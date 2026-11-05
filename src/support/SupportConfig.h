@@ -91,6 +91,10 @@ struct SupportConfig {
     CoverageModel coverage;
     CapacityModel capacity;
 
+    // The model stands on the build plate (no elevation, no raft): parts on
+    // the first layer are held by the plate, not by tips.
+    bool on_plate = false;
+
     // Tilt release: extra peel demand towards the side away from the hinge.
     double peel_bias = 0.0;  // 0 = off (hinge side unknown)
     Vec2 peel_axis{0, 0};

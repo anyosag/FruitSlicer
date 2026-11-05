@@ -92,6 +92,7 @@ struct SupportTree {
     double raft_top = 0;
     std::vector<Warning> warnings;
     size_t dropped_points = 0;
+    size_t braces_skipped_trap = 0;  // pillar pairs left unbraced because model passes between them
 
     size_t trunks() const {  // pillars standing on the raft
         size_t n = 0;

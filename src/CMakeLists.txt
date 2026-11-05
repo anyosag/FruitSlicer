@@ -11,6 +11,7 @@ add_library(fruit_core
   slice/MeshSlicer.cpp
   layers/LayerStack.cpp
   layers/IslandGraph.cpp
+  layers/HollowAnalysis.cpp
   printer/PrinterProfile.cpp
   io/PngWriter.cpp
   io/Render.cpp

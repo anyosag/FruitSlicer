@@ -242,6 +242,18 @@ void Builder::brace() {
         const double h = std::min(A.top, B.top) - cfg_.flex_zone;
         const double z0 = out_.raft_top + cfg_.base_height + 1.0;
         if (std::max(A.top, B.top) - out_.raft_top < cfg_.brace_min_height || h - z0 < best[v]) continue;
+        // No-trap rule: pillars, brace and raft form a closed loop. If any
+        // model material passes between the two pillars below the braces,
+        // that loop would encircle it and the supports could not come off.
+        bool fenced = false;
+        for (double z = out_.raft_top + 0.25; z <= h && !fenced; z += 0.25) {
+            const Vec3 a{A.xy.x, A.xy.y, z}, b{B.xy.x, B.xy.y, z};
+            if (tree_.anyHit(a, b - a, distance(a, b))) fenced = true;
+        }
+        if (fenced) {
+            ++out_.braces_skipped_trap;
+            continue;
+        }
         // Zig-zag at 45°, levels at least `brace_step` apart.
         bool from_a = true;
         for (double z = z0; z + best[v] <= h; z += std::max(best[v], cfg_.brace_step)) {

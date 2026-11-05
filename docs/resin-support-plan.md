@@ -230,6 +230,8 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 | M2 support tree | phase 1 done | Collision-aware heads, pillars with 45° bridges, diagonal ground routes, bracing outside the flex zone, one-piece pad raft, floating-island validation. |
 | M3 orientation | done | Two-stage search; −15 % / −17 % points on the armadillo / bunny vs their input orientation. |
 | M5 branching (part) | done | Pillars merge into trunks at 45° below the flex zone; armadillo: 82 → 47 trunks, 189 → 35 braces, 4.4 → 3.9 ml. Model anchors with a weight limit and the no-trap rule are still open. |
+| Calibration loop | done | `fit` turns result sheets into a resin profile (logistic capacity, coverage radius, critical angle, island sizes); `--profile` everywhere. |
+| Safety gaps | done | Hollow analysis (cups / traps, polygon version of UVtools' two passes), no tips on closed-cavity ceilings, no-trap bracing rule, `--hinge` / `--peel-bias`, `--on-plate`. |
 | M4 / M6 | open | UVtools as external lint; native `.goo` with grayscale contact weakening (blocked on inspecting a real 16K file). |
 
 **Corrections and findings found during implementation:**
@@ -240,3 +242,4 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 - **Capacity tips on any underside.** Capacity tips may go on self-supporting undersides too. Without this, a steep downward cone hanging from one apex tip had nowhere to add capacity.
 - **Stabilization tips are never pruned.** Their purpose, resisting lateral wobble, is not captured by the coverage and capacity checks.
 - **CI.** GitHub Actions (`build-test`: configure, build, ctest, CLI smoke test) runs on every push to the PR and has passed.
+- **Where traps can form.** A ring in a single horizontal layer cannot form with the current support topology (MST bracing, tree merges). The real trap is a vertical loop: two pillars plus a brace plus the raft, with model material passing through the loop. The rule now checks for that.

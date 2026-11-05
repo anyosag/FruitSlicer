@@ -223,26 +223,60 @@ int cmdCalibrate(const std::string& kind, const std::string& out, const std::str
     return 0;
 }
 
+// Settings shared by points / support / orient.
+struct GenCli {
+    std::string profile;
+    double critical_angle = -1;  // < 0: profile or built-in default
+    std::string hinge;           // side of the vat hinge: +x, -x, +y, -y
+    double peel_bias = -1;       // < 0: 0.25 when a hinge is given
+    bool on_plate = false;
+};
+
+void addGenOptions(CLI::App* cmd, GenCli& g) {
+    cmd->add_option("--profile", g.profile, "Resin profile from `fruitslicer fit`");
+    cmd->add_option("--critical-angle", g.critical_angle,
+                    "Surfaces leaning more than this from vertical need support (deg)");
+    cmd->add_option("--hinge", g.hinge, "Side of the tilting vat's hinge on the plate: +x, -x, +y or -y")
+        ->check(CLI::IsMember({"+x", "-x", "+y", "-y"}));
+    cmd->add_option("--peel-bias", g.peel_bias,
+                    "Extra peel demand on the side far from the hinge (default 0.25 with --hinge; UNVERIFIED size)");
+    cmd->add_flag("--on-plate", g.on_plate, "Print standing on the build plate: no elevation, no raft");
+}
+
+// Resin profile first, then explicit command-line overrides.
+void applySettings(const GenCli& g, SupportConfig& cfg, TreeConfig* tc, json& r) {
+    if (!g.profile.empty()) {
+        std::ifstream in(g.profile);
+        if (!in) throw std::runtime_error("cannot open profile " + g.profile);
+        std::vector<std::string> notes;
+        applyProfile(json::parse(in), cfg, tc, &notes);
+        r["profile"] = g.profile;
+        if (!notes.empty()) r["profile_notes"] = notes;
+    }
+    if (g.critical_angle > 0) cfg.critical_angle_deg = g.critical_angle;
+    if (!g.hinge.empty()) {
+        // Peel stress is highest on the side away from the hinge (Wu 2016).
+        const double sgn = g.hinge[0] == '+' ? -1.0 : 1.0;
+        cfg.peel_axis = g.hinge[1] == 'x' ? Vec2{sgn, 0} : Vec2{0, sgn};
+        cfg.peel_bias = g.peel_bias >= 0 ? g.peel_bias : 0.25;
+        r["peel"] = {{"hinge", g.hinge}, {"bias", cfg.peel_bias}};
+    } else if (g.peel_bias >= 0) {
+        throw std::runtime_error("--peel-bias needs --hinge");
+    }
+    if (g.on_plate) {
+        cfg.on_plate = true;
+        if (tc) tc->raft = RaftStyle::None;
+        r["on_plate"] = true;
+    }
+}
+
 struct PointsOpts {
     double density = 1.0;
-    double critical_angle = -1;  // < 0: profile or built-in default
-    std::string cosmetic, points_in, edits, out = "points.json", ply, report, profile;
+    GenCli gen;
+    std::string cosmetic, points_in, edits, out = "points.json", ply, report;
     bool no_prune = false;
     std::string strategy = "greedy";
 };
-
-// Resin profile first, then explicit command-line overrides.
-void applySettings(const std::string& profile, double critical_angle, SupportConfig& cfg, TreeConfig* tc, json& r) {
-    if (!profile.empty()) {
-        std::ifstream in(profile);
-        if (!in) throw std::runtime_error("cannot open profile " + profile);
-        std::vector<std::string> notes;
-        applyProfile(json::parse(in), cfg, tc, &notes);
-        r["profile"] = profile;
-        if (!notes.empty()) r["profile_notes"] = notes;
-    }
-    if (critical_angle > 0) cfg.critical_angle_deg = critical_angle;
-}
 
 int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& o) {
     json r;
@@ -250,7 +284,7 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
     SupportConfig cfg;
     cfg.layer_height = layer_h;
     cfg.coverage.density = o.density;
-    applySettings(o.profile, o.critical_angle, cfg, nullptr, r);
+    applySettings(o.gen, cfg, nullptr, r);
     CosmeticSpec cosmetic;
     if (!o.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(o.cosmetic)));
     PointGenOptions opts;
@@ -290,6 +324,9 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
                   {"samples", st.samples},
                   {"uncovered_samples", st.uncovered},
                   {"tiny_islands_skipped", st.tiny_islands_skipped},
+                  {"cavity_samples_skipped", st.cavity_samples_skipped},
+                  {"suction_cups", st.suction_cups},
+                  {"resin_traps", st.resin_traps},
                   {"capacity_deficit_layers", st.capacity_deficits},
                   {"before_pruning", st.greedy_points},
                   {"pruned", st.pruned},
@@ -342,7 +379,7 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
     cfg.layer_height = layer_h;
     cfg.coverage.density = popts.density;
     TreeConfig tc;
-    applySettings(popts.profile, popts.critical_angle, cfg, &tc, r);
+    applySettings(popts.gen, cfg, &tc, r);
     if (!o.points_in.empty()) {
         pts = pointsFromJson(json::parse(std::ifstream(o.points_in)));
     } else {
@@ -354,7 +391,9 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
         pts = res.points;
         r["point_stats"] = {{"uncovered_samples", res.stats.uncovered},
                             {"capacity_deficit_layers", res.stats.capacity_deficits},
-                            {"small_islands_skipped", res.stats.tiny_islands_skipped}};
+                            {"small_islands_skipped", res.stats.tiny_islands_skipped},
+                            {"suction_cups", res.stats.suction_cups},
+                            {"resin_traps", res.stats.resin_traps}};
         json w = json::array();
         for (const auto& x : res.warnings) w.push_back({{"code", x.code}, {"message", x.message}});
         r["point_warnings"] = w;
@@ -387,6 +426,7 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
     r["pillars_on_model"] = anchors;
     r["bridges"] = tree.bridges.size();
     r["braces"] = tree.braces.size();
+    r["braces_skipped_no_trap"] = tree.braces_skipped_trap;
     r["dropped_points"] = tree.dropped_points;
     r["raft_thickness"] = tree.raft_top;
     r["support_triangles"] = sup.faceCount();
@@ -419,7 +459,8 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
 struct OrientCli {
     int directions = 64, finalists = 6, top = 3;
     std::vector<double> visible_from;  // flattened triples, model frame
-    std::string preview_dir, profile;
+    std::string preview_dir;
+    GenCli gen;
 };
 
 int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_h, const OrientCli& o) {
@@ -435,7 +476,8 @@ int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_
     opt.elevation = place.elevate;
     opt.cfg.layer_height = layer_h;
     json settings_report;
-    applySettings(o.profile, -1, opt.cfg, nullptr, settings_report);
+    applySettings(o.gen, opt.cfg, nullptr, settings_report);
+    if (o.gen.on_plate) opt.elevation = 0;
     for (size_t i = 0; i + 2 < o.visible_from.size(); i += 3)
         opt.visible_from.push_back({o.visible_from[i], o.visible_from[i + 1], o.visible_from[i + 2]});
     const auto res = searchOrientations(mesh, opt);
@@ -551,8 +593,7 @@ int main(int argc, char** argv) {
     addPlacement(points, place);
     points->add_option("--layer", layer_h, "Layer height (mm)");
     points->add_option("--density", popts.density, "Support density (1 = default, >1 denser)");
-    points->add_option("--critical-angle", popts.critical_angle, "Surfaces leaning more than this from vertical need support (deg)");
-    points->add_option("--profile", popts.profile, "Resin profile from `fruitslicer fit`");
+    addGenOptions(points, popts.gen);
     points->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON (keep_out boxes, visible_from directions)");
     points->add_option("--points-in", popts.points_in, "Previous points.json (keeps its manual points; ids for --edits)");
     points->add_option("--edits", popts.edits, "Edits JSON (add / delete / move / resize)");
@@ -580,8 +621,7 @@ int main(int argc, char** argv) {
     addPlacement(support, place);
     support->add_option("--layer", layer_h, "Layer height (mm)");
     support->add_option("--density", popts.density, "Support density (1 = default)");
-    support->add_option("--critical-angle", popts.critical_angle, "Critical overhang angle from vertical (deg)");
-    support->add_option("--profile", popts.profile, "Resin profile from `fruitslicer fit`");
+    addGenOptions(support, popts.gen);
     support->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON");
     support->add_option("--points", sopts.points_in, "Use these points (e.g. edited) instead of generating");
     support->add_option("-o,--output", sopts.out, "Output STL: model + supports");
@@ -597,7 +637,7 @@ int main(int argc, char** argv) {
     orient->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
     addPlacement(orient, place);
     orient->add_option("--layer", layer_h, "Layer height used to evaluate finalists (mm)");
-    orient->add_option("--profile", ocli.profile, "Resin profile from `fruitslicer fit`");
+    addGenOptions(orient, ocli.gen);
     orient->add_option("--directions", ocli.directions, "Candidate build directions");
     orient->add_option("--finalists", ocli.finalists, "Candidates evaluated with the full generator");
     orient->add_option("--top", ocli.top, "How many results to print");
@@ -623,6 +663,7 @@ int main(int argc, char** argv) {
         if (*info) return cmdInfo(in_path);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
+        if ((*points || *support) && popts.gen.on_plate) place.elevate = 0;
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
         if (*orient) return cmdOrient(in_path, place, layer_h, ocli);
         if (*fit) return cmdFit(fcli);

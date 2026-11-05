@@ -34,6 +34,9 @@ struct PointGenStats {
     size_t samples = 0;
     size_t uncovered = 0;           // samples left without a covering tip (should be 0)
     size_t tiny_islands_skipped = 0;
+    size_t cavity_samples_skipped = 0;
+    size_t suction_cups = 0;
+    size_t resin_traps = 0;
     size_t capacity_deficits = 0;   // component-layers short of capacity after all fixes
     size_t greedy_points = 0;       // before pruning
     size_t pruned = 0;

@@ -19,6 +19,7 @@ behind it, and the milestone plan are in
 | M3 — orientation search (two-stage: mesh proxies over 64 directions, full generator on the 6 best) | done |
 | M5 (part) — branching: nearby pillars merge into trunks below the flex zone | done |
 | Calibration loop: `fit` result sheets → resin profile → `--profile` | done |
+| Safety: suction-cup / resin-trap warnings, no supports in closed cavities, no-trap bracing, hinge bias, on-plate mode | done |
 | Physical validation: overlap coupon, calibration plates | **needs your printer** |
 
 ## Build
@@ -161,6 +162,24 @@ Each point gets:
 
 The report re-slices model plus supports and lists anything that would still
 start printing in mid-air (`validation.floating_islands`, which should be 0).
+
+Safety checks and options:
+
+- **Suction cups and resin traps.** Hollows closed towards the plate but open
+  towards the film are cups, and each peel pulls a vacuum through them.
+  Fully closed hollows are traps. Both are reported with their height range
+  and volume. Tips are never placed on the ceiling of a closed cavity, since
+  they could not be removed.
+- **No-trap bracing.** Two trunks are never braced when model material passes
+  between them below the braces. The pillars, brace and raft would form a
+  loop around it, and the supports could not come off (PrusaSlicer #14594).
+- **`--hinge ±x|±y`.** Tells FruitSlicer which side of the plate the tilting
+  vat's hinge is on. Peel stress is highest on the far side (Wu 2016), so tips
+  there carry extra demand (`--peel-bias`, default 0.25; the right value is
+  unmeasured).
+- **`--on-plate`.** Prints flat-backed parts standing on the build plate, with
+  no elevation and no raft. The base is held by the plate, so only overhangs
+  get tips.
 
 ![Supports generated for the armadillo in its best orientation](docs/armadillo_supported_preview.png)
 

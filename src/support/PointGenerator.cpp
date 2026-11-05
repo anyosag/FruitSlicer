@@ -10,6 +10,7 @@
 #include <sstream>
 #include <unordered_map>
 
+#include "layers/HollowAnalysis.h"
 #include "layers/IslandGraph.h"
 #include "layers/LayerStack.h"
 #include "mesh/AabbTree.h"
@@ -147,12 +148,22 @@ private:
         double last_stab_z = -1e9;
         double last_warn_z = -1e9;
         bool exempt = false;  // skipped tiny island not yet merged: no capacity demand
+        bool plate = false;   // stands on the build plate (on-plate mode): held by the plate
     };
     std::vector<int> uf_;
     std::vector<Comp> comp_;
     std::vector<std::vector<int>> manual_by_layer_;
     std::vector<int> tips_on_part_;
     std::vector<int> skipped_islands_;
+    HollowReport hollows_;
+    std::vector<ExPolygons> traps_;  // per layer: enclosed cavities (resin traps)
+    size_t cavity_skipped_ = 0;
+    bool inTrap(int layer, const Vec2& xy) const {
+        if (layer < 0 || layer >= static_cast<int>(traps_.size())) return false;
+        for (const auto& e : traps_[layer])
+            if (e.contains(xy)) return true;
+        return false;
+    }
     PointGenResult result_;
 };
 
@@ -217,6 +228,11 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     Sample s;
     project(xy, layers_.layerBottom(layer), s.pos, s.normal);
     if (s.normal.z > (needs_cover ? 0.2 : -0.05)) return -1;  // not a downward-facing surface
+    // Ceiling of an enclosed cavity: no support could ever be removed from it.
+    if (inTrap(layer - 1, xy)) {
+        if (needs_cover) ++cavity_skipped_;
+        return -1;
+    }
     if (decimate) {
         bool close = false;
         const double sp = spacing > 0 ? spacing : cfg_.sample_min_spacing;
@@ -323,6 +339,7 @@ void Generator::unite(int a, int b) {
     A.pool.insert(A.pool.end(), B.pool.begin(), B.pool.end());
     A.last_stab_z = std::max(A.last_stab_z, B.last_stab_z);
     A.exempt = A.exempt && B.exempt;
+    A.plate = A.plate || B.plate;
     B = Comp{};
     uf_[b] = a;
 }
@@ -373,6 +390,15 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
                               std::vector<std::pair<int, std::vector<int>>>& large_islands) {
     const LayerPart& P = graph_.part(part);
     const int L = P.layer;
+    if (cfg_.on_plate && L == 0) {  // cured onto the build plate: held by it
+        comp_[find(part)].plate = true;
+        return;
+    }
+    if (inTrap(L - 1, toVec(P.shape.contour.front())) || inTrap(L - 1, P.box.center())) {
+        ++cavity_skipped_;
+        comp_[find(part)].exempt = true;
+        return;
+    }
     if ((P.area < cfg_.tiny_island_area && mergesSoon(part, cfg_.tiny_island_merge_layers)) ||
         (P.area < cfg_.absorb_island_area && mergesSoon(part, cfg_.absorb_island_layers))) {
         // Reported once, aggregated, in finalize().
@@ -596,7 +622,7 @@ void Generator::enforceCapacity(int layer) {
     }
     for (auto& [root, need] : demand) {
         Comp& C = comp_[root];
-        if (C.exempt || C.capacity + 1e-9 >= need) continue;
+        if (C.exempt || C.plate || C.capacity + 1e-9 >= need) continue;
         // Add tips at pool samples farthest from the component's tips.
         while (C.capacity + 1e-9 < need) {
             int best = -1;
@@ -706,6 +732,10 @@ void Generator::setup() {
     costf_.edge_weight = cfg_.edge_weight;
     costf_.edge_margin = cfg_.edge_margin;
     minima_ = findMinima(mesh_);
+    hollows_ = analyzeHollows(layers_);
+    traps_.assign(layers_.size(), {});
+    for (size_t L = 0; L < layers_.size(); ++L)
+        if (!hollows_.trap_regions[L].empty()) traps_[L] = toExPolygons(hollows_.trap_regions[L]);
     s_off_ = cfg_.layer_height * std::tan(deg2rad(cfg_.critical_angle_deg));
     anchor_layers_ = std::max(1, static_cast<int>(std::lround(cfg_.anchor_window / cfg_.layer_height)));
     const size_t np = graph_.parts().size();
@@ -815,8 +845,10 @@ void Generator::finalize() {
         std::iota(uf.begin(), uf.end(), 0);
         std::vector<double> cap(uf.size(), 0);
         std::vector<std::vector<int>> members(uf.size());
-        std::vector<char> exempt(uf.size(), 0);
+        std::vector<char> exempt(uf.size(), 0), plate(uf.size(), 0);
         for (int p : skipped_islands_) exempt[p] = 1;
+        if (cfg_.on_plate)
+            for (int p : graph_.partsInLayer(0)) plate[p] = 1;
         auto f = [&](int a) {
             while (uf[a] != a) a = uf[a] = uf[uf[a]];
             return a;
@@ -831,6 +863,7 @@ void Generator::finalize() {
                     if (b < a) std::swap(a, b);
                     cap[a] += cap[b];
                     exempt[a] = exempt[a] && exempt[b];
+                    plate[a] = plate[a] || plate[b];
                     members[a].insert(members[a].end(), members[b].begin(), members[b].end());
                     members[b].clear();
                     uf[b] = a;
@@ -849,7 +882,7 @@ void Generator::finalize() {
                 else it->second += d;
             }
             for (auto& [r, d] : demand) {
-                if (exempt[r]) continue;
+                if (exempt[r] || plate[r]) continue;
                 const int pair = static_cast<int>(slack.size());
                 slack.push_back(cap[r] - d);
                 for (int ti : members[r]) tip_pairs[ti].push_back(pair);
@@ -895,6 +928,31 @@ void Generator::finalize() {
     for (double s : slack)
         if (s < -1e-9) ++st.capacity_deficits;
     st.tiny_islands_skipped = skipped_islands_.size();
+    st.cavity_samples_skipped = cavity_skipped_;
+    for (const HollowComponent& h : hollows_.components) {
+        const double z0 = layers_.layerBottom(h.first_layer), z1 = layers_.layerTop(h.last_layer);
+        std::ostringstream m;
+        m.precision(3);
+        if (h.kind == HollowKind::SuctionCup) {
+            ++st.suction_cups;
+            m << "suction cup: " << h.volume << " mm³ pocket (z " << z0 << "–" << z1
+              << ") is closed towards the plate and open towards the film, so each peel pulls a vacuum; "
+              << "add a vent hole near z " << z0 << " or turn the opening towards the plate";
+            warn("suction_cup", m.str(), h.first_layer, {h.center.x, h.center.y, z0});
+        } else {
+            ++st.resin_traps;
+            m << "resin trap: closed cavity of " << h.volume << " mm³ (z " << z0 << "–" << z1
+              << ") keeps uncured resin inside and builds pressure as it closes; add drain holes. "
+              << "Its ceiling cannot be supported";
+            warn("resin_trap", m.str(), h.first_layer, {h.center.x, h.center.y, z0});
+        }
+    }
+    if (cavity_skipped_ > 0) {
+        std::ostringstream m;
+        m << cavity_skipped_ << " surface samples / islands inside closed cavities were left unsupported "
+          << "(supports there could never be removed); the cavity ceiling must hold itself";
+        warn("cavity_ceiling", m.str(), -1, {});
+    }
     if (!skipped_islands_.empty()) {
         std::ostringstream m;
         m << skipped_islands_.size() << " small islands merge with the model almost at once (< "
