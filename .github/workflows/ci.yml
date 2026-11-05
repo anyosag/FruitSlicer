@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 env:
@@ -20,6 +21,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
       - run: cargo fmt --all --check
       - run: cargo test --workspace --release
+      - run: cargo build --release -p fruitslicer-cli
       - name: Check a sliced file with the independent checker
         run: |
           ./target/release/fruitslicer test-pattern pattern.goo
