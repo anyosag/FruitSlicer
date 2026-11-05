@@ -8,7 +8,10 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use goo::GooFile;
-use slicer::{slice_to_goo, stl, Mesh, PrintSettings, Printer, SATURN_4_ULTRA_16K};
+use slicer::checks::CheckParams;
+use slicer::{
+    slice_to_goo_with, stl, Mesh, PrintSettings, Printer, SliceHooks, SATURN_4_ULTRA_16K,
+};
 
 const USAGE: &str = "usage:
   fruitslicer slice <model.stl> [--out file.goo] [placement] [settings]
@@ -20,7 +23,13 @@ placement (slice only; the model is centred on the plate and dropped to Z=0):
 
 settings (defaults are placeholders: use your resin's numbers):
   --layer-height MM (0.05)  --exposure S (2.5)  --bottom-exposure S (30)
-  --bottom-layers N (4)  --pwm 0-255 (255)  --mirror-x on|off (on)  --threads N";
+  --bottom-layers N (4)  --pwm 0-255 (255)  --aa 1|2|4|8 (1 = off)  --mirror-x on|off (on)  --threads N
+
+supports and checks (slice only):
+  --supports on|off (off)  --lift MM (5)  --overhang-angle DEG (45)  --support-spacing MM (3)
+  --tip-diameter MM (0.35)  --angled-tips on|off (on)  --raft-lip MM (0.8; 0 = square edge)
+  --checks on|off (on): report islands, overhangs, suction cups and trapped resin
+  --hollow WALL_MM: hollow the print  --drain-holes on|off (on)  --hole-diameter MM (2.5)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -195,12 +204,32 @@ fn print_settings(flags: &[(String, String)]) -> Result<PrintSettings, String> {
     if let Some(v) = flag(flags, "layer-height")? {
         s.layer_mm = v;
     }
+    if let Some(v) = flag(flags, "aa")? {
+        s.anti_alias = v;
+    }
     if let Some(v) = flag(flags, "pwm")? {
         s.light_pwm = v;
         s.bottom_light_pwm = v;
     }
     s.validate()?;
     Ok(s)
+}
+
+fn hollow_params(
+    flags: &[(String, String)],
+) -> Result<Option<slicer::hollow::HollowParams>, String> {
+    let Some(wall) = flag::<f32>(flags, "hollow")? else {
+        return Ok(None);
+    };
+    let mut p = slicer::hollow::HollowParams {
+        wall_mm: wall,
+        ..Default::default()
+    };
+    if let Some(d) = flag(flags, "hole-diameter")? {
+        p.hole_diameter_mm = d;
+    }
+    p.drain_holes = flag::<String>(flags, "drain-holes")?.as_deref() != Some("off");
+    Ok(Some(p))
 }
 
 fn printer(flags: &[(String, String)]) -> Result<Printer, String> {
@@ -232,7 +261,8 @@ fn run_slice(
     let settings = print_settings(flags)?;
     let p = printer(flags)?;
     let out = File::create(out_path).map_err(|e| format!("{out_path}: {e}"))?;
-    let r = slice_to_goo(
+    let checks = flag::<String>(flags, "checks")?.as_deref() != Some("off");
+    let r = slice_to_goo_with(
         mesh,
         &p,
         &settings,
@@ -240,6 +270,11 @@ fn run_slice(
         &timestamp(),
         out,
         threads(flags)?,
+        &SliceHooks {
+            checks: checks.then(CheckParams::default),
+            hollow: hollow_params(flags)?,
+            ..Default::default()
+        },
     )
     .map_err(|e| e.to_string())?;
     let [sx, sy, sz] = r.model_size_mm;
@@ -286,6 +321,29 @@ fn run_slice(
             diff * 100.0
         );
     }
+    for d in &r.drain_holes {
+        println!(
+            "  drain hole      at ({:.1}, {:.1}) mm through layers {}-{}",
+            d.center_mm[0], d.center_mm[1], d.first_layer, d.last_layer
+        );
+    }
+    for i in &r.issues {
+        let c = i.area.center();
+        let unit = if i.kind == slicer::checks::IssueKind::TrappedResin {
+            "mm3"
+        } else {
+            "mm2"
+        };
+        eprintln!(
+            "check: {} at layers {}-{}, around ({:.1}, {:.1}) mm, {:.1} {unit}",
+            i.kind.label(),
+            i.first_layer,
+            i.last_layer,
+            c[0],
+            c[1],
+            i.size
+        );
+    }
     eprintln!("note: exposure defaults are placeholders; set them for your resin before printing.");
     Ok(())
 }
@@ -315,6 +373,30 @@ fn slice_cmd(args: &[String]) -> Result<(), String> {
         flag(&flags, "x")?.unwrap_or(0.0),
         flag(&flags, "y")?.unwrap_or(0.0),
     ]);
+    if flag::<String>(&flags, "supports")?.as_deref() == Some("on") {
+        let mut sp = slicer::supports::SupportParams::default();
+        if let Some(v) = flag(&flags, "lift")? {
+            sp.lift_mm = v;
+        }
+        if let Some(v) = flag(&flags, "overhang-angle")? {
+            sp.overhang_angle_deg = v;
+        }
+        if let Some(v) = flag(&flags, "support-spacing")? {
+            sp.spacing_mm = v;
+        }
+        if let Some(v) = flag(&flags, "tip-diameter")? {
+            sp.tip_diameter_mm = v;
+        }
+        if let Some(v) = flag::<String>(&flags, "angled-tips")? {
+            sp.angled_tips = v != "off";
+        }
+        if let Some(v) = flag(&flags, "raft-lip")? {
+            sp.raft_lip_mm = v;
+        }
+        let s = slicer::supports::generate(&mesh, &sp)?;
+        println!("added {} supports", s.points.len());
+        mesh = s.combined();
+    }
     let profile = std::path::Path::new(&input)
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())

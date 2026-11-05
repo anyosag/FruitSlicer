@@ -177,6 +177,141 @@ fn fill_row(row: &mut [(f64, i32)], width: u32) -> Vec<(u32, u32)> {
     spans
 }
 
+/// Grey pixel runs for one row: sorted, non-overlapping `(x0, x1, value)`
+/// with value > 0.
+pub type GreyRow = Vec<(u32, u32, u8)>;
+
+/// Anti-aliased version of [`slice_layer`]: each pixel's grey level is the
+/// fraction of it covered by the cross-section, estimated exactly along X
+/// and with `samples` sub-rows along Y.
+pub fn slice_layer_grey<'a>(
+    tris: impl IntoIterator<Item = &'a Triangle>,
+    z: f64,
+    grid: &PixelGrid,
+    samples: u32,
+) -> Vec<GreyRow> {
+    let s = samples.max(1) as usize;
+    let h = grid.height as usize;
+    // Crossings per sub-row: sub-row j of row r is at y = r + (j + 0.5) / s.
+    let mut crossings: Vec<Vec<(f64, i32)>> = vec![Vec::new(); h * s];
+    for t in tris {
+        let Some(seg) = cut(t, z, grid) else { continue };
+        let (lo, hi, dir) = if seg.y0 < seg.y1 {
+            (seg.y0, seg.y1, 1)
+        } else {
+            (seg.y1, seg.y0, -1)
+        };
+        if lo == hi {
+            continue;
+        }
+        let sf = s as f64;
+        let first = ((lo * sf - 0.5).ceil().max(0.0)) as i64;
+        let last = (((hi * sf - 0.5).ceil()) as i64 - 1).min((h * s) as i64 - 1);
+        for k in first..=last {
+            let yc = (k as f64 + 0.5) / sf;
+            let x = seg.x0 + (seg.x1 - seg.x0) * (yc - seg.y0) / (seg.y1 - seg.y0);
+            crossings[k as usize].push((x, dir));
+        }
+    }
+    let width = grid.width as f64;
+    let mut rows = Vec::with_capacity(h);
+    let mut events: Vec<(f64, i32)> = Vec::new();
+    for r in 0..h {
+        events.clear();
+        for sub in &mut crossings[r * s..(r + 1) * s] {
+            if sub.is_empty() {
+                continue;
+            }
+            sub.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut winding = 0;
+            let mut start = 0.0;
+            for &(x, dir) in sub.iter() {
+                let was = winding != 0;
+                winding += dir;
+                let now = winding != 0;
+                if !was && now {
+                    start = x;
+                } else if was && !now {
+                    let (a, b) = (start.clamp(0.0, width), x.clamp(0.0, width));
+                    if b > a {
+                        events.push((a, 1));
+                        events.push((b, -1));
+                    }
+                }
+            }
+        }
+        rows.push(coverage_runs(&mut events, s as u32, grid.width));
+    }
+    rows
+}
+
+/// Turns interval endpoints (+1 at a start, -1 at an end, from `s`
+/// sub-rows) into grey runs.
+fn coverage_runs(events: &mut [(f64, i32)], s: u32, width: u32) -> GreyRow {
+    let mut out: GreyRow = Vec::new();
+    if events.is_empty() {
+        return out;
+    }
+    events.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let full = s as f64;
+    let push = |a: u32, b: u32, cov: f64, out: &mut GreyRow| {
+        let v = ((cov / full) * 255.0).round().clamp(0.0, 255.0) as u8;
+        if v == 0 || a >= b {
+            return;
+        }
+        match out.last_mut() {
+            Some(l) if l.1 == a && l.2 == v => l.1 = b,
+            _ => out.push((a, b, v)),
+        }
+    };
+    let mut level = 0i32;
+    let mut x = events[0].0;
+    // The pixel being accumulated, and its covered area (in sub-row units).
+    let mut pix = x.floor() as u32;
+    let mut acc = 0.0f64;
+    for &(ex, d) in events.iter() {
+        // Constant `level` from x to ex.
+        while x < ex {
+            let c = x.floor() as u32;
+            if c != pix {
+                push(pix, pix + 1, acc, &mut out);
+                pix = c;
+                acc = 0.0;
+            }
+            let next = (c as f64 + 1.0).min(ex);
+            if x == c as f64 && ex >= c as f64 + 1.0 {
+                // Whole pixels at this level.
+                let end = (ex.floor() as u32).min(width);
+                push(c, end, level as f64, &mut out);
+                x = end as f64;
+                pix = end;
+                acc = 0.0;
+                continue;
+            }
+            acc += (next - x) * level as f64;
+            x = next;
+        }
+        level += d;
+    }
+    if pix < width {
+        push(pix, pix + 1, acc, &mut out);
+    }
+    out
+}
+
+/// Grey runs minus binary spans (for hollowing an anti-aliased layer).
+pub fn grey_subtract(row: &GreyRow, cut: &[(u32, u32)]) -> GreyRow {
+    if cut.is_empty() {
+        return row.clone();
+    }
+    let mut out = Vec::with_capacity(row.len());
+    for &(a, b, v) in row {
+        let plain: Vec<(u32, u32)> = crate::hollow::subtract(&[(a, b)], cut);
+        out.extend(plain.into_iter().map(|(x, y)| (x, y, v)));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +373,31 @@ mod tests {
         // A solid spanning [0, 1] is cut at its bottom face but not its top.
         assert_eq!(slice_layer(&m.triangles, 0.0, &grid()).lit_pixels(), 800);
         assert!(slice_layer(&m.triangles, 1.0, &grid()).is_empty());
+    }
+
+    #[test]
+    fn grey_square_edges_have_partial_coverage() {
+        // x from -7.75 to -5.75 mm is 22.5 .. 42.5 px; y from -9.0 to -6.9 mm
+        // is rows 5.0 .. 15.5 (0.2 mm rows, plate centred).
+        let m = Mesh::cuboid(
+            [2.25 - 10.0, 1.0 - 10.0, 0.0],
+            [4.25 - 10.0, 3.1 - 10.0, 1.0],
+        );
+        let g = slice_layer_grey(&m.triangles, 0.5, &grid(), 4);
+        // Rows fully inside: 22.5 -> half pixel 22, full 23..42, half 42.
+        let row = &g[10];
+        assert_eq!(row, &vec![(22, 23, 128), (23, 42, 255), (42, 43, 128)]);
+        // Top row 15 is covered from 15.0 to 15.5: 2 of 4 sub-rows.
+        let top = &g[15];
+        assert_eq!(top, &vec![(22, 23, 64), (23, 42, 128), (42, 43, 64)]);
+        assert!(g[16].is_empty() && g[4].is_empty());
+        // Total coverage matches the area: 20 px x 10.5 rows.
+        let lit: f64 = g
+            .iter()
+            .flatten()
+            .map(|&(a, b, v)| (b - a) as f64 * v as f64 / 255.0)
+            .sum();
+        assert!((lit - 20.0 * 10.5).abs() < 0.5, "{lit}");
     }
 
     #[test]

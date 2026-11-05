@@ -8,3 +8,7 @@ repository.workspace = true
 
 [dependencies]
 goo = { path = "../goo" }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]

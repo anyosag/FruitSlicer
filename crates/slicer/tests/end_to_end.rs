@@ -175,3 +175,279 @@ fn single_thread_and_multi_thread_agree() {
     };
     assert_eq!(run(1), run(8));
 }
+
+#[test]
+fn checks_find_a_cup_and_an_island_on_the_real_grid() {
+    use slicer::checks::{CheckParams, IssueKind};
+    use slicer::{slice_to_goo_with, SliceHooks};
+    // A 20 x 20 mm cup: 1 mm floor on the plate, 2 mm walls, 6 mm tall.
+    let mut m = Mesh::cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 1.0]);
+    m.append(Mesh::cuboid([-10.0, -10.0, 1.0], [10.0, -8.0, 6.0]));
+    m.append(Mesh::cuboid([-10.0, 8.0, 1.0], [10.0, 10.0, 6.0]));
+    m.append(Mesh::cuboid([-10.0, -8.0, 1.0], [-8.0, 8.0, 6.0]));
+    m.append(Mesh::cuboid([8.0, -8.0, 1.0], [10.0, 8.0, 6.0]));
+    // A floating 3 x 3 mm block starting at Z = 3 mm, away from the cup.
+    m.append(Mesh::cuboid([40.0, 0.0, 3.0], [43.0, 3.0, 4.0]));
+    let mut out = Vec::new();
+    let progress_calls = std::sync::atomic::AtomicU32::new(0);
+    let progress = |done: u32, total: u32| {
+        assert!(done <= total);
+        progress_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    };
+    let r = slice_to_goo_with(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "2026-11-05 00:00:00",
+        &mut out,
+        4,
+        &SliceHooks {
+            progress: Some(&progress),
+            cancel: None,
+            checks: Some(CheckParams::default()),
+            hollow: None,
+        },
+    )
+    .unwrap();
+    assert!(progress_calls.into_inner() > 0);
+    let cups: Vec<_> = r
+        .issues
+        .iter()
+        .filter(|i| i.kind == IssueKind::SuctionCup)
+        .collect();
+    assert_eq!(cups.len(), 1, "{:?}", r.issues);
+    // Inner hollow is 16 x 16 mm = 256 mm^2, give or take a cell.
+    assert!((cups[0].size - 256.0).abs() < 20.0, "{:?}", cups[0]);
+    assert_eq!(cups[0].first_layer, 20); // first layer above the 1 mm floor
+    let c = cups[0].area.center();
+    assert!(c[0].abs() < 0.5 && c[1].abs() < 0.5, "{c:?}");
+    let islands: Vec<_> = r
+        .issues
+        .iter()
+        .filter(|i| i.kind == IssueKind::Island)
+        .collect();
+    assert_eq!(islands.len(), 1, "{:?}", r.issues);
+    assert_eq!(islands[0].first_layer, 60);
+    let c = islands[0].area.center();
+    assert!(
+        (c[0] - 41.5).abs() < 0.5 && (c[1] - 1.5).abs() < 0.5,
+        "{c:?}"
+    );
+}
+
+#[test]
+fn cancelling_stops_the_slice() {
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let m = Mesh::cuboid([-5.0, -5.0, 0.0], [5.0, 5.0, 5.0]);
+    let cancel = std::sync::atomic::AtomicBool::new(true);
+    let r = slice_to_goo_with(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "2026-11-05 00:00:00",
+        Vec::new(),
+        2,
+        &SliceHooks {
+            cancel: Some(&cancel),
+            ..Default::default()
+        },
+    );
+    assert!(matches!(r, Err(SliceError::Cancelled)));
+}
+
+/// Slices with checks on and returns the islands found.
+fn islands_after_supports(
+    model: &Mesh,
+    p: &slicer::supports::SupportParams,
+) -> Vec<slicer::checks::Issue> {
+    use slicer::checks::{CheckParams, IssueKind};
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let mut placed = model.clone();
+    placed.place_on_plate([0.0, 0.0]);
+    let s = slicer::supports::generate(&placed, p).unwrap();
+    let r = slice_to_goo_with(
+        &s.combined(),
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "2026-11-05 00:00:00",
+        Vec::new(),
+        4,
+        &SliceHooks {
+            checks: Some(CheckParams::default()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    r.issues
+        .into_iter()
+        .filter(|i| i.kind == IssueKind::Island)
+        .collect()
+}
+
+#[test]
+fn supported_sphere_has_no_islands_and_unsupported_one_does() {
+    let ball = sphere(8.0, 48, 96);
+    let p = slicer::supports::SupportParams::default();
+    let islands = islands_after_supports(&ball, &p);
+    assert!(islands.is_empty(), "{islands:?}");
+    // Without supports a lifted sphere's first layers float.
+    let mut lifted = ball.clone();
+    lifted.place_on_plate([0.0, 0.0]);
+    lifted.translate([0.0, 0.0, 5.0]);
+    let (r, _) = slice(&lifted, &SATURN_4_ULTRA_16K);
+    assert!(!r.empty_layers.is_empty());
+}
+
+#[test]
+fn supported_table_has_no_islands() {
+    let mut m = Mesh::cuboid([-10.0, -10.0, 10.0], [10.0, 10.0, 12.0]);
+    for (x, y) in [(-10.0, -10.0), (8.0, -10.0), (-10.0, 8.0), (8.0, 8.0)] {
+        m.append(Mesh::cuboid([x, y, 0.0], [x + 2.0, y + 2.0, 10.0]));
+    }
+    let islands = islands_after_supports(&m, &Default::default());
+    assert!(islands.is_empty(), "{islands:?}");
+}
+
+#[test]
+fn check_goo_finds_the_same_problems_as_slicing() {
+    use slicer::checks::{check_goo, CheckParams};
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let mut m = Mesh::cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 1.0]);
+    m.append(Mesh::cuboid([-10.0, -10.0, 1.0], [10.0, -8.0, 4.0]));
+    m.append(Mesh::cuboid([-10.0, 8.0, 1.0], [10.0, 10.0, 4.0]));
+    m.append(Mesh::cuboid([-10.0, -8.0, 1.0], [-8.0, 8.0, 4.0]));
+    m.append(Mesh::cuboid([8.0, -8.0, 1.0], [10.0, 8.0, 4.0]));
+    m.append(Mesh::cuboid([30.0, 5.0, 2.0], [33.0, 9.0, 3.0]));
+    let mut out = Vec::new();
+    let r = slice_to_goo_with(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "t",
+        &mut out,
+        4,
+        &SliceHooks {
+            checks: Some(CheckParams::default()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let goo = GooFile::read(out.as_slice()).unwrap();
+    let a = check_goo(&goo, CheckParams::default(), None, None).unwrap();
+    assert!(!r.issues.is_empty());
+    assert_eq!(a.issues, r.issues);
+    assert!((a.lit_volume_mm3 - r.sliced_volume_mm3).abs() < 1e-6 * r.sliced_volume_mm3);
+}
+
+fn hollow_report(drain: bool) -> slicer::SliceReport {
+    use slicer::checks::CheckParams;
+    use slicer::hollow::HollowParams;
+    use slicer::{slice_to_goo_with, SliceHooks};
+    // A 20 mm cube floating 5 mm up (as if on supports).
+    let m = Mesh::cuboid([-10.0, -10.0, 5.0], [10.0, 10.0, 25.0]);
+    slice_to_goo_with(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "t",
+        Vec::new(),
+        4,
+        &SliceHooks {
+            checks: Some(CheckParams::default()),
+            hollow: Some(HollowParams {
+                drain_holes: drain,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn hollowing_without_holes_traps_resin_and_holes_fix_it() {
+    use slicer::checks::IssueKind;
+    let closed = hollow_report(false);
+    let kinds: Vec<_> = closed.issues.iter().map(|i| i.kind).collect();
+    assert!(kinds.contains(&IssueKind::TrappedResin), "{kinds:?}");
+    // Wall 2 mm: interior is about 16^3 mm^3 less resin than solid 20^3.
+    let expect = 20f64.powi(3) - 16f64.powi(3);
+    assert!(
+        (closed.sliced_volume_mm3 - expect).abs() / expect < 0.03,
+        "{} vs {expect}",
+        closed.sliced_volume_mm3
+    );
+    assert!(closed.drain_holes.is_empty());
+
+    let open = hollow_report(true);
+    assert!(!open.drain_holes.is_empty());
+    let bad: Vec<_> = open
+        .issues
+        .iter()
+        .filter(|i| matches!(i.kind, IssueKind::TrappedResin | IssueKind::SuctionCup))
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
+    let c = open.drain_holes[0].center_mm;
+    assert!(c[0].abs() < 8.0 && c[1].abs() < 8.0, "{c:?}");
+}
+
+#[test]
+fn anti_aliased_slice_has_grey_edges_and_right_volume() {
+    use slicer::hollow::HollowParams;
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let mut ball = sphere(6.0, 48, 96);
+    ball.place_on_plate([0.0, 0.0]);
+    for hollow in [None, Some(HollowParams::default())] {
+        let settings = PrintSettings {
+            anti_alias: 4,
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let r = slice_to_goo_with(
+            &ball,
+            &SATURN_4_ULTRA_16K,
+            &settings,
+            "t",
+            "t",
+            &mut out,
+            4,
+            &SliceHooks {
+                hollow,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let goo = GooFile::read(out.as_slice()).unwrap();
+        assert_eq!(goo.header.anti_aliasing_level, 4);
+        // Some pixels in a middle layer are neither 0 nor 255.
+        let mid = &goo.layers[goo.layers.len() / 2].1;
+        let mut greys = 0u64;
+        rle::decode_runs(mid, |v, len| {
+            if v != 0 && v != 255 {
+                greys += len;
+            }
+        })
+        .unwrap();
+        assert!(greys > 100, "{greys} grey pixels");
+        if hollow.is_none() {
+            let err = (r.sliced_volume_mm3 - r.mesh_volume_mm3).abs() / r.mesh_volume_mm3;
+            assert!(
+                err < 0.01,
+                "{} vs {}",
+                r.sliced_volume_mm3,
+                r.mesh_volume_mm3
+            );
+        } else {
+            assert!(
+                r.sliced_volume_mm3 < 0.92 * r.mesh_volume_mm3,
+                "{}",
+                r.sliced_volume_mm3 / r.mesh_volume_mm3
+            );
+        }
+    }
+}

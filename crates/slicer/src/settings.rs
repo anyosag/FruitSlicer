@@ -7,6 +7,8 @@ use crate::printer::Printer;
 /// Per-print exposure settings. The defaults are placeholders, not tuned for
 /// any resin: use your resin maker's numbers.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct PrintSettings {
     pub layer_mm: f32,
     pub exposure_s: f32,
@@ -15,6 +17,9 @@ pub struct PrintSettings {
     /// UV power, 0..=255.
     pub light_pwm: u16,
     pub bottom_light_pwm: u16,
+    /// Anti-aliasing: 1 = off, otherwise sub-rows sampled per pixel row
+    /// (2, 4 or 8). Edge pixels get grey levels by how much they are covered.
+    pub anti_alias: u32,
 }
 
 impl Default for PrintSettings {
@@ -26,6 +31,7 @@ impl Default for PrintSettings {
             bottom_layers: 4,
             light_pwm: 255,
             bottom_light_pwm: 255,
+            anti_alias: 1,
         }
     }
 }
@@ -40,6 +46,9 @@ impl PrintSettings {
         }
         if !(self.exposure_s > 0.0 && self.bottom_exposure_s > 0.0) {
             return Err("exposure times must be positive".into());
+        }
+        if !(1..=16).contains(&self.anti_alias) {
+            return Err("anti-aliasing must be 1 (off) to 16".into());
         }
         if self.light_pwm > 255 || self.bottom_light_pwm > 255 {
             return Err("light PWM must be 0..=255".into());
@@ -127,7 +136,7 @@ pub fn build_header(printer: &Printer, s: &PrintSettings, inp: HeaderInputs) -> 
         printer_name: printer.name.into(),
         printer_type: "DLP".into(),
         profile_name: truncate(inp.profile_name, 32),
-        anti_aliasing_level: 1,
+        anti_aliasing_level: s.anti_alias.max(1) as u16,
         grey_level: 0,
         blur_level: 0,
         small_preview: inp.small_preview,
