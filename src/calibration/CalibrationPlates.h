@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Calibration plates (milestone M0.5). Each plate holds ~50–100 small coupons
 // in a grid; the coupon, not the plate, is the unit of trial, so one print

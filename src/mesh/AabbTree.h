@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Bounding volume hierarchy over a TriangleMesh for ray casts and
 // closest-point queries (tip collision tests, local thickness, projecting

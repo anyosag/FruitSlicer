@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Final check on the printable result: slice model + supports together and
 // make sure the only islands are on the first layer (the raft). Anything

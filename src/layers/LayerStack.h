@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // A model sliced into uniform layers. Layer i spans
 // [i*h, (i+1)*h] above the build plate and is sampled at its mid-height.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Minimal dependency-free PNG writer (8-bit grayscale, uncompressed deflate)
 // and a debug rasterizer for layer polygons. Debug output only — the printer

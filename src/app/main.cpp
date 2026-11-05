@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 // fruitslicer — resin support generator CLI.
 
 #include <CLI/CLI.hpp>

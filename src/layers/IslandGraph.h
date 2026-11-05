@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Connected parts per layer, linked to the parts they rest on in the layer
 // below. A part with no parent is an island: it would print onto the film

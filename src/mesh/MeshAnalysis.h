@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Mesh-level analysis that must not depend on layer height or slicing offset:
 // local minima (where an island first appears), sharp edges, local thickness.

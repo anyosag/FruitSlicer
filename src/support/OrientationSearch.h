@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Orientation search (milestone M3). Orientation is the biggest single lever
 // on support count, scar placement and peel force (Vanek 2014, Zhang 2015,

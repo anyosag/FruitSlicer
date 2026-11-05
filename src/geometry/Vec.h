@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Small fixed-size vector types used throughout FruitSlicer.
 // All 3D coordinates are millimetres in the printer frame (Z up, build plate at Z = 0).

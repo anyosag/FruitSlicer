@@ -178,5 +178,11 @@ instead.
 
 ## Licence
 
-Not chosen yet. Until it is, no code is copied from AGPL projects (PrusaSlicer,
-UVtools); their algorithms are re-implemented from their descriptions.
+FruitSlicer is free software, released under the **GNU Affero General Public
+License, version 3 or (at your option) any later version**
+(`AGPL-3.0-or-later`); see [`LICENSE`](LICENSE). Every source file carries an
+SPDX identifier.
+
+This licence is compatible with PrusaSlicer ("AGPLv3 or higher") and UVtools
+(AGPL-3.0), so their code may be ported into FruitSlicer as long as their
+copyright notices are kept and the source file says where the code came from.

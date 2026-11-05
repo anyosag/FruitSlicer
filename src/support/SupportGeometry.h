@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Support primitives tessellated into closed shells. Shapes overlap each other
 // and the model on purpose (tip penetration); the slicer's NonZero union

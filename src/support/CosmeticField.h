@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Where tips should preferably not touch: user cosmetic regions and sharp
 // edges. Feeds the placement cost; it never forbids support outright except

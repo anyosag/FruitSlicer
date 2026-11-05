@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Closed, outward-oriented primitive meshes. Used for procedural test models,
 // calibration coupons, and support geometry (tips, shafts, bases, rafts).

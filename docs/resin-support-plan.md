@@ -215,7 +215,7 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   then slice in SatelLite, check with UVtools, and print a same-plate A/B on the 16K.
 
 ## Open items for the user
-- **FruitSlicer licence:** AGPL would allow porting PrusaSlicer and UVtools code; anything else means a clean-room re-implementation, which is the assumed default.
+- ~~**FruitSlicer licence**~~: decided: AGPL-3.0-or-later.
 - **Measure on the printer:** film type, hinge side and peel axis; whether the 16K reads `.ctb` (UNVERIFIED); the GOO version.
 - **Physical testing:** the plan assumes the user can print calibration plates on their own 16K with their usual resin.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
 #pragma once
 // Support generation settings. Defaults are *starting values* taken from the
 // research summarised in docs/resin-support-plan.md; the calibration plates
