@@ -5,7 +5,9 @@
 
 #include <set>
 
+#include "calibration/ABPlate.h"
 #include "calibration/CalibrationPlates.h"
+#include "mesh/Primitives.h"
 #include "layers/IslandGraph.h"
 #include "support/SupportGeometry.h"
 
@@ -95,4 +97,32 @@ TEST_CASE("plates that do not fit are rejected; thin rafts are rejected", "[cali
     TipsPlateOptions thin;
     thin.common.raft_thickness = 0.2;
     CHECK_THROWS(tipsPlate(thin, p));
+}
+
+TEST_CASE("A/B plate: balanced shuffled arms that fit the plate", "[calibration][ab]") {
+    const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
+    TriangleMesh model = makeBox({-5, -5, 5}, {5, 5, 8});
+    TriangleMesh sup = makeBox({-6, -6, 0}, {6, 6, 5});  // stand-in for supports + raft
+    ABPlateOptions o;
+    o.copies = 8;
+    const ABPlate a = makeABPlate(model, sup, p, o);
+    size_t na = 0;
+    std::set<std::pair<int, int>> cells;
+    for (const auto& c : a.manifest["copies"]) {
+        na += c["arm"] == "A";
+        CHECK(cells.insert({c["row"].get<int>(), c["col"].get<int>()}).second);
+    }
+    CHECK(na == 4);
+    for (const BBox3& b : {a.supported.bbox(), a.bare.bbox()}) {
+        CHECK(p.fitsXY(b.min.x, b.min.y));
+        CHECK(p.fitsXY(b.max.x, b.max.y));
+    }
+    CHECK(a.bare.bbox().min.z == Approx(0));  // bare copies stand on the plate
+    // Same seed, same layout; another seed shuffles differently.
+    const ABPlate b = makeABPlate(model, sup, p, o);
+    CHECK(a.manifest["copies"] == b.manifest["copies"]);
+    o.seed = 3;
+    CHECK(makeABPlate(model, sup, p, o).manifest["copies"] != a.manifest["copies"]);
+    o.copies = 500;
+    CHECK_THROWS(makeABPlate(model, sup, p, o));
 }

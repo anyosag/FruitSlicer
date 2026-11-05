@@ -20,7 +20,9 @@ behind it, and the milestone plan are in
 | M5 (part) — branching: nearby pillars merge into trunks below the flex zone | done |
 | Calibration loop: `fit` result sheets → resin profile → `--profile` | done |
 | Safety: suction-cup / resin-trap warnings, no supports in closed cavities, no-trap bracing, hinge bias, on-plate mode | done |
-| Physical validation: overlap coupon, calibration plates | **needs your printer** |
+| Same-plate A/B helper for the go/no-go (`abplate`) | done |
+| Physical validation: overlap coupon, calibration plates, A/B plate | **needs your printer** |
+| Native `.goo` with grayscale tips | blocked on a SatelLite-exported 16K `.goo` |
 
 ## Build
 
@@ -209,6 +211,25 @@ Estimates resting on incomplete data (nothing failed, or nothing held) are
 listed under `notes` in the profile, so a bound is never mistaken for a
 measurement. `--profile` works with `points`, `support` and `orient`, and
 explicit command-line options still override it.
+
+### Go/no-go: same-plate comparison with SatelLite
+
+```sh
+./build/src/fruitslicer abplate model.stl --copies 8 --profile my_resin.json -o ab
+```
+
+This writes `ab_A.stl` (copies with FruitSlicer supports, plus an L marker in
+the corner cell) and `ab_B.stl` (bare copies). Import both into SatelLite,
+add its auto-supports to the B copies only, and print them together. Which
+grid cell gets which arm is shuffled with a fixed seed (`ab.json`). Record
+each copy in `ab.results.csv`:
+
+- result: ok / failed / partial;
+- scar, 1–5, judged blind under raking light;
+- seconds to remove the supports.
+
+Count each arm's support contacts in the slicer. The plan's bar is: at the
+same failure rate, at least 25 % fewer contacts or visibly smaller marks.
 
 ### Overlap coupon (please run this first)
 

@@ -232,6 +232,7 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 | M5 branching (part) | done | Pillars merge into trunks at 45° below the flex zone; armadillo: 82 → 47 trunks, 189 → 35 braces, 4.4 → 3.9 ml. Model anchors with a weight limit and the no-trap rule are still open. |
 | Calibration loop | done | `fit` turns result sheets into a resin profile (logistic capacity, coverage radius, critical angle, island sizes); `--profile` everywhere. |
 | Safety gaps | done | Hollow analysis (cups / traps, polygon version of UVtools' two passes), no tips on closed-cavity ceilings, no-trap bracing rule, `--hinge` / `--peel-bias`, `--on-plate`. |
+| A/B plate | done | `abplate`: shuffled FruitSlicer vs vendor-supported copies on one plate, manifest + results sheet. |
 | M4 / M6 | open | UVtools as external lint; native `.goo` with grayscale contact weakening (blocked on inspecting a real 16K file). |
 
 **Corrections and findings found during implementation:**

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "calibration/ABPlate.h"
 #include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
 #include "calibration/Coupons.h"
@@ -523,6 +524,45 @@ int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_
     return 0;
 }
 
+struct ABCli {
+    int copies = 8, seed = 1;
+    std::string out = "abplate";
+};
+
+int cmdABPlate(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& popts,
+               const ABCli& o) {
+    const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
+    json r;
+    TriangleMesh mesh = loadPlaced(path, place, &r);
+    SupportConfig cfg;
+    cfg.layer_height = layer_h;
+    cfg.coverage.density = popts.density;
+    TreeConfig tc;
+    applySettings(popts.gen, cfg, &tc, r);
+    const PointGenResult res = generateSupportPoints(mesh, cfg, {});
+    const SupportTree tree = buildSupportTree(mesh, res.points, tc, printer.minRaftThickness());
+    const TriangleMesh sup = tree.mesh(tc);
+    ABPlateOptions ao;
+    ao.copies = o.copies;
+    ao.seed = static_cast<uint32_t>(o.seed);
+    const ABPlate plate = makeABPlate(mesh, sup, printer, ao);
+    writeStl(o.out + "_A.stl", plate.supported);
+    writeStl(o.out + "_B.stl", plate.bare);
+    std::ofstream(o.out + ".json") << plate.manifest.dump(2) << "\n";
+    std::ofstream(o.out + ".results.csv") << plate.csv;
+    size_t a = 0;
+    for (const auto& c : plate.manifest["copies"]) a += c["arm"] == "A";
+    r["file"] = path;
+    r["copies"] = o.copies;
+    r["arm_A"] = a;
+    r["arm_B"] = static_cast<size_t>(o.copies) - a;
+    r["points_per_copy"] = res.points.size();
+    r["grid"] = {{"rows", plate.rows}, {"cols", plate.cols}};
+    r["files"] = {o.out + "_A.stl", o.out + "_B.stl", o.out + ".json", o.out + ".results.csv"};
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
 struct FitCli {
     std::vector<std::string> results;
     std::string out = "resin_profile.json", resin;
@@ -646,6 +686,16 @@ int main(int argc, char** argv) {
         ->expected(3, 30);
     orient->add_option("--preview-dir", ocli.preview_dir, "Write a preview PNG for each printed result");
 
+    ABCli abcli;
+    auto* abplate = app.add_subcommand("abplate", "Same-plate A/B test: FruitSlicer-supported vs bare copies");
+    abplate->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    addPlacement(abplate, place);
+    abplate->add_option("--layer", layer_h, "Layer height (mm)");
+    addGenOptions(abplate, popts.gen);
+    abplate->add_option("--copies", abcli.copies, "Number of copies (split evenly between the arms)");
+    abplate->add_option("--seed", abcli.seed, "Arm shuffle seed");
+    abplate->add_option("-o,--output", abcli.out, "Output name prefix");
+
     FitCli fcli;
     auto* fit = app.add_subcommand("fit", "Fit a resin profile from filled-in calibration result sheets");
     fit->add_option("results", fcli.results, "<plate>.stl.results.csv files (manifests are found next to them)")
@@ -663,7 +713,8 @@ int main(int argc, char** argv) {
         if (*info) return cmdInfo(in_path);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
-        if ((*points || *support) && popts.gen.on_plate) place.elevate = 0;
+        if ((*points || *support || *abplate) && popts.gen.on_plate) place.elevate = 0;
+        if (*abplate) return cmdABPlate(in_path, place, layer_h, popts, abcli);
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
         if (*orient) return cmdOrient(in_path, place, layer_h, ocli);
         if (*fit) return cmdFit(fcli);
