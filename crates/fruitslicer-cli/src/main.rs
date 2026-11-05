@@ -27,7 +27,8 @@ settings (defaults are placeholders: use your resin's numbers):
 
 supports and checks (slice only):
   --supports on|off (off)  --lift MM (5)  --overhang-angle DEG (45)  --support-spacing MM (3)
-  --checks on|off (on): report islands, overhangs, suction cups and trapped resin";
+  --checks on|off (on): report islands, overhangs, suction cups and trapped resin
+  --hollow WALL_MM: hollow the print  --drain-holes on|off (on)  --hole-diameter MM (2.5)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -210,6 +211,23 @@ fn print_settings(flags: &[(String, String)]) -> Result<PrintSettings, String> {
     Ok(s)
 }
 
+fn hollow_params(
+    flags: &[(String, String)],
+) -> Result<Option<slicer::hollow::HollowParams>, String> {
+    let Some(wall) = flag::<f32>(flags, "hollow")? else {
+        return Ok(None);
+    };
+    let mut p = slicer::hollow::HollowParams {
+        wall_mm: wall,
+        ..Default::default()
+    };
+    if let Some(d) = flag(flags, "hole-diameter")? {
+        p.hole_diameter_mm = d;
+    }
+    p.drain_holes = flag::<String>(flags, "drain-holes")?.as_deref() != Some("off");
+    Ok(Some(p))
+}
+
 fn printer(flags: &[(String, String)]) -> Result<Printer, String> {
     let mut p = SATURN_4_ULTRA_16K;
     if let Some(m) = flag::<String>(flags, "mirror-x")? {
@@ -250,6 +268,7 @@ fn run_slice(
         threads(flags)?,
         &SliceHooks {
             checks: checks.then(CheckParams::default),
+            hollow: hollow_params(flags)?,
             ..Default::default()
         },
     )
@@ -296,6 +315,12 @@ fn run_slice(
         eprintln!(
             "warning: sliced volume differs from mesh volume by {:.0}%; the mesh may have holes or flipped faces",
             diff * 100.0
+        );
+    }
+    for d in &r.drain_holes {
+        println!(
+            "  drain hole      at ({:.1}, {:.1}) mm through layers {}-{}",
+            d.center_mm[0], d.center_mm[1], d.first_layer, d.last_layer
         );
     }
     for i in &r.issues {

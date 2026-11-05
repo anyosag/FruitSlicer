@@ -33,6 +33,7 @@ impl SliceJob {
         printer: Printer,
         settings: PrintSettings,
         checks: Option<CheckParams>,
+        hollow: Option<slicer::hollow::HollowParams>,
         profile: String,
         ctx: eframe::egui::Context,
     ) -> Self {
@@ -63,6 +64,7 @@ impl SliceJob {
                     progress: Some(&progress),
                     cancel: Some(&c),
                     checks,
+                    hollow,
                 },
             )
             .map_err(|e| e.to_string())
@@ -134,7 +136,12 @@ impl SliceJob {
                     empty_layers: a.empty_layers,
                     encoded_bytes: goo.layers.iter().map(|l| l.1.len() as u64).sum(),
                     seconds: started.elapsed().as_secs_f64(),
-                    issues: if checks.is_some() { a.issues } else { Vec::new() },
+                    issues: if checks.is_some() {
+                        a.issues
+                    } else {
+                        Vec::new()
+                    },
+                    drain_holes: Vec::new(),
                 };
                 Ok(SliceOutput {
                     report,

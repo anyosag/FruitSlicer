@@ -788,16 +788,15 @@ pub fn check_goo(
 ) -> Result<GooAnalysis, String> {
     let h = &file.header;
     let (w, rows) = (h.resolution_x as u64, h.resolution_y as u64);
-    let (mx, my) = (
-        h.size_x as f64 / w as f64,
-        h.size_y as f64 / rows as f64,
-    );
+    let (mx, my) = (h.size_x as f64 / w as f64, h.size_y as f64 / rows as f64);
     let grid = CoarseGrid::for_plate(h.size_x as f64, h.size_y as f64, params.cell_mm);
     let mut checker = PrintChecker::new(grid, params);
     let mut out = GooAnalysis::default();
     let n = file.layers.len() as u32;
     let mut bbox: Option<CellBox> = None;
-    let cell = |px: u64, mm: f64, max: usize| (((px as f64 + 0.5) * mm / grid.cell_mm) as usize).min(max - 1);
+    let cell = |px: u64, mm: f64, max: usize| {
+        (((px as f64 + 0.5) * mm / grid.cell_mm) as usize).min(max - 1)
+    };
     for (i, (_, data)) in file.layers.iter().enumerate() {
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
             return Err("cancelled".into());
@@ -813,7 +812,11 @@ pub fn check_goo(
                     let (y, x) = (p / w, p % w);
                     let row_end = ((y + 1) * w).min(end);
                     let x_end = x + (row_end - p);
-                    let (a, b) = if h.mirror_x { (w - x_end, w - x) } else { (x, x_end) };
+                    let (a, b) = if h.mirror_x {
+                        (w - x_end, w - x)
+                    } else {
+                        (x, x_end)
+                    };
                     let cy = cell(y.min(rows - 1), my, grid.height);
                     for cx in cell(a, mx, grid.width)..=cell(b - 1, mx, grid.width) {
                         layer.set(cx, cy);
@@ -828,7 +831,12 @@ pub fn check_goo(
             out.empty_layers.push(i as u32);
         }
         if let Some(b) = solid_bbox(&layer) {
-            let cb = CellBox { x0: b.x0, y0: b.y0, x1: b.x1 - 1, y1: b.y1 - 1 };
+            let cb = CellBox {
+                x0: b.x0,
+                y0: b.y0,
+                x1: b.x1 - 1,
+                y1: b.y1 - 1,
+            };
             bbox = Some(match bbox {
                 None => cb,
                 Some(mut a) => {

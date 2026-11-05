@@ -206,6 +206,7 @@ fn checks_find_a_cup_and_an_island_on_the_real_grid() {
             progress: Some(&progress),
             cancel: None,
             checks: Some(CheckParams::default()),
+            hollow: None,
         },
     )
     .unwrap();
@@ -340,4 +341,57 @@ fn check_goo_finds_the_same_problems_as_slicing() {
     assert!(!r.issues.is_empty());
     assert_eq!(a.issues, r.issues);
     assert!((a.lit_volume_mm3 - r.sliced_volume_mm3).abs() < 1e-6 * r.sliced_volume_mm3);
+}
+
+fn hollow_report(drain: bool) -> slicer::SliceReport {
+    use slicer::checks::CheckParams;
+    use slicer::hollow::HollowParams;
+    use slicer::{slice_to_goo_with, SliceHooks};
+    // A 20 mm cube floating 5 mm up (as if on supports).
+    let m = Mesh::cuboid([-10.0, -10.0, 5.0], [10.0, 10.0, 25.0]);
+    slice_to_goo_with(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "t",
+        Vec::new(),
+        4,
+        &SliceHooks {
+            checks: Some(CheckParams::default()),
+            hollow: Some(HollowParams {
+                drain_holes: drain,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn hollowing_without_holes_traps_resin_and_holes_fix_it() {
+    use slicer::checks::IssueKind;
+    let closed = hollow_report(false);
+    let kinds: Vec<_> = closed.issues.iter().map(|i| i.kind).collect();
+    assert!(kinds.contains(&IssueKind::TrappedResin), "{kinds:?}");
+    // Wall 2 mm: interior is about 16^3 mm^3 less resin than solid 20^3.
+    let expect = 20f64.powi(3) - 16f64.powi(3);
+    assert!(
+        (closed.sliced_volume_mm3 - expect).abs() / expect < 0.03,
+        "{} vs {expect}",
+        closed.sliced_volume_mm3
+    );
+    assert!(closed.drain_holes.is_empty());
+
+    let open = hollow_report(true);
+    assert!(!open.drain_holes.is_empty());
+    let bad: Vec<_> = open
+        .issues
+        .iter()
+        .filter(|i| matches!(i.kind, IssueKind::TrappedResin | IssueKind::SuctionCup))
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
+    let c = open.drain_holes[0].center_mm;
+    assert!(c[0].abs() < 8.0 && c[1].abs() < 8.0, "{c:?}");
 }

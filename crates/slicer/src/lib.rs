@@ -6,6 +6,7 @@
 //! file one layer at a time.
 
 pub mod checks;
+pub mod hollow;
 pub mod job;
 pub mod mesh;
 pub mod preview;

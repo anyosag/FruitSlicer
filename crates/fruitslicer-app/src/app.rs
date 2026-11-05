@@ -48,6 +48,8 @@ pub struct Prefs {
     pub checks: bool,
     pub check_params: CheckParams,
     pub highlight_overhangs: bool,
+    pub hollow: bool,
+    pub hollow_params: slicer::hollow::HollowParams,
     pub profiles: Vec<ResinProfile>,
     pub last_dir: Option<PathBuf>,
 }
@@ -62,6 +64,8 @@ impl Default for Prefs {
             checks: true,
             check_params: CheckParams::default(),
             highlight_overhangs: true,
+            hollow: false,
+            hollow_params: Default::default(),
             profiles: Vec::new(),
             last_dir: None,
         }
@@ -465,6 +469,7 @@ impl App {
             self.printer.clone(),
             self.prefs.print.clone(),
             self.prefs.checks.then_some(self.prefs.check_params),
+            self.prefs.hollow.then_some(self.prefs.hollow_params),
             profile,
             ctx.clone(),
         ));
@@ -602,6 +607,14 @@ impl App {
                             issue.area.max[1] as f32,
                             z1.max(z0 + 0.2),
                         ],
+                    ));
+                }
+                let rad = self.prefs.hollow_params.hole_diameter_mm / 2.0;
+                for d in &out.report.drain_holes {
+                    let (x, y) = (d.center_mm[0] as f32, d.center_mm[1] as f32);
+                    lines.extend(render::box_lines(
+                        [x - rad, y - rad, d.first_layer as f32 * h],
+                        [x + rad, y + rad, (d.last_layer + 1) as f32 * h],
                     ));
                 }
                 if self.tab == Tab::Layers {
@@ -936,6 +949,9 @@ impl App {
             egui::CollapsingHeader::new(RichText::new("Supports").heading())
                 .default_open(true)
                 .show(ui, |ui| self.supports_ui(ui));
+            egui::CollapsingHeader::new(RichText::new("Hollowing").heading())
+                .default_open(false)
+                .show(ui, |ui| self.hollow_ui(ui));
             egui::CollapsingHeader::new(RichText::new("Print checks").heading())
                 .default_open(false)
                 .show(ui, |ui| self.checks_ui(ui));
@@ -1157,6 +1173,52 @@ impl App {
         }
     }
 
+    fn hollow_ui(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.prefs.hollow, "Hollow the print (saves resin)");
+        let h = &mut self.prefs.hollow_params;
+        ui.add_enabled_ui(self.prefs.hollow, |ui| {
+            egui::Grid::new("hollow").num_columns(2).show(ui, |ui| {
+                ui.label("Wall thickness");
+                ui.add(
+                    egui::DragValue::new(&mut h.wall_mm)
+                        .speed(0.05)
+                        .range(0.8..=10.0)
+                        .suffix(" mm"),
+                );
+                ui.end_row();
+                ui.label("Drain holes");
+                ui.checkbox(&mut h.drain_holes, "add automatically");
+                ui.end_row();
+                ui.label("Hole diameter");
+                ui.add(
+                    egui::DragValue::new(&mut h.hole_diameter_mm)
+                        .speed(0.05)
+                        .range(0.8..=10.0)
+                        .suffix(" mm"),
+                );
+                ui.end_row();
+                ui.label("Hole spacing");
+                ui.add(
+                    egui::DragValue::new(&mut h.hole_spacing_mm)
+                        .speed(0.5)
+                        .range(2.0..=100.0)
+                        .suffix(" mm"),
+                );
+                ui.end_row();
+            });
+        });
+        ui.label(
+            RichText::new(
+                "Holes go through the floor of each hollow, on the plate side, so it vents while \
+                 printing and drains afterwards. Give the model some lift so the holes aren't \
+                 against the raft. Hollow ceilings have no internal supports yet: check the \
+                 results for islands and overhangs inside.",
+            )
+            .small()
+            .weak(),
+        );
+    }
+
     fn checks_ui(&mut self, ui: &mut egui::Ui) {
         ui.checkbox(&mut self.prefs.checks, "Check the print while slicing");
         let c = &mut self.prefs.check_params;
@@ -1214,7 +1276,9 @@ impl App {
         let s = &out.settings;
         let secs = s.estimated_seconds(r.layer_count);
         if let Some(name) = &out.opened {
-            ui.label(RichText::new(format!("Showing {name}.goo (opened, not sliced here)")).strong());
+            ui.label(
+                RichText::new(format!("Showing {name}.goo (opened, not sliced here)")).strong(),
+            );
         }
         if ui.small_button("File details…").clicked() {
             self.show_file_info = true;
@@ -1255,6 +1319,21 @@ impl App {
                 ))
                 .color(Color32::from_rgb(230, 170, 60)),
             );
+        }
+        if !r.drain_holes.is_empty() {
+            ui.label(format!("{} drain holes cut:", r.drain_holes.len()));
+            for d in &r.drain_holes {
+                ui.label(
+                    RichText::new(format!(
+                        "  at ({:.1}, {:.1}) mm, layers {}–{}",
+                        d.center_mm[0],
+                        d.center_mm[1],
+                        d.first_layer + 1,
+                        d.last_layer + 1
+                    ))
+                    .small(),
+                );
+            }
         }
         ui.separator();
         if r.issues.is_empty() {
