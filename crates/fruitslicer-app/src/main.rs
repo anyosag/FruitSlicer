@@ -11,6 +11,7 @@ mod layer_view;
 mod project;
 mod render;
 mod scene;
+mod theme;
 mod util;
 
 use eframe::egui;
