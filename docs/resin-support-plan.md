@@ -239,4 +239,4 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 - **Next-layer absorption (an assumption).** Islands up to 0.12 mm² that join the model on the next layer are left unsupported, on the assumption that the flake left on the film is cured into that layer. Islands under 0.03 mm² that merge within 3 layers are also left unsupported. This rule needs checking with the islands plate.
 - **Capacity tips on any underside.** Capacity tips may go on self-supporting undersides too. Without this, a steep downward cone hanging from one apex tip had nowhere to add capacity.
 - **Stabilization tips are never pruned.** Their purpose, resisting lateral wobble, is not captured by the coverage and capacity checks.
-- **CI not running.** The GitHub Actions workflow has never run on the PR; Actions may need enabling on the repository.
+- **CI.** GitHub Actions (`build-test`: configure, build, ctest, CLI smoke test) runs on every push to the PR and has passed.
