@@ -10,12 +10,16 @@
 #include "calibration/CalibrationPlates.h"
 #include "calibration/Coupons.h"
 #include "io/PngWriter.h"
+#include "io/Render.h"
 #include "layers/IslandGraph.h"
 #include "layers/LayerStack.h"
 #include "mesh/MeshAnalysis.h"
 #include "mesh/Placement.h"
+#include "mesh/ObjIO.h"
 #include "mesh/StlIO.h"
 #include "printer/PrinterProfile.h"
+#include "support/PointGenerator.h"
+#include "support/SupportIO.h"
 
 using namespace fruit;
 using json = nlohmann::json;
@@ -25,19 +29,30 @@ namespace {
 struct PlacementOpts {
     std::vector<double> rotate{0, 0, 0};
     double elevate = 5.0;
+    double scale = 1.0;
 };
 
 void addPlacement(CLI::App* cmd, PlacementOpts& o) {
     cmd->add_option("--rotate", o.rotate, "Rotation in degrees about X, Y, Z (applied in that order)")
         ->expected(3);
     cmd->add_option("--elevate", o.elevate, "Height of the model's lowest point above the plate (mm)");
+    cmd->add_option("--scale", o.scale, "Uniform scale applied before rotation (e.g. 1000 for metres)");
 }
 
 TriangleMesh loadPlaced(const std::string& path, const PlacementOpts& o, json* report = nullptr) {
-    TriangleMesh mesh = readStl(path);
-    const int flipped = mesh.orientShellsOutward();
+    TriangleMesh mesh = readMesh(path);
+    int cavities = 0;
+    const int flipped = mesh.orientShellsOutward(&cavities);
+    if (o.scale != 1.0) {
+        Transform s;
+        for (int i = 0; i < 3; ++i) s.m[i][i] = o.scale;
+        mesh.transform(s);
+    }
     placeOnPlate(mesh, {o.rotate[0], o.rotate[1], o.rotate[2]}, o.elevate);
-    if (report) (*report)["shells_flipped"] = flipped;
+    if (report) {
+        (*report)["shells_flipped"] = flipped;
+        (*report)["cavities"] = cavities;
+    }
     return mesh;
 }
 
@@ -46,7 +61,7 @@ json bboxJson(const BBox3& b) {
 }
 
 int cmdInfo(const std::string& path) {
-    TriangleMesh mesh = readStl(path);
+    TriangleMesh mesh = readMesh(path);
     int shells = 0;
     mesh.shellIds(&shells);
     const int flipped = mesh.orientShellsOutward();
@@ -202,6 +217,96 @@ int cmdCalibrate(const std::string& kind, const std::string& out, const std::str
     return 0;
 }
 
+struct PointsOpts {
+    double density = 1.0;
+    double critical_angle = 45.0;
+    std::string cosmetic, points_in, edits, out = "points.json", ply, report;
+    bool no_prune = false;
+    std::string strategy = "greedy";
+};
+
+int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& o) {
+    json r;
+    TriangleMesh mesh = loadPlaced(path, place, &r);
+    SupportConfig cfg;
+    cfg.layer_height = layer_h;
+    cfg.coverage.density = o.density;
+    cfg.critical_angle_deg = o.critical_angle;
+    CosmeticSpec cosmetic;
+    if (!o.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(o.cosmetic)));
+    PointGenOptions opts;
+    opts.prune = !o.no_prune;
+    if (o.strategy == "firstfit") opts.strategy = CoverStrategy::FirstFit;
+    else if (o.strategy != "greedy") throw std::runtime_error("--strategy must be greedy or firstfit");
+    opts.cosmetic = &cosmetic;
+    if (!o.edits.empty()) {
+        if (o.points_in.empty()) throw std::runtime_error("--edits needs --points-in (the points.json the ids refer to)");
+        const auto previous = pointsFromJson(json::parse(std::ifstream(o.points_in)));
+        opts.manual = applyEdits(json::parse(std::ifstream(o.edits)), previous, cosmetic);
+    } else if (!o.points_in.empty()) {
+        // Keep the user's manual points from a previous run.
+        for (const auto& p : pointsFromJson(json::parse(std::ifstream(o.points_in))))
+            if (p.category == PointCategory::Manual) opts.manual.push_back(p);
+    }
+    const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
+
+    json out = pointsToJson(res.points);
+    out["placement"] = {{"rotate", place.rotate}, {"elevate", place.elevate}, {"layer_height", layer_h}};
+    out["source"] = path;
+    std::ofstream(o.out) << out.dump(1) << "\n";
+    if (!o.ply.empty()) writePointsPly(o.ply, res.points);
+
+    const auto& st = res.stats;
+    json counts = json::object();
+    for (const auto& p : res.points) counts[categoryName(p.category)] = counts.value(categoryName(p.category), 0) + 1;
+    double cap = 0;
+    for (const auto& p : res.points) cap += cfg.capacity.capacity(p.tip_diameter);
+    r["file"] = path;
+    r["points"] = res.points.size();
+    r["by_category"] = counts;
+    r["total_capacity_mm2"] = cap;
+    r["stats"] = {{"layers", st.layers},
+                  {"parts", st.parts},
+                  {"islands", st.islands},
+                  {"samples", st.samples},
+                  {"uncovered_samples", st.uncovered},
+                  {"tiny_islands_skipped", st.tiny_islands_skipped},
+                  {"capacity_deficit_layers", st.capacity_deficits},
+                  {"before_pruning", st.greedy_points},
+                  {"pruned", st.pruned},
+                  {"peak_layer_area_mm2", st.peak_layer_area},
+                  {"peak_layer", st.peak_layer},
+                  {"seconds", st.seconds}};
+    json warnings = json::array();
+    for (const auto& w : res.warnings)
+        warnings.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer},
+                            {"at", {w.where.x, w.where.y, w.where.z}}});
+    r["warnings"] = warnings;
+    r["output"] = o.out;
+    if (!o.report.empty()) std::ofstream(o.report) << r.dump(2) << "\n";
+    json brief = r;
+    if (brief["warnings"].size() > 8) {
+        brief["warnings_shown"] = 8;
+        brief["warnings"] = json(std::vector<json>(r["warnings"].begin(), r["warnings"].begin() + 8));
+    }
+    std::cout << brief.dump(2) << "\n";
+    return 0;
+}
+
+int cmdRender(const std::string& path, const PlacementOpts& place, const std::string& points_path,
+              const std::string& out, double az, double el, int size) {
+    TriangleMesh mesh = loadPlaced(path, place);
+    std::vector<SupportPoint> pts;
+    if (!points_path.empty()) pts = pointsFromJson(json::parse(std::ifstream(points_path)));
+    RenderView v;
+    v.azimuth_deg = az;
+    v.elevation_deg = el;
+    v.size = size;
+    renderPreview(out, mesh, pts, v);
+    std::cout << json{{"png", out}, {"points", pts.size()}}.dump() << "\n";
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -210,14 +315,14 @@ int main(int argc, char** argv) {
 
     std::string in_path;
     auto* info = app.add_subcommand("info", "Mesh statistics (shells, manifoldness, volume, minima)");
-    info->add_option("model", in_path, "STL file")->required()->check(CLI::ExistingFile);
+    info->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
 
     PlacementOpts place;
     double layer_h = 0.05, png_px = 0.05;
     int every = 1;
     std::string png_dir, json_out;
     auto* slice = app.add_subcommand("slice", "Slice a placed model and report layers and islands");
-    slice->add_option("model", in_path, "STL file")->required()->check(CLI::ExistingFile);
+    slice->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
     addPlacement(slice, place);
     slice->add_option("--layer", layer_h, "Layer height (mm)");
     slice->add_option("--png-dir", png_dir, "Write debug PNGs of the layers here");
@@ -242,11 +347,41 @@ int main(int argc, char** argv) {
     calibrate->add_option("--seed", seed, "Layout shuffle seed");
     calibrate->add_option("--replicates", replicates, "Copies of each parameter combination");
 
+    PointsOpts popts;
+    auto* points = app.add_subcommand("points", "Generate support points (M1): coverage + capacity + islands");
+    points->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    addPlacement(points, place);
+    points->add_option("--layer", layer_h, "Layer height (mm)");
+    points->add_option("--density", popts.density, "Support density (1 = default, >1 denser)");
+    points->add_option("--critical-angle", popts.critical_angle, "Surfaces leaning more than this from vertical need support (deg)");
+    points->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON (keep_out boxes, visible_from directions)");
+    points->add_option("--points-in", popts.points_in, "Previous points.json (keeps its manual points; ids for --edits)");
+    points->add_option("--edits", popts.edits, "Edits JSON (add / delete / move / resize)");
+    points->add_option("-o,--output", popts.out, "Output points JSON");
+    points->add_option("--ply", popts.ply, "Also write a coloured PLY of the points");
+    points->add_option("--report", popts.report, "Write the full report JSON here");
+    points->add_flag("--no-prune", popts.no_prune, "Skip reverse-delete pruning");
+    points->add_option("--strategy", popts.strategy, "greedy (default) or firstfit (PrusaSlicer-style baseline)");
+
+    std::string render_points, render_out = "preview.png";
+    double az = 30, el = -35;
+    int render_size = 900;
+    auto* render = app.add_subcommand("render", "Preview PNG of the placed model and its support points");
+    render->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    addPlacement(render, place);
+    render->add_option("--points", render_points, "points.json to draw");
+    render->add_option("-o,--output", render_out, "Output PNG");
+    render->add_option("--azimuth", az, "View azimuth (deg)");
+    render->add_option("--elevation", el, "View elevation (deg, negative = from below)");
+    render->add_option("--size", render_size, "Image size (px)");
+
     CLI11_PARSE(app, argc, argv);
     try {
         if (*info) return cmdInfo(in_path);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
+        if (*points) return cmdPoints(in_path, place, layer_h, popts);
+        if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

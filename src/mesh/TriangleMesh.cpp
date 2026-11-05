@@ -140,7 +140,7 @@ std::vector<int> TriangleMesh::shellIds(int* shell_count) const {
     return ids;
 }
 
-int TriangleMesh::orientShellsOutward() {
+int TriangleMesh::orientShellsOutward(int* cavities) {
     int count = 0;
     const std::vector<int> ids = shellIds(&count);
     std::vector<double> vol(count, 0.0);
@@ -149,13 +149,42 @@ int TriangleMesh::orientShellsOutward() {
         const Face& f = faces[i];
         vol[ids[i]] += signedTetVolume(vertices[f[0]] - o, vertices[f[1]] - o, vertices[f[2]] - o);
     }
-    int flipped = 0;
+    // Parity test: cast a ray from a vertex of the shell along a slightly
+    // skewed direction and count crossings with faces of *other* shells.
+    auto enclosed = [&](int shell) {
+        Vec3 p{};
+        for (size_t i = 0; i < faces.size(); ++i)
+            if (ids[i] == shell) { p = vertices[faces[i][0]]; break; }
+        const Vec3 d = normalized(Vec3{1.0, 0.000123, 0.000457});
+        int crossings = 0;
+        for (size_t i = 0; i < faces.size(); ++i) {
+            if (ids[i] == shell) continue;
+            const Vec3 &a = vertices[faces[i][0]], &b = vertices[faces[i][1]], &c = vertices[faces[i][2]];
+            const Vec3 e1 = b - a, e2 = c - a, pv = cross(d, e2);
+            const double det = dot(e1, pv);
+            if (std::abs(det) < 1e-18) continue;
+            const Vec3 tv = p - a;
+            const double u = dot(tv, pv) / det;
+            if (u < 0 || u > 1) continue;
+            const Vec3 qv = cross(tv, e1);
+            const double v = dot(d, qv) / det;
+            if (v < 0 || u + v > 1) continue;
+            if (dot(e2, qv) / det > 1e-12) ++crossings;
+        }
+        return crossings % 2 == 1;
+    };
+    int flipped = 0, kept = 0;
     std::vector<bool> flip(count, false);
-    for (int s = 0; s < count; ++s)
-        if (vol[s] < 0) { flip[s] = true; ++flipped; }
+    for (int s = 0; s < count; ++s) {
+        if (vol[s] >= 0) continue;
+        if (count > 1 && enclosed(s)) { ++kept; continue; }
+        flip[s] = true;
+        ++flipped;
+    }
     if (flipped)
         for (size_t i = 0; i < faces.size(); ++i)
             if (flip[ids[i]]) std::swap(faces[i][1], faces[i][2]);
+    if (cavities) *cavities = kept;
     return flipped;
 }
 

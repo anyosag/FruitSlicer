@@ -77,6 +77,16 @@ TEST_CASE("inside-out shells are flipped; mirroring keeps orientation", "[mesh]"
     CHECK(m.orientShellsOutward() == 1);
     CHECK(m.volume() == Approx(2));
 
+    // A hollowed model: the inner, inverted shell is a cavity and must stay.
+    TriangleMesh hollow = makeBox({0, 0, 0}, {10, 10, 10});
+    TriangleMesh cavity = makeBox({2, 2, 2}, {8, 8, 8});
+    for (auto& f : cavity.faces) std::swap(f[1], f[2]);
+    hollow.append(cavity);
+    int cavities = 0;
+    CHECK(hollow.orientShellsOutward(&cavities) == 0);
+    CHECK(cavities == 1);
+    CHECK(hollow.volume() == Approx(1000 - 216));
+
     TriangleMesh b = makeBox({0, 0, 0}, {1, 2, 3});
     Transform mirror;
     mirror.m[0][0] = -1;

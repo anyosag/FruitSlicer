@@ -14,8 +14,8 @@ behind it, and the milestone plan are in
 |---|---|
 | M0 — foundation: STL I/O, nonzero mesh slicer, mesh minima/thickness, island graph, printer profile, overlap coupon | done |
 | M0.5 — calibration plates (tips, spacing, islands) with manifests and result sheets | done |
-| M1 — capacitated support-point generator | in progress |
-| M2 — heads, pillars, raft, supported-model export | planned |
+| M1 — support-point generator (coverage through material + capacity + islands), points JSON with persistent manual edits, preview renderer | done (calibration still needed) |
+| M2 — heads, pillars, raft, supported-model export | in progress |
 
 ## Build
 
@@ -61,6 +61,48 @@ its own small raft in a grid; the L-shaped marker in the corner cell shows
 which way the rows and columns run. Parameter combinations are shuffled over
 the plate with a fixed seed, so position on the plate does not line up with
 any one parameter.
+
+### Support points
+
+```sh
+./build/src/fruitslicer points model.stl --rotate 30 0 0 -o points.json --report report.json
+./build/src/fruitslicer render model.stl --rotate 30 0 0 --points points.json -o preview.png
+```
+
+![Support points on the Stanford armadillo, seen from below](docs/armadillo_points_preview.png)
+
+*Armadillo seen from below: island tips orange, overhang tips yellow.*
+
+Points are chosen bottom-up so that
+
+1. **coverage**: every surface that leans more than 45° from vertical has a tip
+   within a radius that grows with the cured height above the tip (seeded with
+   PrusaSlicer's curve, 3.2 mm → 6 mm), measured *through material*, so a tip
+   never "covers" across a slot or onto a neighbouring finger;
+2. **capacity**: for every connected piece at every layer, its tips together
+   can hold its cross-section under peel (seed: one 0.4 mm tip per 11.1 mm²,
+   scaled by tip area);
+3. **islands**: every island gets 1 tip (≤ 1.7 mm), 2 tips (≤ 6.5 mm) or at
+   least 3, using the mesh minimum as the contact. Islands too small to hold a
+   tip that join the model almost at once are left alone and reported.
+
+Placement is a cost-weighted greedy set cover (cosmetic keep-out regions and
+sharp edges cost more), followed by pruning that re-checks coverage and
+capacity. On real meshes the greedy cover saves only 1–8 % of points over the
+simpler "every uncovered sample becomes a tip" rule. The settings that move
+the count much more are the coverage radius, the critical angle and the
+orientation, which is why calibration and the orientation search come next.
+
+Manual edits persist across regeneration:
+
+```sh
+# edits.json: {"add": [{"pos": [x,y,z], "tip_diameter": 0.3}], "delete": [<id>], "move": [...], "resize": [...]}
+./build/src/fruitslicer points model.stl --points-in points.json --edits edits.json -o points2.json
+```
+
+Cosmetic regions (`--cosmetic cosmetic.json`) make tips avoid boxes or faces
+visible from given directions:
+`{"keep_out": [{"min": [x,y,z], "max": [x,y,z]}], "visible_from": [[0,-1,0]]}`.
 
 ### Overlap coupon (please run this first)
 

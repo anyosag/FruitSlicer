@@ -45,7 +45,9 @@ void chunk(std::FILE* f, const char* type, const std::vector<uint8_t>& data) {
 
 }  // namespace
 
-void writePngGray(const std::string& path, int w, int h, const std::vector<uint8_t>& px) {
+namespace {
+
+void writePng(const std::string& path, int w, int h, int channels, const std::vector<uint8_t>& px) {
     std::FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) throw std::runtime_error("cannot write " + path);
     const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
@@ -53,15 +55,17 @@ void writePngGray(const std::string& path, int w, int h, const std::vector<uint8
     std::vector<uint8_t> ihdr;
     put32(ihdr, static_cast<uint32_t>(w));
     put32(ihdr, static_cast<uint32_t>(h));
-    ihdr.insert(ihdr.end(), {8, 0, 0, 0, 0});  // 8-bit gray, deflate, no filter, no interlace
+    // 8-bit, colour type 0 (gray) or 2 (RGB), deflate, no filter, no interlace
+    ihdr.insert(ihdr.end(), {8, static_cast<uint8_t>(channels == 3 ? 2 : 0), 0, 0, 0});
     chunk(f, "IHDR", ihdr);
 
     // Raw scanlines with filter byte 0, wrapped in stored deflate blocks.
+    const size_t row = static_cast<size_t>(w) * channels;
     std::vector<uint8_t> raw;
-    raw.reserve(static_cast<size_t>(h) * (w + 1));
+    raw.reserve(static_cast<size_t>(h) * (row + 1));
     for (int y = 0; y < h; ++y) {
         raw.push_back(0);
-        raw.insert(raw.end(), px.begin() + static_cast<long>(y) * w, px.begin() + static_cast<long>(y + 1) * w);
+        raw.insert(raw.end(), px.begin() + static_cast<long>(y * row), px.begin() + static_cast<long>((y + 1) * row));
     }
     std::vector<uint8_t> z{0x78, 0x01};
     uint32_t a = 1, b = 0;
@@ -86,6 +90,12 @@ void writePngGray(const std::string& path, int w, int h, const std::vector<uint8
     chunk(f, "IEND", {});
     std::fclose(f);
 }
+
+}  // namespace
+
+void writePngGray(const std::string& path, int w, int h, const std::vector<uint8_t>& px) { writePng(path, w, h, 1, px); }
+
+void writePngRgb(const std::string& path, int w, int h, const std::vector<uint8_t>& rgb) { writePng(path, w, h, 3, rgb); }
 
 std::vector<uint8_t> rasterize(const Paths& polys, const RasterWindow& win, int& w, int& h, uint8_t value) {
     const Vec2 size = win.area.size();

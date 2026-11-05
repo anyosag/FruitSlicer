@@ -4,6 +4,7 @@ add_executable(fruit_tests
   test_slicer.cpp
   test_islands.cpp
   test_calibration.cpp
+  test_points.cpp
 )
 target_link_libraries(fruit_tests PRIVATE fruit_core Catch2::Catch2WithMain)
 include(${catch2_SOURCE_DIR}/extras/Catch.cmake)

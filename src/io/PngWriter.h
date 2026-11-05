@@ -12,6 +12,8 @@
 namespace fruit {
 
 void writePngGray(const std::string& path, int width, int height, const std::vector<uint8_t>& pixels);
+// 8-bit RGB, pixels row-major (3 bytes per pixel).
+void writePngRgb(const std::string& path, int width, int height, const std::vector<uint8_t>& rgb);
 
 struct RasterWindow {
     BBox2 area;       // mm region to render

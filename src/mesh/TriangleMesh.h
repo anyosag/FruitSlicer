@@ -37,9 +37,10 @@ public:
 
     // Connected components (by shared vertices). Returns a shell id per face.
     std::vector<int> shellIds(int* shell_count = nullptr) const;
-    // Flip shells whose signed volume is negative (inside-out exports).
-    // Returns the number of shells flipped.
-    int orientShellsOutward();
+    // Flip shells whose signed volume is negative (inside-out exports), but
+    // keep negative shells that lie inside another shell: those are cavities
+    // of hollowed models. Returns the number of shells flipped.
+    int orientShellsOutward(int* cavities = nullptr);
 
     // Every edge used exactly twice, once in each direction.
     bool isClosedManifold() const;

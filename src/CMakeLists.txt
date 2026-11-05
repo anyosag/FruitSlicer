@@ -3,6 +3,7 @@ add_library(fruit_core
   geometry/Polygon.cpp
   mesh/TriangleMesh.cpp
   mesh/StlIO.cpp
+  mesh/ObjIO.cpp
   mesh/Primitives.cpp
   mesh/AabbTree.cpp
   mesh/MeshAnalysis.cpp
@@ -12,7 +13,12 @@ add_library(fruit_core
   layers/IslandGraph.cpp
   printer/PrinterProfile.cpp
   io/PngWriter.cpp
+  io/Render.cpp
   support/SupportGeometry.cpp
+  support/SupportModels.cpp
+  support/CosmeticField.cpp
+  support/PointGenerator.cpp
+  support/SupportIO.cpp
   calibration/Coupons.cpp
   calibration/CalibrationPlates.cpp
 )
