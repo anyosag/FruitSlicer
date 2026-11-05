@@ -29,4 +29,9 @@ struct Coupon {
 
 Coupon overlapCoupon();
 
+// An upright, asymmetric "F" standing on the plate in the +X/+Y quarter.
+// Slice it with FruitSlicer and with SatelLite and open both .goo files in
+// UVtools: the images must match (same corner, not mirrored or rotated).
+Coupon orientationCoupon();
+
 }  // namespace fruit

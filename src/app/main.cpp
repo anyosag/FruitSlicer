@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <map>
 #include <fstream>
 #include <iostream>
 
@@ -13,6 +14,8 @@
 #include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
 #include "calibration/Coupons.h"
+#include "formats/GooExport.h"
+#include "formats/GooFile.h"
 #include "io/PngWriter.h"
 #include "io/Render.h"
 #include "layers/IslandGraph.h"
@@ -147,11 +150,11 @@ int cmdSlice(const std::string& path, const PlacementOpts& place, double layer_h
 }
 
 int cmdCoupon(const std::string& kind, const std::string& out, double layer_h, const std::string& png_dir) {
-    if (kind != "overlap") {
-        std::cerr << "unknown coupon '" << kind << "' (available: overlap)\n";
+    if (kind != "overlap" && kind != "orientation") {
+        std::cerr << "unknown coupon '" << kind << "' (available: overlap, orientation)\n";
         return 2;
     }
-    const Coupon c = overlapCoupon();
+    const Coupon c = kind == "overlap" ? overlapCoupon() : orientationCoupon();
     writeStl(out, c.mesh);
     json r;
     r["coupon"] = c.name;
@@ -563,6 +566,144 @@ int cmdABPlate(const std::string& path, const PlacementOpts& place, double layer
     return 0;
 }
 
+struct GooCli {
+    std::string out = "out.goo", settings_from;
+    double exposure = -1, bottom_exposure = -1;
+    int bottom_layers = -1, transition_layers = -1, aa = 8;
+    bool mirror_x = false, mirror_y = false;
+    unsigned threads = 0;
+};
+
+int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
+    const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
+    TriangleMesh mesh = readMesh(path);
+    int cavities = 0;
+    mesh.orientShellsOutward(&cavities);
+    const BBox3 b = mesh.bbox();
+    json r;
+    r["file"] = path;
+    if (b.min.z < -1e-6 || !printer.fitsXY(b.min.x, b.min.y) || !printer.fitsXY(b.max.x, b.max.y))
+        r["warning"] = "model extends below the plate or outside the printable area; it is used as is "
+                       "(use the STL written by `fruitslicer support`, which is already placed)";
+    GooHeader h;
+    h.layer_height = static_cast<float>(layer_h);
+    if (!o.settings_from.empty()) {
+        const GooFileInfo sample = readGoo(o.settings_from);
+        copyPrintSettings(sample.header, h);
+        r["settings_from"] = o.settings_from;
+        if (std::abs(h.layer_height - layer_h) > 1e-6)
+            r["layer_height_note"] = "layer height taken from the sample";
+    }
+    if (o.exposure > 0) h.print.exposure = static_cast<float>(o.exposure);
+    if (o.bottom_exposure > 0) h.print.bottom_exposure = static_cast<float>(o.bottom_exposure);
+    if (o.bottom_layers >= 0) h.print.bottom_layers = static_cast<uint32_t>(o.bottom_layers);
+    if (o.transition_layers >= 0) h.print.transition_layers = static_cast<uint16_t>(o.transition_layers);
+    if (h.print.exposure <= 0 || h.print.bottom_exposure <= 0)
+        throw std::runtime_error("exposure times are required: pass --exposure and --bottom-exposure (and "
+                                 "--bottom-layers), or --settings-from a .goo exported by SatelLite");
+    RasterGrid grid = RasterGrid::fromPrinter(printer);
+    grid.width = h.res_x;
+    grid.height = h.res_y;
+    grid.px = h.size_x / h.res_x;
+    grid.py = h.size_y / h.res_y;
+    grid.x_left = -h.size_x / 2;
+    grid.y_top = h.size_y / 2;
+    grid.mirror_x = o.mirror_x || h.mirror_x;
+    grid.mirror_y = o.mirror_y || h.mirror_y;
+    GooExportOptions eo;
+    eo.aa_levels = o.aa;
+    eo.threads = o.threads;
+    const GooExportResult res = exportGoo(mesh, h, grid, eo, o.out);
+    r["output"] = o.out;
+    r["layers"] = res.layers;
+    r["bytes"] = res.bytes;
+    r["volume_ml"] = res.volume_mm3 / 1000.0;
+    r["print_time_h"] = res.print_time_s / 3600.0;
+    r["seconds"] = res.seconds;
+    r["header"] = {{"version", h.version}, {"printer_name", h.printer_name}, {"aa_level", o.aa},
+                   {"exposure_s", h.print.exposure}, {"bottom_exposure_s", h.print.bottom_exposure},
+                   {"bottom_layers", h.print.bottom_layers}, {"transition_layers", h.print.transition_layers}};
+    r["unverified"] = "GOO version, printer name string and image orientation are not yet checked against a "
+                      "SatelLite file for the 16K; compare with `goo-info` and the orientation coupon first";
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
+int cmdGooInfo(const std::string& path, bool decode) {
+    const GooFileInfo f = readGoo(path);
+    const GooHeader& h = f.header;
+    const GooPrintSettings& p = h.print;
+    json r;
+    r["file"] = path;
+    r["version"] = h.version;
+    r["software"] = h.software_name + " " + h.software_version;
+    r["file_time"] = h.file_time;
+    r["printer_name"] = h.printer_name;
+    r["printer_type"] = h.printer_type;
+    r["profile_name"] = h.profile_name;
+    r["aa_level"] = h.aa_level;
+    r["grey_level"] = h.grey_level;
+    r["blur_level"] = h.blur_level;
+    r["grayscale_8bit"] = h.grayscale_8bit;
+    r["resolution"] = {h.res_x, h.res_y};
+    r["mirror"] = {h.mirror_x, h.mirror_y};
+    r["size_mm"] = {h.size_x, h.size_y, h.size_z};
+    r["layer_height"] = h.layer_height;
+    r["layer_count"] = h.layer_count;
+    r["layer_offset"] = h.layer_offset;
+    r["print_time_s"] = h.print_time;
+    r["volume_mm3"] = h.volume;
+    r["weight_g"] = h.weight;
+    r["print"] = {{"exposure", p.exposure},
+                  {"bottom_exposure", p.bottom_exposure},
+                  {"bottom_layers", p.bottom_layers},
+                  {"transition_layers", p.transition_layers},
+                  {"delay_mode_static", p.delay_mode_static},
+                  {"turn_off_time", p.turn_off_time},
+                  {"bottom_waits", {p.bottom_wait_before_lift, p.bottom_wait_after_lift, p.bottom_wait_after_retract}},
+                  {"waits", {p.wait_before_lift, p.wait_after_lift, p.wait_after_retract}},
+                  {"bottom_lift", {p.bottom_lift_distance, p.bottom_lift_speed, p.bottom_lift2_distance, p.bottom_lift2_speed}},
+                  {"lift", {p.lift_distance, p.lift_speed, p.lift2_distance, p.lift2_speed}},
+                  {"bottom_retract", {p.bottom_retract_distance, p.bottom_retract_speed, p.bottom_retract2_distance, p.bottom_retract2_speed}},
+                  {"retract", {p.retract_distance, p.retract_speed, p.retract2_distance, p.retract2_speed}},
+                  {"pwm", {p.bottom_pwm, p.pwm}},
+                  {"advance_mode", p.advance_mode}};
+    r["footer_ok"] = f.footer_ok;
+    auto def = [](const GooLayerDef& d) {
+        return json{{"z", d.z}, {"exposure", d.exposure}, {"lift", {d.lift_distance, d.lift_speed}},
+                    {"retract", {d.retract_distance, d.retract_speed}}, {"pwm", d.pwm}, {"pause", d.pause}};
+    };
+    if (!f.layers.empty()) {
+        r["first_layer"] = def(f.layers.front());
+        r["last_layer"] = def(f.layers.back());
+    }
+    uint64_t total = 0;
+    size_t mx = 0;
+    for (const auto& d : f.rle) {
+        total += d.size();
+        mx = std::max(mx, d.size());
+    }
+    r["rle_bytes"] = {{"total", total}, {"max_layer", mx}};
+    if (decode) {
+        std::vector<uint8_t> px(static_cast<size_t>(h.res_x) * h.res_y);
+        double lit = 0;
+        std::map<int, uint64_t> greys;
+        for (const auto& d : f.rle) {
+            decodeGooRle(d, px);
+            for (uint8_t v : px)
+                if (v) {
+                    lit += v / 255.0;
+                    ++greys[v];
+                }
+        }
+        const double pa = static_cast<double>(h.size_x) / h.res_x * h.size_y / h.res_y;
+        r["decoded"] = {{"checksums_ok", true}, {"volume_mm3", lit * pa * h.layer_height},
+                        {"distinct_grey_values", greys.size()}};
+    }
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
 struct FitCli {
     std::vector<std::string> results;
     std::string out = "resin_profile.json", resin;
@@ -612,7 +753,7 @@ int main(int argc, char** argv) {
 
     std::string coupon_kind = "overlap", coupon_out = "overlap_coupon.stl";
     auto* coupon = app.add_subcommand("coupon", "Generate a test print");
-    coupon->add_option("kind", coupon_kind, "Coupon kind (overlap)");
+    coupon->add_option("kind", coupon_kind, "Coupon kind: overlap | orientation");
     coupon->add_option("-o,--output", coupon_out, "Output STL");
     coupon->add_option("--layer", layer_h, "Layer height for reference slices (mm)");
     coupon->add_option("--png-dir", png_dir, "Write reference slice PNGs here");
@@ -696,6 +837,29 @@ int main(int argc, char** argv) {
     abplate->add_option("--seed", abcli.seed, "Arm shuffle seed");
     abplate->add_option("-o,--output", abcli.out, "Output name prefix");
 
+    GooCli gcli;
+    auto* goo = app.add_subcommand("goo", "Write an Elegoo .goo print file from a placed, supported model");
+    goo->add_option("model", in_path, "STL or OBJ (e.g. the STL written by `fruitslicer support`)")
+        ->required()
+        ->check(CLI::ExistingFile);
+    goo->add_option("-o,--output", gcli.out, "Output .goo");
+    goo->add_option("--layer", layer_h, "Layer height (mm)");
+    goo->add_option("--exposure", gcli.exposure, "Normal layer exposure (s)");
+    goo->add_option("--bottom-exposure", gcli.bottom_exposure, "Bottom layer exposure (s)");
+    goo->add_option("--bottom-layers", gcli.bottom_layers, "Number of bottom layers");
+    goo->add_option("--transition-layers", gcli.transition_layers, "Layers ramping from bottom to normal exposure");
+    goo->add_option("--aa", gcli.aa, "Anti-aliasing grey levels (1 = off, default 8, 256 = full)");
+    goo->add_option("--settings-from", gcli.settings_from, "Copy print settings and identity from this .goo (e.g. SatelLite's)")
+        ->check(CLI::ExistingFile);
+    goo->add_flag("--mirror-x", gcli.mirror_x, "Mirror the image in X");
+    goo->add_flag("--mirror-y", gcli.mirror_y, "Mirror the image in Y");
+    goo->add_option("--threads", gcli.threads, "Worker threads (0 = all cores)");
+
+    bool goo_decode = false;
+    auto* gooinfo = app.add_subcommand("goo-info", "Show a .goo file's header and layer summary");
+    gooinfo->add_option("file", in_path, ".goo file")->required()->check(CLI::ExistingFile);
+    gooinfo->add_flag("--decode", goo_decode, "Decode every layer: verify checksums, measure volume and grey levels");
+
     FitCli fcli;
     auto* fit = app.add_subcommand("fit", "Fit a resin profile from filled-in calibration result sheets");
     fit->add_option("results", fcli.results, "<plate>.stl.results.csv files (manifests are found next to them)")
@@ -718,6 +882,8 @@ int main(int argc, char** argv) {
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
         if (*orient) return cmdOrient(in_path, place, layer_h, ocli);
         if (*fit) return cmdFit(fcli);
+        if (*goo) return cmdGoo(in_path, layer_h, gcli);
+        if (*gooinfo) return cmdGooInfo(in_path, goo_decode);
         if (*support) return cmdSupport(in_path, place, layer_h, popts, sopts);
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);

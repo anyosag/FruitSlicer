@@ -52,4 +52,17 @@ Coupon overlapCoupon() {
     return c;
 }
 
+Coupon orientationCoupon() {
+    Coupon c;
+    c.name = "orientation";
+    TriangleMesh& m = c.mesh;
+    // "F" 2 mm tall: stem along +Y, arms pointing +X; placed at x 20..30, y 10..26.
+    appendBox(m, {20, 10, 0}, {22, 26, 2});  // stem
+    appendBox(m, {22, 24, 0}, {30, 26, 2});  // top arm
+    appendBox(m, {22, 17, 0}, {27, 19, 2});  // middle arm
+    c.checks = {{1.0, "An upright F (arms to the right) in the +X/+Y quarter of the plate, as seen from above. "
+                      "FruitSlicer's and SatelLite's .goo must show it identically in UVtools"}};
+    return c;
+}
+
 }  // namespace fruit

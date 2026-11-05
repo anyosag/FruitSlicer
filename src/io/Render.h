@@ -22,4 +22,8 @@ struct RenderView {
 void renderPreview(const std::string& png_path, const TriangleMesh& mesh, const std::vector<SupportPoint>& points,
                    const RenderView& view, const TriangleMesh* supports = nullptr);
 
+// Same picture as RGB bytes (size × size × 3), e.g. for print-file thumbnails.
+std::vector<uint8_t> renderPreviewRgb(const TriangleMesh& mesh, const std::vector<SupportPoint>& points,
+                                      const RenderView& view, const TriangleMesh* supports = nullptr);
+
 }  // namespace fruit

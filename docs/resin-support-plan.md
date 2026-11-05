@@ -233,7 +233,8 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 | Calibration loop | done | `fit` turns result sheets into a resin profile (logistic capacity, coverage radius, critical angle, island sizes); `--profile` everywhere. |
 | Safety gaps | done | Hollow analysis (cups / traps, polygon version of UVtools' two passes), no tips on closed-cavity ceilings, no-trap bracing rule, `--hinge` / `--peel-bias`, `--on-plate`. |
 | A/B plate | done | `abplate`: shuffled FruitSlicer vs vendor-supported copies on one plate, manifest + results sheet. |
-| M4 / M6 | open | UVtools as external lint; native `.goo` with grayscale contact weakening (blocked on inspecting a real 16K file). |
+| M6 native `.goo` (part) | done | Exact-coverage rasterizer on 14×19 µm pixels; GOO V3 writer/reader per Elegoo's spec + UVtools; `goo`, `goo-info --decode`, `coupon orientation`; macOS in CI. GOO version, printer string and image orientation still to be checked against a SatelLite-exported file. |
+| M4 / grey-level tips | open | UVtools as external lint; native `.goo` with grayscale contact weakening (blocked on inspecting a real 16K file). |
 
 **Corrections and findings found during implementation:**
 

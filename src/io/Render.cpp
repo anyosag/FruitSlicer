@@ -32,6 +32,11 @@ void categoryColour(PointCategory c, uint8_t rgb[3]) {
 
 void renderPreview(const std::string& path, const TriangleMesh& mesh, const std::vector<SupportPoint>& points,
                    const RenderView& v, const TriangleMesh* supports) {
+    writePngRgb(path, v.size, v.size, renderPreviewRgb(mesh, points, v, supports));
+}
+
+std::vector<uint8_t> renderPreviewRgb(const TriangleMesh& mesh, const std::vector<SupportPoint>& points,
+                                      const RenderView& v, const TriangleMesh* supports) {
     const double az = deg2rad(v.azimuth_deg), el = deg2rad(v.elevation_deg);
     Camera cam;
     // Camera sits in direction (sin az cos el, cos az cos el, sin el) from the
@@ -110,7 +115,7 @@ void renderPreview(const std::string& path, const TriangleMesh& mesh, const std:
                 for (int ch = 0; ch < 3; ++ch) img[3 * k + ch] = rim ? 40 : col[ch];
             }
     }
-    writePngRgb(path, N, N, img);
+    return img;
 }
 
 }  // namespace fruit

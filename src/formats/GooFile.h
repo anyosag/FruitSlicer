@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
+#pragma once
+// Elegoo GOO print files (the Saturn 4 Ultra 16K's native format).
+//
+// Layout from Elegoo's published spec ("Goo Format Spec V1.2", GPL-3.0,
+// github.com/elegooofficial/GOO), with the details the PDF leaves out taken
+// from UVtools' GooFile.cs (AGPL-3.0): version "V3.0", magic
+// 07 00 00 00 44 4C 50 00, big-endian everything, RGB565 big-endian
+// previews, a footer of three zero bytes plus the magic, and per-layer data
+// lengths that include the leading 0x55 and the trailing checksum.
+//
+//   header (195 477 bytes, fields 0–61 in spec order)
+//   per layer: definition (64 bytes) · 0D 0A · data size (4) · RLE data · 0D 0A
+//   footer: 00 00 00 + magic
+//
+// Which GOO version the 16K firmware expects is UNVERIFIED until compared
+// with a file exported by Elegoo SatelLite (`fruitslicer goo-info`).
+
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+namespace fruit {
+
+constexpr int kGooSmallPreview = 116;
+constexpr int kGooBigPreview = 290;
+constexpr size_t kGooHeaderSize = 195477;
+
+// Exposure and motion settings, in the header's field order (spec 24–53).
+struct GooPrintSettings {
+    float exposure = 0;               // s, normal layers
+    bool delay_mode_static = true;    // 1: wait times below; 0: "turn off time"
+    float turn_off_time = 0;
+    float bottom_wait_before_lift = 0, bottom_wait_after_lift = 0, bottom_wait_after_retract = 0;
+    float wait_before_lift = 0, wait_after_lift = 0, wait_after_retract = 0;
+    float bottom_exposure = 0;        // s
+    uint32_t bottom_layers = 0;
+    // Distances in mm, speeds in mm/min. The 16K tilts its vat by itself;
+    // UVtools writes 0.05 for Saturn 4 Ultra files and so do we by default.
+    float bottom_lift_distance = 0.05f, bottom_lift_speed = 0.05f;
+    float lift_distance = 0.05f, lift_speed = 0.05f;
+    float bottom_retract_distance = 0.05f, bottom_retract_speed = 0.05f;
+    float retract_distance = 0.05f, retract_speed = 0.05f;
+    float bottom_lift2_distance = 0, bottom_lift2_speed = 0, lift2_distance = 0, lift2_speed = 0;
+    float bottom_retract2_distance = 0, bottom_retract2_speed = 0, retract2_distance = 0, retract2_speed = 0;
+    uint16_t bottom_pwm = 255, pwm = 255;
+    bool advance_mode = false;        // printer uses per-layer values
+    uint16_t transition_layers = 0;
+};
+
+struct GooHeader {
+    std::string version = "V3.0";
+    std::string software_name = "FruitSlicer";
+    std::string software_version = "0.1.0";
+    std::string file_time;            // "yyyy-MM-dd HH:mm:ss"
+    std::string printer_name = "ELEGOO Saturn 4 Ultra 16K";  // UNVERIFIED string
+    std::string printer_type = "DLP";                        // UVtools' default
+    std::string profile_name = "FruitSlicer";
+    uint16_t aa_level = 8, grey_level = 1, blur_level = 0;
+    std::vector<uint8_t> small_preview;  // 116×116 RGB565 big-endian (2 bytes per pixel)
+    std::vector<uint8_t> big_preview;    // 290×290
+    uint32_t layer_count = 0;
+    uint16_t res_x = 15120, res_y = 6230;
+    bool mirror_x = false, mirror_y = false;
+    float size_x = 211.68f, size_y = 118.37f, size_z = 220.0f;
+    float layer_height = 0.05f;
+    GooPrintSettings print;
+    uint32_t print_time = 0;          // s
+    float volume = 0;                 // mm³
+    float weight = 0;                 // g
+    float price = 0;
+    std::string price_unit = "$";
+    uint32_t layer_offset = kGooHeaderSize;
+    bool grayscale_8bit = true;       // 1: grey values 0x00–0xFF
+};
+
+struct GooLayerDef {
+    uint16_t pause = 0;
+    float pause_z = 0;
+    float z = 0;                      // top of this layer, mm
+    float exposure = 0, off_time = 0;
+    float wait_before_lift = 0, wait_after_lift = 0, wait_after_retract = 0;
+    float lift_distance = 0, lift_speed = 0, lift2_distance = 0, lift2_speed = 0;
+    float retract_distance = 0, retract_speed = 0, retract2_distance = 0, retract2_speed = 0;
+    uint16_t pwm = 255;
+};
+
+// Per-layer definition derived from the header (bottom / transition / normal).
+GooLayerDef layerDefFor(const GooHeader& h, uint32_t index);
+
+// Run-length encoder for one layer image (row-major pixel stream).
+class GooRleEncoder {
+public:
+    GooRleEncoder();
+    void add(uint8_t value, uint32_t count);
+    std::vector<uint8_t> finish();  // appends the checksum; encoder is spent
+
+private:
+    void flush();
+    std::vector<uint8_t> out_;
+    uint8_t prev_ = 0, cur_ = 0;
+    uint64_t stride_ = 0;
+};
+
+// Decodes one layer's RLE data into `pixels` (must be res_x × res_y).
+// Throws on a bad magic byte, checksum or overrun.
+void decodeGooRle(const std::vector<uint8_t>& data, std::vector<uint8_t>& pixels);
+
+// Streaming writer: header placeholder, layers in order, footer, then the
+// final header (with totals) is rewritten in place.
+class GooWriter {
+public:
+    GooWriter(const std::string& path, const GooHeader& header);
+    ~GooWriter();
+    GooWriter(const GooWriter&) = delete;
+    GooWriter& operator=(const GooWriter&) = delete;
+
+    void addLayer(const GooLayerDef& def, const std::vector<uint8_t>& rle);
+    // Writes the footer and the final header. `header` totals may be updated
+    // (layer count is checked against the layers added).
+    void finish(const GooHeader& header);
+
+private:
+    std::FILE* f_ = nullptr;
+    uint32_t layers_ = 0;
+};
+
+struct GooFileInfo {
+    GooHeader header;
+    std::vector<GooLayerDef> layers;
+    std::vector<std::vector<uint8_t>> rle;  // per layer, as stored
+    bool footer_ok = false;
+};
+
+GooFileInfo readGoo(const std::string& path);
+
+// Copies print settings and identity strings (printer, profile, version,
+// resolution, mirrors, AA) from `from` into `to`, leaving geometry-dependent
+// totals and previews alone.
+void copyPrintSettings(const GooHeader& from, GooHeader& to);
+
+// RGB (3 bytes/pixel) → RGB565 big-endian.
+std::vector<uint8_t> toRgb565BE(const std::vector<uint8_t>& rgb);
+
+}  // namespace fruit

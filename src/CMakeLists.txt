@@ -16,6 +16,8 @@ add_library(fruit_core
   io/PngWriter.cpp
   io/Render.cpp
   raster/Rasterizer.cpp
+  formats/GooFile.cpp
+  formats/GooExport.cpp
   support/SupportGeometry.cpp
   support/SupportModels.cpp
   support/CosmeticField.cpp

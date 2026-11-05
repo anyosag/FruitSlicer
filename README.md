@@ -22,11 +22,15 @@ behind it, and the milestone plan are in
 | Safety: suction-cup / resin-trap warnings, no supports in closed cavities, no-trap bracing, hinge bias, on-plate mode | done |
 | Same-plate A/B helper for the go/no-go (`abplate`) | done |
 | Physical validation: overlap coupon, calibration plates, A/B plate | **needs your printer** |
-| Native `.goo` with grayscale tips | blocked on a SatelLite-exported 16K `.goo` |
+| Native `.goo` writer/reader with exact anti-aliasing (`goo`, `goo-info`, orientation coupon) | done; version, orientation and printer string unverified until compared with a SatelLite file |
+| macOS (Apple Silicon) build in CI | done |
+| Grey-level tips (weaker contacts, smaller marks) | next |
 
 ## Build
 
-Requires CMake ≥ 3.24 and a C++20 compiler (GCC 12+, Clang 15+). Dependencies
+Requires CMake ≥ 3.24 and a C++20 compiler (GCC 12+, Clang 15+, or Apple
+Clang from current Xcode command line tools; CI builds on Ubuntu and on
+macOS/Apple Silicon). Dependencies
 (Clipper2, CLI11, nlohmann/json, nanoflann, Catch2) are fetched by CMake.
 
 ```sh
@@ -230,6 +234,40 @@ each copy in `ab.results.csv`:
 
 Count each arm's support contacts in the slicer. The plan's bar is: at the
 same failure rate, at least 25 % fewer contacts or visibly smaller marks.
+
+### Printing with FruitSlicer's own `.goo`
+
+FruitSlicer can write Elegoo's `.goo` print files directly, so SatelLite is
+no longer needed in the loop:
+
+```sh
+./build/src/fruitslicer support model.stl --rotate 30 0 0 -o supported.stl
+./build/src/fruitslicer goo supported.stl -o model.goo \
+    --exposure 2.5 --bottom-exposure 25 --bottom-layers 4 --transition-layers 4
+./build/src/fruitslicer goo-info model.goo --decode   # header, checksums, volume
+```
+
+- **Layout.** Follows Elegoo's published GOO spec V1.2. UVtools' reader
+  fills the gaps the PDF leaves: version `V3.0`, the magic bytes, big-endian
+  fields, the footer, and data lengths.
+- **Anti-aliasing.** Each pixel's grey value is its exact covered fraction,
+  computed on the 16K's non-square 14 × 19 µm pixels and quantised to `--aa`
+  levels (default 8).
+- **Settings.** Exposure times are required, since nothing is guessed. To
+  reuse your SatelLite settings and the printer identity strings, export any
+  model from SatelLite and pass `--settings-from that.goo`.
+- **Not yet verified against a real 16K file:**
+  - the GOO version the printer expects,
+  - the printer-name string,
+  - the image orientation.
+
+  Before printing, run `fruitslicer goo-info` on a file exported by
+  SatelLite and compare. Then generate `fruitslicer coupon orientation`,
+  slice the STL with both FruitSlicer (`goo`) and SatelLite, and check in
+  UVtools that both show the same upright "F" in the same place.
+
+A supported armadillo (1,258 layers) becomes a 43.5 MB `.goo` in about 17 s
+on 4 cores.
 
 ### Overlap coupon (please run this first)
 
