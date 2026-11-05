@@ -19,6 +19,8 @@ add_library(fruit_core
   support/CosmeticField.cpp
   support/PointGenerator.cpp
   support/SupportIO.cpp
+  support/SupportTree.cpp
+  support/SupportValidator.cpp
   calibration/Coupons.cpp
   calibration/CalibrationPlates.cpp
 )

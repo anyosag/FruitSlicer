@@ -20,6 +20,8 @@
 #include "printer/PrinterProfile.h"
 #include "support/PointGenerator.h"
 #include "support/SupportIO.h"
+#include "support/SupportTree.h"
+#include "support/SupportValidator.h"
 
 using namespace fruit;
 using json = nlohmann::json;
@@ -307,6 +309,92 @@ int cmdRender(const std::string& path, const PlacementOpts& place, const std::st
     return 0;
 }
 
+struct SupportOpts {
+    std::string points_in, out = "supported.stl", supports_only, report, preview, raft = "pads";
+    bool no_validate = false;
+};
+
+int cmdSupport(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& popts,
+               const SupportOpts& o) {
+    const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
+    json r;
+    TriangleMesh mesh = loadPlaced(path, place, &r);
+    std::vector<SupportPoint> pts;
+    SupportConfig cfg;
+    cfg.layer_height = layer_h;
+    cfg.coverage.density = popts.density;
+    cfg.critical_angle_deg = popts.critical_angle;
+    if (!o.points_in.empty()) {
+        pts = pointsFromJson(json::parse(std::ifstream(o.points_in)));
+    } else {
+        CosmeticSpec cosmetic;
+        if (!popts.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(popts.cosmetic)));
+        PointGenOptions opts;
+        opts.cosmetic = &cosmetic;
+        const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
+        pts = res.points;
+        r["point_stats"] = {{"uncovered_samples", res.stats.uncovered},
+                            {"capacity_deficit_layers", res.stats.capacity_deficits},
+                            {"small_islands_skipped", res.stats.tiny_islands_skipped}};
+        json w = json::array();
+        for (const auto& x : res.warnings) w.push_back({{"code", x.code}, {"message", x.message}});
+        r["point_warnings"] = w;
+        std::ofstream(o.out + ".points.json") << pointsToJson(pts).dump(1) << "\n";
+    }
+    TreeConfig tc;
+    if (o.raft == "none") tc.raft = RaftStyle::None;
+    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads or none");
+    const SupportTree tree = buildSupportTree(mesh, pts, tc, printer.minRaftThickness());
+    const TriangleMesh sup = tree.mesh(tc);
+    {
+        StlWriter w(o.out);
+        w.add(mesh);
+        w.add(sup);
+    }
+    if (!o.supports_only.empty()) writeStl(o.supports_only, sup);
+
+    size_t anchors = 0;
+    for (const auto& P : tree.pillars) anchors += P.on_model;
+    json counts = json::object();
+    for (const auto& w : tree.warnings) counts[w.code] = counts.value(w.code, 0) + 1;
+    const BBox3 b = [&] { BBox3 bb = mesh.bbox(); bb.extend(sup.bbox()); return bb; }();
+    r["file"] = path;
+    r["output"] = o.out;
+    r["points"] = pts.size();
+    r["heads"] = tree.heads.size();
+    r["pillars"] = tree.pillars.size();
+    r["pillars_on_model"] = anchors;
+    r["bridges"] = tree.bridges.size();
+    r["braces"] = tree.braces.size();
+    r["dropped_points"] = tree.dropped_points;
+    r["raft_thickness"] = tree.raft_top;
+    r["support_triangles"] = sup.faceCount();
+    r["support_volume_ml"] = sup.volume() / 1000.0;  // overlapping shells: upper bound
+    r["fits_printer"] = printer.fitsXY(b.min.x, b.min.y) && printer.fitsXY(b.max.x, b.max.y) && b.max.z <= printer.build_z;
+    r["tree_warnings"] = counts;
+    if (!o.no_validate) {
+        const ValidationReport v = validateSupported(mesh, sup, layer_h, cfg.link_grow, cfg.absorb_island_area,
+                                                     printer.pixelX() * printer.pixelY());
+        json fl = json::array();
+        for (const auto& f : v.floating)
+            if (fl.size() < 20) fl.push_back({{"layer", f.layer}, {"z", f.z}, {"area_mm2", f.area}, {"at", {f.at.x, f.at.y}}});
+        r["validation"] = {{"layers", v.layers},
+                           {"plate_contacts", v.first_layer_islands},
+                           {"floating_islands", v.floating.size()},
+                           {"small_floating_islands", v.small_floating},
+                           {"subpixel_slivers", v.subpixel},
+                           {"first_floating", fl}};
+    }
+    if (!o.preview.empty()) {
+        RenderView view;
+        renderPreview(o.preview, mesh, pts, view, &sup);
+        r["preview"] = o.preview;
+    }
+    if (!o.report.empty()) std::ofstream(o.report) << r.dump(2) << "\n";
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -375,12 +463,29 @@ int main(int argc, char** argv) {
     render->add_option("--elevation", el, "View elevation (deg, negative = from below)");
     render->add_option("--size", render_size, "Image size (px)");
 
+    SupportOpts sopts;
+    auto* support = app.add_subcommand("support", "Generate points, heads, pillars and raft; write model + supports STL");
+    support->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    addPlacement(support, place);
+    support->add_option("--layer", layer_h, "Layer height (mm)");
+    support->add_option("--density", popts.density, "Support density (1 = default)");
+    support->add_option("--critical-angle", popts.critical_angle, "Critical overhang angle from vertical (deg)");
+    support->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON");
+    support->add_option("--points", sopts.points_in, "Use these points (e.g. edited) instead of generating");
+    support->add_option("-o,--output", sopts.out, "Output STL: model + supports");
+    support->add_option("--supports-only", sopts.supports_only, "Also write the supports alone");
+    support->add_option("--raft", sopts.raft, "pads (default) or none");
+    support->add_option("--report", sopts.report, "Report JSON");
+    support->add_option("--preview", sopts.preview, "Preview PNG (from below)");
+    support->add_flag("--no-validate", sopts.no_validate, "Skip the floating-island check");
+
     CLI11_PARSE(app, argc, argv);
     try {
         if (*info) return cmdInfo(in_path);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
+        if (*support) return cmdSupport(in_path, place, layer_h, popts, sopts);
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);
     } catch (const std::exception& e) {

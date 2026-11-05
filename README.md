@@ -15,7 +15,8 @@ behind it, and the milestone plan are in
 | M0 — foundation: STL I/O, nonzero mesh slicer, mesh minima/thickness, island graph, printer profile, overlap coupon | done |
 | M0.5 — calibration plates (tips, spacing, islands) with manifests and result sheets | done |
 | M1 — support-point generator (coverage through material + capacity + islands), points JSON with persistent manual edits, preview renderer | done (calibration still needed) |
-| M2 — heads, pillars, raft, supported-model export | in progress |
+| M2 — heads (collision-aware), pillars with 45° bridges and diagonal ground routes, bracing outside the flex zone, one-piece pad raft, model+supports STL, floating-island validation | phase 1 done |
+| M3 — orientation search | next |
 
 ## Build
 
@@ -103,6 +104,36 @@ Manual edits persist across regeneration:
 Cosmetic regions (`--cosmetic cosmetic.json`) make tips avoid boxes or faces
 visible from given directions:
 `{"keep_out": [{"min": [x,y,z], "max": [x,y,z]}], "visible_from": [[0,-1,0]]}`.
+
+### Supports and printable file
+
+```sh
+./build/src/fruitslicer support model.stl --rotate 30 0 0 -o supported.stl \
+    --preview preview.png --report report.json
+```
+
+This writes the model and its supports as one STL to load into Elegoo
+SatelLite or CHITUBOX for slicing. The points used are saved next to it
+(`supported.stl.points.json`); edit them and pass them back with `--points`.
+Each point gets:
+
+- a pinhead pointing along the surface normal, tilted at most 45° from
+  vertical. Its direction is searched when the default one would hit the
+  model; the check uses rays along the cone, so walls are seen but the
+  surface under the tip is not;
+- a vertical pillar to the raft. Up to three heads share one pillar through
+  45° bridges. A head with no clear vertical drop walks diagonally outwards
+  until it finds one, and only as a last resort stands on the model; that
+  case is reported because it marks an upper surface;
+- bracing between tall pillars, kept out of the 2 mm flex zone below the
+  heads so the tips bend and snap off at the part;
+- a pad under each pillar, the pads joined by flat bars, so the raft and
+  supports come off as one piece.
+
+The report re-slices model plus supports and lists anything that would still
+start printing in mid-air (`validation.floating_islands`, which should be 0).
+
+![Supports generated for the armadillo](docs/armadillo_supported_preview.png)
 
 ### Overlap coupon (please run this first)
 
