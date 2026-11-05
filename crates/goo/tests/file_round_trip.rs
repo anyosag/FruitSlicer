@@ -107,7 +107,7 @@ fn whole_file_round_trips() {
     for i in 0..3u8 {
         let px: Vec<u8> = (0..w as usize * h as usize)
             .map(|p| {
-                if (p / 7 + i as usize) % 3 == 0 {
+                if (p / 7 + i as usize).is_multiple_of(3) {
                     0xFF
                 } else {
                     i * 40

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/goo", "crates/fruitslicer-cli"]
+members = ["crates/goo", "crates/slicer", "crates/fruitslicer-cli"]
 
 [workspace.package]
 edition = "2021"

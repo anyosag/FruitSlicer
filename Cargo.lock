@@ -7,8 +7,16 @@ name = "fruitslicer-cli"
 version = "0.1.0"
 dependencies = [
  "goo",
+ "slicer",
 ]
 
 [[package]]
 name = "goo"
 version = "0.1.0"
+
+[[package]]
+name = "slicer"
+version = "0.1.0"
+dependencies = [
+ "goo",
+]

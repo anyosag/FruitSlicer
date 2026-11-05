@@ -1,0 +1,10 @@
+[package]
+name = "slicer"
+version = "0.1.0"
+description = "FruitSlicer's slicing core: STL loading, layer rasterization, .goo output"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+goo = { path = "../goo" }

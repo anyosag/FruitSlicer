@@ -1,12 +1,5 @@
-//! FruitSlicer command-line tools.
-//!
-//! ```text
-//! fruitslicer info <file.goo> [--layer N --pgm out.pgm --scale S]
-//! fruitslicer test-pattern <out.goo> [--exposure S] [--bottom-exposure S]
-//!                                    [--bottom-layers N] [--layer-height MM] [--height MM]
-//! ```
+//! FruitSlicer command-line tools. Run with no arguments for usage.
 
-mod printer;
 mod test_pattern;
 
 use std::fs::File;
@@ -15,16 +8,25 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use goo::GooFile;
+use slicer::{slice_to_goo, stl, Mesh, PrintSettings, Printer, SATURN_4_ULTRA_16K};
 
 const USAGE: &str = "usage:
+  fruitslicer slice <model.stl> [--out file.goo] [placement] [settings]
+  fruitslicer test-pattern <out.goo> [--height MM] [settings]
   fruitslicer info <file.goo> [--layer N --pgm out.pgm [--scale S]]
-  fruitslicer test-pattern <out.goo> [--exposure S] [--bottom-exposure S]
-                                     [--bottom-layers N] [--layer-height MM] [--height MM]";
+
+placement (slice only; the model is centred on the plate and dropped to Z=0):
+  --scale F  --rotate-x DEG --rotate-y DEG --rotate-z DEG  --x MM --y MM
+
+settings (defaults are placeholders: use your resin's numbers):
+  --layer-height MM (0.05)  --exposure S (2.5)  --bottom-exposure S (30)
+  --bottom-layers N (4)  --pwm 0-255 (255)  --mirror-x on|off (on)  --threads N";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("info") => info(&args[1..]),
+        Some("slice") => slice_cmd(&args[1..]),
         Some("test-pattern") => test_pattern_cmd(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
@@ -178,35 +180,157 @@ fn write_pgm(out: &str, h: &goo::Header, data: &[u8], scale: usize) -> Result<()
         .map_err(|e| e.to_string())
 }
 
-fn test_pattern_cmd(args: &[String]) -> Result<(), String> {
-    let (path, flags) = parse(args)?;
-    let mut s = test_pattern::Settings::default();
-    if let Some(v) = flag(&flags, "exposure")? {
+/// Reads the exposure flags shared by `slice` and `test-pattern`.
+fn print_settings(flags: &[(String, String)]) -> Result<PrintSettings, String> {
+    let mut s = PrintSettings::default();
+    if let Some(v) = flag(flags, "exposure")? {
         s.exposure_s = v;
     }
-    if let Some(v) = flag(&flags, "bottom-exposure")? {
+    if let Some(v) = flag(flags, "bottom-exposure")? {
         s.bottom_exposure_s = v;
     }
-    if let Some(v) = flag(&flags, "bottom-layers")? {
+    if let Some(v) = flag(flags, "bottom-layers")? {
         s.bottom_layers = v;
     }
-    if let Some(v) = flag(&flags, "layer-height")? {
+    if let Some(v) = flag(flags, "layer-height")? {
         s.layer_mm = v;
     }
-    if let Some(v) = flag(&flags, "height")? {
-        s.height_mm = v;
+    if let Some(v) = flag(flags, "pwm")? {
+        s.light_pwm = v;
+        s.bottom_light_pwm = v;
     }
+    s.validate()?;
+    Ok(s)
+}
 
-    let p = printer::SATURN_4_ULTRA_16K;
-    let out = File::create(&path).map_err(|e| format!("{path}: {e}"))?;
-    let layers = test_pattern::write(out, &p, &s, &timestamp()).map_err(|e| e.to_string())?;
-    println!("wrote {path}: {layers} layers for {}", p.name);
+fn printer(flags: &[(String, String)]) -> Result<Printer, String> {
+    let mut p = SATURN_4_ULTRA_16K;
+    if let Some(m) = flag::<String>(flags, "mirror-x")? {
+        p.mirror_x = match m.as_str() {
+            "on" => true,
+            "off" => false,
+            _ => return Err("--mirror-x takes on or off".into()),
+        };
+    }
+    Ok(p)
+}
+
+fn threads(flags: &[(String, String)]) -> Result<usize, String> {
+    Ok(flag(flags, "threads")?.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    }))
+}
+
+fn run_slice(
+    mesh: &Mesh,
+    out_path: &str,
+    profile: &str,
+    flags: &[(String, String)],
+) -> Result<(), String> {
+    let settings = print_settings(flags)?;
+    let p = printer(flags)?;
+    let out = File::create(out_path).map_err(|e| format!("{out_path}: {e}"))?;
+    let r = slice_to_goo(
+        mesh,
+        &p,
+        &settings,
+        profile,
+        &timestamp(),
+        out,
+        threads(flags)?,
+    )
+    .map_err(|e| e.to_string())?;
+    let [sx, sy, sz] = r.model_size_mm;
+    println!("wrote {out_path} for {}", p.name);
     println!(
-        "settings: {} mm layers, {} s exposure, {} s x {} bottom layers",
-        s.layer_mm, s.exposure_s, s.bottom_exposure_s, s.bottom_layers
+        "  model           {sx:.2} x {sy:.2} x {sz:.2} mm, {} triangles",
+        mesh.triangles.len()
     );
+    println!(
+        "  layers          {} x {} mm ({} bottom at {} s, rest at {} s)",
+        r.layer_count,
+        settings.layer_mm,
+        settings.bottom_layers.min(r.layer_count),
+        settings.bottom_exposure_s,
+        settings.exposure_s
+    );
+    println!(
+        "  volume          {:.1} mm3 from the mesh, {:.1} mm3 sliced",
+        r.mesh_volume_mm3, r.sliced_volume_mm3
+    );
+    println!("  mirror X        {}", p.mirror_x);
+    println!(
+        "  took            {:.2} s, {:.1} MB",
+        r.seconds,
+        r.encoded_bytes as f64 / 1e6
+    );
+    if !r.empty_layers.is_empty() {
+        let shown: Vec<String> = r.empty_layers.iter().take(10).map(u32::to_string).collect();
+        eprintln!(
+            "warning: {} empty layer(s) (0-based: {}{}); the model may float or be broken",
+            r.empty_layers.len(),
+            shown.join(", "),
+            if r.empty_layers.len() > 10 {
+                ", ..."
+            } else {
+                ""
+            }
+        );
+    }
+    let diff = (r.sliced_volume_mm3 - r.mesh_volume_mm3).abs() / r.mesh_volume_mm3.max(1e-9);
+    if diff > 0.05 {
+        eprintln!(
+            "warning: sliced volume differs from mesh volume by {:.0}%; the mesh may have holes or flipped faces",
+            diff * 100.0
+        );
+    }
     eprintln!("note: exposure defaults are placeholders; set them for your resin before printing.");
     Ok(())
+}
+
+fn slice_cmd(args: &[String]) -> Result<(), String> {
+    let (input, flags) = parse(args)?;
+    let output = flag::<String>(&flags, "out")?.unwrap_or_else(|| {
+        format!(
+            "{}.goo",
+            input.trim_end_matches(".stl").trim_end_matches(".STL")
+        )
+    });
+    let data = std::fs::read(&input).map_err(|e| format!("{input}: {e}"))?;
+    let mut mesh = stl::parse(&data).map_err(|e| format!("{input}: {e}"))?;
+    if let Some(s) = flag::<f32>(&flags, "scale")? {
+        mesh.scale(s);
+    }
+    let rot = [
+        flag(&flags, "rotate-x")?.unwrap_or(0.0),
+        flag(&flags, "rotate-y")?.unwrap_or(0.0),
+        flag(&flags, "rotate-z")?.unwrap_or(0.0),
+    ];
+    if rot != [0.0; 3] {
+        mesh.rotate_xyz(rot);
+    }
+    mesh.place_on_plate([
+        flag(&flags, "x")?.unwrap_or(0.0),
+        flag(&flags, "y")?.unwrap_or(0.0),
+    ]);
+    let profile = std::path::Path::new(&input)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    run_slice(&mesh, &output, &profile, &flags)
+}
+
+fn test_pattern_cmd(args: &[String]) -> Result<(), String> {
+    let (path, flags) = parse(args)?;
+    let height = flag(&flags, "height")?.unwrap_or(3.0);
+    run_slice(
+        &test_pattern::mesh(height),
+        &path,
+        "FruitSlicer test pattern",
+        &flags,
+    )
 }
 
 /// UTC time as "YYYY-MM-DD HH:MM:SS", without pulling in a date crate.
