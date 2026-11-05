@@ -27,7 +27,7 @@ What it does:
   Click an issue in *Results* to jump to it in the layer view. *Add supports under islands* does what it
   says and asks you to slice again.
 - **Hollowing** with a set wall thickness, and drain holes cut through the floor of each hollow.
-- **Anti-aliasing** (2, 4, 8 or 16 samples), written as grey edge pixels.
+- **Anti-aliasing** (2×, 4× or 8×), written as grey edge pixels.
 - **Layer viewer** with zoom, pan, issue markers and a cut-away of the 3D view at the current layer.
 - **Open an existing `.goo`** to view its layers, run the same checks on it and see every header field.
 - **Save** the `.goo`, export the plate with its supports as one STL, and save the whole plate as a
@@ -49,7 +49,8 @@ says so in the status bar.
 - `tools/goo_check.py`: a second, separately written checker (Python standard library only) that walks a
   `.goo` file byte by byte from the spec.
 
-Not built: WiFi upload to the printer, tree supports, print-time estimates, and GOO V5.
+Not built: WiFi upload to the printer, tree supports and GOO V5. The print time shown is a rough
+guess (exposure plus 5 s per layer for the tilt), not measured on the printer.
 
 ## Command line
 
