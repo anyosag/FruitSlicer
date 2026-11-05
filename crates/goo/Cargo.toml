@@ -1,0 +1,9 @@
+[package]
+name = "goo"
+version = "0.1.0"
+description = "Reader and writer for ELEGOO .goo (V3) resin print files"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

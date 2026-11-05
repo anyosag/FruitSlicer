@@ -1,0 +1,14 @@
+[package]
+name = "fruitslicer-cli"
+version = "0.1.0"
+description = "Command-line tools for FruitSlicer"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "fruitslicer"
+path = "src/main.rs"
+
+[dependencies]
+goo = { path = "../goo" }
