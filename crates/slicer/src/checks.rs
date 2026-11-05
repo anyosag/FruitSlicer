@@ -766,6 +766,90 @@ pub fn coarse_from_spans(
     l
 }
 
+/// What [`check_goo`] found in an existing file.
+#[derive(Debug, Clone, Default)]
+pub struct GooAnalysis {
+    pub issues: Vec<Issue>,
+    /// Volume of lit pixels (grey pixels count by their level), mm^3.
+    pub lit_volume_mm3: f64,
+    pub empty_layers: Vec<u32>,
+    /// Plate area covered by lit pixels in any layer, if any.
+    pub bounds: Option<RectMm>,
+}
+
+/// Runs the print checks on an existing .goo file, for example one made by
+/// another slicer. Layers are read as stored; X mirroring is undone using
+/// the header's flag so positions match the plate.
+pub fn check_goo(
+    file: &goo::GooFile,
+    params: CheckParams,
+    progress: Option<&dyn Fn(u32, u32)>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<GooAnalysis, String> {
+    let h = &file.header;
+    let (w, rows) = (h.resolution_x as u64, h.resolution_y as u64);
+    let (mx, my) = (
+        h.size_x as f64 / w as f64,
+        h.size_y as f64 / rows as f64,
+    );
+    let grid = CoarseGrid::for_plate(h.size_x as f64, h.size_y as f64, params.cell_mm);
+    let mut checker = PrintChecker::new(grid, params);
+    let mut out = GooAnalysis::default();
+    let n = file.layers.len() as u32;
+    let mut bbox: Option<CellBox> = None;
+    let cell = |px: u64, mm: f64, max: usize| (((px as f64 + 0.5) * mm / grid.cell_mm) as usize).min(max - 1);
+    for (i, (_, data)) in file.layers.iter().enumerate() {
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            return Err("cancelled".into());
+        }
+        let mut layer = CoarseLayer::empty(grid.width, grid.height);
+        let mut lit = 0u64;
+        let mut pos = 0u64;
+        goo::rle::decode_runs(data, |v, len| {
+            if v != 0 {
+                lit += len * v as u64;
+                let (mut p, end) = (pos, pos + len);
+                while p < end {
+                    let (y, x) = (p / w, p % w);
+                    let row_end = ((y + 1) * w).min(end);
+                    let x_end = x + (row_end - p);
+                    let (a, b) = if h.mirror_x { (w - x_end, w - x) } else { (x, x_end) };
+                    let cy = cell(y.min(rows - 1), my, grid.height);
+                    for cx in cell(a, mx, grid.width)..=cell(b - 1, mx, grid.width) {
+                        layer.set(cx, cy);
+                    }
+                    p = row_end;
+                }
+            }
+            pos += len;
+        })
+        .map_err(|e| format!("layer {i}: {e}"))?;
+        if lit == 0 {
+            out.empty_layers.push(i as u32);
+        }
+        if let Some(b) = solid_bbox(&layer) {
+            let cb = CellBox { x0: b.x0, y0: b.y0, x1: b.x1 - 1, y1: b.y1 - 1 };
+            bbox = Some(match bbox {
+                None => cb,
+                Some(mut a) => {
+                    a.union(&cb);
+                    a
+                }
+            });
+        }
+        out.lit_volume_mm3 += lit as f64 / 255.0 * mx * my * h.layer_thickness as f64;
+        checker.push_layer(layer);
+        if let Some(p) = progress {
+            if i % 16 == 0 || i as u32 + 1 == n {
+                p(i as u32 + 1, n);
+            }
+        }
+    }
+    out.bounds = bbox.map(|b| grid.cell_rect_mm(&b));
+    out.issues = checker.finish(h.layer_thickness as f64);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

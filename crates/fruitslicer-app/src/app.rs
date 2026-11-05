@@ -122,6 +122,8 @@ pub struct App {
     redo: Vec<Snapshot>,
     new_profile_name: String,
     show_about: bool,
+    show_file_info: bool,
+    ctx: egui::Context,
 }
 
 impl App {
@@ -165,6 +167,8 @@ impl App {
             redo: Vec::new(),
             new_profile_name: String::new(),
             show_about: false,
+            show_file_info: false,
+            ctx: cc.egui_ctx.clone(),
         };
         for p in open {
             app.open_path(&p);
@@ -284,6 +288,20 @@ impl App {
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
+        if ext == "goo" {
+            if self.job.is_some() {
+                self.error = Some("Wait for the current job to finish first.".into());
+                return;
+            }
+            self.job = Some(SliceJob::open(
+                data.to_vec(),
+                name.clone(),
+                self.prefs.checks.then_some(self.prefs.check_params),
+                self.ctx.clone(),
+            ));
+            self.status = format!("Reading and checking {name}.goo…");
+            return;
+        }
         let parsed = match ext.as_str() {
             "obj" => crate::import::parse_obj(data),
             "3mf" => crate::import::parse_3mf(data),
@@ -305,6 +323,7 @@ impl App {
     fn open_dialog(&mut self) {
         let mut d = rfd::FileDialog::new()
             .add_filter("3D models", &["stl", "STL", "obj", "OBJ", "3mf", "3MF"])
+            .add_filter("Sliced files (.goo)", &["goo", "GOO"])
             .add_filter("All files", &["*"]);
         if let Some(dir) = &self.prefs.last_dir {
             d = d.set_directory(dir);
@@ -397,6 +416,9 @@ impl App {
     // ----- slicing -----------------------------------------------------------
 
     fn result_is_current(&self) -> bool {
+        if self.result.as_ref().is_some_and(|r| r.opened.is_some()) {
+            return true;
+        }
         let now: Vec<_> = self
             .objects
             .iter()
@@ -457,7 +479,11 @@ impl App {
                 Ok(out) => {
                     let r = &out.report;
                     self.status = format!(
-                        "Sliced {} layers in {:.1} s. {}",
+                        "{} {} layers in {:.1} s. {}",
+                        match &out.opened {
+                            Some(n) => format!("Opened {n}.goo:"),
+                            None => "Sliced".to_string(),
+                        },
                         r.layer_count,
                         r.seconds,
                         if r.issues.is_empty() {
@@ -1187,6 +1213,12 @@ impl App {
         let r = &out.report;
         let s = &out.settings;
         let secs = s.estimated_seconds(r.layer_count);
+        if let Some(name) = &out.opened {
+            ui.label(RichText::new(format!("Showing {name}.goo (opened, not sliced here)")).strong());
+        }
+        if ui.small_button("File details…").clicked() {
+            self.show_file_info = true;
+        }
         egui::Grid::new("results").num_columns(2).show(ui, |ui| {
             ui.label("Layers");
             ui.label(format!("{} × {} mm", r.layer_count, s.layer_mm));
@@ -1550,7 +1582,9 @@ impl App {
                     max = [max[0].max(b.max[0]), max[1].max(b.max[1])];
                 }
             }
-            let rect = if min[0].is_finite() {
+            let rect = if let Some((a, b)) = out.opened_bounds {
+                PixelRect::around_mm(&h, a, b, 3.0)
+            } else if min[0].is_finite() && out.opened.is_none() {
                 PixelRect::around_mm(&h, min, max, 3.0)
             } else {
                 PixelRect::full(&h)
@@ -1642,7 +1676,7 @@ impl App {
                 egui::Stroke::new(1.0, c.gamma_multiply(0.4))
             };
             painter.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Outside);
-            if on_layer {
+            if on_layer && (r.width() > 60.0 || self.selected_issue == Some(i)) {
                 painter.text(
                     r.left_top() - Vec2::new(0.0, 2.0),
                     egui::Align2::LEFT_BOTTOM,
@@ -1673,6 +1707,55 @@ impl App {
             egui::FontId::proportional(12.0),
             Color32::from_gray(140),
         );
+    }
+
+    fn file_info_window(&mut self, ctx: &egui::Context) {
+        let Some(out) = &self.result else { return };
+        let h = &out.goo.header;
+        let mut open = self.show_file_info;
+        egui::Window::new("File details")
+            .open(&mut open)
+            .default_width(420.0)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                ui.label("Every header field, as stored. Compare these with a file from ELEGOO's own slicer to check the unverified ones.");
+                egui::Grid::new("hdr").striped(true).num_columns(2).show(ui, |ui| {
+                    let mut row = |k: &str, v: String| {
+                        ui.label(k);
+                        ui.label(v);
+                        ui.end_row();
+                    };
+                    row("Version", h.version.clone());
+                    row("Software", format!("{} {}", h.software_info, h.software_version));
+                    row("Created", h.file_time.clone());
+                    row("Printer", format!("{} ({})", h.printer_name, h.printer_type));
+                    row("Profile", h.profile_name.clone());
+                    row("Resolution", format!("{} × {} px", h.resolution_x, h.resolution_y));
+                    row("Mirror X / Y", format!("{} / {}", h.mirror_x, h.mirror_y));
+                    row("Plate", format!("{} × {} × {} mm", h.size_x, h.size_y, h.size_z));
+                    row("Layers", format!("{} × {} mm", h.layer_count, h.layer_thickness));
+                    row("Bottom layers", format!("{} (transition {})", h.bottom_layers, h.transition_layers));
+                    row("Exposure", format!("{} s (bottom {} s)", h.exposure_time, h.bottom_exposure_time));
+                    row("Light PWM", format!("{} (bottom {})", h.light_pwm, h.bottom_light_pwm));
+                    row("Delay mode", format!("{:?}", h.delay_mode));
+                    row("Lift", format!("{} mm @ {}, then {} mm @ {}", h.lift_distance, h.lift_speed, h.lift_distance_2, h.lift_speed_2));
+                    row("Retract", format!("{} mm @ {}, then {} mm @ {}", h.retract_distance, h.retract_speed, h.retract_distance_2, h.retract_speed_2));
+                    row("Bottom lift", format!("{} mm @ {}, then {} mm @ {}", h.bottom_lift_distance, h.bottom_lift_speed, h.bottom_lift_distance_2, h.bottom_lift_speed_2));
+                    row("Bottom retract", format!("{} mm @ {}, then {} mm @ {}", h.bottom_retract_distance, h.bottom_retract_speed, h.bottom_retract_distance_2, h.bottom_retract_speed_2));
+                    row("Waits", format!("before lift {} s, after lift {} s, after retract {} s", h.before_lift_time, h.after_lift_time, h.after_retract_time));
+                    row("Bottom waits", format!("before lift {} s, after lift {} s, after retract {} s", h.bottom_before_lift_time, h.bottom_after_lift_time, h.bottom_after_retract_time));
+                    row("Turn-off time", format!("{} s", h.turn_off_time));
+                    row("Anti-aliasing", format!("level {}, grey {}, blur {}, 8-bit {}", h.anti_aliasing_level, h.grey_level, h.blur_level, h.grey_scale_level));
+                    row("Advance mode", format!("{}", h.advance_mode));
+                    row("Estimates", format!("{} s, {:.1} mm³, {:.1} g", h.printing_time, h.total_volume, h.total_weight));
+                });
+                if let Some((def, _)) = out.goo.layers.get(self.layer) {
+                    ui.separator();
+                    ui.label(RichText::new(format!("Layer {} fields", self.layer + 1)).strong());
+                    ui.label(format!("{def:#?}"));
+                }
+            });
+        self.show_file_info = open;
     }
 
     fn about_window(&mut self, ctx: &egui::Context) {
@@ -1833,6 +1916,9 @@ impl eframe::App for App {
             .frame(egui::Frame::NONE)
             .show(ui, |ui| match self.tab {
                 Tab::Plate => self.view_3d(ui),
+                Tab::Layers if self.result.as_ref().is_some_and(|r| r.opened.is_some()) => {
+                    ui.vertical(|ui| self.layers_view(ui));
+                }
                 Tab::Layers => {
                     // Split: layer image on the left, a small 3D view on the right.
                     let avail = ui.available_size();
@@ -1865,6 +1951,7 @@ impl eframe::App for App {
             }
         }
         self.about_window(&ctx);
+        self.file_info_window(&ctx);
         if self.job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }

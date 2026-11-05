@@ -309,3 +309,35 @@ fn supported_table_has_no_islands() {
     let islands = islands_after_supports(&m, &Default::default());
     assert!(islands.is_empty(), "{islands:?}");
 }
+
+#[test]
+fn check_goo_finds_the_same_problems_as_slicing() {
+    use slicer::checks::{check_goo, CheckParams};
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let mut m = Mesh::cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 1.0]);
+    m.append(Mesh::cuboid([-10.0, -10.0, 1.0], [10.0, -8.0, 4.0]));
+    m.append(Mesh::cuboid([-10.0, 8.0, 1.0], [10.0, 10.0, 4.0]));
+    m.append(Mesh::cuboid([-10.0, -8.0, 1.0], [-8.0, 8.0, 4.0]));
+    m.append(Mesh::cuboid([8.0, -8.0, 1.0], [10.0, 8.0, 4.0]));
+    m.append(Mesh::cuboid([30.0, 5.0, 2.0], [33.0, 9.0, 3.0]));
+    let mut out = Vec::new();
+    let r = slice_to_goo_with(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "t",
+        &mut out,
+        4,
+        &SliceHooks {
+            checks: Some(CheckParams::default()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let goo = GooFile::read(out.as_slice()).unwrap();
+    let a = check_goo(&goo, CheckParams::default(), None, None).unwrap();
+    assert!(!r.issues.is_empty());
+    assert_eq!(a.issues, r.issues);
+    assert!((a.lit_volume_mm3 - r.sliced_volume_mm3).abs() < 1e-6 * r.sliced_volume_mm3);
+}
