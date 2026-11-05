@@ -15,6 +15,7 @@ add_library(fruit_core
   printer/PrinterProfile.cpp
   io/PngWriter.cpp
   io/Render.cpp
+  raster/Rasterizer.cpp
   support/SupportGeometry.cpp
   support/SupportModels.cpp
   support/CosmeticField.cpp
