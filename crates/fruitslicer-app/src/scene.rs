@@ -41,6 +41,12 @@ pub struct Object {
     pub supports_version: Option<u64>,
     /// +1 if the mesh winds outward, -1 if inward.
     pub orient: f32,
+    /// Hand-added support tips and removed automatic ones, in the model's
+    /// own coordinates (as loaded), so they follow moves and rotations.
+    pub added: Vec<[f32; 3]>,
+    pub removed: Vec<[f32; 3]>,
+    /// Translation applied after scale and rotation to get `placed`.
+    shift: [f32; 3],
 }
 
 impl Object {
@@ -56,6 +62,9 @@ impl Object {
             version: 0,
             supports_version: None,
             orient: 1.0,
+            added: Vec::new(),
+            removed: Vec::new(),
+            shift: [0.0; 3],
         };
         o.orient = if signed_volume(&o.base) < 0.0 {
             -1.0
@@ -75,7 +84,14 @@ impl Object {
         if p.rotation != [0.0; 3] {
             m.rotate_xyz(p.rotation);
         }
+        let before = m.bounds().map(|b| b.min).unwrap_or([0.0; 3]);
         m.place_on_plate(p.offset);
+        let after = m.bounds().map(|b| b.min).unwrap_or([0.0; 3]);
+        self.shift = [
+            after[0] - before[0],
+            after[1] - before[1],
+            after[2] - before[2],
+        ];
         self.placed_bounds = m.bounds();
         self.placed = m;
         self.version += 1;
@@ -85,8 +101,40 @@ impl Object {
         self.supports_version == Some(self.version)
     }
 
+    /// Model coordinates (as loaded) to placed coordinates.
+    pub fn to_placed(&self, v: [f32; 3]) -> [f32; 3] {
+        let q = rotation_quat(self.placement.rotation);
+        let r = q * (glam::Vec3::from(v) * self.placement.scale) + glam::Vec3::from(self.shift);
+        r.into()
+    }
+
+    /// Placed coordinates back to model coordinates.
+    pub fn to_model(&self, v: [f32; 3]) -> [f32; 3] {
+        let q = rotation_quat(self.placement.rotation);
+        let r = q.inverse() * (glam::Vec3::from(v) - glam::Vec3::from(self.shift))
+            / self.placement.scale;
+        r.into()
+    }
+
+    /// Z offset between `placed` and the printed (lifted) model.
+    pub fn lift(&self) -> f32 {
+        match (&self.supported, self.placed_bounds) {
+            (Some(s), Some(b)) if self.supports_current() => {
+                s.model.bounds().map(|m| m.min[2] - b.min[2]).unwrap_or(0.0)
+            }
+            _ => 0.0,
+        }
+    }
+
     pub fn generate_supports(&mut self, p: &SupportParams) -> Result<(), String> {
-        self.supported = Some(supports::generate(&self.placed, p)?);
+        let added: Vec<[f32; 3]> = self.added.iter().map(|&v| self.to_placed(v)).collect();
+        let removed: Vec<[f32; 3]> = self.removed.iter().map(|&v| self.to_placed(v)).collect();
+        self.supported = Some(supports::generate_edited(
+            &self.placed,
+            p,
+            &added,
+            &removed,
+        )?);
         self.supports_version = Some(self.version);
         Ok(())
     }
@@ -175,6 +223,68 @@ impl Object {
     }
 }
 
+/// Nearest hit of a ray with a mesh's triangles: (distance, point).
+pub fn ray_mesh(m: &Mesh, o: glam::Vec3, d: glam::Vec3) -> Option<(f32, glam::Vec3)> {
+    let mut best: Option<f32> = None;
+    for t in &m.triangles {
+        let (a, b, c) = (
+            glam::Vec3::from(t[0]),
+            glam::Vec3::from(t[1]),
+            glam::Vec3::from(t[2]),
+        );
+        // Moller-Trumbore.
+        let (e1, e2) = (b - a, c - a);
+        let p = d.cross(e2);
+        let det = e1.dot(p);
+        if det.abs() < 1e-12 {
+            continue;
+        }
+        let inv = 1.0 / det;
+        let s = o - a;
+        let u = s.dot(p) * inv;
+        if !(0.0..=1.0).contains(&u) {
+            continue;
+        }
+        let q = s.cross(e1);
+        let v = d.dot(q) * inv;
+        if v < 0.0 || u + v > 1.0 {
+            continue;
+        }
+        let tt = e2.dot(q) * inv;
+        if tt > 0.0 && best.is_none_or(|b| tt < b) {
+            best = Some(tt);
+        }
+    }
+    best.map(|t| (t, o + d * t))
+}
+
+/// Open and non-manifold edge counts (vertices welded at 0.1 um).
+pub fn mesh_errors(m: &Mesh) -> (usize, usize) {
+    use std::collections::HashMap;
+    let key = |v: &[f32; 3]| {
+        let q = |c: f32| (c * 1e4).round() as i64;
+        (q(v[0]), q(v[1]), q(v[2]))
+    };
+    let mut ids: HashMap<(i64, i64, i64), u32> = HashMap::new();
+    let mut edges: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in &m.triangles {
+        let mut i = [0u32; 3];
+        for k in 0..3 {
+            let n = ids.len() as u32;
+            i[k] = *ids.entry(key(&t[k])).or_insert(n);
+        }
+        if i[0] == i[1] || i[1] == i[2] || i[0] == i[2] {
+            continue; // degenerate
+        }
+        for (a, b) in [(i[0], i[1]), (i[1], i[2]), (i[2], i[0])] {
+            *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let open = edges.values().filter(|&&n| n == 1).count();
+    let nonmanifold = edges.values().filter(|&&n| n > 2).count();
+    (open, nonmanifold)
+}
+
 /// The rotation `Mesh::rotate_xyz` applies (X first, then Y, then Z).
 pub fn rotation_quat(deg: [f32; 3]) -> glam::Quat {
     glam::Quat::from_rotation_z(deg[2].to_radians())
@@ -259,6 +369,32 @@ mod tests {
     use slicer::SATURN_4_ULTRA_16K;
 
     #[test]
+    fn model_and_placed_coordinates_round_trip() {
+        let mut o = Object::new(
+            1,
+            "b".into(),
+            Mesh::cuboid([3.0, 4.0, 5.0], [13.0, 24.0, 7.0]),
+        );
+        o.placement = Placement {
+            scale: 1.5,
+            rotation: [20.0, -30.0, 70.0],
+            offset: [12.0, -7.0],
+        };
+        o.rebuild();
+        // A corner of the box maps onto a vertex of the placed mesh.
+        let p = o.to_placed([3.0, 4.0, 5.0]);
+        let hit = o
+            .placed
+            .triangles
+            .iter()
+            .flatten()
+            .any(|v| (glam::Vec3::from(*v) - glam::Vec3::from(p)).length() < 1e-3);
+        assert!(hit, "{p:?}");
+        let back = o.to_model(p);
+        assert!((glam::Vec3::from(back) - glam::Vec3::new(3.0, 4.0, 5.0)).length() < 1e-3);
+    }
+
+    #[test]
     fn rotation_quat_matches_mesh_rotate() {
         let deg = [30.0, -45.0, 110.0];
         let mut m = Mesh::new(vec![[[1.0, 2.0, 3.0]; 3]]);
@@ -266,6 +402,21 @@ mod tests {
         let q = rotation_quat(deg) * glam::Vec3::new(1.0, 2.0, 3.0);
         let v = m.triangles[0][0];
         assert!((q - glam::Vec3::from(v)).length() < 1e-4, "{q:?} {v:?}");
+    }
+
+    #[test]
+    fn mesh_errors_finds_a_missing_face() {
+        let mut m = Mesh::cuboid([0.0; 3], [1.0, 1.0, 1.0]);
+        assert_eq!(mesh_errors(&m), (0, 0));
+        m.triangles.pop();
+        assert_eq!(mesh_errors(&m), (3, 0));
+    }
+
+    #[test]
+    fn ray_mesh_hits_the_near_face() {
+        let m = Mesh::cuboid([-1.0; 3], [1.0; 3]);
+        let (t, p) = ray_mesh(&m, glam::Vec3::new(0.2, -5.0, 0.3), glam::Vec3::Y).unwrap();
+        assert!((t - 4.0).abs() < 1e-5 && (p.y + 1.0).abs() < 1e-5);
     }
 
     #[test]

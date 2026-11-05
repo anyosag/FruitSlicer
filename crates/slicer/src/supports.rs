@@ -145,13 +145,46 @@ impl Supported {
 
 /// Raises `placed` (resting on Z = 0) by the lift and adds supports.
 pub fn generate(placed: &Mesh, p: &SupportParams) -> Result<Supported, String> {
+    generate_edited(placed, p, &[], &[])
+}
+
+/// Like [`generate`], with hand edits. Points are in `placed` coordinates
+/// (before the lift). Automatic supports whose tip is within 1.5 mm of a
+/// `removed` point are dropped; each `added` point gets a support going
+/// straight down from it.
+pub fn generate_edited(
+    placed: &Mesh,
+    p: &SupportParams,
+    added: &[Vec3],
+    removed: &[Vec3],
+) -> Result<Supported, String> {
     p.validate()?;
     let mut model = placed.clone();
     let Some(b) = model.bounds() else {
         return Ok(Supported::default());
     };
-    model.translate([0.0, 0.0, p.model_floor() - b.min[2]]);
-    let points = find_points(&model, p);
+    let dz = p.model_floor() - b.min[2];
+    model.translate([0.0, 0.0, dz]);
+    let mut points = find_points(&model, p);
+    let near = |a: Vec3, b: Vec3| {
+        let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 1.5 * 1.5
+    };
+    points.retain(|q| !removed.iter().any(|r| near(q.top, [r[0], r[1], r[2] + dz])));
+    if !added.is_empty() {
+        let index = RayIndex::new(&model, p.spacing_mm.max(1.0), p.overhang_angle_deg);
+        for a in added {
+            let top = [a[0], a[1], a[2] + dz];
+            let (bz, on_model) = index.landing(top[0], top[1], top[2], p.ground());
+            if top[2] - bz >= 0.3 {
+                points.push(SupportPoint {
+                    top,
+                    bottom_z: bz,
+                    on_model,
+                });
+            }
+        }
+    }
     let supports = build(&points, p);
     Ok(Supported {
         model,
@@ -600,6 +633,23 @@ fn lathe(c: [f32; 2], rings: &[(f32, f32)], n: usize) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hand_edits_add_and_remove_supports() {
+        let m = Mesh::cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 5.0]);
+        let p = SupportParams::default();
+        let auto = generate(&m, &p).unwrap();
+        let first = auto.points[0].top;
+        let removed = [[first[0], first[1], first[2] - p.model_floor()]];
+        let added = [[0.1, 0.2, 0.0]];
+        let s = generate_edited(&m, &p, &added, &removed).unwrap();
+        assert_eq!(s.points.len(), auto.points.len());
+        assert!(!s.points.iter().any(|q| q.top == first));
+        assert!(s
+            .points
+            .iter()
+            .any(|q| q.top == [0.1, 0.2, p.model_floor()]));
+    }
 
     #[test]
     fn lathe_is_closed_and_outward() {

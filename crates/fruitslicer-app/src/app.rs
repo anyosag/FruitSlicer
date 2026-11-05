@@ -94,7 +94,17 @@ enum Drag {
 }
 
 /// Undo snapshot: every object's id, name, mesh and placement.
-type Snapshot = Vec<(u64, String, Arc<Mesh>, Placement, bool)>;
+#[derive(Clone)]
+struct SavedObject {
+    id: u64,
+    name: String,
+    base: Arc<Mesh>,
+    placement: Placement,
+    had_supports: bool,
+    added: Vec<[f32; 3]>,
+    removed: Vec<[f32; 3]>,
+}
+type Snapshot = Vec<SavedObject>;
 
 pub struct App {
     prefs: Prefs,
@@ -128,6 +138,9 @@ pub struct App {
     show_about: bool,
     show_file_info: bool,
     ctx: egui::Context,
+    edit_supports: bool,
+    /// Open and non-manifold edges per object id.
+    mesh_errors: HashMap<u64, (usize, usize)>,
 }
 
 impl App {
@@ -173,6 +186,8 @@ impl App {
             show_about: false,
             show_file_info: false,
             ctx: cc.egui_ctx.clone(),
+            edit_supports: false,
+            mesh_errors: HashMap::new(),
         };
         for p in open {
             app.open_path(&p);
@@ -185,14 +200,14 @@ impl App {
     fn snapshot(&self) -> Snapshot {
         self.objects
             .iter()
-            .map(|o| {
-                (
-                    o.id,
-                    o.name.clone(),
-                    self.bases[&o.id].clone(),
-                    o.placement,
-                    o.supported.is_some(),
-                )
+            .map(|o| SavedObject {
+                id: o.id,
+                name: o.name.clone(),
+                base: self.bases[&o.id].clone(),
+                placement: o.placement,
+                had_supports: o.supported.is_some(),
+                added: o.added.clone(),
+                removed: o.removed.clone(),
             })
             .collect()
     }
@@ -209,14 +224,16 @@ impl App {
 
     fn restore(&mut self, snap: Snapshot) {
         let mut objs = Vec::new();
-        for (id, name, base, placement, had_supports) in snap {
-            let mut o = Object::new(id, name, (*base).clone());
-            o.placement = placement;
+        for so in snap {
+            let mut o = Object::new(so.id, so.name, (*so.base).clone());
+            o.placement = so.placement;
+            o.added = so.added;
+            o.removed = so.removed;
             o.rebuild();
-            if had_supports {
+            if so.had_supports {
                 let _ = o.generate_supports(&self.prefs.supports);
             }
-            self.bases.insert(id, base);
+            self.bases.insert(so.id, so.base);
             objs.push(o);
         }
         self.objects = objs;
@@ -250,6 +267,7 @@ impl App {
         let id = self.next_id;
         self.next_id += 1;
         let base = Arc::new(mesh);
+        self.mesh_errors.insert(id, scene::mesh_errors(&base));
         self.bases.insert(id, base.clone());
         let mut o = Object::new(id, name, (*base).clone());
         // Put a second model next to the first rather than on top of it.
@@ -648,6 +666,16 @@ impl App {
                     ui.close();
                     self.save_dialog();
                 }
+                if ui
+                    .add_enabled(
+                        !self.objects.is_empty(),
+                        egui::Button::new("Export plate as STL (with supports)…"),
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.export_stl();
+                }
                 ui.separator();
                 if ui.button("Clear plate").clicked() {
                     ui.close();
@@ -907,7 +935,7 @@ impl App {
                 && self
                     .undo
                     .last()
-                    .map(|s| s.iter().find(|x| x.0 == id).map(|x| x.3))
+                    .map(|s| s.iter().find(|x| x.id == id).map(|x| x.placement))
                     != Some(Some(before))
             {
                 self.checkpoint();
@@ -929,6 +957,33 @@ impl App {
             o.placed.triangles.len(),
             o.placed.volume() / 1000.0
         ));
+        if let Some(&(open, nm)) = self.mesh_errors.get(&o.id) {
+            if open > 0 || nm > 0 {
+                ui.label(
+                    RichText::new(format!(
+                        "⚠ Mesh problems: {open} open edges, {nm} non-manifold edges. Holes or \
+                         overlaps can slice wrongly; check the layers, or repair the mesh \
+                         first (for example in Blender's 3D-Print toolbox)."
+                    ))
+                    .small()
+                    .color(Color32::from_rgb(230, 170, 60)),
+                );
+            }
+        }
+        if o.orient < 0.0 {
+            ui.label(
+                RichText::new("Faces point inwards (the mesh is inside out). Slicing handles it.")
+                    .small()
+                    .weak(),
+            );
+        }
+        if !o.added.is_empty() || !o.removed.is_empty() {
+            ui.label(format!(
+                "Hand edits: {} added, {} removed",
+                o.added.len(),
+                o.removed.len()
+            ));
+        }
         if let Some(s) = o.supported.as_ref().filter(|_| o.supports_current()) {
             let on_model = s.points.iter().filter(|p| p.on_model).count();
             ui.label(format!(
@@ -1149,6 +1204,29 @@ impl App {
             ui.checkbox(&mut s.support_minima, "");
             ui.end_row();
         });
+        ui.horizontal(|ui| {
+            ui.toggle_value(&mut self.edit_supports, "Edit by hand")
+                .on_hover_text(
+                    "Click a model to add a support there. Right-click a support to remove it.",
+                );
+            if ui.button("Clear edits").clicked() {
+                self.checkpoint();
+                for o in &mut self.objects {
+                    o.added.clear();
+                    o.removed.clear();
+                    o.supports_version = None;
+                }
+                self.refresh_supports();
+            }
+        });
+        if self.edit_supports {
+            ui.label(
+                RichText::new(
+                    "Editing: click a model to add a support, right-click a support to remove it.",
+                )
+                .color(Color32::from_rgb(120, 200, 255)),
+            );
+        }
         ui.horizontal(|ui| {
             if ui.button("Regenerate").clicked() {
                 self.regenerate_all_supports();
@@ -1511,7 +1589,15 @@ impl App {
             }
             self.drag = Drag::None;
         }
-        if resp.clicked() {
+        if self.edit_supports
+            && self.tab == Tab::Plate
+            && (resp.clicked() || resp.secondary_clicked())
+        {
+            if let Some(p) = resp.interact_pointer_pos() {
+                let (o, d) = self.camera.ray(to_ndc(p), aspect);
+                self.edit_support_at(o, d, resp.secondary_clicked());
+            }
+        } else if resp.clicked() {
             self.selected = resp
                 .interact_pointer_pos()
                 .and_then(|p| pick(self, p))
@@ -1621,6 +1707,87 @@ impl App {
             egui::FontId::proportional(12.0),
             Color32::from_gray(140),
         );
+    }
+
+    /// Adds a support where the ray hits a model, or (with `remove`) removes
+    /// the support whose tip is nearest the ray.
+    fn edit_support_at(&mut self, o: glam::Vec3, d: glam::Vec3, remove: bool) {
+        if !remove {
+            let hit = self
+                .objects
+                .iter()
+                .enumerate()
+                .filter_map(|(i, ob)| {
+                    scene::ray_mesh(ob.print_model(), o, d).map(|(t, p)| (i, t, p))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            let Some((i, _, p)) = hit else { return };
+            self.checkpoint();
+            let ob = &mut self.objects[i];
+            let placed = [p.x, p.y, p.z - ob.lift()];
+            let local = ob.to_model(placed);
+            ob.added.push(local);
+            ob.supports_version = None;
+            self.selected = Some(ob.id);
+            self.status = "Added a support.".into();
+        } else {
+            // Nearest support tip to the ray, within 2 mm.
+            let mut best: Option<(usize, f32, [f32; 3])> = None;
+            for (i, ob) in self.objects.iter().enumerate() {
+                let Some(s) = ob.supported.as_ref().filter(|_| ob.supports_current()) else {
+                    continue;
+                };
+                for q in &s.points {
+                    let v = glam::Vec3::from(q.top) - o;
+                    let dist = (v - d * v.dot(d)).length();
+                    if dist < 2.0 && best.is_none_or(|b| dist < b.1) {
+                        best = Some((i, dist, q.top));
+                    }
+                }
+            }
+            let Some((i, _, top)) = best else { return };
+            self.checkpoint();
+            let ob = &mut self.objects[i];
+            let placed = [top[0], top[1], top[2] - ob.lift()];
+            let local = ob.to_model(placed);
+            // Undo a hand-added one if that's what it was.
+            let before = ob.added.len();
+            ob.added
+                .retain(|a| (glam::Vec3::from(*a) - glam::Vec3::from(local)).length() > 0.05);
+            if ob.added.len() == before {
+                ob.removed.push(local);
+            }
+            ob.supports_version = None;
+            self.status = "Removed a support.".into();
+        }
+        let p = self.prefs.supports;
+        for ob in &mut self.objects {
+            if !ob.supports_current() {
+                if let Err(e) = ob.generate_supports(&p) {
+                    self.error = Some(e);
+                }
+            }
+        }
+    }
+
+    fn export_stl(&mut self) {
+        if self.objects.is_empty() {
+            return;
+        }
+        self.refresh_supports();
+        let mesh = scene::print_mesh(&self.objects);
+        let mut d = rfd::FileDialog::new()
+            .add_filter("STL", &["stl"])
+            .set_file_name("plate.stl");
+        if let Some(dir) = &self.prefs.last_dir {
+            d = d.set_directory(dir);
+        }
+        if let Some(path) = d.save_file() {
+            match std::fs::write(&path, stl::to_binary(&mesh)) {
+                Ok(()) => self.status = format!("Exported {}.", path.display()),
+                Err(e) => self.error = Some(format!("{}: {e}", path.display())),
+            }
+        }
     }
 
     fn layers_view(&mut self, ui: &mut egui::Ui) {
