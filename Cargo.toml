@@ -6,3 +6,6 @@ members = ["crates/goo", "crates/slicer", "crates/fruitslicer-cli", "crates/frui
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/anyosag/fruitslicer"
+
+[profile.release]
+strip = true
