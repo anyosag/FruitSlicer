@@ -22,7 +22,8 @@
 //!   from vertical), so it breaks off square instead of tearing a sliver.
 //! - Low points, which carry the most pull early in the print, get a
 //!   bigger tip (0.5 mm).
-//! - The raft's edge slopes down to a thin lip so a scraper slides under it.
+//! - The raft's edge is undercut (it flares out at 45° from a smaller
+//!   footprint), so there's a gap at the plate for a scraper to slip into.
 //!
 //! What this does not do: branching or tree supports, moving supports off
 //! the model to avoid marks, or bracing between columns. Defaults are
@@ -59,11 +60,11 @@ pub struct SupportParams {
     pub raft_mm: f32,
     /// How far the raft extends past the outermost feet.
     pub raft_margin_mm: f32,
-    /// Slope of the raft's edge, degrees from the plate; 90 for a square
-    /// edge. Lower slopes give a scraper more room to get under.
-    pub raft_edge_slope_deg: f32,
-    /// Thickness of the raft at its outer edge, below the slope.
-    pub raft_edge_mm: f32,
+    /// Height of the raft's undercut edge; 0 for a square edge.
+    pub raft_lip_mm: f32,
+    /// Angle of the undercut from the plate. It overhangs while printing,
+    /// so it can't be much flatter than 45°.
+    pub raft_lip_angle_deg: f32,
     /// Also support local minima (downward points).
     pub support_minima: bool,
     /// Sides of each column's cross-section.
@@ -86,8 +87,8 @@ impl Default for SupportParams {
             foot_height_mm: 1.0,
             raft_mm: 1.5,
             raft_margin_mm: 2.0,
-            raft_edge_slope_deg: 30.0,
-            raft_edge_mm: 0.4,
+            raft_lip_mm: 0.8,
+            raft_lip_angle_deg: 45.0,
             support_minima: true,
             segments: 8,
         }
@@ -114,10 +115,10 @@ impl SupportParams {
         if !(0.0..90.0).contains(&self.overhang_angle_deg) {
             return Err("overhang angle must be 0..90 degrees".into());
         }
-        if !(1.0..=90.0).contains(&self.raft_edge_slope_deg) {
-            return Err("raft edge slope must be 1..90 degrees".into());
+        if !(30.0..=90.0).contains(&self.raft_lip_angle_deg) {
+            return Err("raft lip angle must be 30..90 degrees (flatter won't print)".into());
         }
-        if self.lift_mm < 0.0 || self.raft_mm < 0.0 || self.raft_edge_mm < 0.0 {
+        if self.lift_mm < 0.0 || self.raft_mm < 0.0 || self.raft_lip_mm < 0.0 {
             return Err("lift and raft thickness can't be negative".into());
         }
         Ok(())
@@ -730,36 +731,35 @@ pub fn build(points: &[SupportPoint], p: &SupportParams) -> Mesh {
     if on_raft && !feet.is_empty() {
         let (x0, x1) = minmax(feet.iter().map(|f| f[0]));
         let (y0, y1) = minmax(feet.iter().map(|f| f[1]));
-        let edge = p.raft_edge_mm.min(p.raft_mm);
-        let slope = (p.raft_mm - edge) / p.raft_edge_slope_deg.to_radians().tan();
-        let slope = if p.raft_edge_slope_deg >= 89.9 {
+        let lip = p.raft_lip_mm.min(p.raft_mm);
+        let inset = if p.raft_lip_angle_deg >= 89.9 {
             0.0
         } else {
-            slope
+            lip / p.raft_lip_angle_deg.to_radians().tan()
         };
-        // Keep the feet on the flat top, clear of the slope.
-        let m = (p.raft_margin_mm + rf).max(slope + rf + 0.5);
+        let m = p.raft_margin_mm + rf;
         out.append(raft(
             [x0 - m, y0 - m],
             [x1 + m, y1 + m],
             p.raft_mm,
-            edge,
-            slope,
+            lip,
+            inset,
         ));
     }
     out
 }
 
-/// A raft over `min`..`max`, `t` thick, whose edge rises straight up to
-/// `edge` and then slopes up to `t` over `slope` mm, so a scraper can get
-/// under it.
-fn raft(min: [f32; 2], max: [f32; 2], t: f32, edge: f32, slope: f32) -> Mesh {
-    if slope <= 1e-3 || edge >= t {
+/// A raft over `min`..`max`, `t` thick. Its edge is undercut: the
+/// bottom is inset by `inset`, and the sides flare out to the full size at
+/// height `lip`, so there's a gap at the plate for a scraper to slip into.
+fn raft(min: [f32; 2], max: [f32; 2], t: f32, lip: f32, inset: f32) -> Mesh {
+    let inset = inset
+        .min((max[0] - min[0]) / 2.0 - 0.5)
+        .min((max[1] - min[1]) / 2.0 - 0.5);
+    if inset <= 1e-3 || lip <= 1e-3 {
         return Mesh::cuboid([min[0], min[1], 0.0], [max[0], max[1], t]);
     }
-    let slope = slope
-        .min((max[0] - min[0]) / 2.0 - 0.1)
-        .min((max[1] - min[1]) / 2.0 - 0.1);
+    let lip = lip.min(t);
     let rect = |i: f32, z: f32| -> [Vec3; 4] {
         [
             [min[0] + i, min[1] + i, z],
@@ -768,7 +768,10 @@ fn raft(min: [f32; 2], max: [f32; 2], t: f32, edge: f32, slope: f32) -> Mesh {
             [min[0] + i, max[1] - i, z],
         ]
     };
-    let rings = [rect(0.0, 0.0), rect(0.0, edge), rect(slope.max(0.0), t)];
+    let mut rings = vec![rect(inset, 0.0), rect(0.0, lip)];
+    if t > lip + 1e-4 {
+        rings.push(rect(0.0, t));
+    }
     let mut tris = Vec::new();
     for w in rings.windows(2) {
         let (l, u) = (&w[0], &w[1]);
@@ -778,7 +781,7 @@ fn raft(min: [f32; 2], max: [f32; 2], t: f32, edge: f32, slope: f32) -> Mesh {
             tris.push([l[k], u[k1], u[k]]);
         }
     }
-    let (b, t) = (&rings[0], &rings[2]);
+    let (b, t) = (&rings[0], &rings[rings.len() - 1]);
     tris.extend([[b[0], b[2], b[1]], [b[0], b[3], b[2]]]);
     tris.extend([[t[0], t[1], t[2]], [t[0], t[2], t[3]]]);
     Mesh::new(tris)
@@ -1064,34 +1067,35 @@ mod tests {
     }
 
     #[test]
-    fn raft_edge_slopes_down_to_a_thin_lip() {
-        let (t, e) = (1.5f32, 0.4f32);
-        let w = (t - e) / 30f32.to_radians().tan();
-        let m = raft([0.0, 0.0], [20.0, 20.0], t, e, w);
+    fn raft_edge_is_undercut_for_a_scraper() {
+        let (t, lip) = (1.5f32, 0.8f32);
+        let m = raft([0.0, 0.0], [20.0, 20.0], t, lip, lip);
         let v = signed_volume(&m);
-        let (a1, a2) = (400.0f64, ((20.0 - 2.0 * w) as f64).powi(2));
-        let want = 400.0 * e as f64 + (t - e) as f64 / 3.0 * (a1 + a2 + (a1 * a2).sqrt());
+        let (a1, a2) = (((20.0 - 2.0 * lip) as f64).powi(2), 400.0f64);
+        let want = lip as f64 / 3.0 * (a1 + a2 + (a1 * a2).sqrt()) + 400.0 * (t - lip) as f64;
         assert!((v - want).abs() < 1e-3, "{v} vs {want}");
-        // The lip is thinner than the raft, and the raft is still on the plate.
-        let b = m.bounds().unwrap();
-        assert_eq!((b.min[2], b.max[2]), (0.0, t));
+        // The footprint on the plate is smaller than the raft's top.
+        let bottom: Vec<_> = m
+            .triangles
+            .iter()
+            .flatten()
+            .filter(|p| p[2] == 0.0)
+            .map(|p| p[0])
+            .collect();
+        let lo = bottom.iter().cloned().fold(f32::INFINITY, f32::min);
+        assert!((lo - lip).abs() < 1e-5, "{lo}");
+        assert_eq!(m.bounds().unwrap().min[0], 0.0);
         // A 90° edge is a plain box.
-        let sq = raft([0.0, 0.0], [20.0, 20.0], t, e, 0.0);
+        let sq = raft([0.0, 0.0], [20.0, 20.0], t, lip, 0.0);
         assert!((signed_volume(&sq) - 400.0 * t as f64).abs() < 1e-3);
     }
 
     #[test]
-    fn feet_stay_on_the_flat_part_of_the_raft() {
-        let m = Mesh::cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 5.0]);
-        let p = SupportParams::default();
-        let s = generate(&m, &p).unwrap();
-        let rb = s.supports.bounds().unwrap();
-        let slope = (p.raft_mm - p.raft_edge_mm) / p.raft_edge_slope_deg.to_radians().tan();
-        let rf = p.foot_diameter_mm / 2.0;
-        for q in s.points.iter().filter(|q| !q.on_model) {
-            let e = q.column_top(p.tip_length_mm);
-            assert!(e[0] - rf >= rb.min[0] + slope - 1e-3 && e[0] + rf <= rb.max[0] - slope + 1e-3);
-            assert!(e[1] - rf >= rb.min[1] + slope - 1e-3 && e[1] + rf <= rb.max[1] - slope + 1e-3);
-        }
+    fn flat_raft_lips_are_rejected() {
+        let p = SupportParams {
+            raft_lip_angle_deg: 20.0,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
     }
 }

@@ -19,7 +19,8 @@ What it does:
   angle get a grid of supports, and the lowest points of each downward part get one as well. They're
   shaped to come off cleanly: thin tips (0.35 mm) that reach only 0.12 mm into the model, tips that lean
   up to 30° to meet sloped faces head-on, bigger tips (0.5 mm) only at the low points that carry the
-  most pull, and a raft whose edge slopes down to a thin lip so a scraper slides under it.
+  most pull, and a raft with an undercut edge (it flares out at 45° from a smaller footprint), so there is a gap at
+  the plate for a scraper to slip into.
   Tick *Edit by hand* to add a support with a click or remove one with a right-click. There are no tree
   supports.
 - **Print checks**, run during slicing on a 0.25 mm grid:
@@ -66,7 +67,7 @@ cargo build --release
 
 # Placement: --scale F, --rotate-x/y/z DEG, --x MM --y MM (offset from the plate centre).
 # Supports: --lift MM, --overhang-angle DEG, --support-spacing MM, --tip-diameter MM,
-#   --angled-tips on|off, --raft-slope DEG.
+#   --angled-tips on|off, --raft-lip MM.
 # Hollowing: --hollow WALL_MM, --drain-holes on|off, --hole-diameter MM.
 # Anti-aliasing: --aa 2|4|8.  Checks: --checks on|off.
 

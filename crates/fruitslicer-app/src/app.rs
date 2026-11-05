@@ -1348,9 +1348,18 @@ impl App {
                     .suffix(" mm"),
             );
             ui.end_row();
-            ui.label("Raft edge slope");
-            ui.add(egui::Slider::new(&mut s.raft_edge_slope_deg, 10.0..=90.0).suffix("°"))
-                .on_hover_text("The raft's edge slopes down to a thin lip so a scraper slides under it. 90° is a square edge.");
+            ui.label("Raft lip");
+            ui.add(
+                egui::DragValue::new(&mut s.raft_lip_mm)
+                    .speed(0.05)
+                    .range(0.0..=3.0)
+                    .suffix(" mm"),
+            )
+            .on_hover_text("Height of the undercut at the raft's edge, where a scraper slips in. 0 for a square edge.");
+            ui.end_row();
+            ui.label("Raft lip angle");
+            ui.add(egui::Slider::new(&mut s.raft_lip_angle_deg, 30.0..=90.0).suffix("°"))
+                .on_hover_text("How steeply the undercut flares out from the plate. It overhangs while printing, so stay near 45° or steeper.");
             ui.end_row();
             ui.label("Support low points");
             ui.checkbox(&mut s.support_minima, "");
@@ -1399,8 +1408,8 @@ impl App {
         });
         ui.label(
             RichText::new(
-                "Thin, shallow tips that lean to meet sloped faces, on a raft with a sloped \
-                 edge. Straight columns only: no tree supports. Defaults come from slicer guides \
+                "Thin, shallow tips that lean to meet sloped faces, on a raft with an \
+                 undercut edge. Straight columns only: no tree supports. Defaults come from slicer guides \
                  and are untested on this printer.",
             )
             .small()
