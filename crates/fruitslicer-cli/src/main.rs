@@ -27,6 +27,7 @@ settings (defaults are placeholders: use your resin's numbers):
 
 supports and checks (slice only):
   --supports on|off (off)  --lift MM (5)  --overhang-angle DEG (45)  --support-spacing MM (3)
+  --tip-diameter MM (0.35)  --angled-tips on|off (on)  --raft-slope DEG (30; 90 = square edge)
   --checks on|off (on): report islands, overhangs, suction cups and trapped resin
   --hollow WALL_MM: hollow the print  --drain-holes on|off (on)  --hole-diameter MM (2.5)";
 
@@ -382,6 +383,15 @@ fn slice_cmd(args: &[String]) -> Result<(), String> {
         }
         if let Some(v) = flag(&flags, "support-spacing")? {
             sp.spacing_mm = v;
+        }
+        if let Some(v) = flag(&flags, "tip-diameter")? {
+            sp.tip_diameter_mm = v;
+        }
+        if let Some(v) = flag::<String>(&flags, "angled-tips")? {
+            sp.angled_tips = v != "off";
+        }
+        if let Some(v) = flag(&flags, "raft-slope")? {
+            sp.raft_edge_slope_deg = v;
         }
         let s = slicer::supports::generate(&mesh, &sp)?;
         println!("added {} supports", s.points.len());

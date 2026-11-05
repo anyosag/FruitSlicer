@@ -14,9 +14,19 @@
 //! or an upward-facing part of the model (then it ends in a small tip on the
 //! model, which leaves a mark there).
 //!
+//! Made to come off cleanly:
+//!
+//! - Tips are thin where they touch (0.35 mm) and only reach 0.12 mm into
+//!   the model, so they snap at the contact and leave a small mark.
+//! - On a sloped face the tip leans to meet the surface head-on (up to 30°
+//!   from vertical), so it breaks off square instead of tearing a sliver.
+//! - Low points, which carry the most pull early in the print, get a
+//!   bigger tip (0.5 mm).
+//! - The raft's edge slopes down to a thin lip so a scraper slides under it.
+//!
 //! What this does not do: branching or tree supports, moving supports off
-//! the model to avoid marks, bracing between columns, or sizing tips by the
-//! load they carry. Defaults are starting points, not tuned values.
+//! the model to avoid marks, or bracing between columns. Defaults are
+//! starting points from slicer guides, not values tested on this printer.
 
 use crate::mesh::{Mesh, Triangle, Vec3};
 
@@ -33,6 +43,10 @@ pub struct SupportParams {
     pub spacing_mm: f32,
     /// Diameter where the tip touches the model.
     pub tip_diameter_mm: f32,
+    /// Tip diameter at low points (local minima), which hold the most.
+    pub strong_tip_diameter_mm: f32,
+    /// Lean tips to meet sloped faces head-on (at most 30° from vertical).
+    pub angled_tips: bool,
     /// Length of the tapered tip.
     pub tip_length_mm: f32,
     /// How far the tip reaches into the model so it bonds.
@@ -45,6 +59,11 @@ pub struct SupportParams {
     pub raft_mm: f32,
     /// How far the raft extends past the outermost feet.
     pub raft_margin_mm: f32,
+    /// Slope of the raft's edge, degrees from the plate; 90 for a square
+    /// edge. Lower slopes give a scraper more room to get under.
+    pub raft_edge_slope_deg: f32,
+    /// Thickness of the raft at its outer edge, below the slope.
+    pub raft_edge_mm: f32,
     /// Also support local minima (downward points).
     pub support_minima: bool,
     /// Sides of each column's cross-section.
@@ -57,14 +76,18 @@ impl Default for SupportParams {
             lift_mm: 5.0,
             overhang_angle_deg: 45.0,
             spacing_mm: 3.0,
-            tip_diameter_mm: 0.4,
+            tip_diameter_mm: 0.35,
+            strong_tip_diameter_mm: 0.5,
+            angled_tips: true,
             tip_length_mm: 2.0,
-            tip_penetration_mm: 0.2,
+            tip_penetration_mm: 0.12,
             column_diameter_mm: 1.2,
             foot_diameter_mm: 2.5,
             foot_height_mm: 1.0,
-            raft_mm: 1.0,
+            raft_mm: 1.5,
             raft_margin_mm: 2.0,
+            raft_edge_slope_deg: 30.0,
+            raft_edge_mm: 0.4,
             support_minima: true,
             segments: 8,
         }
@@ -76,6 +99,7 @@ impl SupportParams {
         let pos = [
             ("spacing", self.spacing_mm),
             ("tip diameter", self.tip_diameter_mm),
+            ("low-point tip diameter", self.strong_tip_diameter_mm),
             ("column diameter", self.column_diameter_mm),
             ("foot diameter", self.foot_diameter_mm),
         ];
@@ -90,7 +114,10 @@ impl SupportParams {
         if !(0.0..90.0).contains(&self.overhang_angle_deg) {
             return Err("overhang angle must be 0..90 degrees".into());
         }
-        if self.lift_mm < 0.0 || self.raft_mm < 0.0 {
+        if !(1.0..=90.0).contains(&self.raft_edge_slope_deg) {
+            return Err("raft edge slope must be 1..90 degrees".into());
+        }
+        if self.lift_mm < 0.0 || self.raft_mm < 0.0 || self.raft_edge_mm < 0.0 {
             return Err("lift and raft thickness can't be negative".into());
         }
         Ok(())
@@ -118,10 +145,35 @@ impl SupportParams {
 /// One support: from `top` on the model down to `bottom_z`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SupportPoint {
+    /// Where the tip touches the model.
     pub top: Vec3,
     pub bottom_z: f32,
     /// `true` when it ends on the model rather than the raft or plate.
     pub on_model: bool,
+    /// Unit direction from `top` along the tip, away from the model.
+    /// Straight down unless the tip leans to meet a sloped face.
+    pub tip_dir: Vec3,
+    /// Uses the bigger low-point tip.
+    pub strong: bool,
+}
+
+const DOWN: Vec3 = [0.0, 0.0, -1.0];
+/// Most a tip leans from vertical.
+const MAX_TIP_LEAN_DEG: f32 = 30.0;
+
+impl SupportPoint {
+    /// Where the tip ends and the vertical column starts.
+    pub fn column_top(&self, tip_length: f32) -> Vec3 {
+        if self.tip_dir == DOWN {
+            return [self.top[0], self.top[1], self.top[2] - tip_length];
+        }
+        let d = self.tip_dir;
+        [
+            self.top[0] + d[0] * tip_length,
+            self.top[1] + d[1] * tip_length,
+            self.top[2] + d[2] * tip_length,
+        ]
+    }
 }
 
 /// Result of [`generate`].
@@ -175,14 +227,7 @@ pub fn generate_edited(
         let index = RayIndex::new(&model, p.spacing_mm.max(1.0), p.overhang_angle_deg);
         for a in added {
             let top = [a[0], a[1], a[2] + dz];
-            let (bz, on_model) = index.landing(top[0], top[1], top[2], p.ground());
-            if top[2] - bz >= 0.3 {
-                points.push(SupportPoint {
-                    top,
-                    bottom_z: bz,
-                    on_model,
-                });
-            }
+            points.extend(index.place(top, None, false, p));
         }
     }
     let supports = build(&points, p);
@@ -199,6 +244,8 @@ struct Hit {
     z: f32,
     down: bool,
     needs_support: bool,
+    /// Outward unit normal.
+    n: Vec3,
 }
 
 /// Triangles binned into an XY grid, for vertical ray casts.
@@ -266,10 +313,12 @@ impl<'a> RayIndex<'a> {
                 continue;
             }
             let nz = n[2] * self.orient / len;
+            let k = self.orient / len;
             hits.push(Hit {
                 z,
                 down: nz < 0.0,
                 needs_support: -nz > self.cos_limit,
+                n: [n[0] * k, n[1] * k, n[2] * k],
             });
         }
         hits.sort_by(|a, b| a.z.total_cmp(&b.z));
@@ -288,6 +337,88 @@ impl<'a> RayIndex<'a> {
             .map(|h| (h.z, true))
             .unwrap_or((ground, false))
     }
+
+    /// Whether (x, y, z) is outside the model: the nearest surface above it
+    /// faces down, or there is none.
+    fn outside(&self, x: f32, y: f32, z: f32) -> bool {
+        self.hits(x, y)
+            .iter()
+            .find(|h| h.z > z)
+            .is_none_or(|h| h.down)
+    }
+
+    /// A support touching the model at `contact`. With `normal` (the
+    /// surface's outward normal) and angled tips on, the tip leans to meet
+    /// the surface head-on if there's room; otherwise it goes straight down.
+    /// `None` when there's no room for a support at all.
+    fn place(
+        &self,
+        contact: Vec3,
+        normal: Option<Vec3>,
+        strong: bool,
+        p: &SupportParams,
+    ) -> Option<SupportPoint> {
+        let ground = p.ground();
+        let [x, y, z] = contact;
+        let vertical = || {
+            let (bz, on_model) = self.landing(x, y, z, ground);
+            (z - bz >= 0.3).then_some(SupportPoint {
+                top: contact,
+                bottom_z: bz,
+                on_model,
+                tip_dir: DOWN,
+                strong,
+            })
+        };
+        let Some(n) = normal.filter(|_| p.angled_tips) else {
+            return vertical();
+        };
+        let d = lean(n);
+        if d == DOWN {
+            return vertical();
+        }
+        let l = p.tip_length_mm;
+        let at = |t: f32| [x + d[0] * t, y + d[1] * t, z + d[2] * t];
+        let (e, mid) = (at(l), at(l * 0.5));
+        // The tip's end and middle, and a ring around the column's top
+        // (so the column doesn't graze the model and close off a pocket),
+        // must all be clear of the model.
+        let r = p.column_diameter_mm;
+        let ring = [[r, 0.0], [-r, 0.0], [0.0, r], [0.0, -r]];
+        let clear = e[2] > ground + 0.3
+            && self.outside(e[0], e[1], e[2])
+            && self.outside(mid[0], mid[1], mid[2])
+            && ring
+                .iter()
+                .all(|o| self.outside(e[0] + o[0], e[1] + o[1], e[2] + r));
+        if !clear {
+            return vertical();
+        }
+        let (bz, on_model) = self.landing(e[0], e[1], e[2], ground);
+        if e[2] - bz < 0.3 {
+            return vertical();
+        }
+        Some(SupportPoint {
+            top: contact,
+            bottom_z: bz,
+            on_model,
+            tip_dir: d,
+            strong,
+        })
+    }
+}
+
+/// Direction for a tip leaving a downward face with outward normal `n`:
+/// along the normal, leaning at most [`MAX_TIP_LEAN_DEG`] from vertical.
+fn lean(n: Vec3) -> Vec3 {
+    let h = (n[0] * n[0] + n[1] * n[1]).sqrt();
+    let a = (-n[2]).clamp(-1.0, 1.0).acos();
+    if h < 1e-6 || a < 1f32.to_radians() || n[2] >= 0.0 {
+        return DOWN;
+    }
+    let a = a.min(MAX_TIP_LEAN_DEG.to_radians());
+    let (sa, ca) = a.sin_cos();
+    [n[0] / h * sa, n[1] / h * sa, -ca]
 }
 
 fn minmax(it: impl Iterator<Item = f32>) -> (f32, f32) {
@@ -359,24 +490,12 @@ pub fn find_points(model: &Mesh, p: &SupportParams) -> Vec<SupportPoint> {
         for i in 0..=nx {
             let (x, y) = (x0 + i as f32 * s, y0 + j as f32 * s);
             let hits = index.hits(x, y);
-            for (k, h) in hits.iter().enumerate() {
+            for h in &hits {
                 if !(h.down && h.needs_support) || h.z <= ground + 1e-3 {
                     continue;
                 }
-                // The surface below: the previous upward-facing hit.
-                let below = hits[..k].iter().rev().find(|b| !b.down);
-                let (bz, on_model) = match below {
-                    Some(b) if b.z > ground => (b.z, true),
-                    _ => (ground, false),
-                };
-                if h.z - bz < 0.3 {
-                    continue; // the gap would just cure solid
-                }
-                points.push(SupportPoint {
-                    top: [x, y, h.z],
-                    bottom_z: bz,
-                    on_model,
-                });
+                // None when the gap below would just cure solid.
+                points.extend(index.place([x, y, h.z], Some(h.n), false, p));
             }
         }
     }
@@ -395,15 +514,7 @@ pub fn find_points(model: &Mesh, p: &SupportParams) -> Vec<SupportPoint> {
             if near {
                 continue;
             }
-            let (bz, on_model) = index.landing(v[0], v[1], v[2], ground);
-            if v[2] - bz < 0.3 {
-                continue;
-            }
-            points.push(SupportPoint {
-                top: v,
-                bottom_z: bz,
-                on_model,
-            });
+            points.extend(index.place(v, None, true, p));
         }
     }
 
@@ -432,16 +543,12 @@ pub fn find_points(model: &Mesh, p: &SupportParams) -> Vec<SupportPoint> {
         if c[2] <= ground + 1e-3 || near.any_within(c, reach, &points) {
             continue;
         }
-        let (bz, on_model) = index.landing(c[0], c[1], c[2], ground);
-        if c[2] - bz < 0.3 {
-            continue;
+        let k = index.orient / len;
+        let nn = [n[0] * k, n[1] * k, n[2] * k];
+        if let Some(sp) = index.place(c, Some(nn), false, p) {
+            near.insert(c, points.len());
+            points.push(sp);
         }
-        near.insert(c, points.len());
-        points.push(SupportPoint {
-            top: c,
-            bottom_z: bz,
-            on_model,
-        });
     }
     points
 }
@@ -533,95 +640,199 @@ fn local_minima(m: &Mesh) -> Vec<Vec3> {
 /// Builds the support meshes and the raft.
 pub fn build(points: &[SupportPoint], p: &SupportParams) -> Mesh {
     let mut out = Mesh::default();
-    let (rt, rc, rf) = (
-        p.tip_diameter_mm / 2.0,
-        p.column_diameter_mm / 2.0,
-        p.foot_diameter_mm / 2.0,
-    );
+    let (rc, rf) = (p.column_diameter_mm / 2.0, p.foot_diameter_mm / 2.0);
+    let rt_plain = p.tip_diameter_mm / 2.0;
+    let on_raft = p.raft_mm > 0.0 && p.lift_mm > 0.0;
+    let n = p.segments.max(3);
     let mut feet: Vec<[f32; 2]> = Vec::new();
     for sp in points {
-        let [x, y, zt] = sp.top;
+        let rt = if sp.strong {
+            p.strong_tip_diameter_mm / 2.0
+        } else {
+            rt_plain
+        };
         let zb = sp.bottom_z;
-        let top = zt + p.tip_penetration_mm;
-        let len = zt - zb;
+        // Bury the foot slightly in the raft (or plate) so it bonds.
+        let foot_bottom = if on_raft { zb - p.raft_mm.min(0.2) } else { zb };
         // Profile rings from top to bottom: (z, radius).
         let mut rings: Vec<(f32, f32)> = Vec::new();
-        if sp.on_model {
-            // Tip at both ends.
-            if len <= 2.0 * p.tip_length_mm {
-                let mid = (zt + zb) / 2.0;
-                let rm = rt + (rc - rt) * ((len / 2.0) / p.tip_length_mm).min(1.0);
-                rings.extend([(top, rt), (mid, rm), (zb - p.tip_penetration_mm, rt)]);
-            } else {
-                rings.extend([
-                    (top, rt),
-                    (zt - p.tip_length_mm, rc),
-                    (zb + p.tip_length_mm, rc),
-                    (zb - p.tip_penetration_mm, rt),
-                ]);
-            }
-        } else {
-            // Bury the foot slightly in the raft (or plate) so it bonds.
-            let bottom = if p.raft_mm > 0.0 && p.lift_mm > 0.0 {
-                zb - p.raft_mm.min(0.2)
-            } else {
-                zb
-            };
-            if len <= p.tip_length_mm + p.foot_height_mm {
+        let [x, y] = if sp.tip_dir == DOWN {
+            let [x, y, zt] = sp.top;
+            let top = zt + p.tip_penetration_mm;
+            let len = zt - zb;
+            if sp.on_model {
+                // Tip at both ends.
+                if len <= 2.0 * p.tip_length_mm {
+                    let mid = (zt + zb) / 2.0;
+                    let rm = rt + (rc - rt) * ((len / 2.0) / p.tip_length_mm).min(1.0);
+                    rings.extend([(top, rt), (mid, rm), (zb - p.tip_penetration_mm, rt_plain)]);
+                } else {
+                    rings.extend([
+                        (top, rt),
+                        (zt - p.tip_length_mm, rc),
+                        (zb + p.tip_length_mm, rc),
+                        (zb - p.tip_penetration_mm, rt_plain),
+                    ]);
+                }
+            } else if len <= p.tip_length_mm + p.foot_height_mm {
                 let k = len / (p.tip_length_mm + p.foot_height_mm);
                 let mid = zb + p.foot_height_mm * k;
-                rings.extend([(top, rt), (mid, rc), (bottom, rf.max(rc))]);
+                rings.extend([(top, rt), (mid, rc), (foot_bottom, rf.max(rc))]);
             } else {
                 rings.extend([
                     (top, rt),
                     (zt - p.tip_length_mm, rc),
                     (zb + p.foot_height_mm, rc),
-                    (bottom, rf.max(rc)),
+                    (foot_bottom, rf.max(rc)),
                 ]);
             }
+            [x, y]
+        } else {
+            // A leaning tip, then a vertical column from where it ends.
+            let d = sp.tip_dir;
+            let start = [
+                sp.top[0] - d[0] * p.tip_penetration_mm,
+                sp.top[1] - d[1] * p.tip_penetration_mm,
+                sp.top[2] - d[2] * p.tip_penetration_mm,
+            ];
+            let e = sp.column_top(p.tip_length_mm);
+            let axis = [start[0] - e[0], start[1] - e[1], start[2] - e[2]];
+            let l = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+            let up = [axis[0] / l, axis[1] / l, axis[2] / l];
+            out.append(lathe_axis(e, up, &[(l, rt), (0.0, rc)], n));
+            let len = e[2] - zb;
+            if sp.on_model {
+                if len <= p.tip_length_mm {
+                    rings.extend([(e[2], rc), (zb - p.tip_penetration_mm, rt_plain)]);
+                } else {
+                    rings.extend([
+                        (e[2], rc),
+                        (zb + p.tip_length_mm, rc),
+                        (zb - p.tip_penetration_mm, rt_plain),
+                    ]);
+                }
+            } else if len <= p.foot_height_mm {
+                rings.extend([(e[2], rc), (foot_bottom, rf.max(rc))]);
+            } else {
+                rings.extend([
+                    (e[2], rc),
+                    (zb + p.foot_height_mm, rc),
+                    (foot_bottom, rf.max(rc)),
+                ]);
+            }
+            [e[0], e[1]]
+        };
+        if !sp.on_model {
             feet.push([x, y]);
         }
-        out.append(lathe([x, y], &rings, p.segments.max(3)));
+        out.append(lathe([x, y], &rings, n));
     }
-    if p.raft_mm > 0.0 && p.lift_mm > 0.0 && !feet.is_empty() {
+    if on_raft && !feet.is_empty() {
         let (x0, x1) = minmax(feet.iter().map(|f| f[0]));
         let (y0, y1) = minmax(feet.iter().map(|f| f[1]));
-        let m = p.raft_margin_mm + rf;
-        out.append(Mesh::cuboid(
-            [x0 - m, y0 - m, 0.0],
-            [x1 + m, y1 + m, p.raft_mm],
+        let edge = p.raft_edge_mm.min(p.raft_mm);
+        let slope = (p.raft_mm - edge) / p.raft_edge_slope_deg.to_radians().tan();
+        let slope = if p.raft_edge_slope_deg >= 89.9 {
+            0.0
+        } else {
+            slope
+        };
+        // Keep the feet on the flat top, clear of the slope.
+        let m = (p.raft_margin_mm + rf).max(slope + rf + 0.5);
+        out.append(raft(
+            [x0 - m, y0 - m],
+            [x1 + m, y1 + m],
+            p.raft_mm,
+            edge,
+            slope,
         ));
     }
     out
 }
 
-/// A closed solid of revolution around the vertical line at `c`. `rings`
-/// go from top to bottom. Winding is outward.
-fn lathe(c: [f32; 2], rings: &[(f32, f32)], n: usize) -> Mesh {
-    let ring = |(z, r): (f32, f32)| -> Vec<Vec3> {
-        (0..n)
-            .map(|k| {
-                let a = std::f32::consts::TAU * k as f32 / n as f32;
-                [c[0] + r * a.cos(), c[1] + r * a.sin(), z]
-            })
-            .collect()
+/// A raft over `min`..`max`, `t` thick, whose edge rises straight up to
+/// `edge` and then slopes up to `t` over `slope` mm, so a scraper can get
+/// under it.
+fn raft(min: [f32; 2], max: [f32; 2], t: f32, edge: f32, slope: f32) -> Mesh {
+    if slope <= 1e-3 || edge >= t {
+        return Mesh::cuboid([min[0], min[1], 0.0], [max[0], max[1], t]);
+    }
+    let slope = slope
+        .min((max[0] - min[0]) / 2.0 - 0.1)
+        .min((max[1] - min[1]) / 2.0 - 0.1);
+    let rect = |i: f32, z: f32| -> [Vec3; 4] {
+        [
+            [min[0] + i, min[1] + i, z],
+            [max[0] - i, min[1] + i, z],
+            [max[0] - i, max[1] - i, z],
+            [min[0] + i, max[1] - i, z],
+        ]
     };
-    let rs: Vec<Vec<Vec3>> = rings.iter().map(|&r| ring(r)).collect();
+    let rings = [rect(0.0, 0.0), rect(0.0, edge), rect(slope.max(0.0), t)];
     let mut tris = Vec::new();
-    // Sides: going down from ring i (upper) to i+1 (lower), angles increase
-    // counter-clockwise seen from above.
-    for w in rs.windows(2) {
-        let (u, l) = (&w[0], &w[1]);
-        for k in 0..n {
-            let k1 = (k + 1) % n;
+    for w in rings.windows(2) {
+        let (l, u) = (&w[0], &w[1]);
+        for k in 0..4 {
+            let k1 = (k + 1) % 4;
             tris.push([l[k], l[k1], u[k1]]);
             tris.push([l[k], u[k1], u[k]]);
         }
     }
-    // Caps.
+    let (b, t) = (&rings[0], &rings[2]);
+    tris.extend([[b[0], b[2], b[1]], [b[0], b[3], b[2]]]);
+    tris.extend([[t[0], t[1], t[2]], [t[0], t[2], t[3]]]);
+    Mesh::new(tris)
+}
+
+/// A closed solid of revolution around the vertical line at `c`. `rings`
+/// are (z, radius) from top to bottom. Winding is outward.
+fn lathe(c: [f32; 2], rings: &[(f32, f32)], n: usize) -> Mesh {
+    lathe_axis([c[0], c[1], 0.0], [0.0, 0.0, 1.0], rings, n)
+}
+
+/// A closed solid of revolution around the line through `base` along the
+/// unit vector `up`. `rings` are (distance along `up`, radius), in
+/// decreasing distance. Winding is outward.
+fn lathe_axis(base: Vec3, up: Vec3, rings: &[(f32, f32)], n: usize) -> Mesh {
+    let cross = |a: Vec3, b: Vec3| -> Vec3 {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    // u, v with u x v = up, so angles run counter-clockwise seen from `up`.
+    let helper = if up[2].abs() < 0.9 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let u = cross(up, helper);
+    let ul = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+    let u = [u[0] / ul, u[1] / ul, u[2] / ul];
+    let v = cross(up, u);
+    let at = |t: f32, r: f32, a: f32| -> Vec3 {
+        let (s, c) = a.sin_cos();
+        std::array::from_fn(|i| base[i] + up[i] * t + r * (u[i] * c + v[i] * s))
+    };
+    let ring = |(t, r): (f32, f32)| -> Vec<Vec3> {
+        (0..n)
+            .map(|k| at(t, r, std::f32::consts::TAU * k as f32 / n as f32))
+            .collect()
+    };
+    let rs: Vec<Vec<Vec3>> = rings.iter().map(|&r| ring(r)).collect();
+    let mut tris = Vec::new();
+    for w in rs.windows(2) {
+        let (hi, lo) = (&w[0], &w[1]);
+        for k in 0..n {
+            let k1 = (k + 1) % n;
+            tris.push([lo[k], lo[k1], hi[k1]]);
+            tris.push([lo[k], hi[k1], hi[k]]);
+        }
+    }
     let (top, bot) = (&rs[0], &rs[rs.len() - 1]);
-    let tc = [c[0], c[1], rings[0].0];
-    let bc = [c[0], c[1], rings[rings.len() - 1].0];
+    let tc = at(rings[0].0, 0.0, 0.0);
+    let bc = at(rings[rings.len() - 1].0, 0.0, 0.0);
     for k in 0..n {
         let k1 = (k + 1) % n;
         tris.push([tc, top[k], top[k1]]);
@@ -766,5 +977,121 @@ mod tests {
             "{:?}",
             s.points
         );
+    }
+
+    #[test]
+    fn tilted_lathe_is_closed_and_outward() {
+        let up = lean([0.5, 0.0, -0.866]);
+        let m = lathe_axis([1.0, 2.0, 3.0], up, &[(2.0, 1.0), (0.0, 1.0)], 64);
+        let v = signed_volume(&m);
+        assert!((v - 2.0 * std::f64::consts::PI).abs() < 0.02, "{v}");
+    }
+
+    #[test]
+    fn lean_follows_the_normal_up_to_30_degrees() {
+        let (s20, c20) = 20f32.to_radians().sin_cos();
+        let d = lean([s20, 0.0, -c20]);
+        assert!(
+            (d[0] - s20).abs() < 1e-5 && (d[2] + c20).abs() < 1e-5,
+            "{d:?}"
+        );
+        let (s40, c40) = 40f32.to_radians().sin_cos();
+        let d = lean([0.0, -s40, -c40]);
+        let (s30, c30) = 30f32.to_radians().sin_cos();
+        assert!(
+            (d[1] + s30).abs() < 1e-5 && (d[2] + c30).abs() < 1e-5,
+            "{d:?}"
+        );
+        assert_eq!(lean([0.0, 0.0, -1.0]), DOWN);
+    }
+
+    #[test]
+    fn tips_lean_to_meet_a_sloped_underside() {
+        let mut m = Mesh::cuboid([-10.0, -5.0, 0.0], [10.0, 5.0, 4.0]);
+        m.rotate_xyz([0.0, 20.0, 0.0]);
+        let p = SupportParams::default();
+        let s = generate(&m, &p).unwrap();
+        let leaning: Vec<_> = s.points.iter().filter(|q| q.tip_dir != DOWN).collect();
+        assert!(
+            leaning.len() >= 4,
+            "{} leaning of {}",
+            leaning.len(),
+            s.points.len()
+        );
+        let (s20, c20) = 20f32.to_radians().sin_cos();
+        let index = RayIndex::new(&s.model, 1.0, p.overhang_angle_deg);
+        for q in &leaning {
+            let d = q.tip_dir;
+            assert!(
+                (d[0].abs() - s20).abs() < 0.01 && d[1].abs() < 0.01,
+                "{d:?}"
+            );
+            assert!((d[2] + c20).abs() < 0.01, "{d:?}");
+            let e = q.column_top(p.tip_length_mm);
+            assert!(index.outside(e[0], e[1], e[2]), "tip ends inside the model");
+            assert!(!q.on_model && q.bottom_z == p.raft_mm);
+        }
+        // Without angled tips everything goes straight down.
+        let flat = SupportParams {
+            angled_tips: false,
+            ..p
+        };
+        assert!(generate(&m, &flat)
+            .unwrap()
+            .points
+            .iter()
+            .all(|q| q.tip_dir == DOWN));
+    }
+
+    #[test]
+    fn low_points_get_strong_tips() {
+        let mut m = Mesh::cuboid([-10.0, -10.0, 10.0], [10.0, 10.0, 12.0]);
+        let (a, b, c, tip) = (
+            [0.0, 0.0, 10.0],
+            [0.4, 0.0, 10.0],
+            [0.2, 0.4, 10.0],
+            [0.2, 0.15, 5.0],
+        );
+        m.append(Mesh::new(vec![
+            [a, c, b],
+            [a, b, tip],
+            [b, c, tip],
+            [c, a, tip],
+        ]));
+        let s = generate(&m, &SupportParams::default()).unwrap();
+        let low = s.points.iter().filter(|q| q.strong).count();
+        assert_eq!(low, 1, "{:?}", s.points);
+    }
+
+    #[test]
+    fn raft_edge_slopes_down_to_a_thin_lip() {
+        let (t, e) = (1.5f32, 0.4f32);
+        let w = (t - e) / 30f32.to_radians().tan();
+        let m = raft([0.0, 0.0], [20.0, 20.0], t, e, w);
+        let v = signed_volume(&m);
+        let (a1, a2) = (400.0f64, ((20.0 - 2.0 * w) as f64).powi(2));
+        let want = 400.0 * e as f64 + (t - e) as f64 / 3.0 * (a1 + a2 + (a1 * a2).sqrt());
+        assert!((v - want).abs() < 1e-3, "{v} vs {want}");
+        // The lip is thinner than the raft, and the raft is still on the plate.
+        let b = m.bounds().unwrap();
+        assert_eq!((b.min[2], b.max[2]), (0.0, t));
+        // A 90° edge is a plain box.
+        let sq = raft([0.0, 0.0], [20.0, 20.0], t, e, 0.0);
+        assert!((signed_volume(&sq) - 400.0 * t as f64).abs() < 1e-3);
+    }
+
+    #[test]
+    fn feet_stay_on_the_flat_part_of_the_raft() {
+        let m = Mesh::cuboid([-10.0, -10.0, 0.0], [10.0, 10.0, 5.0]);
+        let p = SupportParams::default();
+        let s = generate(&m, &p).unwrap();
+        let rb = s.supports.bounds().unwrap();
+        let slope = (p.raft_mm - p.raft_edge_mm) / p.raft_edge_slope_deg.to_radians().tan();
+        let rf = p.foot_diameter_mm / 2.0;
+        for q in s.points.iter().filter(|q| !q.on_model) {
+            let e = q.column_top(p.tip_length_mm);
+            assert!(e[0] - rf >= rb.min[0] + slope - 1e-3 && e[0] + rf <= rb.max[0] - slope + 1e-3);
+            assert!(e[1] - rf >= rb.min[1] + slope - 1e-3 && e[1] + rf <= rb.max[1] - slope + 1e-3);
+        }
     }
 }

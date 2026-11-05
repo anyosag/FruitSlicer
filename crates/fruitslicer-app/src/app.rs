@@ -1303,6 +1303,19 @@ impl App {
                     .suffix(" mm"),
             );
             ui.end_row();
+            ui.label("Low-point tip");
+            ui.add(
+                egui::DragValue::new(&mut s.strong_tip_diameter_mm)
+                    .speed(0.01)
+                    .range(0.1..=2.0)
+                    .suffix(" mm"),
+            )
+            .on_hover_text("Tip diameter at the lowest points, which hold the most at the start of the print");
+            ui.end_row();
+            ui.label("Angle tips");
+            ui.checkbox(&mut s.angled_tips, "")
+                .on_hover_text("Lean tips (up to 30°) to meet sloped faces head-on, so they snap off cleanly");
+            ui.end_row();
             ui.label("Tip length");
             ui.add(
                 egui::DragValue::new(&mut s.tip_length_mm)
@@ -1334,6 +1347,10 @@ impl App {
                     .range(0.0..=5.0)
                     .suffix(" mm"),
             );
+            ui.end_row();
+            ui.label("Raft edge slope");
+            ui.add(egui::Slider::new(&mut s.raft_edge_slope_deg, 10.0..=90.0).suffix("°"))
+                .on_hover_text("The raft's edge slopes down to a thin lip so a scraper slides under it. 90° is a square edge.");
             ui.end_row();
             ui.label("Support low points");
             ui.checkbox(&mut s.support_minima, "");
@@ -1372,11 +1389,19 @@ impl App {
                     o.clear_supports();
                 }
             }
+            if ui
+                .button("Defaults")
+                .on_hover_text("Put every support setting back to its default")
+                .clicked()
+            {
+                self.prefs.supports = SupportParams::default();
+            }
         });
         ui.label(
             RichText::new(
-                "Straight columns only: no tree or branching supports. Defaults are untested \
-                 starting points.",
+                "Thin, shallow tips that lean to meet sloped faces, on a raft with a sloped \
+                 edge. Straight columns only: no tree supports. Defaults come from slicer guides \
+                 and are untested on this printer.",
             )
             .small()
             .weak(),

@@ -15,8 +15,11 @@ What it does:
 - **Load** STL (binary or ASCII), OBJ and 3MF files, by File > Open or by dropping them on the window.
   Several models can share the plate. Move them by dragging, or set scale, rotation and position in the
   left panel. *Lay flat*, *Arrange* and undo/redo (Ctrl+Z / Ctrl+Y) are there too.
-- **Automatic supports**: straight columns with tapered tips standing on a raft. Overhangs flatter than
-  the set angle get a grid of supports, and the lowest points of each downward part get one as well.
+- **Automatic supports**: columns with tapered tips standing on a raft. Overhangs flatter than the set
+  angle get a grid of supports, and the lowest points of each downward part get one as well. They're
+  shaped to come off cleanly: thin tips (0.35 mm) that reach only 0.12 mm into the model, tips that lean
+  up to 30° to meet sloped faces head-on, bigger tips (0.5 mm) only at the low points that carry the
+  most pull, and a raft whose edge slopes down to a thin lip so a scraper slides under it.
   Tick *Edit by hand* to add a support with a click or remove one with a right-click. There are no tree
   supports.
 - **Print checks**, run during slicing on a 0.25 mm grid:
@@ -62,7 +65,8 @@ cargo build --release
     --layer-height 0.05 --exposure 2.5 --bottom-exposure 30 --bottom-layers 4
 
 # Placement: --scale F, --rotate-x/y/z DEG, --x MM --y MM (offset from the plate centre).
-# Supports: --lift MM, --overhang-angle DEG, --support-spacing MM.
+# Supports: --lift MM, --overhang-angle DEG, --support-spacing MM, --tip-diameter MM,
+#   --angled-tips on|off, --raft-slope DEG.
 # Hollowing: --hollow WALL_MM, --drain-holes on|off, --hole-diameter MM.
 # Anti-aliasing: --aa 2|4|8.  Checks: --checks on|off.
 
