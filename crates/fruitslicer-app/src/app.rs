@@ -1274,6 +1274,19 @@ impl App {
         ui.checkbox(&mut self.prefs.auto_supports, "Automatic supports");
         let s = &mut self.prefs.supports;
         egui::Grid::new("supports").num_columns(2).show(ui, |ui| {
+            ui.label("Style");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut s.tree, true, "Tree")
+                    .on_hover_text("Neighbouring supports lean in and merge into shared trunks: fewer feet, and they come off in clusters");
+                ui.selectable_value(&mut s.tree, false, "Columns");
+            });
+            ui.end_row();
+            if s.tree {
+                ui.label("Branch angle");
+                ui.add(egui::Slider::new(&mut s.branch_angle_deg, 10.0..=50.0).suffix("°"))
+                    .on_hover_text("Most a branch leans from vertical. Steeper branches merge less.");
+                ui.end_row();
+            }
             ui.label("Overhang angle");
             ui.add(egui::Slider::new(&mut s.overhang_angle_deg, 10.0..=80.0).suffix("°"))
                 .on_hover_text("Downward faces flatter than this get supports");
@@ -1409,8 +1422,8 @@ impl App {
         ui.label(
             RichText::new(
                 "Thin, shallow tips that lean to meet sloped faces, on a raft with an \
-                 undercut edge. Straight columns only: no tree supports. Defaults come from slicer guides \
-                 and are untested on this printer.",
+                 undercut edge. Supports that land on the model stay straight. Defaults come from \
+                 slicer guides and are untested on this printer.",
             )
             .small()
             .weak(),

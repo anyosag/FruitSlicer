@@ -15,14 +15,14 @@ What it does:
 - **Load** STL (binary or ASCII), OBJ and 3MF files, by File > Open or by dropping them on the window.
   Several models can share the plate. Move them by dragging, or set scale, rotation and position in the
   left panel. *Lay flat*, *Arrange* and undo/redo (Ctrl+Z / Ctrl+Y) are there too.
-- **Automatic supports**: columns with tapered tips standing on a raft. Overhangs flatter than the set
+- **Automatic supports**, as trees (neighbouring supports lean in and merge into shared trunks, so there
+  are fewer feet and they come off in clusters) or as straight columns, standing on a raft. Overhangs flatter than the set
   angle get a grid of supports, and the lowest points of each downward part get one as well. They're
   shaped to come off cleanly: thin tips (0.35 mm) that reach only 0.12 mm into the model, tips that lean
   up to 30° to meet sloped faces head-on, bigger tips (0.5 mm) only at the low points that carry the
   most pull, and a raft with an undercut edge (it flares out at 45° from a smaller footprint), so there is a gap at
   the plate for a scraper to slip into.
-  Tick *Edit by hand* to add a support with a click or remove one with a right-click. There are no tree
-  supports.
+  Tick *Edit by hand* to add a support with a click or remove one with a right-click.
 - **Print checks**, run during slicing on a 0.25 mm grid:
   - *Island*: a region that starts in mid-air with nothing under it.
   - *Unsupported overhang*: a region more than 2.5 mm from anything in the layer below.
@@ -53,7 +53,7 @@ says so in the status bar.
 - `tools/goo_check.py`: a second, separately written checker (Python standard library only) that walks a
   `.goo` file byte by byte from the spec.
 
-Not built: WiFi upload to the printer, tree supports and GOO V5. The print time shown is a rough
+Not built: WiFi upload to the printer and GOO V5. The print time shown is a rough
 guess (exposure plus 5 s per layer for the tilt), not measured on the printer.
 
 ## Command line

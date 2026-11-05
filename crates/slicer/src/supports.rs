@@ -1,5 +1,5 @@
-//! Automatic supports: straight columns with tapered tips, standing on a
-//! raft or on the model itself.
+//! Automatic supports: tapered tips on tree branches or straight columns,
+//! standing on a raft or on the model itself.
 //!
 //! How points are chosen:
 //!
@@ -25,8 +25,11 @@
 //! - The raft's edge is undercut (it flares out at 45° from a smaller
 //!   footprint), so there's a gap at the plate for a scraper to slip into.
 //!
-//! What this does not do: branching or tree supports, moving supports off
-//! the model to avoid marks, or bracing between columns. Defaults are
+//! With `tree` on, supports that go to the raft lean in and merge pairwise
+//! into thicker trunks wherever the branches stay clear of the model.
+//!
+//! What this does not do: moving supports off the model to avoid marks,
+//! or bracing between columns. Defaults are
 //! starting points from slicer guides, not values tested on this printer.
 
 use crate::mesh::{Mesh, Triangle, Vec3};
@@ -67,6 +70,15 @@ pub struct SupportParams {
     pub raft_lip_angle_deg: f32,
     /// Also support local minima (downward points).
     pub support_minima: bool,
+    /// Tree supports: neighbouring supports lean in and merge into shared
+    /// trunks, so there are fewer feet and they come off in clusters.
+    pub tree: bool,
+    /// Most a branch leans from vertical, degrees.
+    pub branch_angle_deg: f32,
+    /// Furthest apart (sideways) two branches can be and still merge.
+    pub max_branch_mm: f32,
+    /// Trunks thicken as branches join, up to this diameter.
+    pub trunk_diameter_mm: f32,
     /// Sides of each column's cross-section.
     pub segments: usize,
 }
@@ -90,6 +102,10 @@ impl Default for SupportParams {
             raft_lip_mm: 0.8,
             raft_lip_angle_deg: 45.0,
             support_minima: true,
+            tree: true,
+            branch_angle_deg: 35.0,
+            max_branch_mm: 10.0,
+            trunk_diameter_mm: 3.0,
             segments: 8,
         }
     }
@@ -231,7 +247,12 @@ pub fn generate_edited(
             points.extend(index.place(top, None, false, p));
         }
     }
-    let supports = build(&points, p);
+    let supports = if p.tree && p.lift_mm > 0.0 {
+        let index = RayIndex::new(&model, p.spacing_mm.max(1.0), p.overhang_angle_deg);
+        build_tree(&index, &points, p)
+    } else {
+        build(&points, p)
+    };
     Ok(Supported {
         model,
         supports,
@@ -749,6 +770,225 @@ pub fn build(points: &[SupportPoint], p: &SupportParams) -> Mesh {
     out
 }
 
+/// A node in a support tree: where a branch ends, or where two meet.
+struct TreeNode {
+    p: Vec3,
+    r: f32,
+    parent: Option<usize>,
+    alive: bool,
+}
+
+/// Where two branches tipped at `a` and `b` would meet, leaning at most
+/// `tan` (tangent of the branch angle) from vertical.
+fn merge_point(a: Vec3, b: Vec3, tan: f32) -> Vec3 {
+    let (a, b) = if a[2] >= b[2] { (a, b) } else { (b, a) };
+    let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+    if d < 1e-6 {
+        return [a[0], a[1], b[2] - 0.5];
+    }
+    // Sideways distance from a, chosen so both branches lean equally far.
+    let ha = ((d + (a[2] - b[2]) * tan) / 2.0).clamp(0.0, d);
+    let hb = d - ha;
+    let z = (a[2] - ha / tan).min(b[2] - hb / tan).min(b[2] - 0.5);
+    let t = ha / d;
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, z]
+}
+
+impl RayIndex<'_> {
+    /// Whether a rod of radius `r` from `a` to `b` stays clear of the model.
+    fn rod_clear(&self, a: Vec3, b: Vec3, r: f32) -> bool {
+        let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        let n = (len / 0.5).ceil().max(1.0) as usize;
+        let o = r + 0.3;
+        (1..=n).all(|k| {
+            let t = k as f32 / n as f32;
+            let [x, y, z] = [a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t];
+            [[0.0, 0.0], [o, 0.0], [-o, 0.0], [0.0, o], [0.0, -o]]
+                .iter()
+                .all(|q| self.outside(x + q[0], y + q[1], z))
+        })
+    }
+}
+
+/// Tree supports: supports that go to the raft lean in and merge pairwise
+/// into thicker trunks wherever the branches stay clear of the model.
+/// Supports that end on the model stay straight.
+fn build_tree(index: &RayIndex, points: &[SupportPoint], p: &SupportParams) -> Mesh {
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
+
+    let (on_model, to_raft): (Vec<SupportPoint>, Vec<SupportPoint>) =
+        points.iter().partition(|q| q.on_model);
+    let mut out = build(&on_model, p);
+    let n = p.segments.max(3);
+    let ground = p.ground();
+    let r_leaf = p.column_diameter_mm / 2.0;
+    let r_max = (p.trunk_diameter_mm / 2.0).max(r_leaf);
+    let rf = p.foot_diameter_mm / 2.0;
+    let tan = p.branch_angle_deg.clamp(5.0, 60.0).to_radians().tan();
+    let min_z = ground + p.foot_height_mm + 0.5;
+
+    // Tips, and a leaf node where each tip ends.
+    let mut nodes: Vec<TreeNode> = Vec::new();
+    for sp in &to_raft {
+        let rt = if sp.strong {
+            p.strong_tip_diameter_mm / 2.0
+        } else {
+            p.tip_diameter_mm / 2.0
+        };
+        let d = sp.tip_dir;
+        let start = [
+            sp.top[0] - d[0] * p.tip_penetration_mm,
+            sp.top[1] - d[1] * p.tip_penetration_mm,
+            sp.top[2] - d[2] * p.tip_penetration_mm,
+        ];
+        let e = sp.column_top(p.tip_length_mm);
+        out.append(rod(e, start, r_leaf, rt, n));
+        nodes.push(TreeNode {
+            p: e,
+            r: r_leaf,
+            parent: None,
+            alive: true,
+        });
+    }
+
+    // Merge the pair that can meet highest, again and again.
+    let cell = p.max_branch_mm.max(1.0);
+    let key = |v: Vec3| ((v[0] / cell).floor() as i64, (v[1] / cell).floor() as i64);
+    let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, nd) in nodes.iter().enumerate() {
+        grid.entry(key(nd.p)).or_default().push(i);
+    }
+    let mut heap: BinaryHeap<(i64, Reverse<usize>, Reverse<usize>)> = BinaryHeap::new();
+    let candidates = |i: usize, nodes: &[TreeNode], grid: &HashMap<(i64, i64), Vec<usize>>| {
+        let a = nodes[i].p;
+        let (kx, ky) = key(a);
+        let mut found = Vec::new();
+        if nodes[i].r >= r_max - 1e-4 {
+            return found;
+        }
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                for &j in grid.get(&(kx + dx, ky + dy)).into_iter().flatten() {
+                    // A full-thickness trunk takes no more branches, so
+                    // trees stay small and don't pile up into a knot.
+                    if j == i || !nodes[j].alive || nodes[j].r >= r_max - 1e-4 {
+                        continue;
+                    }
+                    let b = nodes[j].p;
+                    if (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) > cell * cell {
+                        continue;
+                    }
+                    let m = merge_point(a, b, tan);
+                    if m[2] >= min_z {
+                        found.push(((m[2] * 1000.0) as i64, Reverse(i.min(j)), Reverse(i.max(j))));
+                    }
+                }
+            }
+        }
+        found
+    };
+    for i in 0..nodes.len() {
+        for c in candidates(i, &nodes, &grid) {
+            if c.1 .0 == i {
+                heap.push(c);
+            }
+        }
+    }
+    while let Some((_, Reverse(i), Reverse(j))) = heap.pop() {
+        if !nodes[i].alive || !nodes[j].alive {
+            continue;
+        }
+        let (a, b) = (nodes[i].p, nodes[j].p);
+        let m = merge_point(a, b, tan);
+        let r = (nodes[i].r.powi(2) + nodes[j].r.powi(2)).sqrt().min(r_max);
+        let clear = !index.landing(m[0], m[1], m[2], ground).1
+            && index.rod_clear(a, m, nodes[i].r)
+            && index.rod_clear(b, m, nodes[j].r)
+            && index.rod_clear(m, [m[0], m[1], ground], r);
+        if !clear {
+            continue;
+        }
+        let k = nodes.len();
+        nodes.push(TreeNode {
+            p: m,
+            r,
+            parent: None,
+            alive: true,
+        });
+        for c in [i, j] {
+            nodes[c].alive = false;
+            nodes[c].parent = Some(k);
+        }
+        grid.entry(key(m)).or_default().push(k);
+        heap.extend(candidates(k, &nodes, &grid));
+    }
+
+    // Branches, joints and trunks.
+    let on_raft = p.raft_mm > 0.0;
+    let mut feet = Vec::new();
+    for nd in &nodes {
+        out.append(ball(nd.p, nd.r, n));
+        match nd.parent {
+            Some(q) => out.append(rod(nodes[q].p, nd.p, nodes[q].r, nd.r, n)),
+            None => {
+                let [x, y, z] = nd.p;
+                let zb = ground;
+                let bottom = if on_raft { zb - p.raft_mm.min(0.2) } else { zb };
+                let rfoot = rf.max(nd.r * 1.5);
+                let rings: Vec<(f32, f32)> = if z - zb > p.foot_height_mm {
+                    vec![(z, nd.r), (zb + p.foot_height_mm, nd.r), (bottom, rfoot)]
+                } else {
+                    vec![(z, nd.r), (bottom, rfoot)]
+                };
+                out.append(lathe([x, y], &rings, n));
+                feet.push(([x, y], rfoot));
+            }
+        }
+    }
+    if on_raft && !feet.is_empty() {
+        let rmax = feet.iter().map(|f| f.1).fold(0.0, f32::max);
+        let (x0, x1) = minmax(feet.iter().map(|f| f.0[0]));
+        let (y0, y1) = minmax(feet.iter().map(|f| f.0[1]));
+        let lip = p.raft_lip_mm.min(p.raft_mm);
+        let inset = if p.raft_lip_angle_deg >= 89.9 {
+            0.0
+        } else {
+            lip / p.raft_lip_angle_deg.to_radians().tan()
+        };
+        let m = p.raft_margin_mm + rmax;
+        out.append(raft(
+            [x0 - m, y0 - m],
+            [x1 + m, y1 + m],
+            p.raft_mm,
+            lip,
+            inset,
+        ));
+    }
+    out
+}
+
+/// A tapered rod from `lo` (radius `rl`) to `hi` (radius `rh`).
+fn rod(lo: Vec3, hi: Vec3, rl: f32, rh: f32, n: usize) -> Mesh {
+    let d = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    if len < 1e-5 {
+        return Mesh::default();
+    }
+    let up = [d[0] / len, d[1] / len, d[2] / len];
+    lathe_axis(lo, up, &[(len, rh), (0.0, rl)], n)
+}
+
+/// A rough ball, to round off joints.
+fn ball(c: Vec3, r: f32, n: usize) -> Mesh {
+    let rings: Vec<(f32, f32)> = [1.0f32, 0.7, 0.0, -0.7, -1.0]
+        .iter()
+        .map(|&k| (c[2] + k * r, r * (1.0 - k * k).sqrt().max(0.05)))
+        .collect();
+    lathe([c[0], c[1]], &rings, n)
+}
+
 /// A raft over `min`..`max`, `t` thick. Its edge is undercut: the
 /// bottom is inset by `inset`, and the sides flare out to the full size at
 /// height `lip`, so there's a gap at the plate for a scraper to slip into.
@@ -1097,5 +1337,56 @@ mod tests {
             ..Default::default()
         };
         assert!(p.validate().is_err());
+    }
+
+    /// Number of support feet: lathe bottoms buried 0.2 mm in the raft.
+    fn feet(m: &Mesh, p: &SupportParams) -> usize {
+        let z = p.raft_mm - 0.2;
+        let mut v: Vec<(i64, i64)> = m
+            .triangles
+            .iter()
+            .flatten()
+            .filter(|q| (q[2] - z).abs() < 1e-4)
+            .map(|q| ((q[0] * 1e3).round() as i64, (q[1] * 1e3).round() as i64))
+            .collect();
+        v.sort();
+        v.dedup();
+        v.len() / (p.segments + 1)
+    }
+
+    #[test]
+    fn tree_supports_share_trunks() {
+        // A table: its top is 10 mm up, so there's room for branches.
+        let mut m = Mesh::cuboid([-15.0, -15.0, 10.0], [15.0, 15.0, 12.0]);
+        m.append(Mesh::cuboid([-1.0, -1.0, 0.0], [1.0, 1.0, 10.0]));
+        let tree = SupportParams::default();
+        let cols = SupportParams {
+            tree: false,
+            ..tree
+        };
+        let (t, c) = (generate(&m, &tree).unwrap(), generate(&m, &cols).unwrap());
+        assert_eq!(t.points.len(), c.points.len());
+        let (ft, fc) = (feet(&t.supports, &tree), feet(&c.supports, &cols));
+        let raft = c.points.iter().filter(|q| !q.on_model).count();
+        assert!(fc + 5 >= raft, "{fc} feet for {raft} columns");
+        assert!(ft * 3 <= fc, "{ft} trunks for {fc} columns");
+        assert!(signed_volume(&t.supports) > 0.0);
+    }
+
+    #[test]
+    fn merge_point_respects_the_branch_angle() {
+        let tan = 35f32.to_radians().tan();
+        for (a, b) in [
+            ([0.0, 0.0, 20.0], [6.0, 0.0, 20.0]),
+            ([0.0, 0.0, 20.0], [3.0, 4.0, 15.0]),
+            ([0.0, 0.0, 20.0], [1.0, 0.0, 5.0]),
+        ] {
+            let m = merge_point(a, b, tan);
+            for q in [a, b] {
+                let h = ((q[0] - m[0]).powi(2) + (q[1] - m[1]).powi(2)).sqrt();
+                assert!(q[2] - m[2] >= 0.5 - 1e-4);
+                assert!(h <= (q[2] - m[2]) * tan + 1e-3, "{q:?} -> {m:?}");
+            }
+        }
     }
 }
