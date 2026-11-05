@@ -100,7 +100,7 @@ impl RectMm {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IssueKind {
     Island,
     UnsupportedOverhang,
@@ -135,6 +135,8 @@ pub struct Issue {
 
 /// Thresholds for the checks.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct CheckParams {
     /// Size of a coarse cell in mm.
     pub cell_mm: f64,
@@ -404,7 +406,10 @@ impl PrintChecker {
 
     /// Adds the next layer in print order.
     pub fn push_layer(&mut self, layer: CoarseLayer) {
-        assert_eq!((layer.width, layer.height), (self.grid.width, self.grid.height));
+        assert_eq!(
+            (layer.width, layer.height),
+            (self.grid.width, self.grid.height)
+        );
         let bbox = solid_bbox(&layer);
         // Work only on the area around solid cells in this or the previous
         // layer, plus a one-cell margin of open air.
@@ -610,9 +615,7 @@ impl PrintChecker {
             }
             let (gx, gy) = (i % w + c.x0, i / w + c.y0);
             let prev = match prev_crop {
-                Some(p) if p.contains(gx, gy) => {
-                    self.prev_air[(gy - p.y0) * p.w() + (gx - p.x0)]
-                }
+                Some(p) if p.contains(gx, gy) => self.prev_air[(gy - p.y0) * p.w() + (gx - p.x0)],
                 _ => OPEN as u32,
             };
             if prev != u32::MAX {

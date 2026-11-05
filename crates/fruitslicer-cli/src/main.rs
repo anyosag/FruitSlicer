@@ -9,7 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use goo::GooFile;
 use slicer::checks::CheckParams;
-use slicer::{slice_to_goo_with, stl, Mesh, PrintSettings, Printer, SliceHooks, SATURN_4_ULTRA_16K};
+use slicer::{
+    slice_to_goo_with, stl, Mesh, PrintSettings, Printer, SliceHooks, SATURN_4_ULTRA_16K,
+};
 
 const USAGE: &str = "usage:
   fruitslicer slice <model.stl> [--out file.goo] [placement] [settings]
@@ -298,10 +300,19 @@ fn run_slice(
     }
     for i in &r.issues {
         let c = i.area.center();
-        let unit = if i.kind == slicer::checks::IssueKind::TrappedResin { "mm3" } else { "mm2" };
+        let unit = if i.kind == slicer::checks::IssueKind::TrappedResin {
+            "mm3"
+        } else {
+            "mm2"
+        };
         eprintln!(
             "check: {} at layers {}-{}, around ({:.1}, {:.1}) mm, {:.1} {unit}",
-            i.kind.label(), i.first_layer, i.last_layer, c[0], c[1], i.size
+            i.kind.label(),
+            i.first_layer,
+            i.last_layer,
+            c[0],
+            c[1],
+            i.size
         );
     }
     eprintln!("note: exposure defaults are placeholders; set them for your resin before printing.");

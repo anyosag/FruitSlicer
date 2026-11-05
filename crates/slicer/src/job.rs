@@ -115,9 +115,9 @@ pub fn slice_to_goo_with(
         mm_per_px_y: mm_y,
     };
 
-    let coarse_grid = hooks.checks.map(|c| {
-        CoarseGrid::for_plate(printer.size_x as f64, printer.size_y as f64, c.cell_mm)
-    });
+    let coarse_grid = hooks
+        .checks
+        .map(|c| CoarseGrid::for_plate(printer.size_x as f64, printer.size_y as f64, c.cell_mm));
     let mut checker = hooks
         .checks
         .zip(coarse_grid)
@@ -160,8 +160,7 @@ pub fn slice_to_goo_with(
         });
         for (k, cell) in results.into_iter().enumerate() {
             let layer = start + k as u32;
-            let (data, lit, coarse) =
-                cell.into_inner().unwrap().expect("every layer is computed");
+            let (data, lit, coarse) = cell.into_inner().unwrap().expect("every layer is computed");
             if let (Some(c), Some(l)) = (checker.as_mut(), coarse) {
                 c.push_layer(l);
             }

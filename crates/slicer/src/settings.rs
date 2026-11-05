@@ -7,6 +7,8 @@ use crate::printer::Printer;
 /// Per-print exposure settings. The defaults are placeholders, not tuned for
 /// any resin: use your resin maker's numbers.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct PrintSettings {
     pub layer_mm: f32,
     pub exposure_s: f32,

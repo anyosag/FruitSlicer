@@ -210,18 +210,29 @@ fn checks_find_a_cup_and_an_island_on_the_real_grid() {
     )
     .unwrap();
     assert!(progress_calls.into_inner() > 0);
-    let cups: Vec<_> = r.issues.iter().filter(|i| i.kind == IssueKind::SuctionCup).collect();
+    let cups: Vec<_> = r
+        .issues
+        .iter()
+        .filter(|i| i.kind == IssueKind::SuctionCup)
+        .collect();
     assert_eq!(cups.len(), 1, "{:?}", r.issues);
     // Inner hollow is 16 x 16 mm = 256 mm^2, give or take a cell.
     assert!((cups[0].size - 256.0).abs() < 20.0, "{:?}", cups[0]);
     assert_eq!(cups[0].first_layer, 20); // first layer above the 1 mm floor
     let c = cups[0].area.center();
     assert!(c[0].abs() < 0.5 && c[1].abs() < 0.5, "{c:?}");
-    let islands: Vec<_> = r.issues.iter().filter(|i| i.kind == IssueKind::Island).collect();
+    let islands: Vec<_> = r
+        .issues
+        .iter()
+        .filter(|i| i.kind == IssueKind::Island)
+        .collect();
     assert_eq!(islands.len(), 1, "{:?}", r.issues);
     assert_eq!(islands[0].first_layer, 60);
     let c = islands[0].area.center();
-    assert!((c[0] - 41.5).abs() < 0.5 && (c[1] - 1.5).abs() < 0.5, "{c:?}");
+    assert!(
+        (c[0] - 41.5).abs() < 0.5 && (c[1] - 1.5).abs() < 0.5,
+        "{c:?}"
+    );
 }
 
 #[test]
@@ -246,7 +257,10 @@ fn cancelling_stops_the_slice() {
 }
 
 /// Slices with checks on and returns the islands found.
-fn islands_after_supports(model: &Mesh, p: &slicer::supports::SupportParams) -> Vec<slicer::checks::Issue> {
+fn islands_after_supports(
+    model: &Mesh,
+    p: &slicer::supports::SupportParams,
+) -> Vec<slicer::checks::Issue> {
     use slicer::checks::{CheckParams, IssueKind};
     use slicer::{slice_to_goo_with, SliceHooks};
     let mut placed = model.clone();
@@ -266,7 +280,10 @@ fn islands_after_supports(model: &Mesh, p: &slicer::supports::SupportParams) -> 
         },
     )
     .unwrap();
-    r.issues.into_iter().filter(|i| i.kind == IssueKind::Island).collect()
+    r.issues
+        .into_iter()
+        .filter(|i| i.kind == IssueKind::Island)
+        .collect()
 }
 
 #[test]

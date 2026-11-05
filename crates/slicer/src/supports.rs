@@ -21,6 +21,8 @@
 use crate::mesh::{Mesh, Triangle, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct SupportParams {
     /// Gap between the raft and the model's lowest point, in mm.
     pub lift_mm: f32,
@@ -426,7 +428,10 @@ impl PointHash {
     }
 
     fn key(&self, x: f32, y: f32) -> (i64, i64) {
-        ((x / self.cell).floor() as i64, (y / self.cell).floor() as i64)
+        (
+            (x / self.cell).floor() as i64,
+            (y / self.cell).floor() as i64,
+        )
     }
 
     fn insert(&mut self, v: Vec3, i: usize) {
@@ -632,7 +637,9 @@ mod tests {
             .collect();
         assert!(under_top.len() >= 9, "{} under the top", under_top.len());
         assert!(
-            under_top.iter().all(|q| !q.on_model && q.bottom_z == p.raft_mm),
+            under_top
+                .iter()
+                .all(|q| !q.on_model && q.bottom_z == p.raft_mm),
             "supports under the table top go to the raft"
         );
         assert!(!under_legs.is_empty());
@@ -662,7 +669,9 @@ mod tests {
             .filter(|q| (q.top[2] - 12.0).abs() < 1e-3)
             .collect();
         assert!(!shelf.is_empty());
-        assert!(shelf.iter().all(|q| q.on_model && (q.bottom_z - 2.0).abs() < 1e-3));
+        assert!(shelf
+            .iter()
+            .all(|q| q.on_model && (q.bottom_z - 2.0).abs() < 1e-3));
         // Lift 0: the base sits on the plate and needs nothing.
         assert!(s.points.iter().all(|q| q.top[2] > 1.0));
     }
@@ -690,7 +699,12 @@ mod tests {
             [0.2, 0.4, 10.0],
             [0.2, 0.15, 5.0],
         );
-        m.append(Mesh::new(vec![[a, c, b], [a, b, tip], [b, c, tip], [c, a, tip]]));
+        m.append(Mesh::new(vec![
+            [a, c, b],
+            [a, b, tip],
+            [b, c, tip],
+            [c, a, tip],
+        ]));
         let p = SupportParams {
             lift_mm: 0.0,
             spacing_mm: 7.0,
