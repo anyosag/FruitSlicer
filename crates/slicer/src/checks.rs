@@ -152,7 +152,7 @@ impl Default for CheckParams {
     fn default() -> Self {
         Self {
             cell_mm: 0.25,
-            overhang_mm: 1.0,
+            overhang_mm: 2.5,
             min_area_mm2: 0.1,
             min_cup_area_mm2: 1.0,
         }
@@ -246,14 +246,76 @@ struct Hollow {
     cup_last: u32,
 }
 
+/// A rectangle of cells, half-open: `[x0, x1) x [y0, y1)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Crop {
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+impl Crop {
+    fn w(&self) -> usize {
+        self.x1 - self.x0
+    }
+    fn h(&self) -> usize {
+        self.y1 - self.y0
+    }
+    fn contains(&self, x: usize, y: usize) -> bool {
+        x >= self.x0 && x < self.x1 && y >= self.y0 && y < self.y1
+    }
+}
+
+/// Bounding box of solid cells, if any.
+fn solid_bbox(l: &CoarseLayer) -> Option<Crop> {
+    let mut b: Option<Crop> = None;
+    for y in 0..l.height {
+        let row = &l.cells[y * l.width..(y + 1) * l.width];
+        let Some(first) = row.iter().position(|&c| c) else {
+            continue;
+        };
+        let last = row.iter().rposition(|&c| c).unwrap();
+        b = Some(match b {
+            None => Crop {
+                x0: first,
+                y0: y,
+                x1: last + 1,
+                y1: y + 1,
+            },
+            Some(b) => Crop {
+                x0: b.x0.min(first),
+                y0: b.y0,
+                x1: b.x1.max(last + 1),
+                y1: y + 1,
+            },
+        });
+    }
+    b
+}
+
+fn crop_layer(l: &CoarseLayer, c: &Crop) -> CoarseLayer {
+    let mut out = CoarseLayer::empty(c.w(), c.h());
+    for y in c.y0..c.y1 {
+        let src = &l.cells[y * l.width + c.x0..y * l.width + c.x1];
+        out.cells[(y - c.y0) * c.w()..(y - c.y0 + 1) * c.w()].copy_from_slice(src);
+    }
+    out
+}
+
+/// The id of the open vat: all air outside the model, always vented.
+const OPEN: usize = 0;
+
 /// Runs the checks one layer at a time.
 pub struct PrintChecker {
     grid: CoarseGrid,
     params: CheckParams,
     layer: u32,
     prev: Option<CoarseLayer>,
-    /// Air labels of the previous layer, mapped to hollow ids.
+    prev_bbox: Option<Crop>,
+    /// Air labels of the previous layer inside `prev_crop`, as hollow ids.
     prev_air: Vec<u32>,
+    prev_crop: Option<Crop>,
     hollows: Vec<Hollow>,
     issues: Vec<Issue>,
     scratch: Vec<u32>,
@@ -268,8 +330,19 @@ impl PrintChecker {
             params,
             layer: 0,
             prev: None,
+            prev_bbox: None,
             prev_air: Vec::new(),
-            hollows: Vec::new(),
+            prev_crop: None,
+            hollows: vec![Hollow {
+                parent: OPEN,
+                vented: true,
+                cells: 0,
+                max_area_cells: 0,
+                first_layer: 0,
+                bbox: CellBox::point(0, 0),
+                cup_first: None,
+                cup_last: 0,
+            }],
             issues: Vec::new(),
             scratch: Vec::new(),
             air_scratch: Vec::new(),
@@ -311,10 +384,12 @@ impl PrintChecker {
         let g = self.hollows[gone].clone();
         let k = &mut self.hollows[keep];
         k.vented |= g.vented;
-        k.cells += g.cells;
-        k.max_area_cells = k.max_area_cells.max(g.max_area_cells);
-        k.first_layer = k.first_layer.min(g.first_layer);
-        k.bbox.union(&g.bbox);
+        if keep != OPEN {
+            k.cells += g.cells;
+            k.max_area_cells = k.max_area_cells.max(g.max_area_cells);
+            k.first_layer = k.first_layer.min(g.first_layer);
+            k.bbox.union(&g.bbox);
+        }
         k.cup_first = match (k.cup_first, g.cup_first) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -330,17 +405,46 @@ impl PrintChecker {
     /// Adds the next layer in print order.
     pub fn push_layer(&mut self, layer: CoarseLayer) {
         assert_eq!((layer.width, layer.height), (self.grid.width, self.grid.height));
-        self.check_islands_and_overhangs(&layer);
-        self.track_hollows(&layer);
+        let bbox = solid_bbox(&layer);
+        // Work only on the area around solid cells in this or the previous
+        // layer, plus a one-cell margin of open air.
+        let crop = match (bbox, self.prev_bbox) {
+            (None, None) => None,
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (Some(a), Some(b)) => Some(Crop {
+                x0: a.x0.min(b.x0),
+                y0: a.y0.min(b.y0),
+                x1: a.x1.max(b.x1),
+                y1: a.y1.max(b.y1),
+            }),
+        }
+        .map(|c| Crop {
+            x0: c.x0.saturating_sub(1),
+            y0: c.y0.saturating_sub(1),
+            x1: (c.x1 + 1).min(self.grid.width),
+            y1: (c.y1 + 1).min(self.grid.height),
+        });
+        match crop {
+            Some(c) => {
+                let cur = crop_layer(&layer, &c);
+                if let Some(prev) = &self.prev {
+                    let prev = crop_layer(prev, &c);
+                    self.check_islands_and_overhangs(&cur, &prev, &c);
+                }
+                self.track_hollows(&cur, &c);
+            }
+            None => {
+                self.prev_air.clear();
+                self.prev_crop = None;
+            }
+        }
         self.prev = Some(layer);
+        self.prev_bbox = bbox;
         self.layer += 1;
     }
 
-    fn check_islands_and_overhangs(&mut self, layer: &CoarseLayer) {
+    fn check_islands_and_overhangs(&mut self, layer: &CoarseLayer, prev: &CoarseLayer, c: &Crop) {
         let (w, h) = (layer.width, layer.height);
-        let Some(prev) = &self.prev else {
-            return; // layer 0 rests on the plate
-        };
         let n = label(layer, true, &mut self.scratch);
         // Per region: does it touch the previous layer, its cell box, size.
         let mut supported = vec![false; n];
@@ -352,7 +456,7 @@ impl PrintChecker {
                 continue;
             }
             let l = l as usize;
-            let (x, y) = (i % w, i / w);
+            let (x, y) = (i % w + c.x0, i / w + c.y0);
             counts[l] += 1;
             match &mut boxes[l] {
                 Some(b) => b.add(x, y),
@@ -362,9 +466,9 @@ impl PrintChecker {
                 supported[l] = true;
             }
         }
-        let min_cells = (self.params.min_area_mm2 / self.cell_area()).ceil() as u64;
+        let min_cells = ((self.params.min_area_mm2 / self.cell_area()).ceil() as u64).max(1);
         for l in 0..n {
-            if !supported[l] && counts[l] >= min_cells.max(1) {
+            if !supported[l] && counts[l] >= min_cells {
                 self.issues.push(Issue {
                     kind: IssueKind::Island,
                     first_layer: self.layer,
@@ -375,41 +479,46 @@ impl PrintChecker {
             }
         }
 
-        // Overhangs: distance (in cells, 4-connected, through the current
-        // layer's solid) from the previous layer's solid.
-        let limit = (self.params.overhang_mm / self.grid.cell_mm).ceil() as u32;
+        // Overhangs: distance through the current layer's solid from the
+        // previous layer's solid, 8-connected, in half cells (2 per straight
+        // step, 3 per diagonal step).
+        let limit = (2.0 * self.params.overhang_mm / self.grid.cell_mm).round() as u32;
         self.dist.clear();
         self.dist.resize(w * h, u32::MAX);
-        let mut queue = std::collections::VecDeque::new();
+        let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); limit as usize + 4];
         for i in 0..w * h {
             if layer.cells[i] && prev.cells[i] {
                 self.dist[i] = 0;
-                queue.push_back(i);
+                buckets[0].push(i);
             }
         }
-        while let Some(i) = queue.pop_front() {
-            let d = self.dist[i];
-            if d > limit {
-                continue;
-            }
-            let (x, y) = (i % w, i / w);
-            let mut nb = |j: usize| {
-                if layer.cells[j] && self.dist[j] == u32::MAX {
-                    self.dist[j] = d + 1;
-                    queue.push_back(j);
+        for d in 0..=limit as usize {
+            while let Some(i) = buckets[d].pop() {
+                if self.dist[i] != d as u32 {
+                    continue;
                 }
-            };
-            if x > 0 {
-                nb(i - 1);
-            }
-            if x + 1 < w {
-                nb(i + 1);
-            }
-            if y > 0 {
-                nb(i - w);
-            }
-            if y + 1 < h {
-                nb(i + w);
+                let (x, y) = ((i % w) as i64, (i / w) as i64);
+                for (dx, dy, cost) in [
+                    (-1, 0, 2),
+                    (1, 0, 2),
+                    (0, -1, 2),
+                    (0, 1, 2),
+                    (-1, -1, 3),
+                    (1, -1, 3),
+                    (-1, 1, 3),
+                    (1, 1, 3),
+                ] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                        continue;
+                    }
+                    let j = ny as usize * w + nx as usize;
+                    let nd = d as u32 + cost;
+                    if layer.cells[j] && nd < self.dist[j] && nd <= limit + 3 {
+                        self.dist[j] = nd;
+                        buckets[nd as usize].push(j);
+                    }
+                }
             }
         }
         // Group far cells per supported region.
@@ -417,15 +526,11 @@ impl PrintChecker {
         let mut far_count = vec![0u64; n];
         for i in 0..w * h {
             let l = self.scratch[i];
-            if l == u32::MAX || !supported[l as usize] {
-                continue;
-            }
-            let d = self.dist[i];
-            if d != u32::MAX && d <= limit {
+            if l == u32::MAX || !supported[l as usize] || self.dist[i] <= limit {
                 continue;
             }
             let l = l as usize;
-            let (x, y) = (i % w, i / w);
+            let (x, y) = (i % w + c.x0, i / w + c.y0);
             far_count[l] += 1;
             match &mut far_box[l] {
                 Some(b) => b.add(x, y),
@@ -433,7 +538,7 @@ impl PrintChecker {
             }
         }
         for l in 0..n {
-            if far_count[l] >= min_cells.max(1) {
+            if far_count[l] >= min_cells {
                 self.issues.push(Issue {
                     kind: IssueKind::UnsupportedOverhang,
                     first_layer: self.layer,
@@ -445,14 +550,15 @@ impl PrintChecker {
         }
     }
 
-    fn track_hollows(&mut self, layer: &CoarseLayer) {
+    fn track_hollows(&mut self, layer: &CoarseLayer, c: &Crop) {
         let (w, h) = (layer.width, layer.height);
         let n = label(layer, false, &mut self.air_scratch);
         // A hollow id for each air region in this layer.
         let base = self.hollows.len();
-        for k in 0..n {
+        for _ in 0..n {
+            let id = self.hollows.len();
             self.hollows.push(Hollow {
-                parent: base + k,
+                parent: id,
                 vented: false,
                 cells: 0,
                 max_area_cells: 0,
@@ -464,6 +570,7 @@ impl PrintChecker {
         }
         let mut area = vec![0u64; n];
         let mut boxes: Vec<Option<CellBox>> = vec![None; n];
+        let mut touches_edge = vec![false; n];
         for i in 0..w * h {
             let l = self.air_scratch[i];
             if l == u32::MAX {
@@ -473,12 +580,12 @@ impl PrintChecker {
             let (x, y) = (i % w, i / w);
             area[l] += 1;
             match &mut boxes[l] {
-                Some(b) => b.add(x, y),
-                b => *b = Some(CellBox::point(x, y)),
+                Some(b) => b.add(x + c.x0, y + c.y0),
+                b => *b = Some(CellBox::point(x + c.x0, y + c.y0)),
             }
-            // Air at the LCD edge connects to the open vat.
+            // The crop's edge is open air around the model (or the LCD edge).
             if x == 0 || y == 0 || x + 1 == w || y + 1 == h {
-                self.hollows[base + l].vented = true;
+                touches_edge[l] = true;
             }
         }
         for l in 0..n {
@@ -487,44 +594,64 @@ impl PrintChecker {
             hl.max_area_cells = area[l];
             hl.bbox = boxes[l].unwrap();
         }
-        // Join with the previous layer's air above each cell (towards the plate).
-        if !self.prev_air.is_empty() {
-            for i in 0..w * h {
-                let (cur, prev) = (self.air_scratch[i], self.prev_air[i]);
-                if cur != u32::MAX && prev != u32::MAX {
-                    self.union(base + cur as usize, prev as usize);
-                }
+        for l in 0..n {
+            if touches_edge[l] {
+                self.union(base + l, OPEN);
             }
         }
-        // Track each root's area in this layer for cup size.
+        // Join with the previous layer's air at the same cell (towards the
+        // plate). Outside the previous crop there was only open air.
+        let prev_crop = self.prev_crop;
+        let had_prev = self.layer > 0;
+        for i in 0..w * h {
+            let cur = self.air_scratch[i];
+            if cur == u32::MAX || !had_prev {
+                continue;
+            }
+            let (gx, gy) = (i % w + c.x0, i / w + c.y0);
+            let prev = match prev_crop {
+                Some(p) if p.contains(gx, gy) => {
+                    self.prev_air[(gy - p.y0) * p.w() + (gx - p.x0)]
+                }
+                _ => OPEN as u32,
+            };
+            if prev != u32::MAX {
+                self.union(base + cur as usize, prev as usize);
+            }
+        }
+        // Each root's area in this layer, for cup size.
         let mut root_area: std::collections::HashMap<usize, u64> = Default::default();
         for l in 0..n {
             let r = self.find(base + l);
             *root_area.entry(r).or_default() += area[l];
         }
         // Hollows from the previous layer that did not continue were sealed.
-        let mut prev_roots: Vec<usize> = Vec::new();
-        for &p in self.prev_air.iter() {
-            if p != u32::MAX {
-                prev_roots.push(p as usize);
-            }
-        }
-        prev_roots.sort_unstable();
-        prev_roots.dedup();
+        let mut prev_ids: Vec<u32> = self
+            .prev_air
+            .iter()
+            .copied()
+            .filter(|&p| p != u32::MAX)
+            .collect();
+        prev_ids.sort_unstable();
+        prev_ids.dedup();
         let mut checked = std::collections::HashSet::new();
-        for p in prev_roots {
-            let r = self.find(p);
+        for p in prev_ids {
+            let r = self.find(p as usize);
             if !checked.insert(r) || root_area.contains_key(&r) {
                 continue;
             }
             self.seal(r);
         }
         for (&r, &a) in &root_area {
+            if r == OPEN {
+                continue;
+            }
+            let layer = self.layer;
             let hl = &mut self.hollows[r];
             hl.max_area_cells = hl.max_area_cells.max(a);
             if !hl.vented {
-                hl.cup_first.get_or_insert(self.layer);
-                hl.cup_last = self.layer;
+                hl.cup_first.get_or_insert(layer);
+                hl.cup_last = layer;
             }
         }
         // Remember this layer's air as hollow ids (roots resolved lazily).
@@ -536,6 +663,7 @@ impl PrintChecker {
                 (base + l as usize) as u32
             }
         }));
+        self.prev_crop = Some(*c);
     }
 
     /// A hollow `r` has no air in the current layer: it is closed off.

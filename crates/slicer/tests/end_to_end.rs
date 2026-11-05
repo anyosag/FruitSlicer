@@ -244,3 +244,51 @@ fn cancelling_stops_the_slice() {
     );
     assert!(matches!(r, Err(SliceError::Cancelled)));
 }
+
+/// Slices with checks on and returns the islands found.
+fn islands_after_supports(model: &Mesh, p: &slicer::supports::SupportParams) -> Vec<slicer::checks::Issue> {
+    use slicer::checks::{CheckParams, IssueKind};
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let mut placed = model.clone();
+    placed.place_on_plate([0.0, 0.0]);
+    let s = slicer::supports::generate(&placed, p).unwrap();
+    let r = slice_to_goo_with(
+        &s.combined(),
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "2026-11-05 00:00:00",
+        Vec::new(),
+        4,
+        &SliceHooks {
+            checks: Some(CheckParams::default()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    r.issues.into_iter().filter(|i| i.kind == IssueKind::Island).collect()
+}
+
+#[test]
+fn supported_sphere_has_no_islands_and_unsupported_one_does() {
+    let ball = sphere(8.0, 48, 96);
+    let p = slicer::supports::SupportParams::default();
+    let islands = islands_after_supports(&ball, &p);
+    assert!(islands.is_empty(), "{islands:?}");
+    // Without supports a lifted sphere's first layers float.
+    let mut lifted = ball.clone();
+    lifted.place_on_plate([0.0, 0.0]);
+    lifted.translate([0.0, 0.0, 5.0]);
+    let (r, _) = slice(&lifted, &SATURN_4_ULTRA_16K);
+    assert!(!r.empty_layers.is_empty());
+}
+
+#[test]
+fn supported_table_has_no_islands() {
+    let mut m = Mesh::cuboid([-10.0, -10.0, 10.0], [10.0, 10.0, 12.0]);
+    for (x, y) in [(-10.0, -10.0), (8.0, -10.0), (-10.0, 8.0), (8.0, 8.0)] {
+        m.append(Mesh::cuboid([x, y, 0.0], [x + 2.0, y + 2.0, 10.0]));
+    }
+    let islands = islands_after_supports(&m, &Default::default());
+    assert!(islands.is_empty(), "{islands:?}");
+}

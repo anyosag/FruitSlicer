@@ -13,6 +13,7 @@ pub mod printer;
 pub mod raster;
 pub mod settings;
 pub mod stl;
+pub mod supports;
 
 use std::fmt;
 
