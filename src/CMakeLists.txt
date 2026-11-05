@@ -21,6 +21,7 @@ add_library(fruit_core
   support/SupportIO.cpp
   support/SupportTree.cpp
   support/SupportValidator.cpp
+  support/OrientationSearch.cpp
   calibration/Coupons.cpp
   calibration/CalibrationPlates.cpp
 )

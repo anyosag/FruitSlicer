@@ -19,6 +19,7 @@
 #include "mesh/StlIO.h"
 #include "printer/PrinterProfile.h"
 #include "support/PointGenerator.h"
+#include "support/OrientationSearch.h"
 #include "support/SupportIO.h"
 #include "support/SupportTree.h"
 #include "support/SupportValidator.h"
@@ -395,6 +396,68 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
     return 0;
 }
 
+struct OrientCli {
+    int directions = 64, finalists = 6, top = 3;
+    std::vector<double> visible_from;  // flattened triples, model frame
+    std::string preview_dir;
+};
+
+int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_h, const OrientCli& o) {
+    TriangleMesh mesh = readMesh(path);
+    mesh.orientShellsOutward();
+    Transform base;
+    for (int i = 0; i < 3; ++i) base.m[i][i] = place.scale;
+    base = base.then(Transform::rotationXYZ(place.rotate[0], place.rotate[1], place.rotate[2]));
+    mesh.transform(base);
+    OrientOptions opt;
+    opt.directions = o.directions;
+    opt.finalists = o.finalists;
+    opt.elevation = place.elevate;
+    opt.cfg.layer_height = layer_h;
+    for (size_t i = 0; i + 2 < o.visible_from.size(); i += 3)
+        opt.visible_from.push_back({o.visible_from[i], o.visible_from[i + 1], o.visible_from[i + 2]});
+    const auto res = searchOrientations(mesh, opt);
+    const Transform rot_only = Transform::rotationXYZ(place.rotate[0], place.rotate[1], place.rotate[2]);
+    json list = json::array();
+    json input;
+    int shown = 0;
+    for (const auto& c : res) {
+        if (!c.evaluated) break;
+        // One --rotate that reproduces this orientation from the original file.
+        const Vec3 e = eulerXYZ(rot_only.then(c.rotation));
+        json j{{"rotate", {std::round(e.x * 100) / 100, std::round(e.y * 100) / 100, std::round(e.z * 100) / 100}},
+               {"points", c.points},
+               {"island_points", c.islands},
+               {"cosmetic_points", c.cosmetic_points},
+               {"peak_layer_area_mm2", std::round(c.peak_area)},
+               {"height_mm", std::round(c.height * 10) / 10},
+               {"uncovered", c.uncovered},
+               {"capacity_deficit_layers", c.capacity_deficits},
+               {"score", std::round(c.score * 1000) / 1000},
+               {"input_orientation", c.is_input}};
+        if (c.is_input) input = j;
+        if (shown < o.top) {
+            list.push_back(j);
+            if (!o.preview_dir.empty()) {
+                std::filesystem::create_directories(o.preview_dir);
+                TriangleMesh m = mesh;
+                m.transform(c.rotation);
+                placeOnPlate(m, {0, 0, 0}, place.elevate);
+                PointGenOptions po;
+                const auto pr = generateSupportPoints(m, opt.cfg, po);
+                RenderView v;
+                const std::string png = (std::filesystem::path(o.preview_dir) / ("orient_" + std::to_string(shown + 1) + ".png")).string();
+                renderPreview(png, m, pr.points, v);
+                list.back()["preview"] = png;
+            }
+            ++shown;
+        }
+    }
+    json r{{"file", path}, {"candidates", res.size()}, {"best", list}, {"input", input}};
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -479,12 +542,26 @@ int main(int argc, char** argv) {
     support->add_option("--preview", sopts.preview, "Preview PNG (from below)");
     support->add_flag("--no-validate", sopts.no_validate, "Skip the floating-island check");
 
+    OrientCli ocli;
+    auto* orient = app.add_subcommand("orient", "Search build orientations; prints the best --rotate values");
+    orient->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    addPlacement(orient, place);
+    orient->add_option("--layer", layer_h, "Layer height used to evaluate finalists (mm)");
+    orient->add_option("--directions", ocli.directions, "Candidate build directions");
+    orient->add_option("--finalists", ocli.finalists, "Candidates evaluated with the full generator");
+    orient->add_option("--top", ocli.top, "How many results to print");
+    orient->add_option("--visible-from", ocli.visible_from,
+                       "Cosmetic hint in the model's own frame: faces seen from this direction (x y z), repeatable")
+        ->expected(3, 30);
+    orient->add_option("--preview-dir", ocli.preview_dir, "Write a preview PNG for each printed result");
+
     CLI11_PARSE(app, argc, argv);
     try {
         if (*info) return cmdInfo(in_path);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
+        if (*orient) return cmdOrient(in_path, place, layer_h, ocli);
         if (*support) return cmdSupport(in_path, place, layer_h, popts, sopts);
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);

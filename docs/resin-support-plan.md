@@ -218,3 +218,23 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 - **FruitSlicer licence:** AGPL would allow porting PrusaSlicer and UVtools code; anything else means a clean-room re-implementation, which is the assumed default.
 - **Measure on the printer:** film type, hinge side and peel axis; whether the 16K reads `.ctb` (UNVERIFIED); the GOO version.
 - **Physical testing:** the plan assumes the user can print calibration plates on their own 16K with their usual resin.
+
+
+## Implementation status (updated as milestones land)
+
+| Milestone | State | Notes |
+|---|---|---|
+| M0 foundation | done | Nonzero slicer chained by mesh edges; enclosed inverted shells kept as cavities; 2M-triangle sphere sliced at 0.05 mm in ~9 s. |
+| M0.5 calibration plates | done | `fruitslicer calibrate tips / spacing / islands`, manifests + result CSVs. **Not printed yet.** All seeds below remain unverified until they are. |
+| M1 point generator | done | Coverage through material + capacity + island minimums, greedy + prune, cosmetic/edge cost, persistent manual edits. |
+| M2 support tree | phase 1 done | Collision-aware heads, pillars with 45° bridges, diagonal ground routes, bracing outside the flex zone, one-piece pad raft, floating-island validation. |
+| M3 orientation | done | Two-stage search; −15 % / −17 % points on the armadillo / bunny vs their input orientation. |
+
+**Corrections and findings found during implementation:**
+
+- **Thin features and island linking.** The review claimed a 0.1 mm wire at 20° never overlaps between 0.05 mm layers. That is wrong. A feature of thickness d at angle θ from horizontal stops overlapping only once d < h·cos θ, so this matters for features thinner than about one layer height, or for thick layers. The IslandGraph's parent growth still handles those cases.
+- **Greedy vs. first-fit.** On real meshes the weighted greedy cover saves only 1–8 % of points over the PrusaSlicer-style first-fit rule. Island handling, the coverage radius and orientation move the count far more, as the review predicted.
+- **Next-layer absorption (an assumption).** Islands up to 0.12 mm² that join the model on the next layer are left unsupported, on the assumption that the flake left on the film is cured into that layer. Islands under 0.03 mm² that merge within 3 layers are also left unsupported. This rule needs checking with the islands plate.
+- **Capacity tips on any underside.** Capacity tips may go on self-supporting undersides too. Without this, a steep downward cone hanging from one apex tip had nowhere to add capacity.
+- **Stabilization tips are never pruned.** Their purpose, resisting lateral wobble, is not captured by the coverage and capacity checks.
+- **CI not running.** The GitHub Actions workflow has never run on the PR; Actions may need enabling on the repository.

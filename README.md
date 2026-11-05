@@ -16,7 +16,8 @@ behind it, and the milestone plan are in
 | M0.5 — calibration plates (tips, spacing, islands) with manifests and result sheets | done |
 | M1 — support-point generator (coverage through material + capacity + islands), points JSON with persistent manual edits, preview renderer | done (calibration still needed) |
 | M2 — heads (collision-aware), pillars with 45° bridges and diagonal ground routes, bracing outside the flex zone, one-piece pad raft, model+supports STL, floating-island validation | phase 1 done |
-| M3 — orientation search | next |
+| M3 — orientation search (two-stage: mesh proxies over 64 directions, full generator on the 6 best) | done |
+| M4 — reports, lint via UVtools, edit round-trip in CI | next |
 
 ## Build
 
@@ -104,6 +105,27 @@ Manual edits persist across regeneration:
 Cosmetic regions (`--cosmetic cosmetic.json`) make tips avoid boxes or faces
 visible from given directions:
 `{"keep_out": [{"min": [x,y,z], "max": [x,y,z]}], "visible_from": [[0,-1,0]]}`.
+
+### Orientation
+
+```sh
+./build/src/fruitslicer orient model.stl --visible-from 0 -1 0 --preview-dir out/orient
+```
+
+The search tries the input orientation and 64 build directions spread over a
+sphere. Each is first scored with cheap mesh measures: area that needs
+support, number of downward minima (islands), peak layer area, height, and
+area needing support on faces visible from the `--visible-from` directions
+(given in the model's own frame). The six best, plus the input orientation,
+then go through the real point generator. The command prints the best
+`--rotate` values next to the input orientation's numbers.
+
+| Model | Points (input → best) | Peak layer area | Island tips |
+|---|---|---|---|
+| Armadillo | 239 → 204 (−15 %) | 750 → 551 mm² | 33 → 10 |
+| Stanford bunny | 214 → 177 (−17 %) | 842 → 690 mm² | 62 → 61 |
+
+Each search takes about 30 s at 0.1 mm evaluation layers.
 
 ### Supports and printable file
 
