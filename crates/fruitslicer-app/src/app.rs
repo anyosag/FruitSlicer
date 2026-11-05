@@ -122,6 +122,8 @@ pub struct App {
     plate_uploaded: bool,
     job: Option<SliceJob>,
     result: Option<SliceOutput>,
+    /// Where the plate was last saved or opened as a project.
+    project_path: Option<PathBuf>,
     /// Object versions the current result was sliced from.
     result_versions: Vec<(u64, u64, Option<u64>)>,
     layer: usize,
@@ -175,6 +177,7 @@ impl App {
             plate_uploaded: false,
             job: None,
             result: None,
+            project_path: None,
             result_versions: Vec::new(),
             layer: 0,
             layer_tex: None,
@@ -317,6 +320,10 @@ impl App {
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
+        if ext == crate::project::EXTENSION {
+            self.load_project(path, data);
+            return;
+        }
         if ext == "goo" {
             if self.job.is_some() {
                 self.error = Some("Wait for the current job to finish first.".into());
@@ -353,6 +360,7 @@ impl App {
         let mut d = rfd::FileDialog::new()
             .add_filter("3D models", &["stl", "STL", "obj", "OBJ", "3mf", "3MF"])
             .add_filter("Sliced files (.goo)", &["goo", "GOO"])
+            .add_filter("FruitSlicer projects", &[crate::project::EXTENSION])
             .add_filter("All files", &["*"]);
         if let Some(dir) = &self.prefs.last_dir {
             d = d.set_directory(dir);
@@ -362,6 +370,115 @@ impl App {
                 self.open_path(&p);
             }
         }
+    }
+
+    fn project_settings(&self) -> crate::project::ProjectSettings {
+        let p = &self.prefs;
+        crate::project::ProjectSettings {
+            print: p.print.clone(),
+            supports: p.supports,
+            checks: p.checks,
+            check_params: p.check_params,
+            hollow: p.hollow,
+            hollow_params: p.hollow_params,
+        }
+    }
+
+    fn save_project_dialog(&mut self) {
+        if self.objects.is_empty() {
+            return;
+        }
+        let objs: Vec<_> = self
+            .objects
+            .iter()
+            .map(|o| {
+                (
+                    crate::project::ProjectObject {
+                        name: o.name.clone(),
+                        placement: o.placement,
+                        supports: o.supported.is_some(),
+                        added: o.added.clone(),
+                        removed: o.removed.clone(),
+                        mesh: String::new(),
+                    },
+                    &o.base,
+                )
+            })
+            .collect();
+        let bytes = match crate::project::write(&self.project_settings(), &objs) {
+            Ok(b) => b,
+            Err(e) => {
+                self.error = Some(format!("Could not save the project: {e}"));
+                return;
+            }
+        };
+        let name = self
+            .project_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("plate.{}", crate::project::EXTENSION));
+        let mut d = rfd::FileDialog::new()
+            .add_filter("FruitSlicer project", &[crate::project::EXTENSION])
+            .set_file_name(name);
+        if let Some(dir) = &self.prefs.last_dir {
+            d = d.set_directory(dir);
+        }
+        if let Some(mut path) = d.save_file() {
+            if path.extension().is_none() {
+                path.set_extension(crate::project::EXTENSION);
+            }
+            match std::fs::write(&path, bytes) {
+                Ok(()) => {
+                    self.status = format!("Saved project {}.", path.display());
+                    self.project_path = Some(path);
+                }
+                Err(e) => self.error = Some(format!("{}: {e}", path.display())),
+            }
+        }
+    }
+
+    /// Replaces the plate and the project settings with a saved project.
+    fn load_project(&mut self, path: &std::path::Path, data: &[u8]) {
+        let proj = match crate::project::read(data) {
+            Ok(p) => p,
+            Err(e) => {
+                self.error = Some(format!("{}: {e}", path.display()));
+                return;
+            }
+        };
+        self.checkpoint();
+        let s = proj.settings;
+        self.prefs.print = s.print;
+        self.prefs.supports = s.supports;
+        self.prefs.checks = s.checks;
+        self.prefs.check_params = s.check_params;
+        self.prefs.hollow = s.hollow;
+        self.prefs.hollow_params = s.hollow_params;
+        self.objects.clear();
+        self.selected = None;
+        let n = proj.objects.len();
+        for (po, mesh) in proj.objects {
+            let id = self.next_id;
+            self.next_id += 1;
+            let base = Arc::new(mesh);
+            self.mesh_errors.insert(id, scene::mesh_errors(&base));
+            self.bases.insert(id, base.clone());
+            let mut o = Object::new(id, po.name, (*base).clone());
+            o.placement = po.placement;
+            o.added = po.added;
+            o.removed = po.removed;
+            o.rebuild();
+            if po.supports {
+                let _ = o.generate_supports(&self.prefs.supports);
+            }
+            self.objects.push(o);
+        }
+        self.result = None;
+        self.uploaded.clear();
+        self.project_path = Some(path.to_path_buf());
+        self.frame_all();
+        self.status = format!("Opened project {} ({n} objects).", path.display());
     }
 
     fn selected_mut(&mut self) -> Option<&mut Object> {
@@ -659,10 +776,21 @@ impl App {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Open model…  (Ctrl+O)").clicked() {
+                if ui.button("Open model or project…  (Ctrl+O)").clicked() {
                     ui.close();
                     self.open_dialog();
                 }
+                if ui
+                    .add_enabled(
+                        !self.objects.is_empty(),
+                        egui::Button::new("Save project…  (Ctrl+Shift+S)"),
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.save_project_dialog();
+                }
+                ui.separator();
                 if ui
                     .add_enabled(
                         self.result.is_some(),
@@ -2191,7 +2319,7 @@ impl eframe::App for App {
             let c = i.modifiers.command;
             (
                 c && i.key_pressed(egui::Key::O),
-                c && i.key_pressed(egui::Key::S),
+                c && !i.modifiers.shift && i.key_pressed(egui::Key::S),
                 c && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
                 c && (i.key_pressed(egui::Key::Y)
                     || (i.modifiers.shift && i.key_pressed(egui::Key::Z))),
@@ -2205,6 +2333,9 @@ impl eframe::App for App {
         }
         if save && self.result.is_some() {
             self.save_dialog();
+        }
+        if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::S)) {
+            self.save_project_dialog();
         }
         if undo && !typing {
             self.undo();

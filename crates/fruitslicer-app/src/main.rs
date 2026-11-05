@@ -8,6 +8,7 @@ mod gpu_probe;
 mod import;
 mod jobs;
 mod layer_view;
+mod project;
 mod render;
 mod scene;
 mod util;
