@@ -233,7 +233,7 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 | Calibration loop | done | `fit` turns result sheets into a resin profile (logistic capacity, coverage radius, critical angle, island sizes); `--profile` everywhere. |
 | Safety gaps | done | Hollow analysis (cups / traps, polygon version of UVtools' two passes), no tips on closed-cavity ceilings, no-trap bracing rule, `--hinge` / `--peel-bias`, `--on-plate`. |
 | A/B plate | done | `abplate`: shuffled FruitSlicer vs vendor-supported copies on one plate, manifest + results sheet. |
-| M6 native `.goo` (part) | done | Exact-coverage rasterizer on 14×19 µm pixels; GOO V3 writer/reader per Elegoo's spec + UVtools; `goo`, `goo-info --decode`, `coupon orientation`; macOS in CI. GOO version, printer string and image orientation still to be checked against a SatelLite-exported file. |
+| M6 native `.goo` (part) | done | Exact-coverage rasterizer on 14×19 µm pixels; GOO V3 writer/reader per Elegoo's spec + UVtools; `goo`, `goo-info --decode`, `goo-compare`, `coupon orientation`; macOS in CI. Checked against a SatelLite 1.0.2.43 16K export: same V3.0 layout; its layers decode; with `--settings-from` only the software name differs. Defaults now follow it: AA off, mirror Y, 5 s wait after retract, its transition ramp. Image orientation still to be confirmed with the F coupon. |
 | M4 / grey-level tips | open | UVtools as external lint; native `.goo` with grayscale contact weakening (blocked on inspecting a real 16K file). |
 
 **Corrections and findings found during implementation:**
@@ -245,3 +245,9 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 - **Stabilization tips are never pruned.** Their purpose, resisting lateral wobble, is not captured by the coverage and capacity checks.
 - **CI.** GitHub Actions (`build-test`: configure, build, ctest, CLI smoke test) runs on every push to the PR and has passed.
 - **Where traps can form.** A ring in a single horizontal layer cannot form with the current support topology (MST bracing, tree merges). The real trap is a vertical loop: two pillars plus a brace plus the raft, with model material passing through the loop. The rule now checks for that.
+- **SatelLite 16K sample (1.0.2.43).**
+  - Anti-aliasing off: every pixel is 0 or 255, and AA and grey-scale flags are 0.
+  - Mirror Y = 1.
+  - 5 s wait after every retract.
+  - Transition ramp ends exactly on the normal exposure.
+  - Float32 layer heights (0.03 stored as 0.0299999993) used to add one layer to FruitSlicer's slicing. Fixed.

@@ -14,13 +14,12 @@
 namespace fruit {
 
 struct GooExportOptions {
-    int aa_levels = 8;
+    int aa_levels = 1;              // 1 = off (SatelLite's default for the 16K)
     unsigned threads = 0;           // 0 = all cores
-    double resin_density = 1.1;     // g/ml, for the weight estimate
-    // Seconds per layer spent tilting/lifting, added to the time estimate.
-    // ~3 s from Elegoo's 5.5 s/layer fast-mode figure at 2.5 s exposure;
-    // an estimate only.
-    double motion_seconds_per_layer = 3.0;
+    double resin_density = 1.15;    // g/ml (weight/volume in SatelLite's 16K file)
+    // Seconds per layer spent tilting, added to the time estimate. ~2.4 s
+    // reproduces the print time SatelLite 1.0.2.43 wrote for its 16K file.
+    double motion_seconds_per_layer = 2.4;
 };
 
 struct GooExportResult {

@@ -26,6 +26,11 @@ struct PrinterProfile {
     bool peel_axis_known = false;
     Vec2 peel_axis{0, 0};
 
+    // Image rows stored flipped in Y (header mirror flag = 1), as Elegoo
+    // SatelLite writes for the 16K. PROVISIONAL until goo-compare confirms
+    // with the orientation coupon.
+    bool image_mirror_x = false, image_mirror_y = false;
+
     double pixelX() const { return build_x / res_x; }
     double pixelY() const { return build_y / res_y; }
     // Minimum thickness the raft needs so long bottom exposures never reach tips.

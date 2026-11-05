@@ -22,7 +22,7 @@ behind it, and the milestone plan are in
 | Safety: suction-cup / resin-trap warnings, no supports in closed cavities, no-trap bracing, hinge bias, on-plate mode | done |
 | Same-plate A/B helper for the go/no-go (`abplate`) | done |
 | Physical validation: overlap coupon, calibration plates, A/B plate | **needs your printer** |
-| Native `.goo` writer/reader with exact anti-aliasing (`goo`, `goo-info`, orientation coupon) | done; version, orientation and printer string unverified until compared with a SatelLite file |
+| Native `.goo` writer/reader (`goo`, `goo-info`, `goo-compare`, orientation coupon) | done; header verified against SatelLite 1.0.2.43's 16K file; image orientation pending the F comparison |
 | macOS (Apple Silicon) build in CI | done |
 | Grey-level tips (weaker contacts, smaller marks) | next |
 
@@ -237,39 +237,49 @@ same failure rate, at least 25 % fewer contacts or visibly smaller marks.
 
 ### Printing with FruitSlicer's own `.goo`
 
-FruitSlicer can write Elegoo's `.goo` print files directly, so SatelLite is
-no longer needed in the loop:
+FruitSlicer writes Elegoo's `.goo` print files directly, so SatelLite is no
+longer needed in the loop. The easiest way to get your exposure settings
+right is to copy them from any file SatelLite exported for your printer:
 
 ```sh
 ./build/src/fruitslicer support model.stl --rotate 30 0 0 -o supported.stl
-./build/src/fruitslicer goo supported.stl -o model.goo \
-    --exposure 2.5 --bottom-exposure 25 --bottom-layers 4 --transition-layers 4
-./build/src/fruitslicer goo-info model.goo --decode   # header, checksums, volume
+./build/src/fruitslicer goo supported.stl -o model.goo --settings-from my_satellite_export.goo
+./build/src/fruitslicer goo-info model.goo --decode     # header, checksums, volume
 ```
 
-- **Layout.** Follows Elegoo's published GOO spec V1.2. UVtools' reader
-  fills the gaps the PDF leaves: version `V3.0`, the magic bytes, big-endian
-  fields, the footer, and data lengths.
-- **Anti-aliasing.** Each pixel's grey value is its exact covered fraction,
-  computed on the 16K's non-square 14 × 19 µm pixels and quantised to `--aa`
-  levels (default 8).
-- **Settings.** Exposure times are required, since nothing is guessed. To
-  reuse your SatelLite settings and the printer identity strings, export any
-  model from SatelLite and pass `--settings-from that.goo`.
-- **Not yet verified against a real 16K file:**
-  - the GOO version the printer expects,
-  - the printer-name string,
-  - the image orientation.
+Without a sample, pass `--layer`, `--exposure`, `--bottom-exposure`,
+`--bottom-layers` and `--transition-layers` yourself.
 
-  Before printing, run `fruitslicer goo-info` on a file exported by
-  SatelLite and compare. Then generate `fruitslicer coupon orientation`,
-  slice the STL with both FruitSlicer (`goo`) and SatelLite, and check in
-  UVtools that both show the same upright "F" in the same place.
+**Checked against a 16K file exported by ELEGOO SatelLite 1.0.2.43:**
 
-A supported armadillo (1,258 layers) becomes a 43.5 MB `.goo` in about 17 s
-on 4 cores.
+- **Format.** Same `V3.0` layout, header size and footer. FruitSlicer's
+  decoder reads all of SatelLite's layers with valid checksums.
+- **Header.** With `--settings-from`, FruitSlicer's header matches
+  SatelLite's in every field except the software name (`goo-compare` checks
+  this). That includes:
+  - printer name and type,
+  - anti-aliasing off (pure black/white pixels),
+  - the Y-mirror flag,
+  - the 5 s wait after each retract,
+  - lift/retract 0.05,
+  - SatelLite's transition exposure ramp.
+- **Print time.** The estimate matches SatelLite's.
 
-### Overlap coupon (please run this first)
+**Still to confirm: image orientation.**
+
+1. Run `fruitslicer coupon orientation -o f.stl`.
+2. Slice `f.stl` in SatelLite.
+3. Run `fruitslicer goo f.stl -o f_fruit.goo --settings-from <SatelLite's f.goo>`.
+4. Run `fruitslicer goo-compare f_fruit.goo <SatelLite's f.goo>`.
+
+This compares an asymmetric "F" under every flip. "orientation matches" means
+FruitSlicer's files print the right way round; otherwise it tells you which
+`--flip-x` / `--flip-y` to use.
+
+`--aa N` writes anti-aliased grey pixels, but grey on the 16K is untested,
+so the default is off, as in SatelLite.
+
+### Overlap coupon (please run this first)### Overlap coupon (please run this first)
 
 FruitSlicer exports the model and its supports as one STL made of overlapping
 closed shells, which the printer's slicer must merge. `coupon overlap` builds a

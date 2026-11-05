@@ -18,6 +18,7 @@ add_library(fruit_core
   raster/Rasterizer.cpp
   formats/GooFile.cpp
   formats/GooExport.cpp
+  formats/GooCompare.cpp
   support/SupportGeometry.cpp
   support/SupportModels.cpp
   support/CosmeticField.cpp

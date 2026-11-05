@@ -3,6 +3,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -155,7 +156,7 @@ TEST_CASE("GOO file round trip on a small grid: pixels and layer settings", "[go
         CHECK(px == dense[i]);
     }
     CHECK(r.layers[0].exposure == 20.0f);           // bottom
-    CHECK(r.layers[1].exposure == Approx(11.0f));   // halfway through the 1-layer ramp
+    CHECK(r.layers[1].exposure == Approx(2.0f));    // a 1-layer ramp reaches normal (SatelLite's rule)
     CHECK(r.layers[2].exposure == 2.0f);            // normal
     CHECK(r.layers[2].z == Approx(0.3f));
 }
@@ -203,4 +204,138 @@ TEST_CASE("export a cube on the full 16K grid: layers, volume, decodable", "[goo
     double lit = 0;
     for (uint8_t v : px) lit += v / 255.0;
     CHECK(lit * grid.px * grid.py == Approx(100.0).epsilon(0.005));
+}
+
+#include "formats/GooCompare.h"
+
+namespace {
+
+// Small GOO file (64×48 px of 0.25 mm) holding `layers`.
+std::string writeSmall(const std::string& name, const std::vector<Paths>& layers) {
+    RasterGrid g;
+    g.width = 64;
+    g.height = 48;
+    g.px = 0.25;
+    g.py = 0.25;
+    g.x_left = -8;
+    g.y_top = 6;
+    GooHeader h;
+    h.res_x = 64;
+    h.res_y = 48;
+    h.size_x = 16;
+    h.size_y = 12;
+    h.layer_height = 0.1f;
+    h.layer_count = static_cast<uint32_t>(layers.size());
+    h.print.exposure = 2;
+    h.print.bottom_exposure = 20;
+    const std::string path = tmp(name);
+    GooWriter w(path, h);
+    for (uint32_t i = 0; i < layers.size(); ++i) {
+        GooRleEncoder enc;
+        rasterizeLayer(layers[i], g, 1, [&](uint8_t v, uint32_t n) { enc.add(v, n); });
+        w.addLayer(layerDefFor(h, i), enc.finish());
+    }
+    w.finish(h);
+    return path;
+}
+
+// An "F" made of three rectangles, optionally mirrored in Y and shifted.
+Paths letterF(double dx, double dy, bool mirror_y) {
+    auto rect = [&](double x0, double y0, double x1, double y1) {
+        if (mirror_y) {
+            std::swap(y0, y1);
+            y0 = -y0;
+            y1 = -y1;
+        }
+        return Path{toPoint({x0 + dx, y0 + dy}), toPoint({x1 + dx, y0 + dy}), toPoint({x1 + dx, y1 + dy}),
+                    toPoint({x0 + dx, y1 + dy})};
+    };
+    return unionNonZero({rect(-2, -4, -1, 4), rect(-1, 3, 3, 4), rect(-1, 0, 2, 1)});
+}
+
+}  // namespace
+
+TEST_CASE("transition ramp matches SatelLite's 16K file", "[goo]") {
+    GooHeader h;
+    h.print.bottom_exposure = 27.5f;
+    h.print.exposure = 1.5f;
+    h.print.bottom_layers = 6;
+    h.print.transition_layers = 6;
+    const float expect[] = {27.5f, 27.5f, 27.5f, 27.5f, 27.5f, 27.5f, 23.17f, 18.83f, 14.5f, 10.17f, 5.83f, 1.5f, 1.5f};
+    for (uint32_t i = 0; i < 13; ++i) CHECK(layerDefFor(h, i).exposure == Approx(expect[i]).margin(1e-4));
+    CHECK(layerDefFor(h, 0).wait_after_retract == 5.0f);  // SatelLite waits 5 s after retract
+    CHECK(h.printer_type == "ELEGOO Saturn 4 Ultra 16K");
+}
+
+TEST_CASE("16K defaults: anti-aliasing off like SatelLite, Y-mirrored rows", "[goo]") {
+    const RasterGrid grid = RasterGrid::fromPrinter(PrinterProfile::saturn4Ultra16k());
+    CHECK(grid.mirror_y);
+    CHECK_FALSE(grid.mirror_x);
+    TriangleMesh cube = makeBox({-3, -2, 0}, {4, 5, 0.3});
+    GooHeader h;
+    h.layer_height = 0.1f;
+    h.print.exposure = 1.5f;
+    h.print.bottom_exposure = 27.5f;
+    const std::string path = tmp("aaoff.goo");
+    exportGoo(cube, h, grid, GooExportOptions{}, path);
+    const GooFileInfo r = readGoo(path);
+    CHECK(r.header.aa_level == 0);
+    CHECK(r.header.grey_level == 0);
+    CHECK_FALSE(r.header.grayscale_8bit);
+    CHECK(r.header.mirror_y);
+    std::vector<uint8_t> px(15120u * 6230u);
+    decodeGooRle(r.rle[1], px);
+    const auto grey = std::count_if(px.begin(), px.end(), [](uint8_t v) { return v != 0 && v != 255; });
+    CHECK(grey == 0);
+    // Mirroring Y reverses the row order exactly.
+    RasterGrid a;
+    a.width = 40;
+    a.height = 30;
+    a.px = 0.2;
+    a.py = 0.2;
+    a.x_left = -4;
+    a.y_top = 3;
+    RasterGrid b = a;
+    b.mirror_y = true;
+    const Paths f = letterF(0, 0, false);
+    const auto ia = rasterizeDense(f, a, 1), ib = rasterizeDense(f, b, 1);
+    for (int y = 0; y < 30; ++y)
+        for (int x = 0; x < 40; ++x) CHECK(ia[y * 40 + x] == ib[(29 - y) * 40 + x]);
+}
+
+TEST_CASE("goo-compare finds identity, a Y flip, and a 180-degree turn", "[goo]") {
+    const std::string a = writeSmall("cmp_a.goo", {letterF(0, 0, false), letterF(0, 0, false)});
+    const std::string same = writeSmall("cmp_same.goo", {letterF(2.5, -1, false), letterF(2.5, -1, false)});
+    const std::string mirrored = writeSmall("cmp_flip.goo", {letterF(-1.5, 0.5, true), letterF(-1.5, 0.5, true)});
+    const GooFileInfo fa = readGoo(a);
+    GooCompareResult r = compareGoo(fa, readGoo(same), -1, 0.25);
+    CHECK(r.best == "identity");
+    CHECK(r.best_iou > 0.95);
+    CHECK(r.header.empty());
+    r = compareGoo(fa, readGoo(mirrored), -1, 0.25);
+    CHECK(r.best == "flip_y");
+    CHECK(r.best_iou > 0.95);
+    for (const auto& s : r.scores)
+        if (s.transform == "identity") CHECK(s.iou < 0.8);
+    // Mirrored in X is told apart from mirrored in Y.
+    Paths fx;
+    for (Path p : letterF(0, 0, false)) {
+        for (auto& q : p) q.x = -q.x;
+        std::reverse(p.begin(), p.end());
+        fx.push_back(p);
+    }
+    r = compareGoo(fa, readGoo(writeSmall("cmp_fx.goo", {fx, fx})), -1, 0.25);
+    CHECK(r.best == "flip_x");
+}
+
+TEST_CASE("float32 layer heights from a print file do not add a layer", "[goo]") {
+    TriangleMesh cyl = makeCylinder({0, 0, 0}, 5, 3.0, 64);
+    const float h32 = 0.03f;  // stored as 0.0299999993
+    GooHeader h;
+    h.layer_height = h32;
+    h.print.exposure = 1.5f;
+    h.print.bottom_exposure = 27.5f;
+    const GooExportResult r = exportGoo(cyl, h, RasterGrid::fromPrinter(PrinterProfile::saturn4Ultra16k()),
+                                        GooExportOptions{}, tmp("float_layers.goo"));
+    CHECK(r.layers == 100);
 }

@@ -14,8 +14,9 @@
 //   per layer: definition (64 bytes) · 0D 0A · data size (4) · RLE data · 0D 0A
 //   footer: 00 00 00 + magic
 //
-// Which GOO version the 16K firmware expects is UNVERIFIED until compared
-// with a file exported by Elegoo SatelLite (`fruitslicer goo-info`).
+// Checked against a 16K file exported by ELEGOO SatelLite 1.0.2.43: same
+// V3.0 layout, header size and footer; FruitSlicer's decoder reads all of
+// its layers. Image orientation is still to be confirmed (goo-compare).
 
 #include <array>
 #include <cstdint>
@@ -34,8 +35,9 @@ struct GooPrintSettings {
     float exposure = 0;               // s, normal layers
     bool delay_mode_static = true;    // 1: wait times below; 0: "turn off time"
     float turn_off_time = 0;
-    float bottom_wait_before_lift = 0, bottom_wait_after_lift = 0, bottom_wait_after_retract = 0;
-    float wait_before_lift = 0, wait_after_lift = 0, wait_after_retract = 0;
+    float bottom_wait_before_lift = 0, bottom_wait_after_lift = 0, bottom_wait_after_retract = 5;
+    // SatelLite 1.0.2.43 waits 5 s after each retract on the 16K (bottom and normal).
+    float wait_before_lift = 0, wait_after_lift = 0, wait_after_retract = 5;
     float bottom_exposure = 0;        // s
     uint32_t bottom_layers = 0;
     // Distances in mm, speeds in mm/min. The 16K tilts its vat by itself;
@@ -56,10 +58,10 @@ struct GooHeader {
     std::string software_name = "FruitSlicer";
     std::string software_version = "0.1.0";
     std::string file_time;            // "yyyy-MM-dd HH:mm:ss"
-    std::string printer_name = "ELEGOO Saturn 4 Ultra 16K";  // UNVERIFIED string
-    std::string printer_type = "DLP";                        // UVtools' default
+    std::string printer_name = "ELEGOO Saturn 4 Ultra 16K";  // matches SatelLite 1.0.2.43
+    std::string printer_type = "ELEGOO Saturn 4 Ultra 16K";  // as SatelLite 1.0.2.43 writes it
     std::string profile_name = "FruitSlicer";
-    uint16_t aa_level = 8, grey_level = 1, blur_level = 0;
+    uint16_t aa_level = 0, grey_level = 0, blur_level = 0;  // anti-aliasing off, as SatelLite writes
     std::vector<uint8_t> small_preview;  // 116×116 RGB565 big-endian (2 bytes per pixel)
     std::vector<uint8_t> big_preview;    // 290×290
     uint32_t layer_count = 0;
@@ -74,7 +76,7 @@ struct GooHeader {
     float price = 0;
     std::string price_unit = "$";
     uint32_t layer_offset = kGooHeaderSize;
-    bool grayscale_8bit = true;       // 1: grey values 0x00–0xFF
+    bool grayscale_8bit = false;      // 1: grey values 0x00–0xFF (SatelLite writes 0 with AA off)
 };
 
 struct GooLayerDef {

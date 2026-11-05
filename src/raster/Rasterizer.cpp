@@ -15,6 +15,8 @@ RasterGrid RasterGrid::fromPrinter(const PrinterProfile& p) {
     g.py = p.pixelY();
     g.x_left = -p.build_x / 2;
     g.y_top = p.build_y / 2;
+    g.mirror_x = p.image_mirror_x;
+    g.mirror_y = p.image_mirror_y;
     return g;
 }
 

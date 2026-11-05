@@ -3,6 +3,7 @@
 #include "formats/GooExport.h"
 
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -17,14 +18,23 @@ GooExportResult exportGoo(const TriangleMesh& mesh, GooHeader h, const RasterGri
                           const std::string& path) {
     const auto t0 = std::chrono::steady_clock::now();
     GooExportResult res;
-    const LayerStack layers = sliceModel(mesh, h.layer_height);
+    // Header heights are float32; slice at the intended value (to the µm).
+    const double layer_h = std::round(static_cast<double>(h.layer_height) * 1e6) / 1e6;
+    const LayerStack layers = sliceModel(mesh, layer_h);
     h.layer_count = static_cast<uint32_t>(layers.size());
     h.res_x = static_cast<uint16_t>(grid.width);
     h.res_y = static_cast<uint16_t>(grid.height);
     h.mirror_x = grid.mirror_x;
     h.mirror_y = grid.mirror_y;
-    h.aa_level = static_cast<uint16_t>(std::max(1, o.aa_levels));
-    h.grayscale_8bit = true;
+    if (o.aa_levels <= 1) {  // off: pure black/white, flags as SatelLite writes them
+        h.aa_level = 0;
+        h.grey_level = 0;
+        h.grayscale_8bit = false;
+    } else {
+        h.aa_level = static_cast<uint16_t>(o.aa_levels);
+        h.grey_level = 1;
+        h.grayscale_8bit = true;
+    }
     {
         const std::time_t now = std::time(nullptr);
         char buf[32];
@@ -71,7 +81,7 @@ GooExportResult exportGoo(const TriangleMesh& mesh, GooHeader h, const RasterGri
         }
     }
     res.layers = h.layer_count;
-    res.volume_mm3 = coverage * grid.px * grid.py * h.layer_height;
+    res.volume_mm3 = coverage * grid.px * grid.py * layer_h;
     double t = 0;
     for (uint32_t i = 0; i < h.layer_count; ++i) {
         const GooLayerDef d = layerDefFor(h, i);

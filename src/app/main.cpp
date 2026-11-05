@@ -14,6 +14,7 @@
 #include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
 #include "calibration/Coupons.h"
+#include "formats/GooCompare.h"
 #include "formats/GooExport.h"
 #include "formats/GooFile.h"
 #include "io/PngWriter.h"
@@ -569,8 +570,8 @@ int cmdABPlate(const std::string& path, const PlacementOpts& place, double layer
 struct GooCli {
     std::string out = "out.goo", settings_from;
     double exposure = -1, bottom_exposure = -1;
-    int bottom_layers = -1, transition_layers = -1, aa = 8;
-    bool mirror_x = false, mirror_y = false;
+    int bottom_layers = -1, transition_layers = -1, aa = 1;
+    bool flip_x = false, flip_y = false;
     unsigned threads = 0;
 };
 
@@ -608,8 +609,14 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     grid.py = h.size_y / h.res_y;
     grid.x_left = -h.size_x / 2;
     grid.y_top = h.size_y / 2;
-    grid.mirror_x = o.mirror_x || h.mirror_x;
-    grid.mirror_y = o.mirror_y || h.mirror_y;
+    // Orientation: the sample's flags if given, else the printer default
+    // (SatelLite-style: Y mirrored); --flip-x / --flip-y invert either.
+    if (o.settings_from.empty()) {
+        h.mirror_x = printer.image_mirror_x;
+        h.mirror_y = printer.image_mirror_y;
+    }
+    grid.mirror_x = h.mirror_x != o.flip_x;
+    grid.mirror_y = h.mirror_y != o.flip_y;
     GooExportOptions eo;
     eo.aa_levels = o.aa;
     eo.threads = o.threads;
@@ -620,11 +627,21 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     r["volume_ml"] = res.volume_mm3 / 1000.0;
     r["print_time_h"] = res.print_time_s / 3600.0;
     r["seconds"] = res.seconds;
-    r["header"] = {{"version", h.version}, {"printer_name", h.printer_name}, {"aa_level", o.aa},
-                   {"exposure_s", h.print.exposure}, {"bottom_exposure_s", h.print.bottom_exposure},
-                   {"bottom_layers", h.print.bottom_layers}, {"transition_layers", h.print.transition_layers}};
-    r["unverified"] = "GOO version, printer name string and image orientation are not yet checked against a "
-                      "SatelLite file for the 16K; compare with `goo-info` and the orientation coupon first";
+    r["header"] = {{"version", h.version},
+                   {"printer_name", h.printer_name},
+                   {"anti_aliasing", o.aa <= 1 ? json("off") : json(o.aa)},
+                   {"mirror", {grid.mirror_x, grid.mirror_y}},
+                   {"layer_height", h.layer_height},
+                   {"exposure_s", h.print.exposure},
+                   {"bottom_exposure_s", h.print.bottom_exposure},
+                   {"bottom_layers", h.print.bottom_layers},
+                   {"transition_layers", h.print.transition_layers},
+                   {"wait_after_retract_s", h.print.wait_after_retract}};
+    r["unverified"] = "image orientation: compare with SatelLite's slice of `fruitslicer coupon orientation` "
+                      "using `fruitslicer goo-compare` before printing";
+    if (o.aa > 1)
+        r["warning_aa"] = "grey (anti-aliased) pixels are untested on the Saturn 4 Ultra 16K; SatelLite's file "
+                          "uses pure black/white";
     std::cout << r.dump(2) << "\n";
     return 0;
 }
@@ -700,6 +717,30 @@ int cmdGooInfo(const std::string& path, bool decode) {
         r["decoded"] = {{"checksums_ok", true}, {"volume_mm3", lit * pa * h.layer_height},
                         {"distinct_grey_values", greys.size()}};
     }
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
+int cmdGooCompare(const std::string& a_path, const std::string& b_path, double z) {
+    const GooFileInfo a = readGoo(a_path), b = readGoo(b_path);
+    const GooCompareResult c = compareGoo(a, b, z);
+    json r;
+    r["a"] = a_path;
+    r["b"] = b_path;
+    json hd = json::array();
+    for (const auto& d : c.header) hd.push_back({{"field", d.field}, {"a", d.a}, {"b", d.b}});
+    r["header_differences"] = hd;
+    json sc = json::object();
+    for (const auto& s : c.scores) sc[s.transform] = std::round(s.iou * 1000) / 1000;
+    r["image"] = {{"layer_a", c.layer_a}, {"z_a", c.z_a}, {"layer_b", c.layer_b}, {"z_b", c.z_b},
+                  {"lit_cells_a", c.cells_a}, {"lit_cells_b", c.cells_b}, {"iou", sc}, {"best", c.best}};
+    std::string verdict;
+    if (c.best_iou < 0.5) verdict = "images differ (different models, scale or layer?); orientation not determined";
+    else if (c.best == "identity") verdict = "orientation matches";
+    else if (c.best == "flip_x") verdict = "A is mirrored in X relative to B: use --flip-x";
+    else if (c.best == "flip_y") verdict = "A is mirrored in Y relative to B: use --flip-y";
+    else verdict = "A is rotated 180 degrees relative to B: use --flip-x --flip-y";
+    r["verdict"] = verdict;
     std::cout << r.dump(2) << "\n";
     return 0;
 }
@@ -848,17 +889,24 @@ int main(int argc, char** argv) {
     goo->add_option("--bottom-exposure", gcli.bottom_exposure, "Bottom layer exposure (s)");
     goo->add_option("--bottom-layers", gcli.bottom_layers, "Number of bottom layers");
     goo->add_option("--transition-layers", gcli.transition_layers, "Layers ramping from bottom to normal exposure");
-    goo->add_option("--aa", gcli.aa, "Anti-aliasing grey levels (1 = off, default 8, 256 = full)");
+    goo->add_option("--aa", gcli.aa, "Anti-aliasing grey levels (1 = off, the default, as SatelLite; 8; 256 = full)");
     goo->add_option("--settings-from", gcli.settings_from, "Copy print settings and identity from this .goo (e.g. SatelLite's)")
         ->check(CLI::ExistingFile);
-    goo->add_flag("--mirror-x", gcli.mirror_x, "Mirror the image in X");
-    goo->add_flag("--mirror-y", gcli.mirror_y, "Mirror the image in Y");
+    goo->add_flag("--flip-x", gcli.flip_x, "Flip the image in X relative to the default orientation");
+    goo->add_flag("--flip-y", gcli.flip_y, "Flip the image in Y relative to the default orientation");
     goo->add_option("--threads", gcli.threads, "Worker threads (0 = all cores)");
 
     bool goo_decode = false;
     auto* gooinfo = app.add_subcommand("goo-info", "Show a .goo file's header and layer summary");
     gooinfo->add_option("file", in_path, ".goo file")->required()->check(CLI::ExistingFile);
     gooinfo->add_flag("--decode", goo_decode, "Decode every layer: verify checksums, measure volume and grey levels");
+
+    std::string cmp_a, cmp_b;
+    double cmp_z = -1;
+    auto* goocmp = app.add_subcommand("goo-compare", "Compare two .goo files: header fields and image orientation");
+    goocmp->add_option("a", cmp_a, "First .goo (e.g. FruitSlicer's)")->required()->check(CLI::ExistingFile);
+    goocmp->add_option("b", cmp_b, "Second .goo (e.g. SatelLite's)")->required()->check(CLI::ExistingFile);
+    goocmp->add_option("--z", cmp_z, "Compare the layers nearest this height (mm); default: half the shorter file");
 
     FitCli fcli;
     auto* fit = app.add_subcommand("fit", "Fit a resin profile from filled-in calibration result sheets");
@@ -884,6 +932,7 @@ int main(int argc, char** argv) {
         if (*fit) return cmdFit(fcli);
         if (*goo) return cmdGoo(in_path, layer_h, gcli);
         if (*gooinfo) return cmdGooInfo(in_path, goo_decode);
+        if (*goocmp) return cmdGooCompare(cmp_a, cmp_b, cmp_z);
         if (*support) return cmdSupport(in_path, place, layer_h, popts, sopts);
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);

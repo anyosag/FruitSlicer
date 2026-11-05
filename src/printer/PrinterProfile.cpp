@@ -17,6 +17,7 @@ PrinterProfile PrinterProfile::saturn4Ultra16k() {
     // constants; these are conservative placeholders (UNVERIFIED for any resin).
     p.bottom_layers = 4;
     p.transition_layers = 4;
+    p.image_mirror_y = true;
     return p;
 }
 

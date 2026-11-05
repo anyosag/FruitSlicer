@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "formats/GooFile.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -273,9 +274,12 @@ GooLayerDef layerDefFor(const GooHeader& h, uint32_t i) {
     if (bottom) {
         d.exposure = p.bottom_exposure;
     } else if (i < p.bottom_layers + p.transition_layers) {
-        // Linear ramp from bottom to normal exposure.
-        const float t = static_cast<float>(i - p.bottom_layers + 1) / static_cast<float>(p.transition_layers + 1);
-        d.exposure = p.bottom_exposure + (p.exposure - p.bottom_exposure) * t;
+        // SatelLite's ramp: reaches the normal exposure on the last
+        // transition layer, rounded to 0.01 s (27.5 -> 1.5 over 6 layers:
+        // 23.17, 18.83, 14.50, 10.17, 5.83, 1.50).
+        const float k = static_cast<float>(i - p.bottom_layers + 1);
+        const float e = p.bottom_exposure - (p.bottom_exposure - p.exposure) * k / static_cast<float>(p.transition_layers);
+        d.exposure = std::round(e * 100.0f) / 100.0f;
     } else {
         d.exposure = p.exposure;
     }
