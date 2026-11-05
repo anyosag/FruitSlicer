@@ -1,20 +1,32 @@
 //! Slicing a placed mesh into a .goo file.
 
 use std::io::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
 use goo::{GooWriter, LayerEncoder, Preview};
 
+use crate::checks::{coarse_from_spans, CheckParams, CoarseGrid, CoarseLayer, Issue, PrintChecker};
 use crate::mesh::{Mesh, Triangle};
 use crate::printer::Printer;
 use crate::raster::{slice_layer, LayerSpans, PixelGrid};
 use crate::settings::{build_header, HeaderInputs, PrintSettings};
 use crate::{preview, SliceError};
 
-/// An encoded layer and its lit pixel count.
-type EncodedLayer = (Vec<u8>, u64);
+/// An encoded layer, its lit pixel count and its coarse grid for checks.
+type EncodedLayer = (Vec<u8>, u64, Option<CoarseLayer>);
+
+/// Optional extras for [`slice_to_goo_with`].
+#[derive(Default)]
+pub struct SliceHooks<'a> {
+    /// Called with (layers done, total) after each batch of layers.
+    pub progress: Option<&'a (dyn Fn(u32, u32) + Sync)>,
+    /// Set to `true` to stop; the slice then returns [`SliceError::Cancelled`].
+    pub cancel: Option<&'a AtomicBool>,
+    /// Run the print checks (islands, overhangs, cups, trapped resin).
+    pub checks: Option<CheckParams>,
+}
 
 /// What happened during a slice, for the user.
 #[derive(Debug, Clone)]
@@ -29,6 +41,8 @@ pub struct SliceReport {
     pub empty_layers: Vec<u32>,
     pub encoded_bytes: u64,
     pub seconds: f64,
+    /// Problems found by the print checks, if they ran.
+    pub issues: Vec<Issue>,
 }
 
 /// Slices `mesh`, which must already be placed: X/Y relative to the plate
@@ -41,6 +55,30 @@ pub fn slice_to_goo(
     timestamp: &str,
     out: impl Write,
     threads: usize,
+) -> Result<SliceReport, SliceError> {
+    slice_to_goo_with(
+        mesh,
+        printer,
+        settings,
+        profile_name,
+        timestamp,
+        out,
+        threads,
+        &SliceHooks::default(),
+    )
+}
+
+/// [`slice_to_goo`] with progress reporting, cancelling and print checks.
+#[allow(clippy::too_many_arguments)]
+pub fn slice_to_goo_with(
+    mesh: &Mesh,
+    printer: &Printer,
+    settings: &PrintSettings,
+    profile_name: &str,
+    timestamp: &str,
+    out: impl Write,
+    threads: usize,
+    hooks: &SliceHooks,
 ) -> Result<SliceReport, SliceError> {
     let started = Instant::now();
     settings.validate().map_err(SliceError::Settings)?;
@@ -77,6 +115,15 @@ pub fn slice_to_goo(
         mm_per_px_y: mm_y,
     };
 
+    let coarse_grid = hooks.checks.map(|c| {
+        CoarseGrid::for_plate(printer.size_x as f64, printer.size_y as f64, c.cell_mm)
+    });
+    let mut checker = hooks
+        .checks
+        .zip(coarse_grid)
+        .map(|(c, g)| PrintChecker::new(g, c));
+    let cancelled = || hooks.cancel.is_some_and(|c| c.load(Ordering::Relaxed));
+
     let threads = threads.max(1);
     let batch = threads * 4;
     let mut lit_total = 0u64;
@@ -84,6 +131,9 @@ pub fn slice_to_goo(
     let mut encoded_bytes = 0u64;
 
     for start in (0..layer_count).step_by(batch) {
+        if cancelled() {
+            return Err(SliceError::Cancelled);
+        }
         let end = (start + batch as u32).min(layer_count);
         let results: Vec<Mutex<Option<EncodedLayer>>> =
             (start..end).map(|_| Mutex::new(None)).collect();
@@ -101,19 +151,29 @@ pub fn slice_to_goo(
                     let spans = slice_layer(tris, z, &grid);
                     let lit = spans.lit_pixels();
                     let data = encode(&spans, grid.width, printer.mirror_x);
-                    *results[k].lock().unwrap() = Some((data, lit));
+                    let coarse = coarse_grid
+                        .as_ref()
+                        .map(|g| coarse_from_spans(&spans, (mm_x, mm_y), g));
+                    *results[k].lock().unwrap() = Some((data, lit, coarse));
                 });
             }
         });
         for (k, cell) in results.into_iter().enumerate() {
             let layer = start + k as u32;
-            let (data, lit) = cell.into_inner().unwrap().expect("every layer is computed");
+            let (data, lit, coarse) =
+                cell.into_inner().unwrap().expect("every layer is computed");
+            if let (Some(c), Some(l)) = (checker.as_mut(), coarse) {
+                c.push_layer(l);
+            }
             if lit == 0 {
                 empty_layers.push(layer);
             }
             lit_total += lit;
             encoded_bytes += data.len() as u64;
             writer.write_layer(&settings.layer_def(printer, layer), &data)?;
+        }
+        if let Some(p) = hooks.progress {
+            p(end, layer_count);
         }
     }
     writer.finish()?;
@@ -126,6 +186,7 @@ pub fn slice_to_goo(
         empty_layers,
         encoded_bytes,
         seconds: started.elapsed().as_secs_f64(),
+        issues: checker.map(|c| c.finish(h)).unwrap_or_default(),
     })
 }
 
