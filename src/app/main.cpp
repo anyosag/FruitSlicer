@@ -313,6 +313,7 @@ int cmdRender(const std::string& path, const PlacementOpts& place, const std::st
 struct SupportOpts {
     std::string points_in, out = "supported.stl", supports_only, report, preview, raft = "pads";
     bool no_validate = false;
+    bool no_merge = false;
 };
 
 int cmdSupport(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& popts,
@@ -343,6 +344,7 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
         std::ofstream(o.out + ".points.json") << pointsToJson(pts).dump(1) << "\n";
     }
     TreeConfig tc;
+    tc.merge_pillars = !o.no_merge;
     if (o.raft == "none") tc.raft = RaftStyle::None;
     else if (o.raft != "pads") throw std::runtime_error("--raft must be pads or none");
     const SupportTree tree = buildSupportTree(mesh, pts, tc, printer.minRaftThickness());
@@ -364,6 +366,8 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
     r["points"] = pts.size();
     r["heads"] = tree.heads.size();
     r["pillars"] = tree.pillars.size();
+    r["trunks_on_raft"] = tree.trunks();
+    r["branches"] = tree.branches.size();
     r["pillars_on_model"] = anchors;
     r["bridges"] = tree.bridges.size();
     r["braces"] = tree.braces.size();
@@ -541,6 +545,7 @@ int main(int argc, char** argv) {
     support->add_option("--report", sopts.report, "Report JSON");
     support->add_option("--preview", sopts.preview, "Preview PNG (from below)");
     support->add_flag("--no-validate", sopts.no_validate, "Skip the floating-island check");
+    support->add_flag("--no-merge", sopts.no_merge, "Keep one pillar per head cluster (no branching trunks)");
 
     OrientCli ocli;
     auto* orient = app.add_subcommand("orient", "Search build orientations; prints the best --rotate values");

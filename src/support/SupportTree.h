@@ -38,6 +38,12 @@ struct TreeConfig {
     double brace_step = 6.0;           // vertical spacing of brace levels
     double max_route_length = 15.0;    // diagonal search for a clear drop
     double max_model_anchor_drop = 10.0;  // longest pillar allowed to stand on the model
+    // Branching: pillars within reach merge where 45° branches from each meet,
+    // below the flex zone; fewer, thicker trunks reach the raft.
+    bool merge_pillars = true;
+    double max_merge_distance = 8.0;
+    int max_tips_per_trunk = 6;
+    double max_trunk_diameter = 1.8;
     RaftStyle raft = RaftStyle::Pads;
     double raft_thickness = 1.0;       // raised to the printer's bottom+transition layers if thinner
     double base_diameter = 3.0;
@@ -60,6 +66,9 @@ struct Pillar {
     std::vector<int> heads;
     int bridges = 0;
     bool on_model = false;       // stands on the model (anchor) instead of the raft
+    bool merged = false;         // ends in a branch into a trunk instead of reaching the raft
+    int tips = 1;                // tips carried (for trunk limits)
+    double lowest_attach = 1e9;  // lowest bridge attachment on the shaft (a merge must start below it)
     Vec3 anchor_contact, anchor_normal;
 };
 
@@ -73,10 +82,17 @@ struct SupportTree {
     std::vector<Pillar> pillars;
     std::vector<Rod> bridges;
     std::vector<Rod> braces;
+    std::vector<Rod> branches;   // pillar -> trunk diagonals
     std::vector<Rod> raft_links;
     double raft_top = 0;
     std::vector<Warning> warnings;
     size_t dropped_points = 0;
+
+    size_t trunks() const {  // pillars standing on the raft
+        size_t n = 0;
+        for (const auto& p : pillars) n += !p.on_model && !p.merged;
+        return n;
+    }
 
     TriangleMesh mesh(const TreeConfig& cfg) const;
 };

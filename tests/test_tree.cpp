@@ -92,3 +92,32 @@ TEST_CASE("tall supports get braces outside the flex zone", "[tree]") {
     }
     CHECK(b.check.floating.empty());
 }
+
+TEST_CASE("branching merges pillars into fewer trunks without touching the model", "[tree]") {
+    TriangleMesh m = makeBox({0, 0, 0}, {24, 24, 2});
+    placeOnPlate(m, {0, 0, 0}, 20.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.1;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    TreeConfig flat;
+    flat.merge_pillars = false;
+    TreeConfig branch;
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    const SupportTree a = buildSupportTree(m, pts, flat, raft);
+    const SupportTree b = buildSupportTree(m, pts, branch, raft);
+    CHECK(b.trunks() < a.trunks());
+    CHECK_FALSE(b.branches.empty());
+    // Every trunk carries at most the configured number of tips.
+    for (const auto& P : b.pillars)
+        if (!P.merged && !P.on_model) CHECK(P.tips <= branch.max_tips_per_trunk);
+    // Branch rods keep clear of the model.
+    AabbTree tree(m);
+    for (const auto& r : b.branches)
+        for (int k = 0; k <= 10; ++k) {
+            const Vec3 q = r.a + (r.b - r.a) * (k / 10.0);
+            CHECK(tree.closest(q).distance >= r.diameter / 2 + branch.clearance - 1e-6);
+        }
+    const ValidationReport v = validateSupported(m, b.mesh(branch), 0.1, cfg.link_grow);
+    CHECK(v.floating.empty());
+    CHECK(v.first_layer_islands == 1);
+}

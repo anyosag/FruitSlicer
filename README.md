@@ -17,7 +17,8 @@ behind it, and the milestone plan are in
 | M1 — support-point generator (coverage through material + capacity + islands), points JSON with persistent manual edits, preview renderer | done (calibration still needed) |
 | M2 — heads (collision-aware), pillars with 45° bridges and diagonal ground routes, bracing outside the flex zone, one-piece pad raft, model+supports STL, floating-island validation | phase 1 done |
 | M3 — orientation search (two-stage: mesh proxies over 64 directions, full generator on the 6 best) | done |
-| M4 — reports, lint via UVtools, edit round-trip in CI | next |
+| M5 (part) — branching: nearby pillars merge into trunks below the flex zone | done |
+| Physical validation: overlap coupon, calibration plates | **needs your printer** |
 
 ## Build
 
@@ -149,13 +150,18 @@ Each point gets:
   case is reported because it marks an upper surface;
 - bracing between tall pillars, kept out of the 2 mm flex zone below the
   heads so the tips bend and snap off at the part;
-- a pad under each pillar, the pads joined by flat bars, so the raft and
+- branching: pillars within 8 mm merge where 45° branches from each meet,
+  below the flex zone and below any bridge already on them. The trunk's
+  cross-section is the sum of the two, and at most 6 tips share one trunk.
+  On the armadillo this cut trunks reaching the raft from 82 to 47 and braces
+  from 189 to 35 (`--no-merge` turns it off);
+- a pad under each trunk, the pads joined by flat bars, so the raft and
   supports come off as one piece.
 
 The report re-slices model plus supports and lists anything that would still
 start printing in mid-air (`validation.floating_islands`, which should be 0).
 
-![Supports generated for the armadillo](docs/armadillo_supported_preview.png)
+![Supports generated for the armadillo in its best orientation](docs/armadillo_supported_preview.png)
 
 ### Overlap coupon (please run this first)
 

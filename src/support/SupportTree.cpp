@@ -101,6 +101,7 @@ private:
     void newPillar(int head, bool on_model, const Vec3& anchor = {}, const Vec3& anchor_n = {});
     void brace();
     void raft();
+    void mergePillars();
 
     const TriangleMesh& mesh_;
     const TreeConfig& cfg_;
@@ -177,8 +178,10 @@ bool Builder::attachToPillar(int hi) {
     Pillar& P = out_.pillars[best];
     out_.bridges.push_back({h.junction, best_attach, h.spec.shaft_diameter});
     P.top = std::max(P.top, best_attach.z);
+    P.lowest_attach = std::min(P.lowest_attach, best_attach.z);
     P.heads.push_back(hi);
     ++P.bridges;
+    ++P.tips;
     P.diameter = std::max(P.diameter, h.spec.shaft_diameter) + 0.1;
     return true;
 }
@@ -205,7 +208,7 @@ void Builder::brace() {
     // Minimum spanning tree over raft-standing pillars (Prim, O(n²)).
     std::vector<int> idx;
     for (size_t i = 0; i < out_.pillars.size(); ++i)
-        if (!out_.pillars[i].on_model) idx.push_back(static_cast<int>(i));
+        if (!out_.pillars[i].on_model && !out_.pillars[i].merged) idx.push_back(static_cast<int>(i));
     const size_t n = idx.size();
     if (n < 2) return;
     std::vector<double> best(n, 1e300);
@@ -241,12 +244,68 @@ void Builder::brace() {
     }
 }
 
+void Builder::mergePillars() {
+    if (!cfg_.merge_pillars) return;
+    const double z_floor = out_.raft_top + cfg_.base_height + 1.0;
+    auto active = [&](const Pillar& P) { return !P.on_model && !P.merged; };
+    while (true) {
+        // Closest mergeable pair first (deterministic: ties by index).
+        int ba = -1, bb = -1;
+        double bd = 1e300;
+        Vec3 bm;
+        double bzs = 0;
+        for (size_t i = 0; i < out_.pillars.size(); ++i) {
+            const Pillar& A = out_.pillars[i];
+            if (!active(A)) continue;
+            for (size_t j = i + 1; j < out_.pillars.size(); ++j) {
+                const Pillar& B = out_.pillars[j];
+                if (!active(B)) continue;
+                const double d = distance(A.xy, B.xy);
+                if (d > cfg_.max_merge_distance || d >= bd || d < 1e-6) continue;
+                if (A.tips + B.tips > cfg_.max_tips_per_trunk) continue;
+                // Branches start below the flex zone of the lower pillar and
+                // meet at 45°.
+                // ... and below every bridge already attached to either shaft.
+                const double zs = std::min({std::min(A.top, B.top) - cfg_.flex_zone, A.lowest_attach - 0.5,
+                                            B.lowest_attach - 0.5});
+                const Vec2 mid = (A.xy + B.xy) * 0.5;
+                const Vec3 m{mid.x, mid.y, zs - d / 2};
+                if (m.z < z_floor) continue;
+                const double r_new = std::min(cfg_.max_trunk_diameter, std::hypot(A.diameter, B.diameter)) / 2;
+                if (!segmentClear({A.xy.x, A.xy.y, zs}, m, A.diameter / 2)) continue;
+                if (!segmentClear({B.xy.x, B.xy.y, zs}, m, B.diameter / 2)) continue;
+                if (!dropClear(m, r_new)) continue;
+                ba = static_cast<int>(i);
+                bb = static_cast<int>(j);
+                bd = d;
+                bm = m;
+                bzs = zs;
+            }
+        }
+        if (ba < 0) break;
+        Pillar& A = out_.pillars[ba];
+        Pillar& B = out_.pillars[bb];
+        out_.branches.push_back({{A.xy.x, A.xy.y, bzs}, bm, A.diameter});
+        out_.branches.push_back({{B.xy.x, B.xy.y, bzs}, bm, B.diameter});
+        A.merged = B.merged = true;
+        A.bottom = bzs;
+        B.bottom = bzs;
+        Pillar C;
+        C.xy = bm.xy();
+        C.top = bm.z;
+        C.bottom = out_.raft_top + cfg_.base_height;
+        C.diameter = std::min(cfg_.max_trunk_diameter, std::hypot(A.diameter, B.diameter));
+        C.tips = A.tips + B.tips;
+        out_.pillars.push_back(C);
+    }
+}
+
 void Builder::raft() {
     if (cfg_.raft == RaftStyle::None) return;
     // Join pads along a minimum spanning tree so the raft is one piece.
     std::vector<int> idx;
     for (size_t i = 0; i < out_.pillars.size(); ++i)
-        if (!out_.pillars[i].on_model) idx.push_back(static_cast<int>(i));
+        if (!out_.pillars[i].on_model && !out_.pillars[i].merged) idx.push_back(static_cast<int>(i));
     const size_t n = idx.size();
     if (n < 2) return;
     std::vector<double> best(n, 1e300);
@@ -322,6 +381,7 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts) {
         ++out_.dropped_points;
         warn("no_route", "head has no clear path to the raft or a short drop onto the model; point dropped", p.pos);
     }
+    mergePillars();
     brace();
     raft();
     return std::move(out_);
@@ -340,7 +400,9 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     for (const Pillar& P : pillars) {
         const Vec3 top{P.xy.x, P.xy.y, P.top}, bottom{P.xy.x, P.xy.y, P.bottom};
         appendShaft(m, top, bottom, P.diameter, q, true);
-        if (P.on_model) {
+        if (P.merged) {
+            appendSphere(m, bottom, P.diameter / 2, q.segments(P.diameter / 2));
+        } else if (P.on_model) {
             // Reversed pinhead: thin contact sinking 0.1 mm into the surface below.
             PinheadSpec a;
             a.tip_diameter = 0.4;
@@ -359,6 +421,10 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
         }
     }
     for (const Rod& r : braces) appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+    for (const Rod& r : branches) {
+        appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+        appendSphere(m, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+    }
     // Raft links: flat bars from the plate up, so the raft's first layers are
     // already one piece.
     for (const Rod& r : raft_links) {
