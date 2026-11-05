@@ -1,0 +1,177 @@
+//! Slices meshes onto the real Saturn 4 Ultra 16K grid and reads the .goo back.
+
+use goo::{rle, GooFile};
+use slicer::{slice_to_goo, stl, Mesh, PrintSettings, SliceError, SATURN_4_ULTRA_16K};
+
+/// A UV sphere with outward winding.
+fn sphere(r: f32, rings: usize, segs: usize) -> Mesh {
+    let p = |i: usize, j: usize| {
+        let th = std::f32::consts::PI * i as f32 / rings as f32;
+        let ph = 2.0 * std::f32::consts::PI * j as f32 / segs as f32;
+        [
+            r * th.sin() * ph.cos(),
+            r * th.sin() * ph.sin(),
+            r * th.cos(),
+        ]
+    };
+    let mut tris = Vec::new();
+    for i in 0..rings {
+        for j in 0..segs {
+            let (a, b, c, d) = (p(i, j), p(i + 1, j), p(i + 1, j + 1), p(i, j + 1));
+            if i != 0 {
+                tris.push([a, b, d]);
+            }
+            if i != rings - 1 {
+                tris.push([b, c, d]);
+            }
+        }
+    }
+    Mesh::new(tris)
+}
+
+fn slice(mesh: &Mesh, printer: &slicer::Printer) -> (slicer::SliceReport, GooFile) {
+    let mut out = Vec::new();
+    let r = slice_to_goo(
+        mesh,
+        printer,
+        &PrintSettings::default(),
+        "test",
+        "2026-11-05 00:00:00",
+        &mut out,
+        4,
+    )
+    .unwrap();
+    (r, GooFile::read(out.as_slice()).unwrap())
+}
+
+/// Bounding box of lit pixels in a decoded layer: (x0, x1, y0, y1), half-open.
+fn lit_bbox(data: &[u8], w: u64) -> (u64, u64, u64, u64) {
+    let (mut x0, mut x1, mut y0, mut y1) = (u64::MAX, 0, u64::MAX, 0);
+    let mut pos = 0u64;
+    rle::decode_runs(data, |v, len| {
+        let mut p = pos;
+        while v != 0 && p < pos + len {
+            // Split the run at row ends.
+            let (y, x) = (p / w, p % w);
+            let end = (pos + len).min((y + 1) * w);
+            x0 = x0.min(x);
+            x1 = x1.max(x + (end - p));
+            y0 = y0.min(y);
+            y1 = y1.max(y + 1);
+            p = end;
+        }
+        pos += len;
+    })
+    .unwrap();
+    (x0, x1, y0, y1)
+}
+
+#[test]
+fn cube_slices_to_exact_size_and_layer_count() {
+    let p = SATURN_4_ULTRA_16K;
+    let mut m = Mesh::cuboid([0.0, 0.0, 0.0], [10.0, 10.0, 2.0]);
+    m.place_on_plate([0.0, 0.0]);
+    let (r, goo) = slice(&m, &p);
+    assert_eq!(r.layer_count, 40);
+    assert_eq!(goo.layers.len(), 40);
+    assert!(r.empty_layers.is_empty());
+    assert!(
+        (r.sliced_volume_mm3 - 200.0).abs() / 200.0 < 0.01,
+        "{}",
+        r.sliced_volume_mm3
+    );
+    let (x0, x1, y0, y1) = lit_bbox(&goo.layers[10].1, p.resolution_x as u64);
+    let (mx, my) = p.pixel_mm();
+    assert!(((x1 - x0) as f64 * mx - 10.0).abs() <= mx);
+    assert!(((y1 - y0) as f64 * my - 10.0).abs() <= my);
+    // Layer 0 uses bottom exposure, later layers the normal one.
+    assert_eq!(goo.layers[0].0.exposure_time, 30.0);
+    assert_eq!(goo.layers[39].0.exposure_time, 2.5);
+    assert!((goo.layers[39].0.position_z - 2.0).abs() < 1e-5);
+}
+
+#[test]
+fn sphere_volume_matches_mesh() {
+    let mut m = sphere(8.0, 48, 96);
+    m.place_on_plate([30.0, -20.0]);
+    let (r, goo) = slice(&m, &SATURN_4_ULTRA_16K);
+    assert_eq!(goo.layers.len(), 320);
+    let err = (r.sliced_volume_mm3 - r.mesh_volume_mm3).abs() / r.mesh_volume_mm3;
+    assert!(
+        err < 0.01,
+        "sliced {} vs mesh {}",
+        r.sliced_volume_mm3,
+        r.mesh_volume_mm3
+    );
+    assert!(r.empty_layers.is_empty());
+}
+
+#[test]
+fn mirror_x_flips_columns() {
+    let mut p = SATURN_4_ULTRA_16K;
+    let mut m = Mesh::cuboid([0.0, 0.0, 0.0], [5.0, 5.0, 0.1]);
+    m.place_on_plate([50.0, 0.0]); // right of centre
+    let w = p.resolution_x as u64;
+
+    p.mirror_x = false;
+    let (_, plain) = slice(&m, &p);
+    let (x0, _, _, _) = lit_bbox(&plain.layers[0].1, w);
+    assert!(x0 > w / 2, "unmirrored model should be on the right");
+
+    p.mirror_x = true;
+    let (_, mirrored) = slice(&m, &p);
+    let (_, x1, _, _) = lit_bbox(&mirrored.layers[0].1, w);
+    assert!(x1 < w / 2, "mirrored model should be on the left");
+    assert!(mirrored.header.mirror_x);
+}
+
+#[test]
+fn stl_round_trip_through_slicer() {
+    let mut m = stl::parse(&stl::to_binary(&Mesh::cuboid(
+        [0.0, 0.0, 0.0],
+        [4.0, 4.0, 1.0],
+    )))
+    .unwrap();
+    m.place_on_plate([0.0, 0.0]);
+    let (r, _) = slice(&m, &SATURN_4_ULTRA_16K);
+    assert_eq!(r.layer_count, 20);
+}
+
+#[test]
+fn rejects_model_bigger_than_plate() {
+    let mut m = Mesh::cuboid([0.0, 0.0, 0.0], [150.0, 10.0, 1.0]);
+    m.place_on_plate([0.0, 0.0]);
+    m.translate([50.0, 0.0, 0.0]);
+    let err = slice_to_goo(
+        &m,
+        &SATURN_4_ULTRA_16K,
+        &PrintSettings::default(),
+        "t",
+        "t",
+        Vec::new(),
+        1,
+    )
+    .unwrap_err();
+    assert!(matches!(err, SliceError::DoesNotFit(_)), "{err}");
+}
+
+#[test]
+fn single_thread_and_multi_thread_agree() {
+    let mut m = sphere(5.0, 24, 48);
+    m.place_on_plate([0.0, 0.0]);
+    let run = |threads| {
+        let mut out = Vec::new();
+        slice_to_goo(
+            &m,
+            &SATURN_4_ULTRA_16K,
+            &PrintSettings::default(),
+            "t",
+            "t",
+            &mut out,
+            threads,
+        )
+        .unwrap();
+        out
+    };
+    assert_eq!(run(1), run(8));
+}
