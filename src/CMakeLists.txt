@@ -14,6 +14,7 @@ add_library(fruit_core
   io/PngWriter.cpp
   support/SupportGeometry.cpp
   calibration/Coupons.cpp
+  calibration/CalibrationPlates.cpp
 )
 target_include_directories(fruit_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fruit_core PUBLIC Clipper2 nlohmann_json::nlohmann_json nanoflann::nanoflann)

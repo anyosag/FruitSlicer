@@ -38,6 +38,14 @@ void appendShaft(TriangleMesh& m, const Vec3& top, const Vec3& bottom, double di
 void appendBaseCone(TriangleMesh& m, const Vec3& top, double shaft_diameter, double base_diameter,
                     double base_z, const GeometryQuality& q = {});
 
+// Direction a head leaves the part: the outward surface normal, tilted
+// towards straight down until it is at most `max_angle_deg` from vertical.
+Vec3 headDirection(const Vec3& outward_normal, double max_angle_deg = 45.0);
+
+// Closed hexahedron from 8 corners: v[0..3] bottom face, v[4..7] top face,
+// both counter-clockwise seen from above. Used for wedges and sheared blocks.
+void appendHexahedron(TriangleMesh& m, const Vec3 (&v)[8]);
+
 // Raft slab from z0 to z1 covering `min`..`max` in XY, with the top edge
 // chamfered inward by `chamfer` mm so a scraper can get under it.
 void appendRaft(TriangleMesh& m, const Vec2& min, const Vec2& max, double z0, double z1,

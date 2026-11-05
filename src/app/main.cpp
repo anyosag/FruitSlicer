@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "calibration/CalibrationPlates.h"
 #include "calibration/Coupons.h"
 #include "io/PngWriter.h"
 #include "layers/IslandGraph.h"
@@ -158,6 +159,49 @@ int cmdCoupon(const std::string& kind, const std::string& out, double layer_h, c
     return 0;
 }
 
+int cmdCalibrate(const std::string& kind, const std::string& out, const std::string& manifest_path,
+                 const std::string& csv_path, int seed, int replicates) {
+    const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
+    CalibrationPlate plate;
+    auto apply = [&](PlateCommon& c) {
+        if (seed >= 0) c.seed = static_cast<uint32_t>(seed);
+        if (replicates > 0) c.replicates = replicates;
+    };
+    if (kind == "tips") {
+        TipsPlateOptions o;
+        apply(o.common);
+        plate = tipsPlate(o, printer);
+    } else if (kind == "spacing") {
+        SpacingPlateOptions o;
+        apply(o.common);
+        plate = spacingPlate(o, printer);
+    } else if (kind == "islands") {
+        IslandsPlateOptions o;
+        apply(o.common);
+        plate = islandsPlate(o, printer);
+    } else {
+        std::cerr << "unknown plate '" << kind << "' (available: tips, spacing, islands)\n";
+        return 2;
+    }
+    writeStl(out, plate.mesh);
+    const json manifest = plate.manifest();
+    const std::string mpath = manifest_path.empty() ? out + ".json" : manifest_path;
+    const std::string cpath = csv_path.empty() ? out + ".results.csv" : csv_path;
+    std::ofstream(mpath) << manifest.dump(2) << "\n";
+    std::ofstream(cpath) << plate.csvTemplate();
+    const BBox3 b = plate.mesh.bbox();
+    json r{{"plate", kind},
+           {"stl", out},
+           {"manifest", mpath},
+           {"results_csv", cpath},
+           {"coupons", plate.coupons.size()},
+           {"grid", {{"rows", plate.rows}, {"cols", plate.cols}, {"cell_mm", plate.cell}}},
+           {"triangles", plate.mesh.faceCount()},
+           {"height_mm", b.max.z}};
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -188,11 +232,22 @@ int main(int argc, char** argv) {
     coupon->add_option("--layer", layer_h, "Layer height for reference slices (mm)");
     coupon->add_option("--png-dir", png_dir, "Write reference slice PNGs here");
 
+    std::string plate_kind, plate_out, manifest_out, csv_out;
+    int seed = -1, replicates = 0;
+    auto* calibrate = app.add_subcommand("calibrate", "Generate a calibration plate (tips, spacing, islands)");
+    calibrate->add_option("kind", plate_kind, "Plate kind: tips | spacing | islands")->required();
+    calibrate->add_option("-o,--output", plate_out, "Output STL")->required();
+    calibrate->add_option("--manifest", manifest_out, "Manifest JSON (default: <output>.json)");
+    calibrate->add_option("--csv", csv_out, "Results CSV template (default: <output>.results.csv)");
+    calibrate->add_option("--seed", seed, "Layout shuffle seed");
+    calibrate->add_option("--replicates", replicates, "Copies of each parameter combination");
+
     CLI11_PARSE(app, argc, argv);
     try {
         if (*info) return cmdInfo(in_path);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
+        if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

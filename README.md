@@ -13,8 +13,8 @@ behind it, and the milestone plan are in
 | Milestone | State |
 |---|---|
 | M0 — foundation: STL I/O, nonzero mesh slicer, mesh minima/thickness, island graph, printer profile, overlap coupon | done |
-| M0.5 — calibration coupons (tips, spacing, islands) | next |
-| M1 — capacitated support-point generator | planned |
+| M0.5 — calibration plates (tips, spacing, islands) with manifests and result sheets | done |
+| M1 — capacitated support-point generator | in progress |
 | M2 — heads, pillars, raft, supported-model export | planned |
 
 ## Build
@@ -41,6 +41,26 @@ ctest --test-dir build
 # Week-1 compatibility test: overlapping shells (see below)
 ./build/src/fruitslicer coupon overlap -o overlap_coupon.stl --png-dir out/overlap_ref
 ```
+
+### Calibration plates
+
+The support generator's limits (how much area a tip of each size holds, how
+far apart tips can be, how many tips an island needs, the self-supporting
+angle) depend on your resin and printer, and no vendor publishes them. Three
+plates measure them:
+
+```sh
+./build/src/fruitslicer calibrate tips    -o tips.stl     # tip diameter × penetration × load
+./build/src/fruitslicer calibrate spacing -o spacing.stl  # tilted plates × tip pitch, plus wedges
+./build/src/fruitslicer calibrate islands -o islands.stl  # island size × number of tips
+```
+
+Each writes `<name>.stl.json` (which cell holds which parameters) and
+`<name>.stl.results.csv` (one row per coupon to fill in). Every coupon sits on
+its own small raft in a grid; the L-shaped marker in the corner cell shows
+which way the rows and columns run. Parameter combinations are shuffled over
+the plate with a fixed seed, so position on the plate does not line up with
+any one parameter.
 
 ### Overlap coupon (please run this first)
 

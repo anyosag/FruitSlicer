@@ -36,23 +36,42 @@ void appendBaseCone(TriangleMesh& m, const Vec3& top, double shaft_diameter, dou
     appendFrustum(m, bottom, base_diameter / 2, top, shaft_diameter / 2, q.segments(base_diameter / 2));
 }
 
-void appendRaft(TriangleMesh& m, const Vec2& lo, const Vec2& hi, double z0, double z1, double chamfer) {
-    if (chamfer <= 0 || chamfer * 2 >= std::min(hi.x - lo.x, hi.y - lo.y) || chamfer >= z1 - z0) {
-        appendBox(m, {lo.x, lo.y, z0}, {hi.x, hi.y, z1});
-        return;
-    }
-    // Frustum-shaped slab: full footprint at z0, inset by `chamfer` at z1.
+Vec3 headDirection(const Vec3& outward_normal, double max_angle_deg) {
+    const Vec3 down{0, 0, -1};
+    Vec3 d = normalized(outward_normal);
+    if (norm2(d) == 0) return down;
+    const double cos_max = std::cos(deg2rad(max_angle_deg));
+    if (dot(d, down) >= cos_max) return d;
+    // Tilt within the vertical plane containing d: keep its horizontal
+    // heading, set the angle from vertical to exactly max_angle_deg.
+    Vec2 h = d.xy();
+    if (norm(h) < 1e-12) return down;  // pointing straight up: no valid tilt
+    h = normalized(h);
+    const double s = std::sin(deg2rad(max_angle_deg));
+    return normalized(Vec3{h.x * s, h.y * s, -cos_max});
+}
+
+void appendHexahedron(TriangleMesh& m, const Vec3 (&v)[8]) {
     const auto b = static_cast<int32_t>(m.vertices.size());
-    const double c = chamfer;
-    const Vec3 v[8] = {{lo.x, lo.y, z0},         {hi.x, lo.y, z0},         {hi.x, hi.y, z0},
-                       {lo.x, hi.y, z0},         {lo.x + c, lo.y + c, z1}, {hi.x - c, lo.y + c, z1},
-                       {hi.x - c, hi.y - c, z1}, {lo.x + c, hi.y - c, z1}};
     for (const auto& p : v) m.vertices.push_back(p);
     const int quads[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
     for (const auto& qd : quads) {
         m.faces.push_back({b + qd[0], b + qd[1], b + qd[2]});
         m.faces.push_back({b + qd[0], b + qd[2], b + qd[3]});
     }
+}
+
+void appendRaft(TriangleMesh& m, const Vec2& lo, const Vec2& hi, double z0, double z1, double chamfer) {
+    if (chamfer <= 0 || chamfer * 2 >= std::min(hi.x - lo.x, hi.y - lo.y) || chamfer >= z1 - z0) {
+        appendBox(m, {lo.x, lo.y, z0}, {hi.x, hi.y, z1});
+        return;
+    }
+    // Frustum-shaped slab: full footprint at z0, inset by `chamfer` at z1.
+    const double c = chamfer;
+    const Vec3 v[8] = {{lo.x, lo.y, z0},         {hi.x, lo.y, z0},         {hi.x, hi.y, z0},
+                       {lo.x, hi.y, z0},         {lo.x + c, lo.y + c, z1}, {hi.x - c, lo.y + c, z1},
+                       {hi.x - c, hi.y - c, z1}, {lo.x + c, hi.y - c, z1}};
+    appendHexahedron(m, v);
 }
 
 }  // namespace fruit
