@@ -23,7 +23,7 @@ placement (slice only; the model is centred on the plate and dropped to Z=0):
 
 settings (defaults are placeholders: use your resin's numbers):
   --layer-height MM (0.05)  --exposure S (2.5)  --bottom-exposure S (30)
-  --bottom-layers N (4)  --pwm 0-255 (255)  --mirror-x on|off (on)  --threads N
+  --bottom-layers N (4)  --pwm 0-255 (255)  --aa 1|2|4|8 (1 = off)  --mirror-x on|off (on)  --threads N
 
 supports and checks (slice only):
   --supports on|off (off)  --lift MM (5)  --overhang-angle DEG (45)  --support-spacing MM (3)
@@ -202,6 +202,9 @@ fn print_settings(flags: &[(String, String)]) -> Result<PrintSettings, String> {
     }
     if let Some(v) = flag(flags, "layer-height")? {
         s.layer_mm = v;
+    }
+    if let Some(v) = flag(flags, "aa")? {
+        s.anti_alias = v;
     }
     if let Some(v) = flag(flags, "pwm")? {
         s.light_pwm = v;

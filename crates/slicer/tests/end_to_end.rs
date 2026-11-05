@@ -395,3 +395,59 @@ fn hollowing_without_holes_traps_resin_and_holes_fix_it() {
     let c = open.drain_holes[0].center_mm;
     assert!(c[0].abs() < 8.0 && c[1].abs() < 8.0, "{c:?}");
 }
+
+#[test]
+fn anti_aliased_slice_has_grey_edges_and_right_volume() {
+    use slicer::hollow::HollowParams;
+    use slicer::{slice_to_goo_with, SliceHooks};
+    let mut ball = sphere(6.0, 48, 96);
+    ball.place_on_plate([0.0, 0.0]);
+    for hollow in [None, Some(HollowParams::default())] {
+        let settings = PrintSettings {
+            anti_alias: 4,
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let r = slice_to_goo_with(
+            &ball,
+            &SATURN_4_ULTRA_16K,
+            &settings,
+            "t",
+            "t",
+            &mut out,
+            4,
+            &SliceHooks {
+                hollow,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let goo = GooFile::read(out.as_slice()).unwrap();
+        assert_eq!(goo.header.anti_aliasing_level, 4);
+        // Some pixels in a middle layer are neither 0 nor 255.
+        let mid = &goo.layers[goo.layers.len() / 2].1;
+        let mut greys = 0u64;
+        rle::decode_runs(mid, |v, len| {
+            if v != 0 && v != 255 {
+                greys += len;
+            }
+        })
+        .unwrap();
+        assert!(greys > 100, "{greys} grey pixels");
+        if hollow.is_none() {
+            let err = (r.sliced_volume_mm3 - r.mesh_volume_mm3).abs() / r.mesh_volume_mm3;
+            assert!(
+                err < 0.01,
+                "{} vs {}",
+                r.sliced_volume_mm3,
+                r.mesh_volume_mm3
+            );
+        } else {
+            assert!(
+                r.sliced_volume_mm3 < 0.92 * r.mesh_volume_mm3,
+                "{}",
+                r.sliced_volume_mm3 / r.mesh_volume_mm3
+            );
+        }
+    }
+}

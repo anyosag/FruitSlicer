@@ -998,6 +998,18 @@ impl App {
             s.light_pwm = pwm;
             s.bottom_light_pwm = pwm;
             ui.end_row();
+            ui.label("Anti-aliasing");
+            egui::ComboBox::from_id_salt("aa")
+                .selected_text(if s.anti_alias <= 1 { "Off".to_string() } else { format!("{}×", s.anti_alias) })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut s.anti_alias, 1, "Off");
+                    ui.selectable_value(&mut s.anti_alias, 2, "2×");
+                    ui.selectable_value(&mut s.anti_alias, 4, "4×");
+                    ui.selectable_value(&mut s.anti_alias, 8, "8×");
+                })
+                .response
+                .on_hover_text("Grey edge pixels for smoother surfaces. Not yet confirmed on the printer: try a small test print first.");
+            ui.end_row();
         });
         ui.label(
             RichText::new("Exposure defaults are placeholders. Use your resin maker's numbers.")

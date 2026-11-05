@@ -121,6 +121,7 @@ impl SliceJob {
                     bottom_layers: h.bottom_layers,
                     light_pwm: h.light_pwm,
                     bottom_light_pwm: h.bottom_light_pwm,
+                    anti_alias: h.anti_aliasing_level.max(1) as u32,
                 };
                 let opened_bounds = a.bounds.map(|b| {
                     (

@@ -11,7 +11,7 @@ use crate::checks::{coarse_from_spans, CheckParams, CoarseGrid, CoarseLayer, Iss
 use crate::hollow::{DrainHole, HollowParams, Hollower, Rows};
 use crate::mesh::{Mesh, Triangle};
 use crate::printer::Printer;
-use crate::raster::{slice_layer, LayerSpans, PixelGrid};
+use crate::raster::{grey_subtract, slice_layer, slice_layer_grey, GreyRow, LayerSpans, PixelGrid};
 use crate::settings::{build_header, HeaderInputs, PrintSettings};
 use crate::{preview, SliceError};
 
@@ -34,8 +34,9 @@ pub struct SliceHooks<'a> {
 /// What a worker hands back for one layer.
 enum Stage {
     Done(EncodedLayer),
-    /// Cropped spans and their erosion, waiting for hollowing.
-    Raw(Rows, Rows),
+    /// Cropped spans, their erosion, and grey rows if anti-aliasing, waiting
+    /// for hollowing.
+    Raw(Rows, Rows, Option<Vec<GreyRow>>),
 }
 
 /// What happened during a slice, for the user.
@@ -143,9 +144,23 @@ pub fn slice_to_goo_with(
         Hollower::new(p, rows, (mm_x, mm_y), h)
     });
 
-    let finalize = |spans: &LayerSpans| -> EncodedLayer {
-        let lit = spans.lit_pixels();
-        let data = encode(spans, grid.width, printer.mirror_x);
+    let aa = settings.anti_alias.max(1);
+    let finalize = |spans: &LayerSpans, grey: Option<&[GreyRow]>| -> EncodedLayer {
+        let (lit, data) = match grey {
+            Some(g) => {
+                let lit: u64 = g
+                    .iter()
+                    .flatten()
+                    .map(|&(a, b, v)| (b - a) as u64 * v as u64)
+                    .sum::<u64>()
+                    .div_ceil(255);
+                (lit, encode_grey(g, grid.width, printer.mirror_x))
+            }
+            None => (
+                spans.lit_pixels(),
+                encode(spans, grid.width, printer.mirror_x),
+            ),
+        };
         let coarse = coarse_grid
             .as_ref()
             .map(|g| coarse_from_spans(spans, (mm_x, mm_y), g));
@@ -183,6 +198,23 @@ pub fn slice_to_goo_with(
         LayerSpans { rows: full }
     };
 
+    // Raw cropped rows and grey rows of layers inside the hollower.
+    let mut waiting: std::collections::VecDeque<(Rows, Option<Vec<GreyRow>>)> = Default::default();
+    // A hollowed layer: subtract the removed interior (raw minus hollowed)
+    // from the grey rows too.
+    let finish_hollowed = |rows: Rows, raw: Rows, grey: Option<Vec<GreyRow>>, row0: usize| {
+        let grey = grey.map(|mut g| {
+            for (i, (r, hol)) in raw.iter().zip(&rows).enumerate() {
+                let removed = crate::hollow::subtract(r, hol);
+                if !removed.is_empty() {
+                    g[row0 + i] = grey_subtract(&g[row0 + i], &removed);
+                }
+            }
+            g
+        });
+        finalize(&uncrop(rows, row0), grey.as_deref())
+    };
+
     for start in (0..layer_count).step_by(batch) {
         if cancelled() {
             return Err(SliceError::Cancelled);
@@ -201,14 +233,15 @@ pub fn slice_to_goo_with(
                     let layer = start as usize + k;
                     let z = (layer as f64 + 0.5) * h;
                     let tris = buckets[layer].iter().map(|&t| &mesh.triangles[t as usize]);
-                    let spans = slice_layer(tris, z, &grid);
+                    let spans = slice_layer(tris.clone(), z, &grid);
+                    let grey = (aa > 1).then(|| slice_layer_grey(tris, z, &grid, aa));
                     let stage = match hol {
                         Some(hw) => {
                             let c = hw.crop(&spans.rows);
                             let e = hw.erode_layer(&c);
-                            Stage::Raw(c, e)
+                            Stage::Raw(c, e, grey)
                         }
-                        None => Stage::Done(finalize(&spans)),
+                        None => Stage::Done(finalize(&spans, grey.as_deref())),
                     };
                     *results[k].lock().unwrap() = Some(stage);
                 });
@@ -217,11 +250,14 @@ pub fn slice_to_goo_with(
         for cell in results.into_iter() {
             match cell.into_inner().unwrap().expect("every layer is computed") {
                 Stage::Done(enc) => write(enc, &mut checker, &mut writer)?,
-                Stage::Raw(c, e) => {
+                Stage::Raw(c, e, grey) => {
                     let hw = hollower.as_mut().unwrap();
                     let row0 = hw.row0();
+                    waiting.push_back((c.clone(), grey));
                     for rows in hw.push(c, e) {
-                        write(finalize(&uncrop(rows, row0)), &mut checker, &mut writer)?;
+                        let (raw, grey) = waiting.pop_front().unwrap();
+                        let enc = finish_hollowed(rows, raw, grey, row0);
+                        write(enc, &mut checker, &mut writer)?;
                     }
                 }
             }
@@ -235,7 +271,9 @@ pub fn slice_to_goo_with(
         let row0 = hw.row0();
         let (rest, holes) = hw.finish();
         for rows in rest {
-            write(finalize(&uncrop(rows, row0)), &mut checker, &mut writer)?;
+            let (raw, grey) = waiting.pop_front().unwrap();
+            let enc = finish_hollowed(rows, raw, grey, row0);
+            write(enc, &mut checker, &mut writer)?;
         }
         drain_holes = holes
             .into_iter()
@@ -306,6 +344,28 @@ fn bucket_by_layer(tris: &[Triangle], layer_count: u32, h: f64) -> Vec<Vec<u32>>
         }
     }
     buckets
+}
+
+/// Encodes grey runs row by row, mirroring X if the printer needs it.
+fn encode_grey(rows: &[GreyRow], width: u32, mirror_x: bool) -> Vec<u8> {
+    let mut enc = LayerEncoder::new();
+    let mut runs: Vec<(u32, u32, u8)> = Vec::new();
+    for row in rows {
+        runs.clear();
+        if mirror_x {
+            runs.extend(row.iter().rev().map(|&(a, b, v)| (width - b, width - a, v)));
+        } else {
+            runs.extend_from_slice(row);
+        }
+        let mut x = 0;
+        for &(a, b, v) in &runs {
+            enc.push_run(0x00, (a - x) as u64);
+            enc.push_run(v, (b - a) as u64);
+            x = b;
+        }
+        enc.push_run(0x00, (width - x) as u64);
+    }
+    enc.finish()
 }
 
 /// Encodes spans row by row, mirroring X if the printer needs it.
