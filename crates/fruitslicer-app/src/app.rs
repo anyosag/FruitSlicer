@@ -16,6 +16,7 @@ use crate::jobs::{save_goo, SliceJob, SliceOutput};
 use crate::layer_view::{self, LayerImage, PixelRect};
 use crate::render::{self, Draw, DrawKind, Gpu3d, ViewCallback};
 use crate::scene::{self, Object, Placement};
+use crate::theme;
 use crate::util;
 
 const KEY_GRID: u64 = u64::MAX - 1;
@@ -73,6 +74,14 @@ impl Default for Prefs {
 }
 
 #[derive(PartialEq, Clone, Copy)]
+enum SettingsTab {
+    Print,
+    Supports,
+    Hollow,
+    Checks,
+}
+
+#[derive(PartialEq, Clone, Copy)]
 enum Tab {
     Plate,
     Layers,
@@ -116,6 +125,11 @@ pub struct App {
     camera: Camera,
     drag: Drag,
     tab: Tab,
+    settings_tab: SettingsTab,
+    /// Show the 3D cut-away next to the layer image.
+    show_cutaway: bool,
+    /// A problem to zoom the layer image onto, next frame.
+    focus_issue: Option<usize>,
     /// GPU copy version per key: (object version, supports shown, highlight).
     uploaded: HashMap<u64, (u64, bool, u32)>,
     gpu_ready: bool,
@@ -155,6 +169,7 @@ impl App {
             .storage
             .and_then(|s| eframe::get_value(s, "prefs"))
             .unwrap_or_default();
+        theme::install(&cc.egui_ctx);
         let mut gpu_ready = false;
         if let Some(rs) = cc.wgpu_render_state.as_ref() {
             Gpu3d::install(rs);
@@ -172,6 +187,9 @@ impl App {
             camera: Camera::default(),
             drag: Drag::None,
             tab: Tab::Plate,
+            settings_tab: SettingsTab::Print,
+            show_cutaway: true,
+            focus_issue: None,
             uploaded: HashMap::new(),
             gpu_ready,
             plate_uploaded: false,
@@ -888,103 +906,192 @@ impl App {
         });
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            if ui.button("Open…").clicked() {
-                self.open_dialog();
-            }
-            ui.separator();
-            let slicing = self.job.is_some();
-            if slicing {
-                let p = self.job.as_ref().map(|j| j.progress()).unwrap_or(0.0);
-                ui.add(
-                    egui::ProgressBar::new(p)
-                        .desired_width(200.0)
-                        .show_percentage(),
-                );
-                if ui.button("Cancel").clicked() {
-                    if let Some(j) = &self.job {
-                        j.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        let bar = ui.max_rect();
+        ui.horizontal_centered(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
+            theme::logo(ui.painter(), r);
+            ui.label(
+                RichText::new("FruitSlicer")
+                    .font(egui::FontId::new(15.0, theme::semibold()))
+                    .color(theme::TEXT),
+            );
+            ui.add_space(10.0);
+            self.menu_bar(ui);
+
+            // Right side: the main actions.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let slicing = self.job.is_some();
+                if slicing {
+                    if theme::secondary_button(ui, true, "Cancel").clicked() {
+                        if let Some(j) = &self.job {
+                            j.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                    let p = self.job.as_ref().map(|j| j.progress()).unwrap_or(0.0);
+                    ui.add(
+                        egui::ProgressBar::new(p)
+                            .desired_width(180.0)
+                            .desired_height(8.0)
+                            .fill(theme::ACCENT)
+                            .corner_radius(4.0),
+                    );
+                    ui.label(
+                        RichText::new(format!("Slicing {:.0}%", p * 100.0)).color(theme::TEXT_WEAK),
+                    );
+                } else {
+                    let stale = self.result.is_some() && !self.result_is_current();
+                    let label = if stale { "Slice again" } else { "Slice" };
+                    if theme::primary_button(ui, !self.objects.is_empty(), label)
+                        .on_hover_text("Slice the plate and check it for problems")
+                        .clicked()
+                    {
+                        let ctx = ui.ctx().clone();
+                        self.start_slice(&ctx);
+                    }
+                    if theme::secondary_button(ui, self.result.is_some(), "Save .goo")
+                        .on_hover_text("Save the sliced file for the printer (Ctrl+S)")
+                        .clicked()
+                    {
+                        self.save_dialog();
+                    }
+                    if stale {
+                        ui.label(
+                            RichText::new("Plate changed since slicing")
+                                .small()
+                                .color(theme::WARN),
+                        );
                     }
                 }
-            } else {
-                let label = if self.result.is_some() && !self.result_is_current() {
-                    "Slice again"
-                } else {
-                    "Slice"
-                };
-                if ui
-                    .add_enabled(
-                        !self.objects.is_empty(),
-                        egui::Button::new(RichText::new(label).strong()),
-                    )
-                    .clicked()
-                {
-                    let ctx = ui.ctx().clone();
-                    self.start_slice(&ctx);
-                }
-            }
-            if ui
-                .add_enabled(
-                    self.result.is_some() && !slicing,
-                    egui::Button::new("Save .goo…"),
-                )
-                .clicked()
-            {
-                self.save_dialog();
-            }
-            ui.separator();
-            ui.selectable_value(&mut self.tab, Tab::Plate, "Plate");
-            ui.add_enabled_ui(self.result.is_some(), |ui| {
-                ui.selectable_value(&mut self.tab, Tab::Layers, "Layers");
             });
-            if self.result.is_some() && !self.result_is_current() && !slicing {
-                ui.label(
-                    RichText::new("⚠ plate changed since slicing")
-                        .color(Color32::from_rgb(230, 170, 60)),
-                );
-            }
+        });
+
+        // Centre: the two modes, centred on the window.
+        let size = Vec2::new(190.0, 34.0);
+        let rect = egui::Rect::from_center_size(bar.center(), size);
+        let has_result = self.result.is_some();
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            theme::segmented(
+                ui,
+                &mut self.tab,
+                &[
+                    (Tab::Plate, "Plate", true),
+                    (Tab::Layers, "Layers", has_result),
+                ],
+                true,
+            );
         });
     }
 
     fn objects_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Models");
+        ui.horizontal(|ui| {
+            theme::section_title(ui, "Models");
+            if !self.objects.is_empty() {
+                ui.label(
+                    RichText::new(self.objects.len().to_string())
+                        .small()
+                        .color(theme::TEXT_FAINT),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button("+ Add")
+                    .on_hover_text("Open a model or project (Ctrl+O)")
+                    .clicked()
+                {
+                    self.open_dialog();
+                }
+            });
+        });
         if self.objects.is_empty() {
-            ui.label("No models yet. Open an STL, OBJ or 3MF file, or drop one on the window.");
+            theme::card(ui, None, |ui| {
+                ui.label(RichText::new("No models yet").strong());
+                theme::hint(
+                    ui,
+                    "Open an STL, OBJ or 3MF file, or drop one on the window.",
+                );
+            });
+            return;
         }
         let mut select = None;
-        for o in &self.objects {
-            let fits = o.fits(&self.printer);
-            let text = if fits {
-                RichText::new(&o.name)
-            } else {
-                RichText::new(format!("{} (off the plate)", o.name)).color(Color32::LIGHT_RED)
-            };
-            if ui
-                .selectable_label(self.selected == Some(o.id), text)
-                .clicked()
-            {
-                select = Some(o.id);
+        theme::card(ui, None, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for o in &self.objects {
+                let fits = o.fits(&self.printer);
+                let sel = self.selected == Some(o.id);
+                let h = 30.0;
+                let (rect, resp) = ui
+                    .allocate_exact_size(Vec2::new(ui.available_width(), h), egui::Sense::click());
+                let p = ui.painter();
+                if sel {
+                    p.rect_filled(rect, 6.0, theme::ACCENT.gamma_multiply(0.16));
+                } else if resp.hovered() {
+                    p.rect_filled(rect, 6.0, theme::FIELD);
+                }
+                let dot = if !fits {
+                    theme::ERROR
+                } else if sel {
+                    theme::ACCENT
+                } else {
+                    Color32::from_rgb(217, 158, 82)
+                };
+                p.circle_filled(rect.left_center() + Vec2::new(12.0, 0.0), 4.5, dot);
+                p.text(
+                    rect.left_center() + Vec2::new(26.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    &o.name,
+                    egui::FontId::new(
+                        13.5,
+                        if sel {
+                            theme::semibold()
+                        } else {
+                            egui::FontFamily::Proportional
+                        },
+                    ),
+                    if sel { Color32::WHITE } else { theme::TEXT },
+                );
+                let right = if fits {
+                    format!("{:.1} ml", o.placed.volume() / 1000.0)
+                } else {
+                    "off the plate".into()
+                };
+                p.text(
+                    rect.right_center() - Vec2::new(10.0, 0.0),
+                    egui::Align2::RIGHT_CENTER,
+                    right,
+                    egui::FontId::proportional(11.5),
+                    if fits {
+                        theme::TEXT_FAINT
+                    } else {
+                        theme::ERROR
+                    },
+                );
+                if resp.clicked() {
+                    select = Some(o.id);
+                }
             }
-        }
+        });
         if let Some(s) = select {
             self.selected = Some(s);
         }
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(self.selected.is_some(), egui::Button::new("Duplicate"))
+                .on_hover_text("Ctrl+D")
                 .clicked()
             {
                 self.duplicate_selected();
             }
             if ui
                 .add_enabled(self.selected.is_some(), egui::Button::new("Delete"))
+                .on_hover_text("Del")
                 .clicked()
             {
                 self.delete_selected();
             }
             if ui
                 .add_enabled(self.objects.len() > 1, egui::Button::new("Arrange"))
+                .on_hover_text("Spread the models out over the plate")
                 .clicked()
             {
                 self.checkpoint();
@@ -994,76 +1101,84 @@ impl App {
                 self.refresh_supports();
             }
         });
-        ui.separator();
+        ui.add_space(6.0);
 
-        let Some(id) = self.selected else { return };
+        let Some(id) = self.selected else {
+            theme::hint(ui, "Select a model to move, rotate or scale it.");
+            return;
+        };
         let Some(idx) = self.objects.iter().position(|o| o.id == id) else {
             return;
         };
-        ui.heading("Placement");
         let before = self.objects[idx].placement;
         let mut p = before;
         let mut commit = false;
-        egui::Grid::new("placement").num_columns(4).show(ui, |ui| {
-            ui.label("Scale %");
-            let mut pct = p.scale * 100.0;
-            let r = ui.add(
-                egui::DragValue::new(&mut pct)
-                    .speed(0.5)
-                    .range(1.0..=2000.0)
-                    .suffix(" %"),
-            );
-            p.scale = pct / 100.0;
-            commit |= r.drag_stopped() || r.lost_focus();
-            ui.end_row();
-            for (axis, i) in [("Rotate X", 0), ("Rotate Y", 1), ("Rotate Z", 2)] {
-                ui.label(axis);
-                let r = ui.add(
-                    egui::DragValue::new(&mut p.rotation[i])
-                        .speed(1.0)
-                        .suffix("°"),
-                );
-                commit |= r.drag_stopped() || r.lost_focus();
-                if ui.small_button("-90").clicked() {
-                    p.rotation[i] -= 90.0;
+        theme::card(ui, Some("Placement"), |ui| {
+            egui::Grid::new("placement")
+                .num_columns(4)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    theme::row_label(ui, "Scale");
+                    let mut pct = p.scale * 100.0;
+                    let r = ui.add(
+                        egui::DragValue::new(&mut pct)
+                            .speed(0.5)
+                            .range(1.0..=2000.0)
+                            .suffix(" %"),
+                    );
+                    p.scale = pct / 100.0;
+                    commit |= r.drag_stopped() || r.lost_focus();
+                    ui.end_row();
+                    for (axis, i) in [("Rotate X", 0), ("Rotate Y", 1), ("Rotate Z", 2)] {
+                        theme::row_label(ui, axis);
+                        let r = ui.add(
+                            egui::DragValue::new(&mut p.rotation[i])
+                                .speed(1.0)
+                                .suffix("°"),
+                        );
+                        commit |= r.drag_stopped() || r.lost_focus();
+                        if ui.small_button("−90°").clicked() {
+                            p.rotation[i] -= 90.0;
+                            commit = true;
+                        }
+                        if ui.small_button("+90°").clicked() {
+                            p.rotation[i] += 90.0;
+                            commit = true;
+                        }
+                        ui.end_row();
+                    }
+                    for (axis, i) in [("Move X", 0), ("Move Y", 1)] {
+                        theme::row_label(ui, axis);
+                        let r = ui.add(
+                            egui::DragValue::new(&mut p.offset[i])
+                                .speed(0.5)
+                                .suffix(" mm"),
+                        );
+                        commit |= r.drag_stopped() || r.lost_focus();
+                        ui.end_row();
+                    }
+                });
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Lay flat")
+                    .on_hover_text("Rotate so the largest flat face is on the plate")
+                    .clicked()
+                {
+                    self.checkpoint();
+                    self.objects[idx].lay_flat();
+                    p = self.objects[idx].placement;
+                    self.refresh_supports();
+                }
+                if ui.button("Centre").clicked() {
+                    p.offset = [0.0, 0.0];
                     commit = true;
                 }
-                if ui.small_button("+90").clicked() {
-                    p.rotation[i] += 90.0;
+                if ui.button("Reset").clicked() {
+                    p = Placement::default();
                     commit = true;
                 }
-                ui.end_row();
-            }
-            for (axis, i) in [("Move X", 0), ("Move Y", 1)] {
-                ui.label(axis);
-                let r = ui.add(
-                    egui::DragValue::new(&mut p.offset[i])
-                        .speed(0.5)
-                        .suffix(" mm"),
-                );
-                commit |= r.drag_stopped() || r.lost_focus();
-                ui.end_row();
-            }
-        });
-        ui.horizontal(|ui| {
-            if ui.button("Centre").clicked() {
-                p.offset = [0.0, 0.0];
-                commit = true;
-            }
-            if ui.button("Reset").clicked() {
-                p = Placement::default();
-                commit = true;
-            }
-            if ui
-                .button("Lay flat")
-                .on_hover_text("Rotate so the largest flat face is on the plate")
-                .clicked()
-            {
-                self.checkpoint();
-                self.objects[idx].lay_flat();
-                p = self.objects[idx].placement;
-                self.refresh_supports();
-            }
+            });
         });
         if p != before {
             if commit
@@ -1083,351 +1198,483 @@ impl App {
             self.refresh_supports();
         }
         let o = &self.objects[idx];
-        if let Some(b) = o.placed_bounds {
-            let s = b.size();
-            ui.label(format!("Size: {:.2} × {:.2} × {:.2} mm", s[0], s[1], s[2]));
-        }
-        ui.label(format!(
-            "{} triangles, {:.2} ml",
-            o.placed.triangles.len(),
-            o.placed.volume() / 1000.0
-        ));
-        if let Some(&(open, nm)) = self.mesh_errors.get(&o.id) {
-            if open > 0 || nm > 0 {
-                ui.label(
-                    RichText::new(format!(
-                        "⚠ Mesh problems: {open} open edges, {nm} non-manifold edges. Holes or \
-                         overlaps can slice wrongly; check the layers, or repair the mesh \
-                         first (for example in Blender's 3D-Print toolbox)."
-                    ))
-                    .small()
-                    .color(Color32::from_rgb(230, 170, 60)),
+        ui.add_space(4.0);
+        theme::card(ui, Some("Details"), |ui| {
+            egui::Grid::new("details")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    if let Some(b) = o.placed_bounds {
+                        let s = b.size();
+                        theme::row_label(ui, "Size");
+                        ui.label(format!("{:.1} × {:.1} × {:.1} mm", s[0], s[1], s[2]));
+                        ui.end_row();
+                    }
+                    theme::row_label(ui, "Volume");
+                    ui.label(format!("{:.2} ml", o.placed.volume() / 1000.0));
+                    ui.end_row();
+                    theme::row_label(ui, "Triangles");
+                    ui.label(o.placed.triangles.len().to_string());
+                    ui.end_row();
+                    if let Some(s) = o.supported.as_ref().filter(|_| o.supports_current()) {
+                        let on_model = s.points.iter().filter(|p| p.on_model).count();
+                        theme::row_label(ui, "Supports");
+                        ui.label(format!("{} ({} on the model)", s.points.len(), on_model));
+                        ui.end_row();
+                    } else if !self.prefs.auto_supports {
+                        theme::row_label(ui, "Supports");
+                        ui.label("none");
+                        ui.end_row();
+                    }
+                    if !o.added.is_empty() || !o.removed.is_empty() {
+                        theme::row_label(ui, "Hand edits");
+                        ui.label(format!(
+                            "{} added, {} removed",
+                            o.added.len(),
+                            o.removed.len()
+                        ));
+                        ui.end_row();
+                    }
+                });
+            if let Some(&(open, nm)) = self.mesh_errors.get(&o.id) {
+                if open > 0 || nm > 0 {
+                    theme::callout(
+                        ui,
+                        theme::WARN,
+                        format!(
+                            "Mesh problems: {open} open edges, {nm} non-manifold edges. Holes or \
+                             overlaps can slice wrongly; check the layers, or repair the mesh \
+                             first (for example in Blender's 3D-Print toolbox)."
+                        ),
+                    );
+                }
+            }
+            if o.orient < 0.0 {
+                theme::hint(
+                    ui,
+                    "Faces point inwards (the mesh is inside out). Slicing handles it.",
                 );
             }
-        }
-        if o.orient < 0.0 {
-            ui.label(
-                RichText::new("Faces point inwards (the mesh is inside out). Slicing handles it.")
-                    .small()
-                    .weak(),
-            );
-        }
-        if !o.added.is_empty() || !o.removed.is_empty() {
-            ui.label(format!(
-                "Hand edits: {} added, {} removed",
-                o.added.len(),
-                o.removed.len()
-            ));
-        }
-        if let Some(s) = o.supported.as_ref().filter(|_| o.supports_current()) {
-            let on_model = s.points.iter().filter(|p| p.on_model).count();
-            ui.label(format!(
-                "{} supports ({} rest on the model)",
-                s.points.len(),
-                on_model
-            ));
-        } else if !self.prefs.auto_supports {
-            ui.label("No supports.");
-        }
+        });
     }
 
+    /// Right panel on the Plate tab: settings, one page at a time.
     fn settings_panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::CollapsingHeader::new(RichText::new("Print settings").heading())
-                .default_open(true)
-                .show(ui, |ui| self.print_settings_ui(ui));
-            egui::CollapsingHeader::new(RichText::new("Supports").heading())
-                .default_open(true)
-                .show(ui, |ui| self.supports_ui(ui));
-            egui::CollapsingHeader::new(RichText::new("Hollowing").heading())
-                .default_open(false)
-                .show(ui, |ui| self.hollow_ui(ui));
-            egui::CollapsingHeader::new(RichText::new("Print checks").heading())
-                .default_open(false)
-                .show(ui, |ui| self.checks_ui(ui));
-            egui::CollapsingHeader::new(RichText::new("Results").heading())
-                .default_open(true)
-                .show(ui, |ui| self.results_ui(ui));
+        ui.add_space(2.0);
+        theme::segmented(
+            ui,
+            &mut self.settings_tab,
+            &[
+                (SettingsTab::Print, "Print", true),
+                (SettingsTab::Supports, "Supports", true),
+                (SettingsTab::Hollow, "Hollow", true),
+                (SettingsTab::Checks, "Checks", true),
+            ],
+            true,
+        );
+        ui.add_space(4.0);
+        if self.result.is_some() {
+            egui::Panel::bottom("last-slice")
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                    top: 8,
+                    ..Default::default()
+                }))
+                .show_separator_line(false)
+                .show(ui, |ui| self.slice_summary(ui));
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("settings")
+            .auto_shrink([false, false])
+            .show(ui, |ui| match self.settings_tab {
+                SettingsTab::Print => self.print_settings_ui(ui),
+                SettingsTab::Supports => self.supports_ui(ui),
+                SettingsTab::Hollow => self.hollow_ui(ui),
+                SettingsTab::Checks => self.checks_ui(ui),
+            });
+    }
+
+    /// A short summary of the last slice, with a way into the layers.
+    fn slice_summary(&mut self, ui: &mut egui::Ui) {
+        let Some(out) = &self.result else { return };
+        let r = &out.report;
+        let secs = out.settings.estimated_seconds(r.layer_count);
+        let stale = !self.result_is_current();
+        let n = r.issues.len();
+        let mut open = false;
+        theme::card(ui, Some("Last slice"), |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{}  ·  {:.1} ml  ·  {} layers",
+                    util::duration(secs),
+                    r.sliced_volume_mm3 / 1000.0,
+                    r.layer_count
+                ))
+                .color(theme::TEXT),
+            );
+            let (text, color) = if n == 0 {
+                ("No problems found".to_string(), theme::OK)
+            } else {
+                (
+                    format!("{n} possible problem{}", if n == 1 { "" } else { "s" }),
+                    theme::WARN,
+                )
+            };
+            theme::dot_label(ui, color, RichText::new(text).color(color));
+            if stale {
+                theme::hint(
+                    ui,
+                    "The plate changed since this slice. Slice again to update it.",
+                );
+            }
+            open = ui
+                .add_sized(
+                    [ui.available_width(), 28.0],
+                    egui::Button::new("View layers  →"),
+                )
+                .clicked();
         });
+        if open {
+            self.tab = Tab::Layers;
+        }
     }
 
     fn print_settings_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Printer: ELEGOO Saturn 4 Ultra 16K").weak());
         let s = &mut self.prefs.print;
-        egui::Grid::new("print").num_columns(2).show(ui, |ui| {
-            ui.label("Layer height");
-            ui.add(
-                egui::DragValue::new(&mut s.layer_mm)
-                    .speed(0.005)
-                    .range(0.01..=0.3)
-                    .suffix(" mm"),
+        theme::card(ui, Some("Exposure"), |ui| {
+            egui::Grid::new("print")
+                .num_columns(2)
+                .spacing([12.0, 7.0])
+                .min_col_width(120.0)
+                .show(ui, |ui| {
+                    theme::row_label(ui, "Layer height");
+                    ui.add(
+                        egui::DragValue::new(&mut s.layer_mm)
+                            .speed(0.005)
+                            .range(0.01..=0.3)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Exposure");
+                    ui.add(
+                        egui::DragValue::new(&mut s.exposure_s)
+                            .speed(0.05)
+                            .range(0.1..=60.0)
+                            .suffix(" s"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Bottom exposure");
+                    ui.add(
+                        egui::DragValue::new(&mut s.bottom_exposure_s)
+                            .speed(0.5)
+                            .range(1.0..=200.0)
+                            .suffix(" s"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Bottom layers");
+                    ui.add(egui::DragValue::new(&mut s.bottom_layers).range(0..=50));
+                    ui.end_row();
+                    theme::row_label(ui, "UV power");
+                    let mut pwm = s.light_pwm;
+                    ui.add(egui::Slider::new(&mut pwm, 1..=255));
+                    s.light_pwm = pwm;
+                    s.bottom_light_pwm = pwm;
+                    ui.end_row();
+                    theme::row_label(ui, "Anti-aliasing");
+                    egui::ComboBox::from_id_salt("aa")
+                        .selected_text(if s.anti_alias <= 1 {
+                            "Off".to_string()
+                        } else {
+                            format!("{}×", s.anti_alias)
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut s.anti_alias, 1, "Off");
+                            ui.selectable_value(&mut s.anti_alias, 2, "2×");
+                            ui.selectable_value(&mut s.anti_alias, 4, "4×");
+                            ui.selectable_value(&mut s.anti_alias, 8, "8×");
+                        })
+                        .response
+                        .on_hover_text("Grey edge pixels for smoother surfaces. Not yet confirmed on the printer: try a small test print first.");
+                    ui.end_row();
+                });
+            theme::callout(
+                ui,
+                theme::WARN,
+                "Exposure defaults are placeholders. Use your resin maker's numbers.",
             );
-            ui.end_row();
-            ui.label("Exposure");
-            ui.add(
-                egui::DragValue::new(&mut s.exposure_s)
-                    .speed(0.05)
-                    .range(0.1..=60.0)
-                    .suffix(" s"),
-            );
-            ui.end_row();
-            ui.label("Bottom exposure");
-            ui.add(
-                egui::DragValue::new(&mut s.bottom_exposure_s)
-                    .speed(0.5)
-                    .range(1.0..=200.0)
-                    .suffix(" s"),
-            );
-            ui.end_row();
-            ui.label("Bottom layers");
-            ui.add(egui::DragValue::new(&mut s.bottom_layers).range(0..=50));
-            ui.end_row();
-            ui.label("UV power");
-            let mut pwm = s.light_pwm;
-            ui.add(egui::Slider::new(&mut pwm, 1..=255));
-            s.light_pwm = pwm;
-            s.bottom_light_pwm = pwm;
-            ui.end_row();
-            ui.label("Anti-aliasing");
-            egui::ComboBox::from_id_salt("aa")
-                .selected_text(if s.anti_alias <= 1 { "Off".to_string() } else { format!("{}×", s.anti_alias) })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut s.anti_alias, 1, "Off");
-                    ui.selectable_value(&mut s.anti_alias, 2, "2×");
-                    ui.selectable_value(&mut s.anti_alias, 4, "4×");
-                    ui.selectable_value(&mut s.anti_alias, 8, "8×");
-                })
-                .response
-                .on_hover_text("Grey edge pixels for smoother surfaces. Not yet confirmed on the printer: try a small test print first.");
-            ui.end_row();
         });
-        ui.label(
-            RichText::new("Exposure defaults are placeholders. Use your resin maker's numbers.")
-                .small()
-                .color(Color32::from_rgb(230, 170, 60)),
-        );
-        ui.checkbox(
-            &mut self.prefs.mirror_x,
-            "Mirror X (as UVtools' profile does)",
-        )
-        .on_hover_text(
-            "Not yet confirmed against a file from ELEGOO's own slicer. If text prints \
-                 backwards, turn this off.",
-        );
+        ui.add_space(4.0);
 
         // Resin profiles.
-        ui.separator();
-        ui.label("Resin profiles");
         let mut load = None;
         let mut delete = None;
-        for (i, p) in self.prefs.profiles.iter().enumerate() {
+        theme::card(ui, Some("Resin profiles"), |ui| {
+            if self.prefs.profiles.is_empty() {
+                theme::hint(ui, "Save the settings above under a name to reuse them.");
+            }
+            for (i, p) in self.prefs.profiles.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.label(RichText::new(&p.name).strong());
+                        theme::hint(
+                            ui,
+                            format!(
+                                "{} mm · {} s · bottom {} s × {}",
+                                p.settings.layer_mm,
+                                p.settings.exposure_s,
+                                p.settings.bottom_exposure_s,
+                                p.settings.bottom_layers
+                            ),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("×").on_hover_text("Delete").clicked() {
+                            delete = Some(i);
+                        }
+                        if ui.small_button("Use").clicked() {
+                            load = Some(i);
+                        }
+                    });
+                });
+            }
             ui.horizontal(|ui| {
-                if ui.button("Use").clicked() {
-                    load = Some(i);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.new_profile_name)
+                        .hint_text("Profile name")
+                        .desired_width(ui.available_width() - 70.0),
+                );
+                if ui
+                    .add_enabled(
+                        !self.new_profile_name.trim().is_empty(),
+                        egui::Button::new("Save"),
+                    )
+                    .clicked()
+                {
+                    let name = self.new_profile_name.trim().to_string();
+                    self.prefs.profiles.retain(|p| p.name != name);
+                    self.prefs.profiles.push(ResinProfile {
+                        name,
+                        settings: self.prefs.print.clone(),
+                    });
+                    self.new_profile_name.clear();
                 }
-                if ui.small_button("✖").on_hover_text("Delete").clicked() {
-                    delete = Some(i);
-                }
-                ui.label(format!(
-                    "{}: {} mm, {} s / {} s × {}",
-                    p.name,
-                    p.settings.layer_mm,
-                    p.settings.exposure_s,
-                    p.settings.bottom_exposure_s,
-                    p.settings.bottom_layers
-                ));
             });
-        }
+        });
         if let Some(i) = load {
             self.prefs.print = self.prefs.profiles[i].settings.clone();
         }
         if let Some(i) = delete {
             self.prefs.profiles.remove(i);
         }
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.new_profile_name)
-                    .hint_text("Name")
-                    .desired_width(120.0),
-            );
-            if ui
-                .add_enabled(
-                    !self.new_profile_name.trim().is_empty(),
-                    egui::Button::new("Save current"),
-                )
-                .clicked()
-            {
-                let name = self.new_profile_name.trim().to_string();
-                self.prefs.profiles.retain(|p| p.name != name);
-                self.prefs.profiles.push(ResinProfile {
-                    name,
-                    settings: self.prefs.print.clone(),
-                });
-                self.new_profile_name.clear();
-            }
+        ui.add_space(4.0);
+
+        let mirror = &mut self.prefs.mirror_x;
+        theme::card(ui, Some("Printer"), |ui| {
+            ui.label("ELEGOO Saturn 4 Ultra 16K");
+            ui.checkbox(mirror, "Mirror X (as UVtools' profile does)")
+                .on_hover_text(
+                    "Not yet confirmed against a file from ELEGOO's own slicer. If text prints \
+                     backwards, turn this off.",
+                );
         });
     }
 
     fn supports_ui(&mut self, ui: &mut egui::Ui) {
         let before = self.prefs.supports;
         let auto_before = self.prefs.auto_supports;
-        ui.checkbox(&mut self.prefs.auto_supports, "Automatic supports");
+        let mut regenerate = false;
+        let mut clear_edits = false;
+        let mut remove = false;
+        let edit = &mut self.edit_supports;
+        let auto = &mut self.prefs.auto_supports;
         let s = &mut self.prefs.supports;
-        egui::Grid::new("supports").num_columns(2).show(ui, |ui| {
-            ui.label("Style");
+        theme::card(ui, Some("Placement"), |ui| {
+            ui.checkbox(auto, "Automatic supports");
+            egui::Grid::new("supports")
+                .num_columns(2)
+                .spacing([12.0, 7.0])
+                .min_col_width(120.0)
+                .show(ui, |ui| {
+                    theme::row_label(ui, "Style");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut s.tree, true, "Tree")
+                            .on_hover_text("Neighbouring supports lean in and merge into shared trunks: fewer feet, and they come off in clusters");
+                        ui.selectable_value(&mut s.tree, false, "Columns");
+                    });
+                    ui.end_row();
+                    if s.tree {
+                        theme::row_label(ui, "Branch angle");
+                        ui.add(egui::Slider::new(&mut s.branch_angle_deg, 10.0..=50.0).suffix("°"))
+                            .on_hover_text("Most a branch leans from vertical. Steeper branches merge less.");
+                        ui.end_row();
+                    }
+                    theme::row_label(ui, "Overhang angle");
+                    ui.add(egui::Slider::new(&mut s.overhang_angle_deg, 10.0..=80.0).suffix("°"))
+                        .on_hover_text("Downward faces flatter than this get supports");
+                    ui.end_row();
+                    theme::row_label(ui, "Spacing");
+                    ui.add(
+                        egui::DragValue::new(&mut s.spacing_mm)
+                            .speed(0.1)
+                            .range(0.8..=20.0)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Lift off plate");
+                    ui.add(
+                        egui::DragValue::new(&mut s.lift_mm)
+                            .speed(0.1)
+                            .range(0.0..=30.0)
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text(
+                        "0 puts the model straight on the plate and only supports overhangs",
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Support low points");
+                    ui.checkbox(&mut s.support_minima, "");
+                    ui.end_row();
+                });
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut s.tree, true, "Tree")
-                    .on_hover_text("Neighbouring supports lean in and merge into shared trunks: fewer feet, and they come off in clusters");
-                ui.selectable_value(&mut s.tree, false, "Columns");
+                regenerate = ui.button("Regenerate").clicked();
+                remove = ui.button("Remove all").clicked();
             });
-            ui.end_row();
-            if s.tree {
-                ui.label("Branch angle");
-                ui.add(egui::Slider::new(&mut s.branch_angle_deg, 10.0..=50.0).suffix("°"))
-                    .on_hover_text("Most a branch leans from vertical. Steeper branches merge less.");
-                ui.end_row();
-            }
-            ui.label("Overhang angle");
-            ui.add(egui::Slider::new(&mut s.overhang_angle_deg, 10.0..=80.0).suffix("°"))
-                .on_hover_text("Downward faces flatter than this get supports");
-            ui.end_row();
-            ui.label("Spacing");
-            ui.add(
-                egui::DragValue::new(&mut s.spacing_mm)
-                    .speed(0.1)
-                    .range(0.8..=20.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Lift off plate");
-            ui.add(
-                egui::DragValue::new(&mut s.lift_mm)
-                    .speed(0.1)
-                    .range(0.0..=30.0)
-                    .suffix(" mm"),
-            )
-            .on_hover_text("0 puts the model straight on the plate and only supports overhangs");
-            ui.end_row();
-            ui.label("Tip diameter");
-            ui.add(
-                egui::DragValue::new(&mut s.tip_diameter_mm)
-                    .speed(0.01)
-                    .range(0.1..=2.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Low-point tip");
-            ui.add(
-                egui::DragValue::new(&mut s.strong_tip_diameter_mm)
-                    .speed(0.01)
-                    .range(0.1..=2.0)
-                    .suffix(" mm"),
-            )
-            .on_hover_text("Tip diameter at the lowest points, which hold the most at the start of the print");
-            ui.end_row();
-            ui.label("Angle tips");
-            ui.checkbox(&mut s.angled_tips, "")
-                .on_hover_text("Lean tips (up to 30°) to meet sloped faces head-on, so they snap off cleanly");
-            ui.end_row();
-            ui.label("Tip length");
-            ui.add(
-                egui::DragValue::new(&mut s.tip_length_mm)
-                    .speed(0.05)
-                    .range(0.3..=10.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Column diameter");
-            ui.add(
-                egui::DragValue::new(&mut s.column_diameter_mm)
-                    .speed(0.05)
-                    .range(0.3..=5.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Foot diameter");
-            ui.add(
-                egui::DragValue::new(&mut s.foot_diameter_mm)
-                    .speed(0.05)
-                    .range(0.3..=10.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Raft thickness");
-            ui.add(
-                egui::DragValue::new(&mut s.raft_mm)
-                    .speed(0.05)
-                    .range(0.0..=5.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Raft lip");
-            ui.add(
-                egui::DragValue::new(&mut s.raft_lip_mm)
-                    .speed(0.05)
-                    .range(0.0..=3.0)
-                    .suffix(" mm"),
-            )
-            .on_hover_text("Height of the undercut at the raft's edge, where a scraper slips in. 0 for a square edge.");
-            ui.end_row();
-            ui.label("Raft lip angle");
-            ui.add(egui::Slider::new(&mut s.raft_lip_angle_deg, 30.0..=90.0).suffix("°"))
-                .on_hover_text("How steeply the undercut flares out from the plate. It overhangs while printing, so stay near 45° or steeper.");
-            ui.end_row();
-            ui.label("Support low points");
-            ui.checkbox(&mut s.support_minima, "");
-            ui.end_row();
         });
-        ui.horizontal(|ui| {
-            ui.toggle_value(&mut self.edit_supports, "Edit by hand")
-                .on_hover_text(
-                    "Click a model to add a support there. Right-click a support to remove it.",
+        ui.add_space(4.0);
+        theme::card(ui, Some("Edit by hand"), |ui| {
+            ui.horizontal(|ui| {
+                ui.toggle_value(edit, if *edit { "Editing…" } else { "Start editing" })
+                    .on_hover_text(
+                        "Click a model to add a support there. Right-click a support to remove it.",
+                    );
+                clear_edits = ui.button("Clear edits").clicked();
+            });
+            if *edit {
+                theme::callout(
+                    ui,
+                    theme::INFO,
+                    "Click a model to add a support, right-click a support to remove it.",
                 );
-            if ui.button("Clear edits").clicked() {
-                self.checkpoint();
-                for o in &mut self.objects {
-                    o.added.clear();
-                    o.removed.clear();
-                    o.supports_version = None;
-                }
-                self.refresh_supports();
             }
         });
-        if self.edit_supports {
-            ui.label(
-                RichText::new(
-                    "Editing: click a model to add a support, right-click a support to remove it.",
-                )
-                .color(Color32::from_rgb(120, 200, 255)),
-            );
-        }
+        ui.add_space(4.0);
+        theme::card(ui, Some("Tips"), |ui| {
+            egui::Grid::new("support-tips")
+                .num_columns(2)
+                .spacing([12.0, 7.0])
+                .min_col_width(120.0)
+                .show(ui, |ui| {
+                    theme::row_label(ui, "Tip diameter");
+                    ui.add(
+                        egui::DragValue::new(&mut s.tip_diameter_mm)
+                            .speed(0.01)
+                            .range(0.1..=2.0)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Low-point tip");
+                    ui.add(
+                        egui::DragValue::new(&mut s.strong_tip_diameter_mm)
+                            .speed(0.01)
+                            .range(0.1..=2.0)
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text("Tip diameter at the lowest points, which hold the most at the start of the print");
+                    ui.end_row();
+                    theme::row_label(ui, "Tip length");
+                    ui.add(
+                        egui::DragValue::new(&mut s.tip_length_mm)
+                            .speed(0.05)
+                            .range(0.3..=10.0)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Angle tips");
+                    ui.checkbox(&mut s.angled_tips, "")
+                        .on_hover_text("Lean tips (up to 30°) to meet sloped faces head-on, so they snap off cleanly");
+                    ui.end_row();
+                });
+        });
+        ui.add_space(4.0);
+        theme::card(ui, Some("Columns and raft"), |ui| {
+            egui::Grid::new("support-columns")
+                .num_columns(2)
+                .spacing([12.0, 7.0])
+                .min_col_width(120.0)
+                .show(ui, |ui| {
+                    theme::row_label(ui, "Column diameter");
+                    ui.add(
+                        egui::DragValue::new(&mut s.column_diameter_mm)
+                            .speed(0.05)
+                            .range(0.3..=5.0)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Foot diameter");
+                    ui.add(
+                        egui::DragValue::new(&mut s.foot_diameter_mm)
+                            .speed(0.05)
+                            .range(0.3..=10.0)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Raft thickness");
+                    ui.add(
+                        egui::DragValue::new(&mut s.raft_mm)
+                            .speed(0.05)
+                            .range(0.0..=5.0)
+                            .suffix(" mm"),
+                    );
+                    ui.end_row();
+                    theme::row_label(ui, "Raft lip");
+                    ui.add(
+                        egui::DragValue::new(&mut s.raft_lip_mm)
+                            .speed(0.05)
+                            .range(0.0..=3.0)
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text("Height of the undercut at the raft's edge, where a scraper slips in. 0 for a square edge.");
+                    ui.end_row();
+                    theme::row_label(ui, "Raft lip angle");
+                    ui.add(egui::Slider::new(&mut s.raft_lip_angle_deg, 30.0..=90.0).suffix("°"))
+                        .on_hover_text("How steeply the undercut flares out from the plate. It overhangs while printing, so stay near 45° or steeper.");
+                    ui.end_row();
+                });
+        });
         ui.horizontal(|ui| {
-            if ui.button("Regenerate").clicked() {
-                self.regenerate_all_supports();
-            }
-            if ui.button("Remove supports").clicked() {
-                self.prefs.auto_supports = false;
-                for o in &mut self.objects {
-                    o.clear_supports();
-                }
-            }
             if ui
-                .button("Defaults")
+                .small_button("Reset to defaults")
                 .on_hover_text("Put every support setting back to its default")
                 .clicked()
             {
                 self.prefs.supports = SupportParams::default();
             }
         });
-        ui.label(
-            RichText::new(
-                "Thin, shallow tips that lean to meet sloped faces, on a raft with an \
-                 undercut edge. Supports that land on the model stay straight. Defaults come from \
-                 slicer guides and are untested on this printer.",
-            )
-            .small()
-            .weak(),
+        theme::hint(
+            ui,
+            "Thin, shallow tips that lean to meet sloped faces, on a raft with an \
+             undercut edge. Supports that land on the model stay straight. Defaults come from \
+             slicer guides and are untested on this printer.",
         );
+
+        if clear_edits {
+            self.checkpoint();
+            for o in &mut self.objects {
+                o.added.clear();
+                o.removed.clear();
+                o.supports_version = None;
+            }
+            self.refresh_supports();
+        }
+        if regenerate {
+            self.regenerate_all_supports();
+        }
+        if remove {
+            self.prefs.auto_supports = false;
+            for o in &mut self.objects {
+                o.clear_supports();
+            }
+        }
         let changed = self.prefs.supports != before;
         if self.prefs.auto_supports && (changed || !auto_before) {
             // Regenerate when the user lets go, not on every drag step.
@@ -1446,217 +1693,319 @@ impl App {
     }
 
     fn hollow_ui(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.prefs.hollow, "Hollow the print (saves resin)");
+        let on = &mut self.prefs.hollow;
         let h = &mut self.prefs.hollow_params;
-        ui.add_enabled_ui(self.prefs.hollow, |ui| {
-            egui::Grid::new("hollow").num_columns(2).show(ui, |ui| {
-                ui.label("Wall thickness");
-                ui.add(
-                    egui::DragValue::new(&mut h.wall_mm)
-                        .speed(0.05)
-                        .range(0.8..=10.0)
-                        .suffix(" mm"),
-                );
-                ui.end_row();
-                ui.label("Drain holes");
-                ui.checkbox(&mut h.drain_holes, "add automatically");
-                ui.end_row();
-                ui.label("Hole diameter");
-                ui.add(
-                    egui::DragValue::new(&mut h.hole_diameter_mm)
-                        .speed(0.05)
-                        .range(0.8..=10.0)
-                        .suffix(" mm"),
-                );
-                ui.end_row();
-                ui.label("Hole spacing");
-                ui.add(
-                    egui::DragValue::new(&mut h.hole_spacing_mm)
-                        .speed(0.5)
-                        .range(2.0..=100.0)
-                        .suffix(" mm"),
-                );
-                ui.end_row();
+        theme::card(ui, Some("Hollowing"), |ui| {
+            ui.checkbox(on, "Hollow the print (saves resin)");
+            ui.add_enabled_ui(*on, |ui| {
+                egui::Grid::new("hollow")
+                    .num_columns(2)
+                    .spacing([12.0, 7.0])
+                    .min_col_width(120.0)
+                    .show(ui, |ui| {
+                        theme::row_label(ui, "Wall thickness");
+                        ui.add(
+                            egui::DragValue::new(&mut h.wall_mm)
+                                .speed(0.05)
+                                .range(0.8..=10.0)
+                                .suffix(" mm"),
+                        );
+                        ui.end_row();
+                    });
             });
         });
-        ui.label(
-            RichText::new(
+        ui.add_space(4.0);
+        theme::card(ui, Some("Drain holes"), |ui| {
+            ui.add_enabled_ui(*on, |ui| {
+                ui.checkbox(&mut h.drain_holes, "Add drain holes automatically");
+                egui::Grid::new("holes")
+                    .num_columns(2)
+                    .spacing([12.0, 7.0])
+                    .min_col_width(120.0)
+                    .show(ui, |ui| {
+                        theme::row_label(ui, "Hole diameter");
+                        ui.add(
+                            egui::DragValue::new(&mut h.hole_diameter_mm)
+                                .speed(0.05)
+                                .range(0.8..=10.0)
+                                .suffix(" mm"),
+                        );
+                        ui.end_row();
+                        theme::row_label(ui, "Hole spacing");
+                        ui.add(
+                            egui::DragValue::new(&mut h.hole_spacing_mm)
+                                .speed(0.5)
+                                .range(2.0..=100.0)
+                                .suffix(" mm"),
+                        );
+                        ui.end_row();
+                    });
+            });
+            theme::hint(
+                ui,
                 "Holes go through the floor of each hollow, on the plate side, so it vents while \
                  printing and drains afterwards. Give the model some lift so the holes aren't \
-                 against the raft. Hollow ceilings have no internal supports yet: check the \
-                 results for islands and overhangs inside.",
-            )
-            .small()
-            .weak(),
-        );
+                 against the raft.",
+            );
+        });
+        if *on {
+            ui.add_space(4.0);
+            theme::callout(
+                ui,
+                theme::WARN,
+                "Hollow ceilings have no internal supports yet: check the results for islands \
+                 and overhangs inside.",
+            );
+        }
     }
 
     fn checks_ui(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.prefs.checks, "Check the print while slicing");
+        let on = &mut self.prefs.checks;
         let c = &mut self.prefs.check_params;
-        egui::Grid::new("checks").num_columns(2).show(ui, |ui| {
-            ui.label("Grid cell");
-            ui.add(
-                egui::DragValue::new(&mut c.cell_mm)
-                    .speed(0.01)
-                    .range(0.1..=1.0)
-                    .suffix(" mm"),
-            );
-            ui.end_row();
-            ui.label("Max overhang");
-            ui.add(
-                egui::DragValue::new(&mut c.overhang_mm)
-                    .speed(0.05)
-                    .range(0.2..=10.0)
-                    .suffix(" mm"),
-            )
-            .on_hover_text("How far a layer may stick out past the one before it");
-            ui.end_row();
-            ui.label("Ignore areas under");
-            ui.add(
-                egui::DragValue::new(&mut c.min_area_mm2)
-                    .speed(0.01)
-                    .range(0.0..=10.0)
-                    .suffix(" mm²"),
-            );
-            ui.end_row();
-            ui.label("Ignore cups under");
-            ui.add(
-                egui::DragValue::new(&mut c.min_cup_area_mm2)
-                    .speed(0.1)
-                    .range(0.0..=100.0)
-                    .suffix(" mm²"),
-            );
-            ui.end_row();
-        });
-        ui.label(
-            RichText::new(
+        theme::card(ui, Some("Print checks"), |ui| {
+            ui.checkbox(on, "Check the print while slicing");
+            ui.add_enabled_ui(*on, |ui| {
+                egui::Grid::new("checks")
+                    .num_columns(2)
+                    .spacing([12.0, 7.0])
+                    .min_col_width(120.0)
+                    .show(ui, |ui| {
+                        theme::row_label(ui, "Grid cell");
+                        ui.add(
+                            egui::DragValue::new(&mut c.cell_mm)
+                                .speed(0.01)
+                                .range(0.1..=1.0)
+                                .suffix(" mm"),
+                        );
+                        ui.end_row();
+                        theme::row_label(ui, "Max overhang");
+                        ui.add(
+                            egui::DragValue::new(&mut c.overhang_mm)
+                                .speed(0.05)
+                                .range(0.2..=10.0)
+                                .suffix(" mm"),
+                        )
+                        .on_hover_text("How far a layer may stick out past the one before it");
+                        ui.end_row();
+                        theme::row_label(ui, "Ignore areas under");
+                        ui.add(
+                            egui::DragValue::new(&mut c.min_area_mm2)
+                                .speed(0.01)
+                                .range(0.0..=10.0)
+                                .suffix(" mm²"),
+                        );
+                        ui.end_row();
+                        theme::row_label(ui, "Ignore cups under");
+                        ui.add(
+                            egui::DragValue::new(&mut c.min_cup_area_mm2)
+                                .speed(0.1)
+                                .range(0.0..=100.0)
+                                .suffix(" mm²"),
+                        );
+                        ui.end_row();
+                    });
+            });
+            theme::hint(
+                ui,
                 "Checks use a coarse grid, so features smaller than a cell can be missed and \
                  narrow gaps can look closed.",
-            )
-            .small()
-            .weak(),
-        );
+            );
+        });
+        ui.add_space(4.0);
+        theme::card(ui, Some("What it looks for"), |ui| {
+            for kind in [
+                IssueKind::Island,
+                IssueKind::UnsupportedOverhang,
+                IssueKind::SuctionCup,
+                IssueKind::TrappedResin,
+            ] {
+                theme::dot_label(ui, issue_color(kind), RichText::new(kind.label()).strong());
+                ui.indent(kind.label(), |ui| theme::hint(ui, issue_help(kind)));
+            }
+        });
     }
 
+    /// Right panel on the Layers tab: what the slice produced and its problems.
     fn results_ui(&mut self, ui: &mut egui::Ui) {
         let Some(out) = &self.result else {
-            ui.label("Slice to see layer count, print time, resin use and problems.");
+            theme::hint(
+                ui,
+                "Slice to see layer count, print time, resin use and problems.",
+            );
             return;
         };
         let r = &out.report;
         let s = &out.settings;
         let secs = s.estimated_seconds(r.layer_count);
-        if let Some(name) = &out.opened {
-            ui.label(
-                RichText::new(format!("Showing {name}.goo (opened, not sliced here)")).strong(),
-            );
-        }
-        if ui.small_button("File details…").clicked() {
-            self.show_file_info = true;
-        }
-        egui::Grid::new("results").num_columns(2).show(ui, |ui| {
-            ui.label("Layers");
-            ui.label(format!("{} × {} mm", r.layer_count, s.layer_mm));
-            ui.end_row();
-            ui.label("Print time");
-            ui.label(format!("about {} (rough)", util::duration(secs)));
-            ui.end_row();
-            ui.label("Resin");
-            ui.label(format!(
-                "{:.1} ml (≈ {:.0} g)",
-                r.sliced_volume_mm3 / 1000.0,
-                r.sliced_volume_mm3 / 1000.0 * 1.1
-            ));
-            ui.end_row();
-            ui.label("File size");
-            ui.label(format!("{:.1} MB", r.encoded_bytes as f64 / 1e6));
-            ui.end_row();
-        });
-        if !r.empty_layers.is_empty() {
-            ui.label(
-                RichText::new(format!(
-                    "⚠ {} empty layers: something is floating or the mesh is broken.",
-                    r.empty_layers.len()
-                ))
-                .color(Color32::LIGHT_RED),
-            );
-        }
-        let diff = (r.sliced_volume_mm3 - r.mesh_volume_mm3).abs() / r.mesh_volume_mm3.max(1e-9);
-        if diff > 0.05 {
-            ui.label(
-                RichText::new(format!(
-                    "⚠ Sliced volume is {:.0}% off the mesh volume: the mesh may have holes or flipped faces.",
-                    diff * 100.0
-                ))
-                .color(Color32::from_rgb(230, 170, 60)),
-            );
-        }
-        if !r.drain_holes.is_empty() {
-            ui.label(format!("{} drain holes cut:", r.drain_holes.len()));
-            for d in &r.drain_holes {
-                ui.label(
-                    RichText::new(format!(
-                        "  at ({:.1}, {:.1}) mm, layers {}–{}",
-                        d.center_mm[0],
-                        d.center_mm[1],
-                        d.first_layer + 1,
-                        d.last_layer + 1
-                    ))
-                    .small(),
+        let mut show_info = false;
+        theme::card(ui, Some("Print"), |ui| {
+            if let Some(name) = &out.opened {
+                ui.label(RichText::new(format!("{name}.goo (opened, not sliced here)")).strong());
+            }
+            ui.columns(2, |c| {
+                theme::stat(
+                    &mut c[0],
+                    "Print time",
+                    &util::duration(secs),
+                    Some("rough"),
+                );
+                theme::stat(
+                    &mut c[1],
+                    "Resin",
+                    &format!("{:.1} ml", r.sliced_volume_mm3 / 1000.0),
+                    Some(&format!("≈ {:.0} g", r.sliced_volume_mm3 / 1000.0 * 1.1)),
+                );
+            });
+            ui.columns(2, |c| {
+                theme::stat(
+                    &mut c[0],
+                    "Layers",
+                    &r.layer_count.to_string(),
+                    Some(&format!("{} mm each", s.layer_mm)),
+                );
+                theme::stat(
+                    &mut c[1],
+                    "File size",
+                    &format!("{:.1} MB", r.encoded_bytes as f64 / 1e6),
+                    None,
+                );
+            });
+            show_info = ui.small_button("File details…").clicked();
+            if !r.empty_layers.is_empty() {
+                theme::callout(
+                    ui,
+                    theme::ERROR,
+                    format!(
+                        "{} empty layers: something is floating or the mesh is broken.",
+                        r.empty_layers.len()
+                    ),
                 );
             }
-        }
-        ui.separator();
-        if r.issues.is_empty() {
-            if self.prefs.checks {
-                ui.label(RichText::new("✔ No problems found.").color(Color32::LIGHT_GREEN));
+            let diff =
+                (r.sliced_volume_mm3 - r.mesh_volume_mm3).abs() / r.mesh_volume_mm3.max(1e-9);
+            if diff > 0.05 {
+                theme::callout(
+                    ui,
+                    theme::WARN,
+                    format!(
+                        "Sliced volume is {:.0}% off the mesh volume: the mesh may have holes or flipped faces.",
+                        diff * 100.0
+                    ),
+                );
             }
-            return;
-        }
-        let mut counts: HashMap<IssueKind, usize> = HashMap::new();
-        for i in &r.issues {
-            *counts.entry(i.kind).or_default() += 1;
-        }
-        for kind in [
-            IssueKind::Island,
-            IssueKind::UnsupportedOverhang,
-            IssueKind::SuctionCup,
-            IssueKind::TrappedResin,
-        ] {
-            if let Some(n) = counts.get(&kind) {
-                ui.label(
-                    RichText::new(format!("{} × {}", n, kind.label())).color(issue_color(kind)),
-                )
-                .on_hover_text(issue_help(kind));
-            }
-        }
-        let islands = counts.get(&IssueKind::Island).copied().unwrap_or(0);
-        let mut fix = false;
-        if islands > 0 && self.result_is_current() && out.opened.is_none() {
-            fix = ui
-                .button(format!("Add supports under {islands} island(s)"))
-                .on_hover_text("Adds a hand-placed support under each island, then you slice again")
-                .clicked();
-        }
-        ui.label(RichText::new("Click one to jump to it:").small().weak());
-        let mut jump = None;
-        egui::ScrollArea::vertical()
-            .max_height(260.0)
-            .id_salt("issues")
-            .show(ui, |ui| {
-                for (i, issue) in r.issues.iter().enumerate() {
-                    let text = issue_text(issue);
-                    let sel = self.selected_issue == Some(i);
-                    if ui
-                        .selectable_label(sel, RichText::new(text).color(issue_color(issue.kind)))
-                        .on_hover_text(issue_help(issue.kind))
-                        .clicked()
-                    {
-                        jump = Some(i);
-                    }
+            if !r.drain_holes.is_empty() {
+                ui.label(format!("{} drain holes cut", r.drain_holes.len()));
+                for d in &r.drain_holes {
+                    theme::hint(
+                        ui,
+                        format!(
+                            "at ({:.1}, {:.1}) mm, layers {}–{}",
+                            d.center_mm[0],
+                            d.center_mm[1],
+                            d.first_layer + 1,
+                            d.last_layer + 1
+                        ),
+                    );
                 }
-            });
+            }
+        });
+        if show_info {
+            self.show_file_info = true;
+        }
+        ui.add_space(4.0);
+
+        let mut fix = false;
+        let mut jump = None;
+        theme::card(ui, Some("Problems"), |ui| {
+            if r.issues.is_empty() {
+                if self.prefs.checks {
+                    theme::dot_label(
+                        ui,
+                        theme::OK,
+                        RichText::new("No problems found").color(theme::OK),
+                    );
+                } else {
+                    theme::hint(ui, "Print checks are off.");
+                }
+                return;
+            }
+            let mut counts: HashMap<IssueKind, usize> = HashMap::new();
+            for i in &r.issues {
+                *counts.entry(i.kind).or_default() += 1;
+            }
+            for kind in [
+                IssueKind::Island,
+                IssueKind::UnsupportedOverhang,
+                IssueKind::SuctionCup,
+                IssueKind::TrappedResin,
+            ] {
+                if let Some(n) = counts.get(&kind) {
+                    let c = issue_color(kind);
+                    ui.horizontal(|ui| {
+                        theme::dot_label(ui, c, RichText::new(kind.label()).color(c));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(n.to_string())
+                                    .font(egui::FontId::new(13.0, theme::semibold()))
+                                    .color(c),
+                            );
+                        });
+                    })
+                    .response
+                    .on_hover_text(issue_help(kind));
+                }
+            }
+            ui.separator();
+            let islands = counts.get(&IssueKind::Island).copied().unwrap_or(0);
+            if islands > 0 && self.result_is_current() && out.opened.is_none() {
+                fix = ui
+                    .button(format!("Add supports under {islands} island(s)"))
+                    .on_hover_text(
+                        "Adds a hand-placed support under each island, then you slice again",
+                    )
+                    .clicked();
+            }
+            theme::hint(ui, "Click one to jump to it.");
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for (i, issue) in r.issues.iter().enumerate() {
+                let sel = self.selected_issue == Some(i);
+                let c = issue_color(issue.kind);
+                let (rect, resp) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 40.0),
+                    egui::Sense::click(),
+                );
+                let p = ui.painter();
+                if sel {
+                    p.rect_filled(rect, 6.0, c.gamma_multiply(0.16));
+                    p.rect_stroke(
+                        rect,
+                        6.0,
+                        egui::Stroke::new(1.0, c.gamma_multiply(0.6)),
+                        egui::StrokeKind::Inside,
+                    );
+                } else if resp.hovered() {
+                    p.rect_filled(rect, 6.0, theme::FIELD);
+                }
+                p.circle_filled(rect.left_center() + Vec2::new(12.0, 0.0), 4.5, c);
+                p.text(
+                    rect.left_top() + Vec2::new(26.0, 6.0),
+                    egui::Align2::LEFT_TOP,
+                    issue.kind.label(),
+                    egui::FontId::new(13.0, theme::semibold()),
+                    if sel { Color32::WHITE } else { theme::TEXT },
+                );
+                p.text(
+                    rect.left_bottom() + Vec2::new(26.0, -5.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    issue_detail(issue),
+                    egui::FontId::proportional(11.5),
+                    theme::TEXT_WEAK,
+                );
+                if resp.on_hover_text(issue_help(issue.kind)).clicked() {
+                    jump = Some(i);
+                }
+            }
+        });
         if fix {
             self.support_islands();
             return;
@@ -1669,23 +2018,8 @@ impl App {
                 let first = out.report.issues[i].first_layer as usize;
                 self.layer = first;
                 self.tab = Tab::Layers;
-                self.center_layer_on_issue(i);
+                self.focus_issue = Some(i);
             }
-        }
-        if self.selected_issue.is_some() && ui.button("Show all problems").clicked() {
-            self.selected_issue = None;
-        }
-    }
-
-    fn center_layer_on_issue(&mut self, i: usize) {
-        let Some(out) = &self.result else { return };
-        let issue = &out.report.issues[i];
-        if let Some((_, _, img)) = &self.layer_tex {
-            let c = issue.area.center();
-            let uv = img.mm_to_uv(&out.goo.header, [c[0] as f32, c[1] as f32]);
-            self.layer_zoom = self.layer_zoom.max(3.0);
-            // layer_pan is in units of the fitted image size.
-            self.layer_pan = Vec2::new(0.5 - uv[0], 0.5 - uv[1]);
         }
     }
 
@@ -1888,19 +2222,120 @@ impl App {
                 + glam::Vec3::new(0.2, -0.1, 0.4),
             draws,
         };
-        ui.painter()
-            .rect_filled(rect, 0.0, Color32::from_rgb(28, 30, 36));
+        theme::gradient(
+            ui.painter(),
+            rect,
+            Color32::from_rgb(30, 34, 43),
+            Color32::from_rgb(13, 15, 19),
+        );
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, cb));
 
-        // Overlay help.
-        ui.painter().text(
-            rect.left_bottom() + Vec2::new(8.0, -8.0),
-            egui::Align2::LEFT_BOTTOM,
-            "Left drag: orbit (or move a model)   Right drag / Shift+drag: pan   Wheel: zoom",
-            egui::FontId::proportional(12.0),
-            Color32::from_gray(140),
+        // Overlays.
+        let painter = ui.painter_at(rect);
+        if self.objects.is_empty() && !layer_mode {
+            let c = rect.center();
+            painter.text(
+                c - Vec2::new(0.0, 14.0),
+                egui::Align2::CENTER_CENTER,
+                "Drop a model here",
+                egui::FontId::new(20.0, theme::semibold()),
+                theme::TEXT,
+            );
+            painter.text(
+                c + Vec2::new(0.0, 14.0),
+                egui::Align2::CENTER_CENTER,
+                "STL, OBJ, 3MF, a FruitSlicer project or a .goo file  ·  or use File › Open (Ctrl+O)",
+                egui::FontId::proportional(13.0),
+                theme::TEXT_WEAK,
+            );
+        }
+        if self.edit_supports && !layer_mode {
+            theme::pill(
+                &painter,
+                rect.center_top() + Vec2::new(0.0, 12.0),
+                egui::Align2::CENTER_TOP,
+                "Editing supports: click a model to add one, right-click a support to remove it",
+                theme::INFO,
+                egui::FontId::proportional(12.0),
+            );
+        }
+        if layer_mode {
+            theme::pill(
+                &painter,
+                rect.left_top() + Vec2::new(10.0, 10.0),
+                egui::Align2::LEFT_TOP,
+                "3D cut-away",
+                theme::TEXT_WEAK,
+                egui::FontId::proportional(11.5),
+            );
+        }
+
+        // Camera presets, top right.
+        let mut set_view = None;
+        let mut frame = false;
+        let bar = egui::Rect::from_min_size(
+            rect.right_top() + Vec2::new(-262.0, 10.0),
+            Vec2::new(252.0, 32.0),
         );
+        if rect.width() > 360.0 {
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(bar)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    egui::Frame::new()
+                        .fill(Color32::from_black_alpha(150))
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::same(3))
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            frame = ui
+                                .add(egui::Button::new("Fit").frame(false))
+                                .on_hover_text("Frame everything (F)")
+                                .clicked();
+                            for (label, v) in [
+                                ("Right", View::Right),
+                                ("Front", View::Front),
+                                ("Top", View::Top),
+                                ("Iso", View::Iso),
+                            ] {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(label).color(theme::TEXT_WEAK),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .clicked()
+                                {
+                                    set_view = Some(v);
+                                }
+                            }
+                        });
+                },
+            );
+        }
+        if let Some(v) = set_view {
+            let (t, d) = (self.camera.target, self.camera.distance);
+            self.camera.set_view(v, t, 1.0);
+            self.camera.distance = d;
+        }
+        if frame {
+            self.frame_all();
+        }
+
+        let hints: &[(&str, &str)] = if layer_mode || rect.width() < 760.0 {
+            &[("Drag", "orbit"), ("Right drag", "pan"), ("Wheel", "zoom")]
+        } else {
+            &[
+                ("Drag", "orbit or move a model"),
+                ("Right drag", "pan"),
+                ("Wheel", "zoom"),
+                ("F", "frame all"),
+            ]
+        };
+        theme::hints(&painter, rect.left_bottom() + Vec2::new(14.0, -10.0), hints);
     }
 
     /// Adds a support where the ray hits a model, or (with `remove`) removes
@@ -2047,22 +2482,44 @@ impl App {
         }
         let h = out.goo.header.clone();
         let layer_mm = out.settings.layer_mm;
-        ui.horizontal(|ui| {
-            ui.label("Layer");
-            let mut l = self.layer + 1;
-            ui.add(egui::DragValue::new(&mut l).range(1..=n));
-            ui.style_mut().spacing.slider_width = (ui.available_width() - 190.0).max(100.0);
-            ui.add(egui::Slider::new(&mut l, 1..=n).show_value(false));
-            self.layer = l.clamp(1, n) - 1;
-            ui.label(format!(
-                "of {n}, Z = {:.2} mm",
-                (self.layer + 1) as f32 * layer_mm
-            ));
-            if ui.button("Fit").clicked() {
-                self.layer_zoom = 1.0;
-                self.layer_pan = Vec2::ZERO;
-            }
-        });
+        let can_cutaway = out.opened.is_none();
+
+        // Header: layer number, height and view options.
+        egui::Frame::new()
+            .fill(theme::PANEL)
+            .inner_margin(egui::Margin::symmetric(12, 6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    theme::section_title(ui, "Layer");
+                    let mut l = self.layer + 1;
+                    ui.add(egui::DragValue::new(&mut l).range(1..=n));
+                    self.layer = l.clamp(1, n) - 1;
+                    ui.label(RichText::new(format!("of {n}")).color(theme::TEXT_WEAK));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(format!("Z {:.2} mm", (self.layer + 1) as f32 * layer_mm))
+                            .font(egui::FontId::new(13.0, theme::semibold())),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if can_cutaway {
+                            ui.toggle_value(&mut self.show_cutaway, "3D cut-away")
+                                .on_hover_text(
+                                    "Show the model cut at this layer next to the image",
+                                );
+                        }
+                        if ui
+                            .button("Fit")
+                            .on_hover_text("Fit the layer in the view")
+                            .clicked()
+                        {
+                            self.layer_zoom = 1.0;
+                            self.layer_pan = Vec2::ZERO;
+                        }
+                    });
+                });
+            });
+
         let (up, down) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::PageUp),
@@ -2076,7 +2533,16 @@ impl App {
             self.layer = self.layer.saturating_sub(1);
         }
 
+        // Body: the image, with the layer scrubber down its right edge.
+        let body = ui.available_rect_before_wrap();
+        let scrub_w = 46.0;
+        let view = egui::Rect::from_min_max(body.min, egui::pos2(body.max.x - scrub_w, body.max.y));
+        let scrub = egui::Rect::from_min_max(egui::pos2(view.max.x, body.min.y), body.max);
+        ui.allocate_rect(body, egui::Sense::hover());
+        self.layer_scrubber(ui, scrub, n);
+
         // Render the layer image if needed. Crop to the print's footprint.
+        let Some(out) = &self.result else { return };
         if self.layer_tex.as_ref().map(|t| t.0) != Some(self.layer) {
             let mut min = [f32::INFINITY; 2];
             let mut max = [f32::NEG_INFINITY; 2];
@@ -2100,13 +2566,13 @@ impl App {
                         .iter()
                         .map(|&v| {
                             if v == 0 {
-                                Color32::from_rgb(16, 18, 24)
+                                Color32::from_rgb(12, 14, 18)
                             } else {
                                 let k = v as f32 / 255.0;
                                 Color32::from_rgb(
-                                    (16.0 + k * 214.0) as u8,
-                                    (18.0 + k * 150.0) as u8,
-                                    (24.0 + k * 40.0) as u8,
+                                    (12.0 + k * 220.0) as u8,
+                                    (14.0 + k * 154.0) as u8,
+                                    (18.0 + k * 52.0) as u8,
                                 )
                             }
                         })
@@ -2127,14 +2593,34 @@ impl App {
             return;
         };
 
-        let (rect, resp) =
-            ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        ui.painter()
-            .rect_filled(rect, 0.0, Color32::from_rgb(10, 11, 14));
+        let rect = view;
+        let resp = ui.interact(
+            rect,
+            ui.scope_id().with("layer-image"),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, Color32::from_rgb(9, 10, 13));
         // Physical aspect of the image.
         let mm_w = (img.rect.x1 - img.rect.x0) as f32 * h.size_x / h.resolution_x as f32;
         let mm_h = (img.rect.y1 - img.rect.y0) as f32 * h.size_y / h.resolution_y as f32;
-        let fit = (rect.width() / mm_w).min(rect.height() / mm_h) * 0.95;
+        let fit = (rect.width() / mm_w).min(rect.height() / mm_h) * 0.92;
+
+        // Zoom to a problem the user picked: centre it, and make it about
+        // half the view, so the whole box and its label stay on screen.
+        if let Some(i) = self.focus_issue.take() {
+            if let Some(issue) = out.report.issues.get(i) {
+                let a = img.mm_to_uv(&h, [issue.area.min[0] as f32, issue.area.max[1] as f32]);
+                let b = img.mm_to_uv(&h, [issue.area.max[0] as f32, issue.area.min[1] as f32]);
+                let w = ((b[0] - a[0]).abs() * mm_w * fit).max(1.0);
+                let hh = ((b[1] - a[1]).abs() * mm_h * fit).max(1.0);
+                let z = (rect.width() * 0.5 / w).min(rect.height() * 0.5 / hh);
+                self.layer_zoom = z.clamp(1.0, 12.0);
+                let c = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+                self.layer_pan = Vec2::new(0.5 - c[0], 0.5 - c[1]);
+            }
+        }
+
         if resp.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
@@ -2147,18 +2633,29 @@ impl App {
         }
         let center = rect.center() + self.layer_pan * size;
         let img_rect = egui::Rect::from_center_size(center, size);
-        let painter = ui.painter_at(rect);
+        // A faint outline of the cropped area, so empty layers still read.
+        painter.rect_stroke(
+            img_rect,
+            2.0,
+            egui::Stroke::new(1.0, Color32::from_rgb(34, 38, 47)),
+            egui::StrokeKind::Outside,
+        );
         painter.image(
             tex.id(),
             img_rect,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             Color32::WHITE,
         );
-        // Issues on this layer.
+
+        // Issues on this layer. Boxes first, then labels, so labels sit on
+        // top and never hide behind another box.
+        let inner = rect.shrink(8.0);
+        let mut labels: Vec<(egui::Rect, Color32, &'static str, bool)> = Vec::new();
         for (i, issue) in out.report.issues.iter().enumerate() {
             let on_layer =
                 (issue.first_layer as usize..=issue.last_layer as usize).contains(&self.layer);
-            if !on_layer && self.selected_issue != Some(i) {
+            let sel = self.selected_issue == Some(i);
+            if !on_layer && !sel {
                 continue;
             }
             let a = img.mm_to_uv(&h, [issue.area.min[0] as f32, issue.area.max[1] as f32]);
@@ -2167,50 +2664,243 @@ impl App {
                 img_rect.min + Vec2::new(a[0], a[1]) * size,
                 img_rect.min + Vec2::new(b[0], b[1]) * size,
             )
-            .expand(2.0);
+            .expand(3.0);
             let c = issue_color(issue.kind);
-            let width = if self.selected_issue == Some(i) {
-                3.0
-            } else {
-                1.5
-            };
             let stroke = if on_layer {
-                egui::Stroke::new(width, c)
+                egui::Stroke::new(if sel { 2.5 } else { 1.5 }, c)
             } else {
                 egui::Stroke::new(1.0, c.gamma_multiply(0.4))
             };
-            painter.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Outside);
-            if on_layer && (r.width() > 60.0 || self.selected_issue == Some(i)) {
-                painter.text(
-                    r.left_top() - Vec2::new(0.0, 2.0),
-                    egui::Align2::LEFT_BOTTOM,
-                    issue.kind.label(),
-                    egui::FontId::proportional(12.0),
-                    c,
-                );
+            if sel && on_layer {
+                painter.rect_filled(r, 4.0, c.gamma_multiply(0.10));
+            }
+            painter.rect_stroke(r, 4.0, stroke, egui::StrokeKind::Outside);
+            if on_layer && (r.width() > 40.0 || sel) {
+                labels.push((r, c, issue.kind.label(), sel));
             }
         }
-        // Cursor position readout.
+        // Selected first so it gets the best spot.
+        labels.sort_by_key(|l| !l.3);
+        let font = egui::FontId::new(11.5, theme::semibold());
+        let mut placed: Vec<egui::Rect> = Vec::new();
+        for (r, c, text, _) in labels {
+            let w = painter
+                .layout_no_wrap(text.to_string(), font.clone(), c)
+                .size()
+                .x
+                + 14.0;
+            let lh = 20.0;
+            // Above the box if there is room, else just inside its top edge;
+            // always kept inside the view.
+            let mut y = if r.top() - lh - 4.0 >= inner.top() {
+                r.top() - lh - 4.0
+            } else {
+                (r.top() + 4.0).max(inner.top())
+            };
+            let x = r
+                .left()
+                .clamp(inner.left(), (inner.right() - w).max(inner.left()));
+            let mut lr = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, lh));
+            // Step down past any label already placed there.
+            while placed.iter().any(|p| p.intersects(lr)) && lr.bottom() < inner.bottom() {
+                y += lh + 3.0;
+                lr = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, lh));
+            }
+            if lr.bottom() > inner.bottom() {
+                continue;
+            }
+            placed.push(lr);
+            theme::pill(
+                &painter,
+                lr.min,
+                egui::Align2::LEFT_TOP,
+                text,
+                c,
+                font.clone(),
+            );
+        }
+
+        // Overlays: orientation note, cursor position, hints.
+        theme::pill(
+            &painter,
+            rect.left_top() + Vec2::new(10.0, 10.0),
+            egui::Align2::LEFT_TOP,
+            "Seen from above the plate (X mirror undone)",
+            theme::TEXT_WEAK,
+            egui::FontId::proportional(11.5),
+        );
         if let Some(p) = resp.hover_pos() {
             let uv = (p - img_rect.min) / size;
             if (0.0..=1.0).contains(&uv.x) && (0.0..=1.0).contains(&uv.y) {
                 let mm = img.uv_to_mm(&h, uv.x, uv.y);
-                painter.text(
-                    rect.right_top() + Vec2::new(-8.0, 8.0),
+                theme::pill(
+                    &painter,
+                    rect.right_top() + Vec2::new(-10.0, 10.0),
                     egui::Align2::RIGHT_TOP,
-                    format!("X {:.2}  Y {:.2} mm", mm[0], mm[1]),
-                    egui::FontId::monospace(12.0),
-                    Color32::from_gray(170),
+                    &format!("X {:.2}  Y {:.2} mm", mm[0], mm[1]),
+                    theme::TEXT,
+                    egui::FontId::monospace(11.5),
                 );
             }
         }
-        painter.text(
-            rect.left_bottom() + Vec2::new(8.0, -8.0),
-            egui::Align2::LEFT_BOTTOM,
-            "Seen from above the plate (X mirror undone).  Up/Down: layer   Wheel: zoom   Drag: pan",
-            egui::FontId::proportional(12.0),
-            Color32::from_gray(140),
+        theme::hints(
+            &painter,
+            rect.left_bottom() + Vec2::new(14.0, -10.0),
+            &[("↑ ↓", "layer"), ("Wheel", "zoom"), ("Drag", "pan")],
         );
+
+        // The picked problem, explained.
+        let picked = self
+            .selected_issue
+            .and_then(|i| out.report.issues.get(i).map(|x| (i, x.clone())));
+        if let Some((_, issue)) = picked {
+            let c = issue_color(issue.kind);
+            let w = 340.0_f32.min(rect.width() - 24.0);
+            let area = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - w - 12.0, rect.bottom() - 44.0 - 130.0),
+                Vec2::new(w, 130.0),
+            );
+            let mut clear = false;
+            let mut jump = false;
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(area)
+                    .layout(egui::Layout::bottom_up(egui::Align::LEFT)),
+                |ui| {
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_unmultiplied(24, 27, 34, 240))
+                        .stroke(egui::Stroke::new(1.0, c.gamma_multiply(0.5)))
+                        .corner_radius(10)
+                        .inner_margin(egui::Margin::same(12))
+                        .shadow(egui::Shadow {
+                            offset: [0, 4],
+                            blur: 16,
+                            spread: 0,
+                            color: Color32::from_black_alpha(120),
+                        })
+                        .show(ui, |ui| {
+                            ui.set_width(w - 24.0);
+                            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                ui.horizontal(|ui| {
+                                    theme::dot_label(
+                                        ui,
+                                        c,
+                                        RichText::new(issue.kind.label())
+                                            .font(egui::FontId::new(14.0, theme::semibold()))
+                                            .color(Color32::WHITE),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            clear = ui
+                                                .small_button("×")
+                                                .on_hover_text("Close")
+                                                .clicked();
+                                        },
+                                    );
+                                });
+                                theme::hint(ui, issue_detail(&issue));
+                                ui.label(
+                                    RichText::new(issue_help(issue.kind))
+                                        .small()
+                                        .color(theme::TEXT),
+                                );
+                                if issue.first_layer as usize != self.layer {
+                                    jump = ui.small_button("Go to its first layer").clicked();
+                                }
+                            });
+                        });
+                },
+            );
+            if clear {
+                self.selected_issue = None;
+            }
+            if jump {
+                self.layer = issue.first_layer as usize;
+            }
+        }
+    }
+
+    /// A vertical layer slider with the problems marked along it.
+    fn layer_scrubber(&mut self, ui: &mut egui::Ui, rect: egui::Rect, n: usize) {
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, theme::PANEL);
+        let track = egui::Rect::from_center_size(
+            rect.center(),
+            Vec2::new(6.0, (rect.height() - 72.0).max(20.0)),
+        );
+        let resp = ui.interact(
+            rect,
+            ui.scope_id().with("scrubber"),
+            egui::Sense::click_and_drag(),
+        );
+        let y_of = |l: usize| -> f32 {
+            let t = if n > 1 {
+                l as f32 / (n - 1) as f32
+            } else {
+                0.0
+            };
+            track.bottom() - t * track.height()
+        };
+        if let Some(p) = resp.interact_pointer_pos() {
+            if resp.dragged() || resp.clicked() || resp.drag_started() {
+                let t = ((track.bottom() - p.y) / track.height()).clamp(0.0, 1.0);
+                self.layer = (t * (n - 1) as f32).round() as usize;
+            }
+        }
+        if resp.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll > 0.0 {
+                self.layer = (self.layer + 1).min(n - 1);
+            } else if scroll < 0.0 {
+                self.layer = self.layer.saturating_sub(1);
+            }
+        }
+        painter.rect_filled(track, 3.0, theme::FIELD);
+        let y = y_of(self.layer);
+        painter.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(track.left(), y), track.right_bottom()),
+            3.0,
+            theme::ACCENT.gamma_multiply(0.75),
+        );
+        // Problem markers.
+        if let Some(out) = &self.result {
+            for (i, issue) in out.report.issues.iter().enumerate() {
+                let y0 = y_of(issue.first_layer as usize);
+                let y1 = y_of(issue.last_layer as usize);
+                let c = issue_color(issue.kind);
+                let sel = self.selected_issue == Some(i);
+                let x = track.right() + 4.0;
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x, y1 - 1.5),
+                        egui::pos2(x + if sel { 8.0 } else { 6.0 }, y0 + 1.5),
+                    ),
+                    1.0,
+                    c,
+                );
+            }
+        }
+        let handle = egui::pos2(track.center().x, y);
+        painter.circle_filled(handle, 8.0, Color32::WHITE);
+        painter.circle_stroke(handle, 8.0, egui::Stroke::new(2.0, theme::ACCENT));
+        painter.text(
+            egui::pos2(rect.center().x, rect.top() + 10.0),
+            egui::Align2::CENTER_TOP,
+            n.to_string(),
+            egui::FontId::proportional(10.5),
+            theme::TEXT_FAINT,
+        );
+        painter.text(
+            egui::pos2(rect.center().x, rect.bottom() - 10.0),
+            egui::Align2::CENTER_BOTTOM,
+            "1",
+            egui::FontId::proportional(10.5),
+            theme::TEXT_FAINT,
+        );
+        if resp.hovered() || resp.dragged() {
+            resp.on_hover_text_at_pointer(format!("Layer {}", self.layer + 1));
+        }
     }
 
     fn file_info_window(&mut self, ctx: &egui::Context) {
@@ -2305,11 +2995,12 @@ fn issue_help(k: IssueKind) -> &'static str {
     }
 }
 
-fn issue_text(i: &Issue) -> String {
+/// Where and how big a problem is, without its kind.
+fn issue_detail(i: &Issue) -> String {
     let layers = if i.first_layer == i.last_layer {
-        format!("layer {}", i.first_layer + 1)
+        format!("Layer {}", i.first_layer + 1)
     } else {
-        format!("layers {}–{}", i.first_layer + 1, i.last_layer + 1)
+        format!("Layers {}–{}", i.first_layer + 1, i.last_layer + 1)
     };
     let c = i.area.center();
     let size = if i.kind == IssueKind::TrappedResin {
@@ -2317,12 +3008,7 @@ fn issue_text(i: &Issue) -> String {
     } else {
         format!("{:.1} mm²", i.size)
     };
-    format!(
-        "{}: {layers}, at ({:.1}, {:.1}), {size}",
-        i.kind.label(),
-        c[0],
-        c[1]
-    )
+    format!("{layers}  ·  ({:.1}, {:.1}) mm  ·  {size}", c[0], c[1])
 }
 
 /// The CLI's calibration pattern: a 20 x 20 mm square and four pads.
@@ -2400,44 +3086,93 @@ impl eframe::App for App {
             self.frame_all();
         }
 
-        egui::Panel::top("menu").show(ui, |ui| {
-            self.menu_bar(ui);
-            self.toolbar(ui);
-        });
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(&self.status);
-            });
-        });
-        egui::Panel::left("objects")
-            .default_size(270.0)
+        egui::Panel::top("top-bar")
+            .exact_size(52.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::symmetric(14, 0))
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+            )
+            .show(ui, |ui| self.top_bar(ui));
+        egui::Panel::bottom("status")
+            .exact_size(26.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::symmetric(14, 0)),
+            )
             .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("left")
-                    .show(ui, |ui| self.objects_panel(ui));
+                ui.horizontal_centered(|ui| {
+                    let busy = self.job.is_some();
+                    let dot = if busy { theme::ACCENT } else { theme::OK };
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
+                    ui.painter().circle_filled(r.center(), 3.5, dot);
+                    ui.label(RichText::new(&self.status).small().color(theme::TEXT_WEAK));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  ·  {} × {} mm",
+                                self.printer.name, self.printer.size_x, self.printer.size_y
+                            ))
+                            .small()
+                            .color(theme::TEXT_FAINT),
+                        );
+                    });
+                });
             });
+        let side = egui::Frame::new()
+            .fill(theme::PANEL)
+            .inner_margin(egui::Margin::same(12));
+        let layers = self.tab == Tab::Layers && self.result.is_some();
+        if !layers {
+            egui::Panel::left("objects")
+                .default_size(290.0)
+                .size_range(240.0..=420.0)
+                .frame(side)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("left")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.objects_panel(ui));
+                });
+        }
         egui::Panel::right("settings")
-            .default_size(330.0)
-            .show(ui, |ui| self.settings_panel(ui));
+            .default_size(340.0)
+            .size_range(300.0..=480.0)
+            .frame(side)
+            .show(ui, |ui| {
+                if layers {
+                    egui::ScrollArea::vertical()
+                        .id_salt("results")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.results_ui(ui));
+                } else {
+                    self.settings_panel(ui);
+                }
+            });
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ui, |ui| match self.tab {
-                Tab::Plate => self.view_3d(ui),
-                Tab::Layers if self.result.as_ref().is_some_and(|r| r.opened.is_some()) => {
-                    ui.vertical(|ui| self.layers_view(ui));
+            .show(ui, |ui| {
+                if !layers {
+                    self.view_3d(ui);
+                    return;
                 }
-                Tab::Layers => {
-                    // Split: layer image on the left, a small 3D view on the right.
-                    let avail = ui.available_size();
-                    ui.horizontal(|ui| {
-                        ui.allocate_ui(Vec2::new(avail.x * 0.62, avail.y), |ui| {
-                            ui.vertical(|ui| self.layers_view(ui));
-                        });
-                        ui.allocate_ui(Vec2::new(ui.available_width(), avail.y), |ui| {
-                            self.view_3d(ui);
-                        });
-                    });
+                let cutaway =
+                    self.show_cutaway && self.result.as_ref().is_some_and(|r| r.opened.is_none());
+                if cutaway {
+                    // The 3D cut-away gets a resizable share of the space.
+                    let w = ui.available_width();
+                    egui::Panel::right("cutaway")
+                        .resizable(true)
+                        .default_size(w * 0.42)
+                        .size_range(240.0..=(w * 0.7).max(260.0))
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| self.view_3d(ui));
                 }
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| self.layers_view(ui));
             });
 
         if let Some(e) = self.error.clone() {

@@ -22,17 +22,19 @@ What it does:
   up to 30° to meet sloped faces head-on, bigger tips (0.5 mm) only at the low points that carry the
   most pull, and a raft with an undercut edge (it flares out at 45° from a smaller footprint), so there is a gap at
   the plate for a scraper to slip into.
-  Tick *Edit by hand* to add a support with a click or remove one with a right-click.
+  On the *Supports* tab, *Start editing* lets you add a support with a click or remove one with a
+  right-click.
 - **Print checks**, run during slicing on a 0.25 mm grid:
   - *Island*: a region that starts in mid-air with nothing under it.
   - *Unsupported overhang*: a region more than 2.5 mm from anything in the layer below.
   - *Suction cup*: a hollow that is open only towards the vat floor, so it pulls on the film.
   - *Trapped resin*: a fully enclosed hollow.
-  Click an issue in *Results* to jump to it in the layer view. *Add supports under islands* does what it
-  says and asks you to slice again.
+  Click an issue in the *Problems* list (on the *Layers* tab) to zoom the layer view onto it.
+  *Add supports under islands* does what it says and asks you to slice again.
 - **Hollowing** with a set wall thickness, and drain holes cut through the floor of each hollow.
 - **Anti-aliasing** (2×, 4× or 8×), written as grey edge pixels.
-- **Layer viewer** with zoom, pan, issue markers and a cut-away of the 3D view at the current layer.
+- **Layer viewer** with zoom, pan, issue markers, a layer scrubber that marks where problems are, and
+  a resizable cut-away of the 3D view at the current layer (hide it with *3D cut-away*).
 - **Open an existing `.goo`** to view its layers, run the same checks on it and see every header field.
 - **Save** the `.goo`, export the plate with its supports as one STL, and save the whole plate as a
   project (`.fsproj`: a zip with the settings, placements, support edits and each model's mesh).
