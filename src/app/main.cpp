@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
 #include "calibration/Coupons.h"
 #include "io/PngWriter.h"
@@ -224,11 +225,24 @@ int cmdCalibrate(const std::string& kind, const std::string& out, const std::str
 
 struct PointsOpts {
     double density = 1.0;
-    double critical_angle = 45.0;
-    std::string cosmetic, points_in, edits, out = "points.json", ply, report;
+    double critical_angle = -1;  // < 0: profile or built-in default
+    std::string cosmetic, points_in, edits, out = "points.json", ply, report, profile;
     bool no_prune = false;
     std::string strategy = "greedy";
 };
+
+// Resin profile first, then explicit command-line overrides.
+void applySettings(const std::string& profile, double critical_angle, SupportConfig& cfg, TreeConfig* tc, json& r) {
+    if (!profile.empty()) {
+        std::ifstream in(profile);
+        if (!in) throw std::runtime_error("cannot open profile " + profile);
+        std::vector<std::string> notes;
+        applyProfile(json::parse(in), cfg, tc, &notes);
+        r["profile"] = profile;
+        if (!notes.empty()) r["profile_notes"] = notes;
+    }
+    if (critical_angle > 0) cfg.critical_angle_deg = critical_angle;
+}
 
 int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& o) {
     json r;
@@ -236,7 +250,7 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
     SupportConfig cfg;
     cfg.layer_height = layer_h;
     cfg.coverage.density = o.density;
-    cfg.critical_angle_deg = o.critical_angle;
+    applySettings(o.profile, o.critical_angle, cfg, nullptr, r);
     CosmeticSpec cosmetic;
     if (!o.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(o.cosmetic)));
     PointGenOptions opts;
@@ -327,7 +341,8 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
     SupportConfig cfg;
     cfg.layer_height = layer_h;
     cfg.coverage.density = popts.density;
-    cfg.critical_angle_deg = popts.critical_angle;
+    TreeConfig tc;
+    applySettings(popts.profile, popts.critical_angle, cfg, &tc, r);
     if (!o.points_in.empty()) {
         pts = pointsFromJson(json::parse(std::ifstream(o.points_in)));
     } else {
@@ -345,7 +360,6 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
         r["point_warnings"] = w;
         std::ofstream(o.out + ".points.json") << pointsToJson(pts).dump(1) << "\n";
     }
-    TreeConfig tc;
     tc.merge_pillars = !o.no_merge;
     if (o.raft == "none") tc.raft = RaftStyle::None;
     else if (o.raft != "pads") throw std::runtime_error("--raft must be pads or none");
@@ -405,7 +419,7 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
 struct OrientCli {
     int directions = 64, finalists = 6, top = 3;
     std::vector<double> visible_from;  // flattened triples, model frame
-    std::string preview_dir;
+    std::string preview_dir, profile;
 };
 
 int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_h, const OrientCli& o) {
@@ -420,6 +434,8 @@ int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_
     opt.finalists = o.finalists;
     opt.elevation = place.elevate;
     opt.cfg.layer_height = layer_h;
+    json settings_report;
+    applySettings(o.profile, -1, opt.cfg, nullptr, settings_report);
     for (size_t i = 0; i + 2 < o.visible_from.size(); i += 3)
         opt.visible_from.push_back({o.visible_from[i], o.visible_from[i + 1], o.visible_from[i + 2]});
     const auto res = searchOrientations(mesh, opt);
@@ -460,7 +476,32 @@ int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_
         }
     }
     json r{{"file", path}, {"candidates", res.size()}, {"best", list}, {"input", input}};
+    if (settings_report.contains("profile_notes")) r["profile_notes"] = settings_report["profile_notes"];
     std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
+struct FitCli {
+    std::vector<std::string> results;
+    std::string out = "resin_profile.json", resin;
+    double layer = 0, exposure = 0, temp = 0, fraction = 0.7;
+};
+
+int cmdFit(const FitCli& o) {
+    std::vector<PlateResults> plates;
+    for (const auto& csv : o.results) plates.push_back(loadPlateResults(manifestForResults(csv), csv));
+    FitOptions fo;
+    fo.resin = o.resin;
+    fo.layer_height = o.layer;
+    fo.exposure_s = o.exposure;
+    fo.vat_temp_c = o.temp;
+    fo.capacity_fraction = o.fraction;
+    const json prof = fitProfile(plates, fo);
+    std::ofstream(o.out) << prof.dump(2) << "\n";
+    json brief = prof;
+    brief.erase("fits");
+    brief["written"] = o.out;
+    std::cout << brief.dump(2) << "\n";
     return 0;
 }
 
@@ -511,6 +552,7 @@ int main(int argc, char** argv) {
     points->add_option("--layer", layer_h, "Layer height (mm)");
     points->add_option("--density", popts.density, "Support density (1 = default, >1 denser)");
     points->add_option("--critical-angle", popts.critical_angle, "Surfaces leaning more than this from vertical need support (deg)");
+    points->add_option("--profile", popts.profile, "Resin profile from `fruitslicer fit`");
     points->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON (keep_out boxes, visible_from directions)");
     points->add_option("--points-in", popts.points_in, "Previous points.json (keeps its manual points; ids for --edits)");
     points->add_option("--edits", popts.edits, "Edits JSON (add / delete / move / resize)");
@@ -539,6 +581,7 @@ int main(int argc, char** argv) {
     support->add_option("--layer", layer_h, "Layer height (mm)");
     support->add_option("--density", popts.density, "Support density (1 = default)");
     support->add_option("--critical-angle", popts.critical_angle, "Critical overhang angle from vertical (deg)");
+    support->add_option("--profile", popts.profile, "Resin profile from `fruitslicer fit`");
     support->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON");
     support->add_option("--points", sopts.points_in, "Use these points (e.g. edited) instead of generating");
     support->add_option("-o,--output", sopts.out, "Output STL: model + supports");
@@ -554,6 +597,7 @@ int main(int argc, char** argv) {
     orient->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
     addPlacement(orient, place);
     orient->add_option("--layer", layer_h, "Layer height used to evaluate finalists (mm)");
+    orient->add_option("--profile", ocli.profile, "Resin profile from `fruitslicer fit`");
     orient->add_option("--directions", ocli.directions, "Candidate build directions");
     orient->add_option("--finalists", ocli.finalists, "Candidates evaluated with the full generator");
     orient->add_option("--top", ocli.top, "How many results to print");
@@ -562,6 +606,18 @@ int main(int argc, char** argv) {
         ->expected(3, 30);
     orient->add_option("--preview-dir", ocli.preview_dir, "Write a preview PNG for each printed result");
 
+    FitCli fcli;
+    auto* fit = app.add_subcommand("fit", "Fit a resin profile from filled-in calibration result sheets");
+    fit->add_option("results", fcli.results, "<plate>.stl.results.csv files (manifests are found next to them)")
+        ->required()
+        ->check(CLI::ExistingFile);
+    fit->add_option("-o,--output", fcli.out, "Output resin profile JSON");
+    fit->add_option("--resin", fcli.resin, "Resin name (recorded in the profile)");
+    fit->add_option("--layer", fcli.layer, "Layer height the plates were printed at (mm)");
+    fit->add_option("--exposure", fcli.exposure, "Normal exposure time (s)");
+    fit->add_option("--temp", fcli.temp, "Vat temperature (°C)");
+    fit->add_option("--fraction", fcli.fraction, "Usable share of the 50 % failure load (default 0.7)");
+
     CLI11_PARSE(app, argc, argv);
     try {
         if (*info) return cmdInfo(in_path);
@@ -569,6 +625,7 @@ int main(int argc, char** argv) {
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
         if (*orient) return cmdOrient(in_path, place, layer_h, ocli);
+        if (*fit) return cmdFit(fcli);
         if (*support) return cmdSupport(in_path, place, layer_h, popts, sopts);
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);

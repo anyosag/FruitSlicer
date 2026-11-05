@@ -14,7 +14,14 @@ namespace fruit {
 namespace {
 
 double shaftFor(double tip_d) { return tip_d <= 0.3 ? 0.8 : (tip_d <= 0.45 ? 1.0 : 1.2); }
-double penetrationFor(double tip_d) { return std::clamp(0.5 * tip_d, 0.08, 0.2); }
+double penetrationFor(double tip_d, const TreeConfig& cfg) {
+    if (cfg.penetration_table.empty()) return std::clamp(0.5 * tip_d, 0.08, 0.2);
+    // Nearest measured diameter.
+    const auto* best = &cfg.penetration_table.front();
+    for (const auto& e : cfg.penetration_table)
+        if (std::abs(e.first - tip_d) < std::abs(best->first - tip_d)) best = &e;
+    return best->second;
+}
 
 class Builder {
 public:
@@ -114,7 +121,7 @@ private:
 bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
     PinheadSpec s;
     s.tip_diameter = p.tip_diameter;
-    s.penetration = penetrationFor(p.tip_diameter);
+    s.penetration = penetrationFor(p.tip_diameter, cfg_);
     s.head_length = cfg_.head_length;
     s.shaft_diameter = shaftFor(p.tip_diameter);
     const Vec3 n = normalized(p.normal);
@@ -414,7 +421,7 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
             a.shaft_diameter = P.diameter;
             appendPinhead(m, P.anchor_contact, {0, 0, 1}, a, q);
         } else {
-            appendBaseCone(m, bottom, P.diameter, cfg.base_diameter, raft_top - 0.1, q);
+            appendBaseCone(m, bottom, P.diameter, cfg.base_diameter, std::max(0.0, raft_top - 0.1), q);
             if (cfg.raft == RaftStyle::Pads) {
                 const double r = cfg.base_diameter / 2 + cfg.pad_brim;
                 appendFrustum(m, {P.xy.x, P.xy.y, 0}, r, {P.xy.x, P.xy.y, raft_top}, std::max(0.5, r - 0.4),

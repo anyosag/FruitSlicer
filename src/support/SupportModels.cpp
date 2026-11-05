@@ -27,8 +27,23 @@ double CoverageModel::radius(double dz) const {
 }
 
 double CapacityModel::capacity(double d) const {
-    const double s = d / reference_diameter;
-    return reference_capacity * s * s / std::max(safety, 1e-6);
+    const double inv_safety = 1.0 / std::max(safety, 1e-6);
+    if (table.empty()) {
+        const double s = d / reference_diameter;
+        return reference_capacity * s * s * inv_safety;
+    }
+    // Interpolate in tip area (d²); extrapolate proportionally to area.
+    const auto& f = table.front();
+    const auto& b = table.back();
+    if (d <= f.first) return f.second * (d * d) / (f.first * f.first) * inv_safety;
+    if (d >= b.first) return b.second * (d * d) / (b.first * b.first) * inv_safety;
+    for (size_t i = 1; i < table.size(); ++i)
+        if (d <= table[i].first) {
+            const double a0 = table[i - 1].first * table[i - 1].first, a1 = table[i].first * table[i].first;
+            const double t = (d * d - a0) / (a1 - a0);
+            return (table[i - 1].second + t * (table[i].second - table[i - 1].second)) * inv_safety;
+        }
+    return b.second * inv_safety;
 }
 
 const char* categoryName(PointCategory c) {

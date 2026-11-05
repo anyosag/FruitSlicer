@@ -52,6 +52,9 @@ struct TreeConfig {
     double base_height = 1.0;
     double pad_brim = 0.8;
     double link_width = 1.2;          // raft link bar width
+    // Measured (tip diameter, penetration) pairs from a resin profile; empty =
+    // 0.5 × diameter clamped to [0.08, 0.2] mm.
+    std::vector<std::pair<double, double>> penetration_table;
     GeometryQuality quality;
 };
 

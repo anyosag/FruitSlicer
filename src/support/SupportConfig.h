@@ -38,6 +38,9 @@ struct CapacityModel {
     double reference_diameter = 0.4;
     double reference_capacity = 11.1;  // mm² per tip
     double safety = 1.0;               // > 1 = more conservative
+    // Measured (diameter, capacity) pairs from a resin profile. When set they
+    // replace the seed; between and beyond them capacity scales with tip area.
+    std::vector<std::pair<double, double>> table;
 
     double capacity(double tip_diameter) const;
 };

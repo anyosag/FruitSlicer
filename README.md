@@ -18,6 +18,7 @@ behind it, and the milestone plan are in
 | M2 — heads (collision-aware), pillars with 45° bridges and diagonal ground routes, bracing outside the flex zone, one-piece pad raft, model+supports STL, floating-island validation | phase 1 done |
 | M3 — orientation search (two-stage: mesh proxies over 64 directions, full generator on the 6 best) | done |
 | M5 (part) — branching: nearby pillars merge into trunks below the flex zone | done |
+| Calibration loop: `fit` result sheets → resin profile → `--profile` | done |
 | Physical validation: overlap coupon, calibration plates | **needs your printer** |
 
 ## Build
@@ -162,6 +163,33 @@ The report re-slices model plus supports and lists anything that would still
 start printing in mid-air (`validation.floating_islands`, which should be 0).
 
 ![Supports generated for the armadillo in its best orientation](docs/armadillo_supported_preview.png)
+
+### From printed plates to a resin profile
+
+After printing the plates, fill in the `result` column (`ok`, `failed` or
+`partial`) and, for the tips plate, the `scar` column (1 = invisible …
+5 = pit). Leave `scar` empty or 0 when not scored. Then:
+
+```sh
+./build/src/fruitslicer fit tips.stl.results.csv spacing.stl.results.csv islands.stl.results.csv \
+    --resin "My resin" --layer 0.05 --exposure 2.5 --temp 30 -o my_resin.json
+./build/src/fruitslicer support model.stl --profile my_resin.json -o supported.stl
+```
+
+`fit` estimates the following:
+
+- **from the tips plate:** how much layer area each tip size holds (70 % of
+  the load at which half the tips fail), the best penetration for each size,
+  and a default tip (the lowest scar score among tips that hold at least
+  4 mm²);
+- **from the spacing plate:** the coverage radius (the widest tip pitch that
+  held at every angle, divided by √2) and the critical overhang angle;
+- **from the islands plate:** how large an island one or two tips can hold.
+
+Estimates resting on incomplete data (nothing failed, or nothing held) are
+listed under `notes` in the profile, so a bound is never mistaken for a
+measurement. `--profile` works with `points`, `support` and `orient`, and
+explicit command-line options still override it.
 
 ### Overlap coupon (please run this first)
 
