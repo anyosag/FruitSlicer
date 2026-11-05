@@ -144,7 +144,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, open: Vec<PathBuf>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        open: Vec<PathBuf>,
+        gpu_note: Option<String>,
+    ) -> Self {
         let prefs: Prefs = cc
             .storage
             .and_then(|s| eframe::get_value(s, "prefs"))
@@ -191,6 +195,9 @@ impl App {
         };
         for p in open {
             app.open_path(&p);
+        }
+        if let Some(n) = gpu_note {
+            app.status = n;
         }
         app
     }
@@ -1449,6 +1456,14 @@ impl App {
                 .on_hover_text(issue_help(kind));
             }
         }
+        let islands = counts.get(&IssueKind::Island).copied().unwrap_or(0);
+        let mut fix = false;
+        if islands > 0 && self.result_is_current() && out.opened.is_none() {
+            fix = ui
+                .button(format!("Add supports under {islands} island(s)"))
+                .on_hover_text("Adds a hand-placed support under each island, then you slice again")
+                .clicked();
+        }
         ui.label(RichText::new("Click one to jump to it:").small().weak());
         let mut jump = None;
         egui::ScrollArea::vertical()
@@ -1467,6 +1482,10 @@ impl App {
                     }
                 }
             });
+        if fix {
+            self.support_islands();
+            return;
+        }
         if let Some(i) = jump {
             if self.selected_issue == Some(i) {
                 self.selected_issue = None;
@@ -1768,6 +1787,58 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Adds a hand-placed support under each island found by the last slice.
+    fn support_islands(&mut self) {
+        let Some(out) = &self.result else { return };
+        let h = out.settings.layer_mm;
+        let islands: Vec<Issue> = out
+            .report
+            .issues
+            .iter()
+            .filter(|i| i.kind == IssueKind::Island)
+            .cloned()
+            .collect();
+        self.checkpoint();
+        let mut added = 0;
+        for isl in islands {
+            let z = isl.first_layer as f32 * h;
+            let (min, max) = (isl.area.min, isl.area.max);
+            // Try the centre first, then a grid over the island's box.
+            let mut tries = vec![isl.area.center()];
+            for j in 0..3 {
+                for i in 0..3 {
+                    tries.push([
+                        min[0] + (max[0] - min[0]) * (i as f64 + 0.5) / 3.0,
+                        min[1] + (max[1] - min[1]) * (j as f64 + 0.5) / 3.0,
+                    ]);
+                }
+            }
+            'found: for c in tries {
+                let o = glam::Vec3::new(c[0] as f32, c[1] as f32, z - 2.0);
+                for ob in &mut self.objects {
+                    if let Some((_, p)) = scene::ray_mesh(ob.print_model(), o, glam::Vec3::Z) {
+                        if (p.z - z).abs() < 1.0 {
+                            let placed = [p.x, p.y, p.z - ob.lift()];
+                            let local = ob.to_model(placed);
+                            ob.added.push(local);
+                            ob.supports_version = None;
+                            added += 1;
+                            break 'found;
+                        }
+                    }
+                }
+            }
+        }
+        let p = self.prefs.supports;
+        for ob in &mut self.objects {
+            if !ob.supports_current() {
+                let _ = ob.generate_supports(&p);
+            }
+        }
+        self.tab = Tab::Plate;
+        self.status = format!("Added {added} supports under islands. Slice again to check.");
     }
 
     fn export_stl(&mut self) {
