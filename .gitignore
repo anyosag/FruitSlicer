@@ -1,0 +1,7 @@
+build/
+build-*/
+out/
+*.stl
+!tests/data/*.stl
+.cache/
+compile_commands.json
