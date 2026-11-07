@@ -174,7 +174,8 @@ void App::scaleToFit() {
 bool App::canGoTo(Step s) const {
     switch (s) {
         case Step::Model: return true;
-        case Step::Orient: return doc_ && doc_->fit().fits;
+        case Step::Orient:
+        case Step::Supports: return doc_ && doc_->fit().fits;
         default: return false;  // the next updates
     }
 }
@@ -314,6 +315,97 @@ void App::useOrientation(int option) {
     }
     o.decided = true;
     orient_view_ = OrientView::Settings;
+}
+
+void App::generateSupports() {
+    if (!doc_ || !doc_->fit().fits) return;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<SupportResult>();
+    const int rev = doc_->revision(), settings = doc_->orient.settings;
+    const SupportChoices choices = doc_->supports.choices;
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Generating supports",
+        [snap, out, choices](const fruit::JobControl& ctl) { *out = generate(*snap, choices, snap->orient.visible, ctl); },
+        [this, target, out, rev, settings](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't generate supports", e.what());
+                }
+                return;
+            }
+            SupportState& s = d->supports;
+            s.result = std::make_shared<const SupportResult>(std::move(*out));
+            s.result_revision = rev;
+            s.result_settings = settings;
+            s.selected_tip = -1;
+            log::info("supports: " + std::to_string(s.result->tips) + " tips, " + std::to_string(s.result->pillars) +
+                      " pillars in " + std::to_string(s.result->seconds) + " s");
+        });
+}
+
+void App::setSupportChoices(const SupportChoices& c) {
+    if (doc_) doc_->supports.choices = c;
+}
+
+void App::selectTip(int index) {
+    if (!doc_ || !doc_->supports.result) return;
+    const int n = static_cast<int>(doc_->supports.result->points.size());
+    doc_->supports.selected_tip = index >= 0 && index < n ? index : -1;
+}
+
+void App::focusOn(const fruit::Vec3& where) {
+    camera_.frame({static_cast<float>(where.x), static_cast<float>(where.y), static_cast<float>(where.z)}, 12);
+    view_set_ = false;
+}
+
+namespace {
+
+// A small octahedron per tip: cheap, and readable at any zoom.
+void addMarker(fruit::TriangleMesh& m, const fruit::Vec3& c, double r) {
+    const auto base = static_cast<int32_t>(m.vertices.size());
+    const fruit::Vec3 d[6] = {{r, 0, 0}, {-r, 0, 0}, {0, r, 0}, {0, -r, 0}, {0, 0, r}, {0, 0, -r}};
+    for (const auto& v : d) m.vertices.push_back(c + v);
+    const int f[8][3] = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4}, {2, 0, 5}, {1, 2, 5}, {3, 1, 5}, {0, 3, 5}};
+    for (const auto& t : f) m.faces.push_back({base + t[0], base + t[1], base + t[2]});
+}
+
+}  // namespace
+
+void App::syncScene() {
+    renderer_.setOverhangTint(0);
+    if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
+        renderer_.clearExtras();
+        return;
+    }
+    const SupportState& s = doc_->supports;
+    if (!s.result) {
+        renderer_.clearExtras();
+        renderer_.setOverhangTint(supportConfig(doc_->placement(), s.choices).critical_angle_deg);
+        return;
+    }
+    if (scene_for_ != s.result) {
+        tip_meshes_.assign(5, fruit::TriangleMesh{});
+        for (const auto& p : s.result->points)
+            addMarker(tip_meshes_[static_cast<std::size_t>(p.category)], p.pos, 0.3 + 0.5 * p.tip_diameter);
+        scene_for_ = s.result;
+        ++scene_key_;
+    }
+    std::vector<const fruit::TriangleMesh*> meshes{&s.result->mesh};
+    for (const auto& t : tip_meshes_) meshes.push_back(&t);
+    renderer_.setExtras(meshes, scene_key_);
+    const bool fresh = s.fresh(doc_->revision(), doc_->orient.settings);
+    const bool why = supports_view_ == SupportsView::Why;
+    renderer_.setExtraStyle(0, fresh ? (why ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
+                            supports_view_ != SupportsView::TipsOnly);
+    // Island, overhang, extra hold, steadying, by hand.
+    static const unsigned kWhy[5] = {0xFF8F3F, 0x5B9BD5, 0xB48EF0, 0x5BD69A, 0xF2F4F7};
+    for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : 0xF2F4F7, fresh);
 }
 
 void App::freePictures() {

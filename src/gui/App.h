@@ -32,6 +32,9 @@ struct AppOptions {
 // The Orient step shows its settings, or the search's results.
 enum class OrientView { Settings, Results };
 
+// How the Supports step draws the result.
+enum class SupportsView { Supports, TipsOnly, Why };
+
 // The size choice in the health dialog.
 enum class SizeChoice { Full, Largest, Custom, Inches };
 
@@ -83,6 +86,17 @@ public:
     OrientView orientView() const { return orient_view_; }
     // The results' pictures from below, as textures (-1: how it sits now).
     unsigned orientPicture(int option);
+    // Supports.
+    void generateSupports();
+    void setSupportChoices(const SupportChoices& c);
+    void selectTip(int index);
+    void setSupportsView(SupportsView v) { supports_view_ = v; }
+    SupportsView supportsView() const { return supports_view_; }
+    void showProblems(bool show) { problems_open_ = show; }
+    bool problemsOpen() const { return problems_open_; }
+    void focusOn(const fruit::Vec3& where);  // turn the camera to look at a point
+    // Puts this step's extras (supports, tips, overhang tint) in the 3D view.
+    void syncScene();
 
     // ---- State ----
     JobRunner& jobs() { return jobs_; }
@@ -132,6 +146,11 @@ private:
     int scored_revision_ = -1, scored_settings_ = -1;  // last scoring started (it may have been cancelled)
     std::shared_ptr<const OrientSearch> pictures_for_;
     std::vector<unsigned> pictures_;  // options, then how it sits now
+    SupportsView supports_view_ = SupportsView::Supports;
+    bool problems_open_ = false;
+    std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from
+    std::vector<fruit::TriangleMesh> tip_meshes_;      // one per tip kind
+    int scene_key_ = 0;
 };
 
 }  // namespace gui

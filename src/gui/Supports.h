@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
+#pragma once
+// The Supports step's work, off the UI thread: plan tips, build the tree,
+// check the result, and say what needs a look. No UI here.
+
+#include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "core/JobControl.h"
+#include "mesh/Placement.h"
+#include "mesh/TriangleMesh.h"
+#include "support/SupportConfig.h"
+#include "support/SupportTree.h"
+#include "support/SupportValidator.h"
+
+namespace gui {
+
+class Document;
+
+// What the Supports step lets you choose before generating.
+struct SupportChoices {
+    int usual_tip = 2;     // tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm
+    double density = 1.0;  // 1 = normal spacing; up to 2 = closer together
+    bool merge = true;     // neighbouring supports join into trunks
+    bool operator==(const SupportChoices&) const = default;
+};
+
+// One line of the result's checks.
+struct SupportCheck {
+    bool ok = true;
+    std::string title, detail;
+};
+
+// Something to look at, grouped by kind. Blocking ones stop saving.
+struct SupportProblem {
+    enum class Level { Blocks, Review, Note };
+    Level level = Level::Review;
+    std::string code;     // the engine's warning code
+    std::string title;    // plain words
+    std::string body;     // what it means and what to do
+    std::string engine;   // the engine's first message, for the curious
+    std::size_t count = 0;
+    bool has_where = false;
+    fruit::Vec3 where;    // printer coordinates of the first one
+};
+
+struct SupportResult {
+    SupportChoices choices;
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tree_cfg;
+    std::vector<fruit::SupportPoint> points;
+    fruit::SupportTree tree;
+    fruit::TriangleMesh mesh;  // the supports, printer coordinates
+    fruit::ValidationReport validation;
+    std::size_t tips = 0, island_tips = 0, extra_hold = 0;
+    std::size_t trunks = 0, pillars = 0, braces = 0, on_model = 0;
+    double support_ml = 0;  // at most: where parts overlap they are counted twice
+    std::vector<std::pair<double, std::size_t>> tip_sizes;  // diameter (mm), tips; biggest first
+    fruit::Vec3 size_with_supports;
+    std::vector<SupportCheck> checks;
+    std::vector<SupportProblem> problems;
+    double seconds = 0;
+
+    std::size_t count(SupportProblem::Level l) const;
+};
+
+// The planner's settings for this placement and these choices.
+fruit::SupportConfig supportConfig(const fruit::Placement& p, const SupportChoices& c);
+fruit::TreeConfig treeConfig(const SupportChoices& c);
+
+// Plans tips, builds the tree and checks the result. Progress: tips up to
+// 0.55, the tree up to 0.85, the check after (stage "check").
+SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+                       const fruit::JobControl& ctl);
+
+// The stages the running card lists, and which one a progress report is in.
+const std::vector<std::string>& supportStages();
+int supportStage(const std::string& engine_stage, double fraction);
+
+// Why a tip is where it is, in a sentence or two, and its numbers.
+std::string tipKind(const fruit::SupportPoint& p);
+std::string tipWhy(const fruit::SupportPoint& p);
+std::string tipNumbers(const fruit::SupportPoint& p, const fruit::SupportConfig& cfg, const fruit::TreeConfig& tc);
+
+}  // namespace gui

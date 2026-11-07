@@ -50,7 +50,8 @@ bool chip(const char* id, const char* text, ImU32 dot, ImU32 fg, ImU32 bg, ImU32
 
 // One step of the job's step bar.
 enum class StepState { Current, Done, Upcoming };
-bool stepPill(int number, const char* label, StepState state, bool enabled);
+bool stepPill(int number, const char* label, StepState state, bool enabled, const char* badge = nullptr,
+              ImU32 badge_color = 0);
 
 // A keyboard shortcut drawn as a key cap, e.g. "⌘ Z".
 void keyBadge(const char* keys);

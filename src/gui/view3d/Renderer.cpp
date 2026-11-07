@@ -4,6 +4,7 @@
 
 #include <glad/gl.h>
 
+#include <cmath>
 #include <vector>
 
 namespace gui {
@@ -115,6 +116,7 @@ Renderer::~Renderer() {
     destroyMesh(plate_fill_);
     destroyMesh(plate_lines_);
     destroyMesh(model_);
+    clearExtras();
     glDeleteProgram(mesh_prog_);
     glDeleteProgram(line_prog_);
     if (fbo_ms_) glDeleteFramebuffers(1, &fbo_ms_);
@@ -195,6 +197,41 @@ void Renderer::setModel(const fruit::TriangleMesh& mesh, int revision) {
     upload(model_.vao, model_.vbo, model_.ibo, pos, idx);
     model_.count = static_cast<int>(idx.size());
     model_revision_ = revision;
+}
+
+void Renderer::setExtras(const std::vector<const fruit::TriangleMesh*>& meshes, int key) {
+    if (key == extras_key_ && extras_.size() == meshes.size()) return;
+    clearExtras();
+    for (const fruit::TriangleMesh* m : meshes) {
+        Extra e;
+        if (m && !m->empty()) {
+            std::vector<float> pos;
+            pos.reserve(m->vertices.size() * 3);
+            for (const auto& v : m->vertices)
+                pos.insert(pos.end(), {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z)});
+            std::vector<unsigned> idx;
+            idx.reserve(m->faces.size() * 3);
+            for (const auto& f : m->faces)
+                idx.insert(idx.end(),
+                           {static_cast<unsigned>(f[0]), static_cast<unsigned>(f[1]), static_cast<unsigned>(f[2])});
+            upload(e.mesh.vao, e.mesh.vbo, e.mesh.ibo, pos, idx);
+            e.mesh.count = static_cast<int>(idx.size());
+        }
+        extras_.push_back(e);
+    }
+    extras_key_ = key;
+}
+
+void Renderer::clearExtras() {
+    for (Extra& e : extras_) destroyMesh(e.mesh);
+    extras_.clear();
+    extras_key_ = -1;
+}
+
+void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible) {
+    if (i >= extras_.size()) return;
+    extras_[i].rgb = rgb;
+    extras_[i].visible = visible;
 }
 
 void Renderer::setModelTransform(const fruit::Transform& t) {
@@ -333,8 +370,29 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         rgb(0xAEB6C4, c);
         glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
         glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, model_matrix_);
+        // Faces that need supports, when asked: tinted by how they lean.
+        // As the planner decides (OrientationSearch, PointGenerator): a face
+        // needs tips when its normal points down past sin(angle from vertical).
+        const float overhang_sin =
+            overhang_deg_ > 0 ? static_cast<float>(std::sin(overhang_deg_ * 3.14159265358979 / 180.0)) : 0.0f;
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), overhang_sin);
+        glUniform3f(glGetUniformLocation(mesh_prog_, "uOverhangColor"), 0x4F / 255.0f, 0x8A / 255.0f, 0xC9 / 255.0f);
         glBindVertexArray(model_.vao);
         glDrawElements(GL_TRIANGLES, model_.count, GL_UNSIGNED_INT, nullptr);
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
+    }
+    // Supports and tips, already in printer coordinates.
+    if (!extras_.empty()) {
+        glUseProgram(mesh_prog_);
+        const M4 identity;
+        glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
+        for (const Extra& e : extras_) {
+            if (!e.visible || !e.mesh.vao) continue;
+            rgb(e.rgb, c);
+            glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
+            glBindVertexArray(e.mesh.vao);
+            glDrawElements(GL_TRIANGLES, e.mesh.count, GL_UNSIGNED_INT, nullptr);
+        }
     }
     glBindVertexArray(0);
     glUseProgram(0);

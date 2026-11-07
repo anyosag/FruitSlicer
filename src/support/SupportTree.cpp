@@ -417,6 +417,8 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
 
 }  // namespace
 
+double tipPenetration(double tip_d, const TreeConfig& cfg) { return penetrationFor(tip_d, cfg); }
+
 TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;
