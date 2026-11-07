@@ -10,9 +10,18 @@
 
 namespace fruit {
 
+namespace {
+std::atomic<unsigned> g_default_threads{0};
+}  // namespace
+
 unsigned resolveThreads(unsigned requested) {
-    return requested ? requested : std::max(1u, std::thread::hardware_concurrency());
+    if (requested) return requested;
+    const unsigned all = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned d = g_default_threads.load(std::memory_order_relaxed);
+    return d ? std::min(d, all) : all;
 }
+
+void setDefaultThreads(unsigned n) { g_default_threads.store(n, std::memory_order_relaxed); }
 
 void runThreads(unsigned n, const std::function<void(unsigned, const std::atomic<bool>&)>& body) {
     std::atomic<bool> stop{false};

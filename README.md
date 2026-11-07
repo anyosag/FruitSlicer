@@ -106,8 +106,19 @@ fix to every print file from then on (the warnings then go away). The
 **Printer** page shows the printer, the orientation in use and the side the
 tilting vat hinges on; once the orientation is confirmed, supports get up to
 +25 % hold on the side away from the hinge. Both are kept between launches in
-`settings.json` in the app's data folder. It is one universal app for Apple
-silicon and Intel Macs, macOS 14 or later.
+`settings.json` in the app's data folder.
+
+The first launch runs **setup**: the printer, the print settings each new job
+starts with (from a SatelLite `.goo`, whose header FruitSlicer keeps a copy of,
+or exposures typed in), the image orientation check, and calibration now or
+later. A `.goo` made for another printer is refused, with the reason, here and
+on the Print step. **Settings** (at the bottom of the rail) has the 3D view's
+smoothing, how many processor cores slicing and saving may use, whether `.goo`
+files go to a plugged-in USB drive, the print settings for new jobs, the log
+file, and **Run setup again**; FruitSlicer sends no usage data. **About** says
+what has been checked and what not yet, and has the full licence text of
+FruitSlicer and of every library and the typeface built into the app. It is
+one universal app for Apple silicon and Intel Macs, macOS 14 or later.
 
 **Download.** Every CI run builds it. On GitHub, open the run (a pull
 request's *Checks* tab, or *Actions* → **CI**), scroll to *Artifacts*, and

@@ -498,7 +498,7 @@ void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = 
         app.renderer().clearModel();
     }
     const unsigned tex =
-        app.renderer().render(pw, ph, app.camera(), app.options().deterministic ? 0 : app.options().msaa_samples);
+        app.renderer().render(pw, ph, app.camera(), app.viewSamples());
     if (tex) ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex)), avail, ImVec2(0, 1), ImVec2(1, 0));
     else ImGui::Dummy(avail);
     // Mouse: left drag turns, right/middle (or Shift + left) drag moves, wheel zooms.

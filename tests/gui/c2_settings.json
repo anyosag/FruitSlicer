@@ -1,0 +1,22 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "settings"}, {"shot": "c2_settings"},
+    {"screen": "about"}, {"shot": "c2_about"},
+    {"licence": "SDL 3"}, {"frames": 2}, {"shot": "c2_licence"},
+    {"licence": ""}, {"frames": 2},
+    {"start_setup": true}, {"shot": "c2_setup_welcome"},
+    {"setup_step": 1}, {"shot": "c2_setup_print_empty"},
+    {"default_sample": "@demo-sample"}, {"shot": "c2_setup_print_file"},
+    {"typed_defaults": [2.0, 30, 6, 4]}, {"shot": "c2_setup_print_typed"},
+    {"setup_typed": false},
+    {"setup_step": 2}, {"shot": "c2_setup_orientation"},
+    {"setup_step": 3}, {"shot": "c2_setup_calibration"},
+    {"screen": "settings"}, {"shot": "c2_settings_after"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
+    {"step": "print"}, {"shot": "c2_new_job_print"}
+  ]
+}

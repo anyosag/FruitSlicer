@@ -132,6 +132,19 @@ TEST_CASE("worker threads: the first exception reaches the caller, nothing termi
                     std::out_of_range);
 }
 
+TEST_CASE("threads: 0 means the default, all cores unless set lower", "[jobs]") {
+    const unsigned all = resolveThreads(0);
+    CHECK(all >= 1);
+    CHECK(resolveThreads(3) == 3);  // an explicit count is kept
+    setDefaultThreads(1);
+    CHECK(resolveThreads(0) == 1);
+    CHECK(resolveThreads(5) == 5);
+    setDefaultThreads(all + 100);  // never more than there are cores
+    CHECK(resolveThreads(0) == all);
+    setDefaultThreads(0);
+    CHECK(resolveThreads(0) == all);
+}
+
 TEST_CASE("slicing: progress reaches 1; a failing progress sink and cancel both surface", "[jobs]") {
     const TriangleMesh m = testModel();
     Recorder rec;

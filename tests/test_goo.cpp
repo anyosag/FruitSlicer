@@ -255,6 +255,30 @@ Paths letterF(double dx, double dy, bool mirror_y) {
 
 }  // namespace
 
+TEST_CASE("GOO header bytes read back as the same header", "[goo]") {
+    GooHeader h;
+    h.layer_height = 0.03f;
+    h.layer_count = 100;
+    h.mirror_y = true;
+    h.printer_name = "ELEGOO Saturn 4 Ultra 16K";
+    h.print.exposure = 1.5f;
+    h.print.bottom_exposure = 27.5f;
+    h.print.bottom_layers = 6;
+    h.print.transition_layers = 6;
+    h.print.wait_after_retract = 5;
+    const auto bytes = gooHeaderBytes(h);
+    CHECK(bytes.size() == kGooHeaderSize);
+    const GooHeader r = parseGooHeader(bytes);
+    CHECK(r.layer_height == h.layer_height);
+    CHECK(r.layer_count == 100);
+    CHECK(r.mirror_y);
+    CHECK(r.printer_name == h.printer_name);
+    CHECK(r.print.exposure == 1.5f);
+    CHECK(r.print.bottom_layers == 6);
+    CHECK(r.print.transition_layers == 6);
+    CHECK(gooHeaderBytes(r) == bytes);
+}
+
 TEST_CASE("transition ramp matches SatelLite's 16K file", "[goo]") {
     GooHeader h;
     h.print.bottom_exposure = 27.5f;

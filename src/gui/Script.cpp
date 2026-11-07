@@ -146,6 +146,8 @@ Screen screenFrom(const std::string& s) {
     if (s == "calibrate") return Screen::Calibrate;
     if (s == "orientation_check") return Screen::OrientationCheck;
     if (s == "printer") return Screen::Printer;
+    if (s == "settings") return Screen::Settings;
+    if (s == "setup") return Screen::Setup;
     throw std::runtime_error("unknown screen " + s);
 }
 
@@ -249,6 +251,34 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("exposures")) {
             const auto& e = step["exposures"];
             app.setExposures(e[0].get<double>(), e[1].get<double>());
+        } else if (step.contains("start_setup")) {
+            app.startSetup();
+        } else if (step.contains("setup_step")) {
+            app.setupStep() = step["setup_step"].get<int>();
+        } else if (step.contains("default_sample")) {
+            // Setup's print settings, from a file (refused if it is for another printer).
+            std::string p = step["default_sample"].get<std::string>();
+            if (p == "@demo-sample") p = demoSample();
+            app.useDefaultSample(p);
+        } else if (step.contains("typed_defaults")) {
+            const auto& t = step["typed_defaults"];
+            App::TypedDefaults& d = app.typedDefaults();
+            d.exposure = t[0].get<double>();
+            d.bottom_exposure = t[1].get<double>();
+            d.bottom_layers = t[2].get<int>();
+            d.transition_layers = t[3].get<int>();
+            app.setupTyped() = true;
+        } else if (step.contains("setup_typed")) {
+            app.setupTyped() = step["setup_typed"].get<bool>();
+        } else if (step.contains("licence")) {
+            app.licenceOpen() = step["licence"].get<std::string>();
+        } else if (step.contains("prefs")) {
+            const auto& j = step["prefs"];
+            Preferences q = app.preferences();
+            q.smooth_view = j.value("smooth_view", q.smooth_view);
+            q.cores = j.value("cores", q.cores);
+            q.goo_to_drive = j.value("goo_to_drive", q.goo_to_drive);
+            app.setPreferences(q);
         } else if (step.contains("sample")) {
             std::string p = step["sample"].get<std::string>();
             if (p == "@demo-sample") p = demoSample();

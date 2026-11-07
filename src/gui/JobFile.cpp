@@ -175,15 +175,15 @@ void saveJob(const std::string& path, const Document& doc) {
                   {"transition_layers", s.transition_layers}, {"sample_path", s.sample_path}};
 
     std::vector<std::uint8_t> sample;
-    if (s.sample && !s.sample_path.empty()) {
+    if (s.sample) {
         // The header as SatelLite wrote it, so the job keeps its settings
-        // even if that file goes.
+        // even if that file goes; if it has already gone, the header as read.
         std::ifstream in(s.sample_path, std::ios::binary);
         sample.resize(fruit::kGooHeaderSize);
-        if (in.read(reinterpret_cast<char*>(sample.data()), static_cast<std::streamsize>(sample.size())))
-            j["print"]["sample_file"] = "sample-header.bin";
-        else
-            sample.clear();
+        if (s.sample_path.empty() ||
+            !in.read(reinterpret_cast<char*>(sample.data()), static_cast<std::streamsize>(sample.size())))
+            sample = fruit::gooHeaderBytes(*s.sample);
+        j["print"]["sample_file"] = "sample-header.bin";
     }
 
     const std::string text = j.dump(2);
