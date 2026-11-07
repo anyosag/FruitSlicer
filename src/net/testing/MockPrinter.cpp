@@ -98,7 +98,8 @@ MockPrinter::MockPrinter(MockPrinterConfig config)
                 const std::string uuid = f.get_field("Uuid");
                 Transfer done = std::move(t);
                 transfers_.erase(uuid);
-                verifyUntil_ = Clock::now() + cfg_.verifyTime;
+                verifyUntil_ = cfg_.holdVerification ? Clock::time_point::max()
+                                                     : Clock::now() + cfg_.verifyTime;
                 completed = true;
                 if (f.get_field("Check") == "1" && Md5::hex(done.data) != done.md5) {
                     verifyUntil_ = {};
@@ -122,9 +123,19 @@ MockPrinter::MockPrinter(MockPrinterConfig config)
             push["Padding"] = std::string(cfg_.pushPaddingPerChunk, '.');
             const std::string text = push.dump();
             std::lock_guard l(wsMu_);
-            for (void* w : sockets_) static_cast<httplib::ws::WebSocket*>(w)->send(text);
+            for (const auto& o : sockets_) static_cast<httplib::ws::WebSocket*>(o.ws)->send(text);
         }
-        if (completed && cfg_.dropWebSocketsAfterUpload) ++dropGeneration_;
+        if (completed && cfg_.dropWebSocketsAfterUpload) {
+            // Drop synchronously: answer the last chunk only once every older
+            // connection is closed, so the client cannot still be answered on
+            // one (a handler polls the generation every 50 ms, later if starved).
+            std::unique_lock l(wsMu_);
+            const int generation = ++dropGeneration_;
+            wsClosed_.wait_for(l, std::chrono::seconds(5), [&] {
+                return std::none_of(sockets_.begin(), sockets_.end(),
+                                    [&](const OpenSocket& o) { return o.generation < generation; });
+            });
+        }
         reply(result);
     });
 
@@ -132,10 +143,11 @@ MockPrinter::MockPrinter(MockPrinterConfig config)
     svr.WebSocket(std::string(kWebSocketPath),
                   [this](const httplib::Request&, httplib::ws::WebSocket& ws) {
                       ++wsConnections_;
-                      const int generation = dropGeneration_;
+                      int generation;
                       {
                           std::lock_guard l(wsMu_);
-                          sockets_.push_back(&ws);
+                          generation = dropGeneration_;
+                          sockets_.push_back({&ws, generation});
                       }
                       ws.set_read_timeout(std::chrono::milliseconds(50));
                       std::string msg;
@@ -155,9 +167,15 @@ MockPrinter::MockPrinter(MockPrinterConfig config)
                           if (!resp.is_null()) ws.send(resp.dump());
                           for (const auto& p : pushes) ws.send(p.dump());
                       }
+                      // Deregister only once this handler has stopped reading:
+                      // a synchronous drop that sees it gone knows nothing will
+                      // be answered on it. Returning then drops the TCP
+                      // connection without a close handshake (as a crashed or
+                      // rebooting mainboard would).
                       std::lock_guard l(wsMu_);
-                      sockets_.erase(std::find(sockets_.begin(), sockets_.end(), &ws));
-                      // Returning drops the connection without a close handshake.
+                      sockets_.erase(std::find_if(sockets_.begin(), sockets_.end(),
+                                                  [&](const OpenSocket& o) { return o.ws == &ws; }));
+                      wsClosed_.notify_all();
                   });
 
     const int port = svr.bind_to_any_port("127.0.0.1");
@@ -284,9 +302,12 @@ json MockPrinter::handleCommand(const json& req, std::vector<json>& pushes) {
                 return json{{"Drop", true}};
             }
             if (cfg_.forcedStartAck) data["Ack"] = *cfg_.forcedStartAck;
-            else if (printing_ || !transfers_.empty() ||
-                     Clock::now() < verifyUntil_ + cfg_.extraBusyTime)
+            else if (printing_ || !transfers_.empty() || Clock::now() < verifyUntil_)
                 data["Ack"] = 1;
+            else if (cfg_.busyAnswersAfterVerify > 0) {
+                --cfg_.busyAnswersAfterVerify;
+                data["Ack"] = 1;
+            }
             else if (!files_.count(name)) data["Ack"] = 2;
             else printing_ = name;
             if (data["Ack"] == 1) ++busyAnswers_;
@@ -350,5 +371,6 @@ std::optional<std::string> MockPrinter::printing() const { std::lock_guard l(mu_
 std::vector<int> MockPrinter::commandsSeen() const { std::lock_guard l(mu_); return commands_; }
 void MockPrinter::addFile(const std::string& p, const std::string& c) { std::lock_guard l(mu_); files_[p] = c; }
 void MockPrinter::setPrinting(const std::string& p) { std::lock_guard l(mu_); printing_ = p; }
+void MockPrinter::finishVerification() { std::lock_guard l(mu_); verifyUntil_ = {}; }
 
 }  // namespace fruit::net::testing
