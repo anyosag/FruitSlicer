@@ -8,7 +8,9 @@
 //              {"open": "@demo"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "model"}]}
 //
 // Steps drive the app through the same commands its buttons use:
-//   {"open": path | "@demo" | "@demo-big" | "@demo-3mf"}  built-in test models
+//   {"open": path | "@demo" | "@demo-big" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
+//   {"save_job": path | "@demo"} {"unsaved": "save" | "discard" | "cancel"}
+//   {"relink": "copy" | "cancel" | path | "@demo"} {"remove": path | "@demo"} (test set-up)
 //   {"wait": "jobs"}            finish background work
 //   {"health": "full" | "largest" | "custom" (+ "percent") | "inches" | "place" | "cancel"}
 //   {"scale": percent} {"rotate": [x, y, z]} {"sits": "raised" | "flat"} {"fit": true}

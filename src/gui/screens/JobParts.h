@@ -44,6 +44,8 @@ void layersView(App& app, Document& doc, ImVec2 size);
 void printView(App& app, Document& doc, ImVec2 size);
 void orientationQuestion(App& app);
 void sendDialog(App& app);  // "Send to the printer" over Wi-Fi
+void unsavedDialog(App& app);  // "Save … before closing?"
+void relinkDialog(App& app);   // "Where is … now?"
 bool showingSaved(const Document& doc);  // the "saved" page, for the file just written
 // In place of the Layers or Print step when the supports no longer match the model.
 void staleSupports(App& app, ImVec2 size);

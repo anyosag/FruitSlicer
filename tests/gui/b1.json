@@ -10,7 +10,7 @@
     {"sits": "flat"}, {"shot": "b1_model_flat"},
     {"undo": 2}, {"rotate": [0, 0, 45]}, {"shot": "b1_model_rotated"},
     {"shortcuts": true}, {"shot": "b1_shortcuts"}, {"shortcuts": false},
-    {"open": "@demo-3mf"}, {"wait": "jobs"}, {"shot": "b1_health_3mf"},
+    {"open": "@demo-3mf"}, {"unsaved": "discard"}, {"wait": "jobs"}, {"shot": "b1_health_3mf"},
     {"health": "place"}, {"shot": "b1_model_3mf"}
   ]
 }

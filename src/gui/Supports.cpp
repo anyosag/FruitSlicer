@@ -396,30 +396,48 @@ int supportStage(const std::string& stage, double f) {
     return 0;
 }
 
+SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+                     const fruit::JobControl& ctl) {
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    const fruit::Placement& p = doc.placement();
+    resolve(p, c, cfg, tc);
+    fruit::CosmeticSpec cos;
+    cos.visible_from = visibleInPrinter(visible_model, p);
+    fruit::PointGenOptions po;
+    po.cosmetic = &cos;
+    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, ctl);
+    return SupportPlan{std::move(pg.points), std::move(pg.warnings)};
+}
+
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
                        const fruit::JobControl& ctl) {
+    const auto t0 = std::chrono::steady_clock::now();
+    SupportResult r = finishSupports(doc, c, planTips(doc, c, visible_model, ctl.sub(0.0, 0.55)), ctl.sub(0.55, 1.0));
+    r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    return r;
+}
+
+SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,
+                             const fruit::JobControl& ctl) {
     const auto t0 = std::chrono::steady_clock::now();
     SupportResult r;
     r.choices = c;
     const fruit::Placement& p = doc.placement();
     resolve(p, c, r.cfg, r.tree_cfg);
+    r.points = std::move(plan.points);
+    r.plan_warnings = std::move(plan.warnings);
 
-    fruit::CosmeticSpec cos;
-    cos.visible_from = visibleInPrinter(visible_model, p);
-    fruit::PointGenOptions po;
-    po.cosmetic = &cos;
-    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), r.cfg, po, ctl.sub(0.0, 0.55));
-    r.points = std::move(pg.points);
-
+    // Progress as generate() reports it: the tree from 0.55, the check from 0.85.
     const double min_raft =
         fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight);
-    r.tree = fruit::buildSupportTree(doc.placed(), r.points, r.tree_cfg, min_raft, ctl.sub(0.55, 0.80));
-    ctl.step("mesh", 0.80);
+    r.tree = fruit::buildSupportTree(doc.placed(), r.points, r.tree_cfg, min_raft, ctl.sub(0.0, 0.55));
+    ctl.step("mesh", 0.55);
     r.mesh = r.tree.mesh(r.tree_cfg);
-    ctl.step("check", 0.85);
+    ctl.step("check", 0.67);
     r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
                                             r.cfg.absorb_island_area, doc.printer.pixelX() * doc.printer.pixelY(),
-                                            ctl.sub(0.85, 1.0));
+                                            ctl.sub(0.67, 1.0));
 
     // Counts.
     r.tips = r.points.size();
@@ -462,7 +480,7 @@ SupportResult generate(const Document& doc, const SupportChoices& c, const std::
 
     // Problems, grouped by kind.
     std::map<std::string, SupportProblem> by_code;
-    addWarnings(pg.warnings, by_code);
+    addWarnings(r.plan_warnings, by_code);
     addWarnings(r.tree.warnings, by_code);
     if (!v.floating.empty()) {
         SupportProblem fp;

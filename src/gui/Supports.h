@@ -120,6 +120,7 @@ struct SupportResult {
     fruit::Vec3 size_with_supports;
     std::vector<SupportCheck> checks;
     std::vector<SupportProblem> problems;
+    std::vector<fruit::Warning> plan_warnings;  // the tip planner's, kept so a saved job can rebuild its problems
     double seconds = 0;
 
     std::size_t count(SupportProblem::Level l) const;
@@ -133,6 +134,18 @@ fruit::TreeConfig treeConfig(const SupportChoices& c);
 // 0.55, the tree up to 0.85, the check after (stage "check").
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
                        const fruit::JobControl& ctl);
+
+// The tip planner's part: the tips and what it warned about.
+struct SupportPlan {
+    std::vector<fruit::SupportPoint> points;
+    std::vector<fruit::Warning> warnings;
+};
+SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+                     const fruit::JobControl& ctl);
+// Everything after the tips: the tree, its checks and the problems. Used
+// when a saved job comes back with its tips.
+SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,
+                             const fruit::JobControl& ctl);
 
 // The stages the running card lists, and which one a progress report is in.
 const std::vector<std::string>& supportStages();

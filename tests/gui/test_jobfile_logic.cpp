@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
+// Saved jobs: what comes back, what counts as unsaved, recent jobs.
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+#include <filesystem>
+#include <fstream>
+
+#include "Document.h"
+#include "JobFile.h"
+#include "Print.h"
+#include "Supports.h"
+#include "formats/GooExport.h"
+#include "formats/GooSetup.h"
+#include "mesh/Primitives.h"
+#include "mesh/StlIO.h"
+
+using Catch::Approx;
+using Catch::Matchers::ContainsSubstring;
+using namespace gui;
+namespace fs = std::filesystem;
+
+namespace {
+
+fs::path dir() {
+    const auto d = fs::temp_directory_path() / "fruit_job_tests";
+    fs::create_directories(d);
+    return d;
+}
+
+std::shared_ptr<Document> bracketAt(const fs::path& model) {
+    fruit::writeStl(model.string(), demoModel());
+    return loadDocument(model.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+}
+
+}  // namespace
+
+TEST_CASE("Jobs: what was decided comes back, supports included", "[gui][jobs][slow]") {
+    const auto doc = bracketAt(dir() / "bracket.stl");
+    fruit::Placement p = doc->placement();
+    p.scale = 1.25;
+    p.rotation_deg = {0, 0, 30};
+    doc->edit(p);
+    doc->orient.visible = {{0, 0, 1}};
+    doc->orient.decided = true;
+    doc->supports.choices.usual_tip = 3;
+    doc->supports.choices.advanced["head_length"] = 1.4;
+    auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, doc->orient.visible,
+                                                      fruit::JobControl::none()));
+    doc->supports.result = r;
+    doc->supports.result_revision = doc->revision();
+    doc->supports.result_settings = doc->orient.settings;
+    doc->print.settings.exposure = 2.5;
+    doc->print.settings.bottom_exposure = 30;
+
+    const auto job = (dir() / "bracket.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    const Document& d = *o.doc;
+    CHECK_FALSE(o.model_missing);
+    CHECK(o.model_path == doc->path);
+    CHECK(d.name == "bracket");
+    CHECK(d.job_path == job);
+    CHECK(meshHash(d.model.mesh) == meshHash(doc->model.mesh));
+    CHECK(d.placement().scale == Approx(1.25));
+    CHECK(d.placement().rotation_deg.z == Approx(30));
+    CHECK(d.placed().bbox().max.x == Approx(doc->placed().bbox().max.x));
+    REQUIRE(d.orient.visible.size() == 1);
+    CHECK(d.orient.decided);
+    CHECK(d.supports.choices == doc->supports.choices);
+    REQUIRE(d.supports.result);
+    CHECK(d.supports.fresh(d.revision(), d.orient.settings));
+    CHECK(d.supports.result->tips == r->tips);
+    CHECK(d.supports.result->pillars == r->pillars);
+    CHECK(d.supports.result->tree_cfg.head_length == Approx(1.4));
+    REQUIRE(d.supports.result->problems.size() == r->problems.size());
+    for (std::size_t i = 0; i < r->problems.size(); ++i) CHECK(d.supports.result->problems[i].code == r->problems[i].code);
+    CHECK(d.print.settings.exposure == 2.5);
+    CHECK(d.print.settings.bottom_exposure == 30);
+    CHECK_FALSE(d.unsaved());
+}
+
+TEST_CASE("Jobs: the SatelLite settings travel with the job; a moved model is noticed", "[gui][jobs]") {
+    const auto model = dir() / "moving.stl";
+    const auto doc = bracketAt(model);
+    // A sample like SatelLite's, then gone from disk: the job keeps its header.
+    fruit::GooPrintRequest req;
+    req.layer_height = 0.03;
+    req.exposure = 1.5;
+    req.bottom_exposure = 27.5;
+    const fruit::GooPrintSetup s = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), req);
+    const auto sample = (dir() / "sample.goo").string();
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 0.3}), s.header, s.grid, fruit::GooExportOptions{}, sample);
+    doc->print.settings.sample_path = sample;
+    doc->print.settings.sample = loadSample(sample);
+    const auto job = (dir() / "moving.fruitjob").string();
+    saveJob(job, *doc);
+    fs::remove(sample);
+    fs::remove(model);
+
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(o.model_missing);
+    CHECK(o.model_path == model.string());
+    REQUIRE(o.doc->print.settings.sample);
+    CHECK(o.doc->print.settings.sample->print.exposure == Approx(1.5));
+    CHECK(o.doc->print.settings.sample->layer_height == Approx(0.03));
+    CHECK_FALSE(o.doc->supports.result);  // none were made
+    CHECK(o.doc->model.mesh.faces.size() == demoModel().faces.size());
+}
+
+TEST_CASE("Jobs: damaged and newer files are refused plainly", "[gui][jobs]") {
+    const auto junk = (dir() / "junk.fruitjob").string();
+    std::ofstream(junk) << "not a zip";
+    CHECK_THROWS_WITH(openJob(junk, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none()),
+                      ContainsSubstring("not a FruitSlicer job"));
+    CHECK_THROWS(openJob((dir() / "missing.fruitjob").string(), fruit::PrinterProfile::saturn4Ultra16k(),
+                         fruit::JobControl::none()));
+}
+
+TEST_CASE("Jobs: what counts as a change since saving", "[gui][jobs]") {
+    const auto doc = bracketAt(dir() / "changes.stl");
+    CHECK(doc->unsaved());  // never saved
+    doc->saved = doc->stamp();
+    CHECK_FALSE(doc->unsaved());
+    fruit::Placement p = doc->placement();
+    p.rotation_deg = {0, 0, 15};
+    doc->edit(p);
+    CHECK(doc->unsaved());
+    auto changes = changesSince(*doc->saved, doc->stamp());
+    REQUIRE(changes.size() == 1);
+    CHECK_THAT(changes[0], ContainsSubstring("turned"));
+    doc->saved = doc->stamp();
+    doc->print.settings.exposure = 2;
+    changes = changesSince(*doc->saved, doc->stamp());
+    REQUIRE(changes.size() == 1);
+    CHECK_THAT(changes[0], ContainsSubstring("print settings"));
+}
+
+TEST_CASE("Jobs: recent jobs, newest first, each once", "[gui][jobs]") {
+    const auto file = (dir() / "data" / "recent.json").string();
+    fs::remove_all(dir() / "data");
+    CHECK(loadRecentJobs(file).empty());
+    for (int i = 0; i < 10; ++i) rememberJob(file, {"/jobs/" + std::to_string(i) + ".fruitjob", "job " + std::to_string(i), "", ""});
+    rememberJob(file, {"/jobs/5.fruitjob", "job 5", "supports ready", "now"});
+    const auto jobs = loadRecentJobs(file);
+    REQUIRE(jobs.size() == 8);
+    CHECK(jobs[0].path == "/jobs/5.fruitjob");
+    CHECK(jobs[0].state == "supports ready");
+    CHECK(jobs[1].path == "/jobs/9.fruitjob");
+    for (std::size_t i = 1; i < jobs.size(); ++i) CHECK(jobs[i].path != jobs[0].path);
+}

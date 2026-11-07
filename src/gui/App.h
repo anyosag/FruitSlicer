@@ -13,6 +13,7 @@
 
 #include "Document.h"
 #include "Calibration.h"
+#include "JobFile.h"
 #include "Jobs.h"
 #include "Send.h"
 #include "platform/Platform.h"
@@ -74,8 +75,37 @@ public:
     void frame();
 
     // ---- Commands ----
+    // A model (STL, OBJ, 3MF) or a saved job, after asking about unsaved work.
     void openPath(const std::string& path);
     void openDialog();
+    // Saved jobs.
+    void saveJob();    // to its file, or ask where (⌘S)
+    void saveJobAs();  // ask where (⇧⌘S)
+    void saveJobTo(const std::string& path, std::function<void()> then = {});
+    const std::vector<RecentJob>& recentJobs() const { return recent_; }
+    // Runs `then` now, or once "Save … before closing?" is answered.
+    void leaveJob(std::function<void()> then);
+    struct UnsavedDialog {
+        bool open = false;
+        std::vector<std::string> changes;  // since the last save; empty when never saved
+        std::function<void()> then;
+    };
+    enum class UnsavedAnswer { DontSave, Cancel, Save };
+    UnsavedDialog& unsavedDialog() { return unsaved_; }
+    void answerUnsaved(UnsavedAnswer a);
+    // A job whose model file has gone: keep its copy, or find the file.
+    struct RelinkDialog {
+        bool open = false;
+        std::shared_ptr<Document> doc;  // opened, not yet shown
+        std::string model_path;         // where the model was
+        bool find = false;              // "Find the file" picked
+    };
+    RelinkDialog& relinkDialog() { return relink_; }
+    void relinkOpen();                  // with the choice made: the copy, or find the file
+    void relinkTo(const std::string& model_path);
+    void relinkCancel();
+    void requestQuit();                 // the window's close box or ⌘Q
+    bool quitting() const { return quit_; }
     void setScreen(Screen s) { screen_ = s; }
     void setView(ViewPreset v);
     void fitView();
@@ -189,6 +219,10 @@ public:
     fruit::Placement healthPlacement() const;
 
 private:
+    void openModel(const std::string& path);
+    void openJobFile(const std::string& path);
+    void installJob(std::shared_ptr<Document> doc);
+    void remember(const Document& d);
     void rail();
     void errorDialog();
     void keys();
@@ -238,6 +272,10 @@ private:
     std::vector<std::string> printer_hosts_;  // added by hand
     bool printer_hosts_loaded_ = false;
     std::shared_ptr<void> mock_printer_;      // scripts only
+    std::vector<RecentJob> recent_;
+    UnsavedDialog unsaved_;
+    RelinkDialog relink_;
+    bool quit_ = false;
     PrinterSetup printer_setup_;
     std::string orient_piece_;
     std::shared_ptr<const OrientationCheck> orient_check_;

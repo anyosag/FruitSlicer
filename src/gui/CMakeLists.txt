@@ -22,6 +22,7 @@ set(app_sources
   Dialogs.cpp
   Document.cpp
   Icons.cpp
+  JobFile.cpp
   Jobs.cpp
   Layers.cpp
   Log.cpp
@@ -35,6 +36,7 @@ set(app_sources
   screens/AboutScreen.cpp
   screens/CalibrateScreens.cpp
   screens/HomeScreen.cpp
+  screens/JobDialogs.cpp
   screens/JobScreen.cpp
   screens/LayersStep.cpp
   screens/PrintStep.cpp

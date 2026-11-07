@@ -160,8 +160,29 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setScreen(screenFrom(step["screen"].get<std::string>()));
         } else if (step.contains("open")) {
             std::string p = step["open"].get<std::string>();
-            if (!p.empty() && p[0] == '@') p = demoPath(p);
+            if (p == "@demo-job") p = (demoDir() / "bracket.fruitjob").string();
+            else if (!p.empty() && p[0] == '@') p = demoPath(p);
             app.openPath(p);
+        } else if (step.contains("save_job")) {
+            std::string p = step["save_job"].get<std::string>();
+            if (p == "@demo") p = (demoDir() / "bracket.fruitjob").string();
+            app.saveJobTo(p);
+        } else if (step.contains("unsaved")) {
+            const std::string a = step["unsaved"].get<std::string>();
+            app.answerUnsaved(a == "save"      ? App::UnsavedAnswer::Save
+                              : a == "discard" ? App::UnsavedAnswer::DontSave
+                                               : App::UnsavedAnswer::Cancel);
+        } else if (step.contains("relink")) {
+            const std::string a = step["relink"].get<std::string>();
+            if (a == "copy") app.relinkOpen();
+            else if (a == "cancel") app.relinkCancel();
+            else app.relinkTo(a == "@demo" ? demoPath("@demo") : a);
+        } else if (step.contains("remove")) {
+            // Test set-up: "@demo" removes the demo bracket's STL (to make a saved job's model go missing).
+            std::string p = step["remove"].get<std::string>();
+            if (p == "@demo") p = (demoDir() / "bracket.stl").string();
+            std::error_code ec;
+            std::filesystem::remove(p, ec);
         } else if (step.contains("health")) {
             const std::string what = step["health"].get<std::string>();
             if (what == "place") app.placeChecked();

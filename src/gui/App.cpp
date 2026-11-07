@@ -6,10 +6,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
+#include <cctype>
 #include <filesystem>
 
 #include <SDL3/SDL.h>
 
+#include "mesh/ModelCheck.h"
+#include "mesh/ModelLoad.h"
 #include "mesh/StlIO.h"
 #include "net/testing/MockPrinter.h"
 
@@ -32,7 +36,10 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
     : window_(window), opts_(opts), jobs_(std::move(wake)) {
     camera_.preset(ViewPreset::Angled);
     // Scripted captures start from FruitSlicer's own settings, never this machine's.
-    if (!opts_.deterministic) printer_setup_ = loadPrinterSetup(settingsFile());
+    if (!opts_.deterministic) {
+        printer_setup_ = loadPrinterSetup(settingsFile());
+        recent_ = loadRecentJobs((std::filesystem::path(platform::dataDir()) / "recent.json").string());
+    }
 }
 
 App::~App() {
@@ -78,7 +85,23 @@ void App::setView(ViewPreset v) {
 
 void App::fitView() { frameModel(); }
 
+namespace {
+std::string recentFile() { return (std::filesystem::path(platform::dataDir()) / "recent.json").string(); }
+bool isJobFile(const std::string& path) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == std::string(".") + kJobExtension;
+}
+}  // namespace
+
 void App::openPath(const std::string& path) {
+    leaveJob([this, path] {
+        if (isJobFile(path)) openJobFile(path);
+        else openModel(path);
+    });
+}
+
+void App::openModel(const std::string& path) {
     const std::string name = std::filesystem::path(path).filename().string();
     screen_ = Screen::Job;
     auto result = std::make_shared<std::shared_ptr<Document>>();
@@ -106,9 +129,202 @@ void App::openPath(const std::string& path) {
 }
 
 void App::openDialog() {
-    platform::openFileDialog(window_, {{"3D models", "stl;obj;3mf"}}, [this](const std::string& path) {
-        if (!path.empty()) openPath(path);
+    platform::openFileDialog(window_, {{"3D models and FruitSlicer jobs", "stl;obj;3mf;fruitjob"}},
+                             [this](const std::string& path) {
+                                 if (!path.empty()) openPath(path);
+                             });
+}
+
+void App::saveJob() {
+    if (!doc_) return;
+    if (doc_->job_path.empty()) saveJobAs();
+    else saveJobTo(doc_->job_path);
+}
+
+void App::saveJobAs() {
+    if (!doc_) return;
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    const std::string start = !doc_->job_path.empty()
+                                  ? doc_->job_path
+                                  : (std::filesystem::path(docs ? docs : ".") / (doc_->name + ".fruitjob")).string();
+    auto then = std::make_shared<std::function<void()>>(std::move(unsaved_.then));
+    platform::saveFileDialog(window_, {{"FruitSlicer jobs", kJobExtension}}, start, [this, then](const std::string& path) {
+        if (!path.empty()) saveJobTo(path, *then);
     });
+}
+
+void App::saveJobTo(const std::string& path, std::function<void()> then) {
+    if (!doc_) return;
+    auto snap = std::make_shared<const Document>(*doc_);
+    const JobStamp stamp = doc_->stamp();
+    std::weak_ptr<Document> target = doc_;
+    const std::string name = std::filesystem::path(path).filename().string();
+    jobs_.start(
+        "Writing " + name, [snap, path](const fruit::JobControl&) { gui::saveJob(path, *snap); },
+        [this, target, path, stamp, name, then](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't save " + name, e.what());
+                }
+                return;
+            }
+            const auto d = target.lock();
+            if (!d) return;
+            d->job_path = path;
+            d->saved = stamp;
+            log::info("job saved: " + path);
+            remember(*d);
+            if (then) then();
+        });
+}
+
+void App::remember(const Document& d) {
+    if (d.job_path.empty()) return;
+    RecentJob r;
+    r.path = d.job_path;
+    r.name = d.name;
+    const auto& s = d.supports;
+    r.state = d.layers.fresh(s.result) ? "layers cut" : s.fresh(d.revision(), d.orient.settings) ? "supports ready"
+                                                                                                    : "placed";
+    if (opts_.deterministic) {
+        r.when = "today";
+    } else {
+        const std::time_t t = std::time(nullptr);
+        std::tm tm{};
+        localtime_r(&t, &tm);
+        char b[32];
+        std::strftime(b, sizeof b, "%Y-%m-%d %H:%M", &tm);
+        r.when = b;
+    }
+    if (opts_.deterministic) {
+        std::erase_if(recent_, [&](const RecentJob& x) { return x.path == r.path; });
+        recent_.insert(recent_.begin(), r);
+        return;
+    }
+    try {
+        rememberJob(recentFile(), r);
+    } catch (const std::exception& e) {
+        log::error(std::string("recent jobs not saved: ") + e.what());
+    }
+    recent_ = loadRecentJobs(recentFile());
+}
+
+void App::openJobFile(const std::string& path) {
+    const std::string name = std::filesystem::path(path).filename().string();
+    auto out = std::make_shared<OpenedJob>();
+    const fruit::PrinterProfile printer = printer_;
+    jobs_.start(
+        "Opening " + name, [path, printer, out](const fruit::JobControl& ctl) { *out = openJob(path, printer, ctl); },
+        [this, out, name](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't open " + name, e.what());
+                }
+                return;
+            }
+            if (out->model_missing) {
+                relink_ = RelinkDialog{};
+                relink_.open = true;
+                relink_.doc = out->doc;
+                relink_.model_path = out->model_path;
+                return;
+            }
+            installJob(out->doc);
+        });
+}
+
+void App::installJob(std::shared_ptr<Document> d) {
+    doc_ = std::move(d);
+    checking_.reset();
+    advanced_ = doc_->supports.choices.advanced;
+    applyPrinterSetup();
+    screen_ = Screen::Job;
+    step_ = doc_->supports.fresh(doc_->revision(), doc_->orient.settings) ? Step::Supports : Step::Model;
+    orient_view_ = OrientView::Settings;
+    advanced_open_ = false;
+    frameModel();
+    remember(*doc_);
+    log::info("job opened: " + doc_->job_path);
+}
+
+void App::leaveJob(std::function<void()> then) {
+    if (doc_ && doc_->unsaved()) {
+        unsaved_ = UnsavedDialog{};
+        unsaved_.open = true;
+        if (doc_->saved) unsaved_.changes = changesSince(*doc_->saved, doc_->stamp());
+        unsaved_.then = std::move(then);
+        return;
+    }
+    if (then) then();
+}
+
+void App::answerUnsaved(UnsavedAnswer a) {
+    unsaved_.open = false;
+    switch (a) {
+        case UnsavedAnswer::DontSave: {
+            auto then = std::move(unsaved_.then);
+            unsaved_ = UnsavedDialog{};
+            if (then) then();
+            break;
+        }
+        case UnsavedAnswer::Cancel: unsaved_ = UnsavedDialog{}; break;
+        case UnsavedAnswer::Save:
+            // Then carries on once saved; a cancelled save dialog drops it.
+            if (doc_ && doc_->job_path.empty()) {
+                saveJobAs();
+            } else if (doc_) {
+                auto then = std::move(unsaved_.then);
+                saveJobTo(doc_->job_path, std::move(then));
+            }
+            unsaved_ = UnsavedDialog{};
+            break;
+    }
+}
+
+void App::relinkOpen() {
+    if (!relink_.doc) return;
+    if (relink_.find) {
+        platform::openFileDialog(window_, {{"3D models", "stl;obj;3mf"}}, [this](const std::string& path) {
+            if (!path.empty()) relinkTo(path);
+        });
+        return;
+    }
+    auto d = relink_.doc;
+    relink_ = RelinkDialog{};
+    installJob(d);
+}
+
+void App::relinkTo(const std::string& model_path) {
+    if (!relink_.doc) return;
+    auto d = relink_.doc;
+    relink_ = RelinkDialog{};
+    try {
+        fruit::LoadedModel m = fruit::loadModel(model_path);
+        if (meshHash(m.mesh) != meshHash(d->model.mesh)) {
+            // Changed since: the job uses the new file, and its supports go out of date.
+            d->model = std::move(m);
+            d->check = fruit::checkMesh(d->model);
+            d->geometry_id = newGeometryId();
+            d->edit(d->placement());
+            log::info("relinked to a changed model: " + model_path);
+        }
+        d->path = model_path;
+    } catch (const std::exception& e) {
+        showError("Couldn't read that model", std::string(e.what()) + " The job keeps its own copy.");
+    }
+    installJob(d);
+}
+
+void App::relinkCancel() { relink_ = RelinkDialog{}; }
+
+void App::requestQuit() {
+    leaveJob([this] { quit_ = true; });
 }
 
 fruit::Placement App::healthPlacement() const {
@@ -139,6 +355,7 @@ void App::placeChecked() {
     checking_.reset();
     doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
     applyPrinterSetup();
+    doc_->saved = doc_->stamp();  // nothing to save until something changes
     health_.open = false;
     advanced_open_ = false;
     step_ = Step::Model;
@@ -1108,6 +1325,9 @@ void App::keys() {
     if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
     const ImGuiInputFlags global = ImGuiInputFlags_RouteGlobal;
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, global)) openDialog();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, global)) saveJob();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, global)) saveJobAs();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, global)) requestQuit();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, global)) undo();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, global)) redo();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
@@ -1174,6 +1394,8 @@ void App::frame() {
     dialogs::shortcuts(*this, shortcuts_open_);
     screens::parts::orientationQuestion(*this);
     screens::parts::sendDialog(*this);
+    screens::parts::unsavedDialog(*this);
+    screens::parts::relinkDialog(*this);
     errorDialog();
     ImGui::End();
 }

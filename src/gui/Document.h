@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -73,6 +74,20 @@ struct PrintState {
     std::string drive;                          // where it went when on a removable drive ("" otherwise)
 };
 
+// What a saved job records, to tell whether anything changed since.
+struct JobStamp {
+    std::string model_path;   // where the model file is
+    int revision = -1;        // placement
+    int orient_settings = -1;  // sides people will see
+    bool orient_decided = false;
+    const void* supports = nullptr;  // the supports result, by identity
+    SupportChoices choices;
+    std::string sample_path;
+    double exposure = 0, bottom_exposure = 0;
+    int bottom_layers = -1, transition_layers = -1;
+    bool operator==(const JobStamp&) const = default;
+};
+
 class Document {
 public:
     std::string path;  // file it came from
@@ -86,6 +101,10 @@ public:
     SupportState supports;
     LayerState layers;
     PrintState print;
+    std::string job_path;               // the .fruitjob it was saved to or opened from ("" if never saved)
+    std::optional<JobStamp> saved;      // as it was then
+    JobStamp stamp() const;
+    bool unsaved() const { return !saved || !(*saved == stamp()); }
 
     const fruit::Placement& placement() const { return placement_; }
     const fruit::Transform& transform() const { return transform_; }  // model -> printer
@@ -110,6 +129,9 @@ private:
     int revision_ = 0;
     std::vector<fruit::Placement> undo_, redo_;
 };
+
+// A new value for Document::geometry_id.
+int newGeometryId();
 
 // Reads, checks and places a model file (worker thread).
 std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::PrinterProfile& printer,

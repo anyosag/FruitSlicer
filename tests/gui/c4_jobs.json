@@ -1,0 +1,15 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"save_job": "@demo"}, {"wait": "jobs"}, {"shot": "c4_saved"},
+    {"rotate": [0, 0, 20]}, {"shot": "c4_edited"},
+    {"open": "@demo-3mf"}, {"shot": "c4_unsaved"},
+    {"unsaved": "discard"}, {"wait": "jobs"}, {"health": "place"},
+    {"screen": "home"}, {"shot": "c4_home_recent"},
+    {"remove": "@demo"}, {"open": "@demo-job"}, {"wait": "jobs"}, {"shot": "c4_relink"},
+    {"relink": "copy"}, {"shot": "c4_job_opened"}
+  ]
+}
