@@ -172,4 +172,23 @@ GooCompareResult compareGoo(const GooFileInfo& a, const GooFileInfo& b, double z
     return r;
 }
 
+OrientationVerdict orientationVerdict(const GooCompareResult& c, double min_iou) {
+    if (c.best_iou < min_iou) return OrientationVerdict::Undetermined;
+    if (c.best == "identity") return OrientationVerdict::Matches;
+    if (c.best == "flip_x") return OrientationVerdict::FlipX;
+    if (c.best == "flip_y") return OrientationVerdict::FlipY;
+    return OrientationVerdict::Rotated180;
+}
+
+const char* verdictText(OrientationVerdict v) {
+    switch (v) {
+        case OrientationVerdict::Matches: return "orientation matches";
+        case OrientationVerdict::FlipX: return "A is mirrored in X relative to B: use --flip-x";
+        case OrientationVerdict::FlipY: return "A is mirrored in Y relative to B: use --flip-y";
+        case OrientationVerdict::Rotated180: return "A is rotated 180 degrees relative to B: use --flip-x --flip-y";
+        case OrientationVerdict::Undetermined: break;
+    }
+    return "images differ (different models, scale or layer?); orientation not determined";
+}
+
 }  // namespace fruit

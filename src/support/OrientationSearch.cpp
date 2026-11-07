@@ -2,6 +2,10 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "support/OrientationSearch.h"
 
+#include <atomic>
+
+#include "core/Parallel.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -62,7 +66,8 @@ std::vector<Vec3> fibonacciSphere(int n) {
     return out;
 }
 
-void stageOne(const TriangleMesh& placed, const OrientOptions& o, const Transform& rot, OrientationResult& r) {
+void stageOne(const TriangleMesh& placed, const OrientOptions& o, const Transform& rot, OrientationResult& r,
+              const JobControl& ctl) {
     const double s_crit = std::sin(deg2rad(o.cfg.critical_angle_deg));
     for (size_t f = 0; f < placed.faces.size(); ++f) {
         const Vec3 n = placed.faceNormal(f);
@@ -75,13 +80,14 @@ void stageOne(const TriangleMesh& placed, const OrientOptions& o, const Transfor
     r.minima = findMinima(placed).size();
     const BBox3 b = placed.bbox();
     r.height = b.max.z;
-    const LayerStack coarse = sliceModel(placed, o.proxy_layer);
+    const LayerStack coarse = sliceModel(placed, o.proxy_layer, nullptr, 1, ctl);
     for (const auto& s : coarse.slices) r.peak_area = std::max(r.peak_area, area(s));
 }
 
 }  // namespace
 
-std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, const OrientOptions& o) {
+std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, const OrientOptions& o,
+                                                  const JobControl& ctl) {
     std::vector<OrientationResult> cands;
     // The input orientation first, then directions over the sphere.
     {
@@ -96,12 +102,20 @@ std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, con
         r.rotation = rotationBetween(d, {0, 0, -1});
         cands.push_back(r);
     }
-    for (auto& c : cands) {
-        c.euler_deg = eulerXYZ(c.rotation);
-        TriangleMesh m = model;
-        m.transform(c.rotation);
-        placeOnPlate(m, {0, 0, 0}, o.elevation);
-        stageOne(m, o, c.rotation, c);
+    {
+        const JobControl quiet = ctl.silent();
+        std::atomic<size_t> done{0};
+        const double total = static_cast<double>(cands.size());
+        parallelFor(cands.size(), o.threads, [&](size_t i) {
+            OrientationResult& c = cands[i];
+            c.euler_deg = eulerXYZ(c.rotation);
+            TriangleMesh m = model;
+            m.transform(c.rotation);
+            placeOnPlate(m, {0, 0, 0}, o.elevation);
+            stageOne(m, o, c.rotation, c, quiet);
+            ctl.report("orient.score", 0.25 * static_cast<double>(++done) / total);
+        });
+        ctl.check();
     }
     // Normalise each proxy by its median over all candidates so the weights
     // compare like with like.
@@ -131,27 +145,42 @@ std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, con
     for (int i = 0; i < k; ++i) finalists.push_back(i);
     for (size_t i = 0; i < cands.size(); ++i)
         if (cands[i].is_input && i >= static_cast<size_t>(k)) finalists.push_back(i);
-    for (size_t i : finalists) {
-        OrientationResult& c = cands[i];
-        TriangleMesh m = model;
-        m.transform(c.rotation);
-        placeOnPlate(m, {0, 0, 0}, o.elevation);
-        CosmeticSpec cos;
-        for (const Vec3& v : o.visible_from) cos.visible_from.push_back(normalized(c.rotation.applyLinear(v)));
-        cos.visible_cos = o.visible_cos;
-        PointGenOptions po;
-        po.cosmetic = &cos;
-        const PointGenResult res = generateSupportPoints(m, o.cfg, po);
-        CostField cf;
-        cf.cosmetic = &cos;
-        c.evaluated = true;
-        c.points = res.points.size();
-        for (const auto& p : res.points) {
-            c.cosmetic_points += cf.isCosmetic(p.pos, p.normal);
-            c.islands += p.category == PointCategory::Island;
-        }
-        c.uncovered = res.stats.uncovered;
-        c.capacity_deficits = res.stats.capacity_deficits;
+    {
+        // Finalists run side by side; each one's slicing gets a share of the
+        // cores. Results land at fixed indices, so they do not depend on timing.
+        const unsigned workers = static_cast<unsigned>(
+            std::min<size_t>(resolveThreads(o.threads), std::max<size_t>(finalists.size(), 1)));
+        const unsigned slice_threads = std::max(1u, resolveThreads(o.threads) / std::max(1u, workers));
+        const JobControl quiet = ctl.silent();
+        std::atomic<size_t> done{0};
+        const double total = static_cast<double>(std::max<size_t>(finalists.size(), 1));
+        ctl.report("orient.evaluate", 0.25);
+        parallelFor(finalists.size(), workers, [&](size_t k) {
+            OrientationResult& c = cands[finalists[k]];
+            TriangleMesh m = model;
+            m.transform(c.rotation);
+            placeOnPlate(m, {0, 0, 0}, o.elevation);
+            CosmeticSpec cos;
+            for (const Vec3& v : o.visible_from) cos.visible_from.push_back(normalized(c.rotation.applyLinear(v)));
+            cos.visible_cos = o.visible_cos;
+            PointGenOptions po;
+            po.cosmetic = &cos;
+            po.slice_threads = slice_threads;
+            PointGenResult res = generateSupportPoints(m, o.cfg, po, quiet);
+            CostField cf;
+            cf.cosmetic = &cos;
+            c.evaluated = true;
+            c.points = res.points.size();
+            for (const auto& p : res.points) {
+                c.cosmetic_points += cf.isCosmetic(p.pos, p.normal);
+                c.islands += p.category == PointCategory::Island;
+            }
+            c.uncovered = res.stats.uncovered;
+            c.capacity_deficits = res.stats.capacity_deficits;
+            if (o.keep_points) c.support_points = std::move(res.points);
+            ctl.report("orient.evaluate", 0.25 + 0.75 * static_cast<double>(++done) / total);
+        });
+        ctl.check();
     }
     // Rank finalists against the best finalist on each metric.
     double best_pts = 1e300, best_peak = 1e300, best_h = 1e300;

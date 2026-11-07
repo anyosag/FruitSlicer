@@ -11,6 +11,7 @@
 
 #include <vector>
 
+#include "core/JobControl.h"
 #include "geometry/Polygon.h"
 #include "mesh/TriangleMesh.h"
 
@@ -21,9 +22,11 @@ struct SliceStats {
 };
 
 // Slice at each z in `zs`. Returns unioned polygons per height
-// (outer contours CCW, holes CW). Runs in parallel over heights.
+// (outer contours CCW, holes CW). Runs in parallel over heights (`threads`,
+// 0 = all cores) and reports stage "slice".
 std::vector<Paths> sliceMesh(const TriangleMesh& mesh, const std::vector<double>& zs,
-                             SliceStats* stats = nullptr, unsigned threads = 0);
+                             SliceStats* stats = nullptr, unsigned threads = 0,
+                             const JobControl& ctl = JobControl::none());
 
 Paths sliceMeshAt(const TriangleMesh& mesh, double z);
 

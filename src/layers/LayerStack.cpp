@@ -11,7 +11,8 @@ size_t LayerStack::layerAt(double z) const {
     return static_cast<size_t>(std::floor(z / layer_height));
 }
 
-LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats) {
+LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats, unsigned threads,
+                      const JobControl& ctl) {
     LayerStack ls;
     ls.layer_height = layer_height;
     const double top = mesh.bbox().max.z;
@@ -21,7 +22,7 @@ LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats*
     const auto n = static_cast<size_t>(std::ceil(top / layer_height - 1e-6));
     ls.sample_z.resize(n);
     for (size_t i = 0; i < n; ++i) ls.sample_z[i] = (static_cast<double>(i) + 0.5) * layer_height;
-    ls.slices = sliceMesh(mesh, ls.sample_z, stats);
+    ls.slices = sliceMesh(mesh, ls.sample_z, stats, threads, ctl);
     return ls;
 }
 

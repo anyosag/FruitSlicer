@@ -31,7 +31,7 @@ behind it, and the milestone plan are in
 Requires CMake ≥ 3.24 and a C++20 compiler (GCC 12+, Clang 15+, or Apple
 Clang from current Xcode command line tools; CI builds on Ubuntu and on
 macOS/Apple Silicon). Dependencies
-(Clipper2, CLI11, nlohmann/json, nanoflann, Catch2) are fetched by CMake.
+(Clipper2, CLI11, nlohmann/json, Catch2) are fetched by CMake.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -146,6 +146,9 @@ Each search takes about 30 s at 0.1 mm evaluation layers.
 This writes the model and its supports as one STL to load into Elegoo
 SatelLite or CHITUBOX for slicing. The points used are saved next to it
 (`supported.stl.points.json`); edit them and pass them back with `--points`.
+A points file records the placement it was made for: without `--rotate`,
+`--elevate` or `--scale`, `support --points` uses that placement; a different
+one is refused, since the points would no longer touch the model.
 Each point gets:
 
 - a pinhead pointing along the surface normal, tilted at most 45° from
@@ -247,8 +250,9 @@ right is to copy them from any file SatelLite exported for your printer:
 ./build/src/fruitslicer goo-info model.goo --decode     # header, checksums, volume
 ```
 
-Without a sample, pass `--layer`, `--exposure`, `--bottom-exposure`,
-`--bottom-layers` and `--transition-layers` yourself.
+Without a sample, pass `--layer`, `--exposure` and `--bottom-exposure`
+yourself. Bottom and transition layers then default to the printer's 4 + 4;
+`--bottom-layers` and `--transition-layers` change them.
 
 **Checked against a 16K file exported by ELEGOO SatelLite 1.0.2.43:**
 
@@ -279,7 +283,7 @@ FruitSlicer's files print the right way round; otherwise it tells you which
 `--aa N` writes anti-aliased grey pixels, but grey on the 16K is untested,
 so the default is off, as in SatelLite.
 
-### Overlap coupon (please run this first)### Overlap coupon (please run this first)
+### Overlap coupon (please run this first)
 
 FruitSlicer exports the model and its supports as one STL made of overlapping
 closed shells, which the printer's slicer must merge. `coupon overlap` builds a

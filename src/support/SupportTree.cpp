@@ -30,7 +30,7 @@ public:
         out_.raft_top = cfg_.raft == RaftStyle::None ? 0.0 : std::max(cfg_.raft_thickness, min_raft);
     }
 
-    SupportTree run(const std::vector<SupportPoint>& pts);
+    SupportTree run(const std::vector<SupportPoint>& pts, const JobControl& ctl);
 
 private:
     // Distance-based clearance along a segment (radius r around it).
@@ -351,13 +351,16 @@ void Builder::raft() {
     }
 }
 
-SupportTree Builder::run(const std::vector<SupportPoint>& pts) {
+SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl& ctl) {
     // Highest points first: their pillars are the longest and lower heads
     // bridge into them.
     std::vector<int> order(pts.size());
     std::iota(order.begin(), order.end(), 0);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return pts[a].pos.z > pts[b].pos.z; });
+    const double np = static_cast<double>(std::max<size_t>(order.size(), 1));
+    size_t done = 0;
     for (int pi : order) {
+        if ((done++ & 15) == 0) ctl.step("tree", 0.7 * static_cast<double>(done) / np);
         const SupportPoint& p = pts[pi];
         Head h;
         bool drop_ok = false;
@@ -402,9 +405,13 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts) {
         ++out_.dropped_points;
         warn("no_route", "head has no clear path to the raft or a short drop onto the model; point dropped", p.pos);
     }
+    ctl.step("tree", 0.7);
     mergePillars();
+    ctl.step("tree", 0.85);
     brace();
+    ctl.step("tree", 0.95);
     raft();
+    ctl.report("tree", 1);
     return std::move(out_);
 }
 
@@ -462,9 +469,9 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
 }
 
 SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<SupportPoint>& points, const TreeConfig& cfg,
-                             double min_raft_thickness) {
+                             double min_raft_thickness, const JobControl& ctl) {
     Builder b(model, cfg, min_raft_thickness);
-    return b.run(points);
+    return b.run(points, ctl);
 }
 
 }  // namespace fruit

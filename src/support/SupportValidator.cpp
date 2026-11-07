@@ -8,11 +8,13 @@
 namespace fruit {
 
 ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh& supports, double layer_height,
-                                   double link_grow, double small_area, double pixel_area) {
+                                   double link_grow, double small_area, double pixel_area, const JobControl& ctl) {
     TriangleMesh all = model;
     all.append(supports);
-    const LayerStack ls = sliceModel(all, layer_height);
+    const LayerStack ls = sliceModel(all, layer_height, nullptr, 0, ctl.sub(0, 0.8));
+    ctl.step("islands", 0.8);
     const IslandGraph g(ls, link_grow);
+    ctl.report("islands", 1);
     ValidationReport r;
     r.layers = ls.size();
     if (ls.size()) r.first_layer_area = area(ls.slices[0]);

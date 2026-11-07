@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "core/JobControl.h"
 #include "mesh/AabbTree.h"
 #include "mesh/TriangleMesh.h"
 #include "support/SupportGeometry.h"
@@ -103,7 +104,9 @@ struct SupportTree {
     TriangleMesh mesh(const TreeConfig& cfg) const;
 };
 
+// Reports stage "tree".
 SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<SupportPoint>& points,
-                             const TreeConfig& cfg, double min_raft_thickness);
+                             const TreeConfig& cfg, double min_raft_thickness,
+                             const JobControl& ctl = JobControl::none());
 
 }  // namespace fruit

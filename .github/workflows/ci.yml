@@ -30,3 +30,24 @@ jobs:
         run: |
           ./build/src/fruitslicer coupon overlap -o overlap.stl
           ./build/src/fruitslicer slice overlap.stl --elevate 0
+
+  # Engine work now runs on background threads under a GUI: catch data races.
+  thread-sanitizer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Allow TSan's memory layout
+        # Recent kernels randomise mmap addresses more than TSan supports.
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        env:
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+        run: ctest --test-dir build --output-on-failure -j 2
