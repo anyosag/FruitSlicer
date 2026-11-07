@@ -59,6 +59,23 @@ pushes (`SdcpClient::errors()`), and Cmd 128 would answer Ack 3. The mock
 printer rejects the last chunk; real firmware may instead answer success and
 only push the error.
 
+### Long uploads and dropped connections — FruitSlicer's own precautions
+
+A 66 MB upload keeps the WebSocket idle for ~7 minutes. Two risks follow,
+neither reported from a device but both cheap to guard against:
+
+- **Unread pushes.** If the printer pushes status while the HTTP upload runs
+  and the client never reads the WebSocket, its messages pile up; a
+  mainboard that blocks on a full socket could stall the upload. With the
+  mock pushing on every chunk, a non-reading client stalled after six 16 KB
+  chunks. The client now drains the WebSocket after every chunk.
+- **Dropped WebSocket.** [HA] issue #451 reports a 16K's SDCP connection
+  dropping 7 times in a week. The client reopens a lost connection once and
+  repeats read-only commands (status, attributes, file list). It never
+  repeats Cmd 128: if the connection drops after the start was sent, it
+  reconnects and reads the status, and reports success only if the printer
+  is printing; otherwise it says to check the printer's screen.
+
 ### Camera: never touched
 
 [16K] (`camera-stream-leak.md`) and [HA] issue #451 report that the 16K keeps
@@ -100,3 +117,5 @@ without TLS, zlib, brotli or zstd: SDCP is plain HTTP/WS on the LAN.
    (FruitSlicer waits up to 3 min for status to leave "transferring", then
    retries busy 6 × 5 s).
 4. Whether the 16K's discovery reply is flat or nested (both parsed).
+5. Whether the printer pushes status during an upload, and whether the
+   WebSocket survives a 7-minute upload (the client copes either way).

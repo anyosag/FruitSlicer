@@ -46,6 +46,13 @@ void noSigpipe(socket_t sock) {
 #endif
 }
 
+// The WebSocket went away. `delivered` says whether the request may already
+// have reached the printer (lost while waiting for the answer).
+struct ConnectionLost : NetError {
+    ConnectionLost(const std::string& what, bool delivered) : NetError(what), delivered(delivered) {}
+    bool delivered;
+};
+
 bool cancelled(const std::atomic<bool>* c) { return c && c->load(); }
 
 // Sleeps in small steps so a cancel flag is noticed promptly.
@@ -90,6 +97,14 @@ struct SdcpClient::Impl {
             throw NetError("cannot open " + url + ": " + httplib::to_string(res.error()) +
                            (res.status() > 0 ? " (HTTP " + std::to_string(res.status()) + ")" : ""));
         ws->set_read_timeout(std::chrono::milliseconds(100));
+        lost = false;
+    }
+
+    bool lost = false;
+
+    // Reopens the WebSocket if it was lost. Discovery identity is kept.
+    void ensureConnected() {
+        if (lost || !ws || !ws->is_open()) connect();
     }
 
     void dispatch(const std::string& text) {
@@ -125,7 +140,10 @@ struct SdcpClient::Impl {
             if (Clock::now() >= deadline) return false;
             const auto r = ws->read(msg);
             if (r == httplib::ws::Timeout) continue;
-            if (r == httplib::ws::Fail) throw NetError("printer closed the WebSocket connection");
+            if (r == httplib::ws::Fail) {
+                lost = true;
+                throw ConnectionLost("the printer closed the WebSocket connection", true);
+            }
             if (r == httplib::ws::Text) dispatch(msg);
         }
         return true;
@@ -134,8 +152,53 @@ struct SdcpClient::Impl {
     std::string send(int cmd, const json& data) {
         const std::string id = randomHex(rng, 16);
         const json req = makeRequest(printer, cmd, data, id, unixNow());
-        if (!ws->send(req.dump())) throw NetError("WebSocket send failed");
+        if (!ws->send(req.dump())) {
+            lost = true;
+            throw ConnectionLost("WebSocket send failed", false);
+        }
         return id;
+    }
+
+    // Reads whatever the printer has pushed, without waiting. Called between
+    // upload chunks so its messages never pile up unread (a printer blocked
+    // on a full socket could stall the upload itself). A lost connection is
+    // only noted here; the next command reopens it.
+    void drain() {
+        if (lost || !ws || !ws->is_open()) return;
+        ws->set_read_timeout(std::chrono::milliseconds(1));
+        std::string msg;
+        for (;;) {
+            const auto r = ws->read(msg);
+            if (r == httplib::ws::Timeout) break;
+            if (r == httplib::ws::Fail) {
+                lost = true;
+                break;
+            }
+            if (r == httplib::ws::Text) dispatch(msg);
+        }
+        if (!lost) ws->set_read_timeout(std::chrono::milliseconds(100));
+    }
+
+    // One request/response, reopening a lost connection once. A request that
+    // may have been delivered is sent again only if `resendable`.
+    // `pushSeq`, if given, must advance (a status/attributes push) as well.
+    json transact(int cmd, const json& data, std::chrono::milliseconds timeout, bool resendable,
+                  const std::uint64_t* pushSeq = nullptr, const char* pushWhat = "") {
+        for (int attempt = 0;; ++attempt) {
+            try {
+                ensureConnected();
+                const std::uint64_t seq0 = pushSeq ? *pushSeq : 0;
+                const auto id = send(cmd, data);
+                json r = await(id, cmd, timeout);
+                if (pushSeq && int(jsonInt(r, "Ack").value_or(0)) == 0 &&
+                    !pump(Clock::now() + options.commandTimeout, [&] { return *pushSeq > seq0; }))
+                    throw TimeoutError(std::string("printer acknowledged the request but sent no ") +
+                                       pushWhat);
+                return r;
+            } catch (const ConnectionLost& e) {
+                if (attempt > 0 || (e.delivered && !resendable)) throw;
+            }
+        }
     }
 
     json await(const std::string& id, int cmd, std::chrono::milliseconds timeout) {
@@ -179,35 +242,28 @@ const PrinterInfo& SdcpClient::printer() const { return impl_->printer; }
 const std::vector<json>& SdcpClient::errors() const { return impl_->errors; }
 
 json SdcpClient::command(Cmd cmd, const json& data, std::chrono::milliseconds timeout) {
-    const auto id = impl_->send(int(cmd), data);
-    return impl_->await(id, int(cmd), timeout);
+    // Only read-only commands are sent twice after a dropped connection.
+    const bool resendable = cmd == Cmd::Status || cmd == Cmd::Attributes || cmd == Cmd::FileList;
+    return impl_->transact(int(cmd), data, timeout, resendable);
 }
 
 PrinterStatus SdcpClient::status() {
-    const auto seq = impl_->statusSeq;
-    const auto id = impl_->send(int(Cmd::Status), json::object());
-    const json r = impl_->await(id, int(Cmd::Status), {});
+    // The rich status arrives as a separate push on sdcp/status/<id>.
+    const json r = impl_->transact(int(Cmd::Status), json::object(), {}, true, &impl_->statusSeq,
+                                   "status");
     const int ack = int(jsonInt(r, "Ack").value_or(0));
     if (ack != 0)
         throw AckError(int(Cmd::Status), ack, "status request refused (Ack " + std::to_string(ack) + ")");
-    // The rich status arrives as a separate push on sdcp/status/<id>.
-    if (!impl_->pump(Clock::now() + impl_->options.commandTimeout,
-                     [&] { return impl_->statusSeq > seq; }))
-        throw TimeoutError("printer acknowledged the status request but sent no status");
     return parseStatus(impl_->lastStatus);
 }
 
 json SdcpClient::attributes() {
-    const auto seq = impl_->attributesSeq;
-    const auto id = impl_->send(int(Cmd::Attributes), json::object());
-    const json r = impl_->await(id, int(Cmd::Attributes), {});
+    const json r = impl_->transact(int(Cmd::Attributes), json::object(), {}, true,
+                                   &impl_->attributesSeq, "attributes");
     const int ack = int(jsonInt(r, "Ack").value_or(0));
     if (ack != 0)
         throw AckError(int(Cmd::Attributes), ack,
                        "attributes request refused (Ack " + std::to_string(ack) + ")");
-    if (!impl_->pump(Clock::now() + impl_->options.commandTimeout,
-                     [&] { return impl_->attributesSeq > seq; }))
-        throw TimeoutError("printer acknowledged the attributes request but sent no attributes");
     return impl_->lastAttributes;
 }
 
@@ -315,6 +371,7 @@ UploadResult SdcpClient::upload(const std::filesystem::path& file, const Progres
                               ": " + why);
         }
         offset += n;
+        impl_->drain();
         if (progress) {
             const double secs = std::chrono::duration<double>(Clock::now() - t0).count();
             progress(UploadProgress{offset, size, secs > 0 ? double(offset) / secs : 0});
@@ -350,7 +407,20 @@ void SdcpClient::startPrint(const std::string& remotePath, const StartOptions& o
     const json data{{"Filename", remotePath}, {"StartLayer", o.startLayer}};
     for (int attempt = 0;; ++attempt) {
         if (cancelled(cancel)) throw CancelledError("cancelled before starting the print");
-        const json r = command(Cmd::StartPrint, data, std::chrono::milliseconds(15000));
+        json r;
+        try {
+            r = command(Cmd::StartPrint, data, std::chrono::milliseconds(15000));
+        } catch (const ConnectionLost&) {
+            // The start may have reached the printer; never send it twice
+            // blind. Reconnect and look.
+            const PrinterStatus st = status();
+            if (st.has(MachineStatus::Printing)) {
+                log("connection dropped after the start command; the printer is printing");
+                return;
+            }
+            throw NetError("the connection dropped right after the start command and the printer "
+                           "is not printing; check its screen before trying again");
+        }
         const int ack = int(jsonInt(r, "Ack").value_or(-1));
         if (ack == 0) return;
         if (ack == 1 && attempt < o.busyRetries) {

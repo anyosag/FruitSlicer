@@ -41,6 +41,18 @@ struct MockPrinterConfig {
     bool corruptUploads = false;
     // Force this Ack for every Cmd 128 (to exercise error messages).
     std::optional<int> forcedStartAck;
+    // On every upload chunk, push a status message padded to this many bytes
+    // to each open WebSocket, from the upload thread. A client that does not
+    // read its WebSocket during the upload fills the socket and the push (and
+    // so the upload) blocks: the stall a single-threaded mainboard could hit.
+    std::size_t pushPaddingPerChunk = 0;
+    // Close every WebSocket when an upload completes (the 16K's connections
+    // are reported to drop now and then).
+    bool dropWebSocketsAfterUpload = false;
+    // Drop the connection instead of answering Cmd 128, after (or without)
+    // actually starting the print.
+    enum class StartDrop { None, AfterStarting, WithoutStarting };
+    StartDrop dropOnStart = StartDrop::None;
 };
 
 class MockPrinter {
@@ -60,6 +72,7 @@ public:
     int cancelRequests() const;
     int chunksReceived() const;
     int rejectedRequests() const;  // bad envelope (wrong Topic/MainboardID/Id)
+    int webSocketConnections() const;  // accepted so far
     std::optional<std::string> printing() const;  // file being printed
     std::vector<int> commandsSeen() const;
     void addFile(const std::string& path, const std::string& content);
@@ -89,6 +102,12 @@ private:
     bool paused_ = false;
     int startRequests_ = 0, busyAnswers_ = 0, cancelRequests_ = 0, chunks_ = 0, rejected_ = 0;
     std::vector<int> commands_;
+
+    // Open WebSockets, for pushes from the upload thread.
+    mutable std::mutex wsMu_;
+    std::vector<void*> sockets_;  // httplib::ws::WebSocket*
+    std::atomic<int> dropGeneration_{0};
+    std::atomic<int> wsConnections_{0};
 
     struct Http;
     std::unique_ptr<Http> http_;
