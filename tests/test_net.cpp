@@ -37,8 +37,9 @@ ClientOptions optionsFor(const MockPrinter& m) {
     ClientOptions o;
     o.udpPort = m.udpPort();
     o.controlPort = m.controlPort();
-    o.probeTimeout = 1000ms;
-    o.commandTimeout = 2000ms;
+    // Upper bounds only (answers return at once); generous for loaded CI.
+    o.probeTimeout = 5000ms;
+    o.commandTimeout = 5000ms;
     return o;
 }
 
@@ -159,7 +160,7 @@ TEST_CASE("Discovery finds the mock printer over loopback", "[net]") {
         o.broadcast = false;
         o.unicastTargets = {"127.0.0.1"};
         o.port = mock.udpPort();
-        o.timeout = 300ms;
+        o.timeout = 1000ms;  // discovery listens this long; generous for loaded CI
         const auto found = discover(o);
         REQUIRE(found.size() == 1);
         CHECK(found[0].mainboardId == cfg.mainboardId);
@@ -265,19 +266,20 @@ TEST_CASE("Upload keeps reading the WebSocket so printer pushes never block it",
     SdcpClient c("127.0.0.1", opts);
     const auto path = tempFile("pushy.goo", 40 * 16 * 1024);
     const auto r = c.upload(path);
+    CHECK(r.size == std::filesystem::file_size(path));
     CHECK(mock.files().at("/local/pushy.goo") == readAll(path));
-    CHECK(c.status().has(MachineStatus::FileTransferring));
-    (void)r;
+    CHECK_NOTHROW(c.status());  // the control connection is still usable
 }
 
 TEST_CASE("A WebSocket dropped during the upload is reopened for the start", "[net]") {
     MockPrinterConfig cfg;
-    cfg.verifyTime = 50ms;
+    // No verification wait: the first status after the upload already reads
+    // idle, so only a properly closed old connection keeps Cmd 128 off it.
+    cfg.verifyTime = 0ms;
     cfg.dropWebSocketsAfterUpload = true;
     MockPrinter mock(cfg);
     SdcpClient c("127.0.0.1", optionsFor(mock));
     const auto r = c.upload(tempFile("drop.goo", 10000));
-    std::this_thread::sleep_for(150ms);  // let the drop land
     c.startPrint(r.remotePath, fastStart());
     CHECK(mock.printing() == "/local/drop.goo");
     CHECK(mock.webSocketConnections() == 2);
@@ -307,31 +309,48 @@ TEST_CASE("A connection lost right after Cmd 128 is never answered by a second s
 
 TEST_CASE("Start after upload waits for verification", "[net]") {
     MockPrinterConfig cfg;
-    cfg.verifyTime = 400ms;
+    cfg.holdVerification = true;  // "transferring" until the test says so
     MockPrinter mock(cfg);
     SdcpClient c("127.0.0.1", optionsFor(mock));
     const auto r = c.upload(tempFile("go.goo", 10000));
     CHECK(c.status().has(MachineStatus::FileTransferring));
-    c.startPrint(r.remotePath, fastStart());
+    auto statusRequests = [&] {
+        const auto seen = mock.commandsSeen();
+        return std::count(seen.begin(), seen.end(), 0);
+    };
+    const auto before = statusRequests();
+    // End verification only after the client has polled it a few times.
+    std::thread verifier([&] {
+        const auto give_up = std::chrono::steady_clock::now() + 20s;
+        while (statusRequests() < before + 3 && std::chrono::steady_clock::now() < give_up)
+            std::this_thread::sleep_for(5ms);
+        mock.finishVerification();
+    });
+    auto so = fastStart();
+    so.settleTimeout = 30s;
+    c.startPrint(r.remotePath, so);
+    verifier.join();
+    CHECK(statusRequests() >= before + 3);
     CHECK(mock.printing() == "/local/go.goo");
-    CHECK(mock.busyAnswers() == 0);  // never asked while verifying
+    CHECK(mock.busyAnswers() == 0);  // Cmd 128 was not sent while verifying
+    CHECK(mock.startRequests() == 1);
 }
 
 TEST_CASE("Start retries while the printer answers busy", "[net]") {
     MockPrinterConfig cfg;
-    cfg.verifyTime = 50ms;
-    cfg.extraBusyTime = 300ms;  // idle status but Cmd 128 still busy, as on the 16K
+    cfg.verifyTime = 0ms;
+    cfg.busyAnswersAfterVerify = 2;  // idle status, yet Cmd 128 busy, as on the 16K
     MockPrinter mock(cfg);
     SdcpClient c("127.0.0.1", optionsFor(mock));
     const auto r = c.upload(tempFile("busy.goo", 10000));
-    auto so = fastStart();
-    so.busyRetries = 20;
     std::vector<std::string> log;
+    auto so = fastStart();
     so.log = [&](const std::string& s) { log.push_back(s); };
     c.startPrint(r.remotePath, so);
     CHECK(mock.printing() == "/local/busy.goo");
-    CHECK(mock.busyAnswers() >= 1);
-    CHECK_FALSE(log.empty());
+    CHECK(mock.busyAnswers() == 2);
+    CHECK(mock.startRequests() == 3);
+    CHECK(log.size() == 2);
 }
 
 TEST_CASE("Start gives up on a printer that stays busy", "[net]") {
@@ -389,7 +408,7 @@ TEST_CASE("CLI: discover, status and files", "[net][cli]") {
     const std::string ctl = std::to_string(mock.controlPort());
     std::string out, err;
     REQUIRE(runCli({"--json", "--udp-port", udp, "discover", "--no-broadcast", "--ask", "127.0.0.1",
-                    "--timeout", "300"}, out, err) == 0);
+                    "--timeout", "1000"}, out, err) == 0);
     const json found = json::parse(out);
     REQUIRE(found.size() == 1);
     CHECK(found[0]["machine"] == "Saturn 4 Ultra 16K");

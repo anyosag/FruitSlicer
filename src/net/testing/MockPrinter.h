@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -34,9 +35,12 @@ struct MockPrinterConfig {
     // How long the printer stays in "file transferring" (verifying) after the
     // last chunk; Cmd 128 answers Ack 1 (busy) during that time.
     std::chrono::milliseconds verifyTime{300};
-    // Cmd 128 keeps answering busy this long after verification ends (the
-    // 16K's busy-after-upload race); CurrentStatus already reads idle.
-    std::chrono::milliseconds extraBusyTime{0};
+    // Stay in "file transferring" after an upload until finishVerification()
+    // (instead of for verifyTime), so tests need no timing assumptions.
+    bool holdVerification = false;
+    // Answer this many Cmd 128s with busy although CurrentStatus already
+    // reads idle (the 16K's busy-after-upload race).
+    int busyAnswersAfterVerify = 0;
     // Flip a byte of every stored chunk, so the MD5 check fails.
     bool corruptUploads = false;
     // Force this Ack for every Cmd 128 (to exercise error messages).
@@ -77,6 +81,7 @@ public:
     std::vector<int> commandsSeen() const;
     void addFile(const std::string& path, const std::string& content);
     void setPrinting(const std::string& path);
+    void finishVerification();  // ends a held verification
 
 private:
     struct Transfer {
@@ -104,8 +109,13 @@ private:
     std::vector<int> commands_;
 
     // Open WebSockets, for pushes from the upload thread.
+    struct OpenSocket {
+        void* ws;        // httplib::ws::WebSocket*
+        int generation;  // dropGeneration_ when it was accepted
+    };
     mutable std::mutex wsMu_;
-    std::vector<void*> sockets_;  // httplib::ws::WebSocket*
+    std::condition_variable wsClosed_;
+    std::vector<OpenSocket> sockets_;
     std::atomic<int> dropGeneration_{0};
     std::atomic<int> wsConnections_{0};
 
