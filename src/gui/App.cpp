@@ -60,6 +60,7 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
             log::error("resins: " + std::string(e.what()));
         }
     }
+    ab_record_ = loadABRecord((std::filesystem::path(abDir()) / "test.json").string());
     if (resins_.empty()) {  // scripted runs, or a folder that can't be written
         Resin r;
         r.id = "my-resin";
@@ -1774,6 +1775,100 @@ void App::saveFitTo(const std::string& path) {
     log::info("saved the fitted profile to " + path);
 }
 
+// ---- A/B test ----
+
+std::string App::abDir() const { return (std::filesystem::path(dataFolder()) / "ab").string(); }
+
+void App::openABSetup() {
+    screen_ = Screen::ABSetup;
+    if (!abBlocker().empty()) return;
+    const fruit::ABPlateFit& f = abFit();
+    if (ab_copies_ < 2 || ab_copies_ > f.capacity) ab_copies_ = defaultABCopies(f.capacity);
+}
+
+const fruit::ABPlateFit& App::abFit() {
+    const void* key = doc_ && doc_->supports.result ? doc_->supports.result.get() : nullptr;
+    if (key != ab_fit_for_) {
+        ab_fit_for_ = key;
+        ab_fit_ = key ? fruit::abPlateFit(doc_->placed(), doc_->supports.result->mesh, printer_) : fruit::ABPlateFit{};
+    }
+    return ab_fit_;
+}
+
+std::string App::abBlocker() const {
+    if (!doc_) return "Open a job first: the test prints copies of its model.";
+    if (!doc_->supports.result) return "Generate the job's supports first: the A copies carry them.";
+    if (!doc_->supports.fresh(doc_->revision(), doc_->orient.settings))
+        return "The job's supports are out of date: generate them again first.";
+    return "";
+}
+
+void App::setABCopies(int n) {
+    if (!abBlocker().empty()) return;
+    ab_copies_ = std::clamp(n, std::min(2, abFit().capacity), abFit().capacity);
+}
+
+const fruit::ABPlate* App::abPlate() {
+    if (!abBlocker().empty() || ab_copies_ < 2) return nullptr;
+    const void* key = doc_->supports.result.get();
+    if (!ab_plate_ || key != ab_plate_for_ || ab_copies_ != ab_plate_copies_) {
+        fruit::ABPlateOptions o;
+        o.copies = ab_copies_;
+        o.model = doc_->name;
+        o.tips_per_copy = static_cast<int>(doc_->supports.result->tips);
+        try {
+            ab_plate_ = std::make_shared<const fruit::ABPlate>(
+                fruit::makeABPlate(doc_->placed(), doc_->supports.result->mesh, printer_, o));
+        } catch (const std::exception& e) {
+            log::error("A/B plate: " + std::string(e.what()));
+            ab_plate_.reset();
+        }
+        ab_plate_for_ = key;
+        ab_plate_copies_ = ab_copies_;
+    }
+    return ab_plate_.get();
+}
+
+void App::saveABFiles() {
+    if (!abBlocker().empty() || !doc_) return;
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    const std::string start = (std::filesystem::path(docs ? docs : ".") / (doc_->name + " AB_A.stl")).string();
+    platform::saveFileDialog(window_, {{"STL", "stl"}}, start, [this](const std::string& path) {
+        if (!path.empty()) saveABTo(path);
+    });
+}
+
+void App::saveABTo(const std::string& path_a) {
+    if (const std::string why = abBlocker(); !why.empty()) {
+        showError("Couldn't save the A/B test", why);
+        return;
+    }
+    const fruit::ABPlate* p = abPlate();
+    if (!p) {
+        showError("Couldn't save the A/B test", "The copies don't fit on the plate.");
+        return;
+    }
+    const std::string path_b = abFileB(path_a);
+    const std::filesystem::path dir = abDir();
+    try {
+        fruit::writeStl(path_a, p->supported);
+        fruit::writeStl(path_b, p->bare);
+        keepABTest(p->manifest, (dir / "ab.json").string(), (dir / "ab.results.csv").string());
+        ABRecord r;
+        r.model = doc_->name;
+        r.resin = doc_->supports.choices.resin;
+        r.file_a = path_a;
+        r.file_b = path_b;
+        r.copies = ab_copies_;
+        saveABRecord((dir / "test.json").string(), r);
+        ab_record_ = r;
+        log::info("saved the A/B test of " + r.model + " (" + std::to_string(r.copies) + " copies) to " + path_a +
+                  " and " + path_b);
+    } catch (const std::exception& e) {
+        showError("Couldn't save the A/B test", e.what());
+    }
+}
+
 std::shared_ptr<const fruit::GooHeader> App::resinSample(const Resin& r) {
     if (r.sample_path.empty()) return nullptr;
     auto it = resin_samples_.find(r.sample_path);
@@ -2046,7 +2141,7 @@ void App::rail() {
     if (railItem("rail_job", "Job", icon::cube, screen_ == Screen::Job)) screen_ = Screen::Job;
     const bool calibrating =
         screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer ||
-        screen_ == Screen::Plate || screen_ == Screen::Score || screen_ == Screen::Fit;
+        screen_ == Screen::Plate || screen_ == Screen::Score || screen_ == Screen::Fit || screen_ == Screen::ABSetup;
     if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
     if (railItem("rail_resins", "Resins", icon::droplet, screen_ == Screen::Resins)) {
         if (screen_ != Screen::Resins) resin_selected_ = newJobResin().id;
@@ -2217,6 +2312,7 @@ void App::frame() {
         case Screen::Plate: screens::plate(*this); break;
         case Screen::Score: screens::score(*this); break;
         case Screen::Fit: screens::fit(*this); break;
+        case Screen::ABSetup: screens::abSetup(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);

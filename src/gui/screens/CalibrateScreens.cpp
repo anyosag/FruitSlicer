@@ -283,6 +283,14 @@ void calibrate(App& app) {
                     "Score a printed plate first."))
             app.openFit();
     }
+    {
+        const ABRecord& ab = app.abRecord();
+        if (rowCard("ab", "A/B test",
+                    "Print the same model with FruitSlicer's supports and SatelLite's, side by side, and compare.",
+                    ab.copies > 0 ? strf("Saved: %s, %d copies", ab.model.c_str(), ab.copies) : "Not set up",
+                    col::TextMuted, "Set up", true))
+            app.openABSetup();
+    }
     endPage();
 }
 

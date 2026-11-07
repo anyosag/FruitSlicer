@@ -17,6 +17,7 @@
 #include "JobFile.h"
 #include "Jobs.h"
 #include "Preferences.h"
+#include "ABTest.h"
 #include "Fit.h"
 #include "Resins.h"
 #include "Send.h"
@@ -30,7 +31,7 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit };
+enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit, ABSetup };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -286,6 +287,17 @@ public:
     void saveFitAs();                             // as a profile (.json), through a dialog
     void saveFitTo(const std::string& path);
     bool& fitTable() { return fit_table_; }       // the chart as a table
+    // The A/B test (canvas board "ABSetup"): copies of the job's model, half
+    // with its supports and half bare for SatelLite's, on one plate.
+    void openABSetup();
+    std::string abBlocker() const;                // why it can't be set up now ("" if it can)
+    const fruit::ABPlateFit& abFit();             // the job's model with its supports
+    int abCopies() const { return ab_copies_; }
+    void setABCopies(int n);                      // kept between 2 and what fits
+    const fruit::ABPlate* abPlate();              // as it would be saved
+    void saveABFiles();                           // through a dialog
+    void saveABTo(const std::string& path_a);     // <name>_A.stl, <name>_B.stl, and the kept files
+    const ABRecord& abRecord() const { return ab_record_; }
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -410,6 +422,14 @@ private:
     std::string fit_resin_;     // whose plates it fitted
     bool fit_table_ = false;
     nlohmann::json fittedProfile() const;  // the resin's profile with the fit in it
+    int ab_copies_ = 0;
+    fruit::ABPlateFit ab_fit_;
+    std::shared_ptr<const fruit::ABPlate> ab_plate_;
+    const void* ab_fit_for_ = nullptr;  // the supports result they were made from
+    const void* ab_plate_for_ = nullptr;
+    int ab_plate_copies_ = 0;
+    ABRecord ab_record_;
+    std::string abDir() const;  // where the test's manifest, sheet and record are kept
     // Where a resin's plate of this kind is kept: the file it was saved as
     // (if it was), and its manifest and score sheet in FruitSlicer's folder.
     PlateFiles keptPlate(const Resin& r, const std::string& kind) const;

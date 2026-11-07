@@ -50,6 +50,7 @@ target_include_directories(fruit_licences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(app_sources
   main.cpp
+  ABTest.cpp
   App.cpp
   Calibration.cpp
   Capture.cpp
@@ -72,6 +73,7 @@ set(app_sources
   Supports.cpp
   Theme.cpp
   Widgets.cpp
+  screens/ABScreens.cpp
   screens/AboutScreen.cpp
   screens/CalibrateScreens.cpp
   screens/HomeScreen.cpp
