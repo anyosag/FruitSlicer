@@ -10,6 +10,7 @@
 #include <clipper2/clipper.h>
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "geometry/Vec.h"
@@ -74,6 +75,11 @@ Paths offset(const Paths& p, double delta_mm, double arc_tolerance_mm = 0.0005);
 // Fewer vertices, every one kept within `tolerance_mm` of the outline
 // (Ramer–Douglas–Peucker). The shape may move by up to that much either way.
 Paths simplify(const Paths& p, double tolerance_mm);
+
+// Where the line through `at` along `dir` runs inside `p` (non-zero): the
+// stretches [t0, t1] of at + t·dir, in order, `dir` being of unit length.
+// For drawing a vertical cut through a stack of layers.
+std::vector<std::pair<double, double>> lineSpans(const Paths& p, const Vec2& at, const Vec2& dir);
 
 // Group (already unioned, NonZero) paths into polygons-with-holes. Islands
 // inside holes become their own ExPolygons.

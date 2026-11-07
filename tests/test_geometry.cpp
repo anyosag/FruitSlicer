@@ -83,3 +83,33 @@ TEST_CASE("transform: the inverse undoes rotation, scale and translation", "[geo
     flat.m[2][2] = 0;
     CHECK_THROWS_AS(flat.inverse(), std::domain_error);
 }
+
+TEST_CASE("where a line runs inside polygons, holes and overlaps included", "[geometry]") {
+    // A 10 mm square with a 4 mm hole, and a second square overlapping it.
+    Paths p = {Path{toPoint({0, 0}), toPoint({10, 0}), toPoint({10, 10}), toPoint({0, 10})},
+               Path{toPoint({3, 3}), toPoint({3, 7}), toPoint({7, 7}), toPoint({7, 3})}};  // the hole, clockwise
+    auto spans = lineSpans(p, {-5, 5}, {1, 0});
+    REQUIRE(spans.size() == 2);
+    CHECK(spans[0].first == Approx(5));  // 5 mm from (-5, 5) to x = 0
+    CHECK(spans[0].second == Approx(8));
+    CHECK(spans[1].first == Approx(12));
+    CHECK(spans[1].second == Approx(15));
+    CHECK(lineSpans(p, {-5, 1}, {1, 0}).size() == 1);   // under the hole
+    CHECK(lineSpans(p, {-5, 11}, {1, 0}).empty());      // above it all
+    // Straight down through the middle, from above.
+    spans = lineSpans(p, {5, 20}, {0, -1});
+    REQUIRE(spans.size() == 2);
+    CHECK(spans[0].first == Approx(10));
+    CHECK(spans[1].second == Approx(20));
+    // Overlapping, same way round: one stretch.
+    p = {Path{toPoint({0, 0}), toPoint({10, 0}), toPoint({10, 10}), toPoint({0, 10})},
+         Path{toPoint({5, 0}), toPoint({15, 0}), toPoint({15, 10}), toPoint({5, 10})}};
+    spans = lineSpans(p, {0, 5}, normalized(Vec2{1, 0}));
+    REQUIRE(spans.size() == 1);
+    CHECK(spans[0].second == Approx(15));
+    // At a slant.
+    spans = lineSpans({Path{toPoint({0, 0}), toPoint({10, 0}), toPoint({10, 10}), toPoint({0, 10})}}, {0, 0},
+                      normalized(Vec2{1, 1}));
+    REQUIRE(spans.size() == 1);
+    CHECK(spans[0].second - spans[0].first == Approx(10 * std::sqrt(2.0)).margin(1e-6));
+}

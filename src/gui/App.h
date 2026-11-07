@@ -156,6 +156,10 @@ public:
     // work: then maintain() starts it once that is done.
     void planHollowPreview();
     bool planningHollow() const;
+    // The Hollow screen's view cut in half, through the middle and square
+    // to the camera, showing what prints and the hollows inside.
+    bool cutAway() const { return cut_away_; }
+    void setCutAway(bool on) { cut_away_ = on; }
     // The results' pictures from below, as textures (-1: how it sits now).
     unsigned orientPicture(int option);
     // Supports.
@@ -428,6 +432,13 @@ private:
     fruit::Transform modelFromPrinter() const;
     std::map<std::string, double> advanced_;  // carried over to the next model opened
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from
+    void syncCut();
+    bool cut_away_ = true;
+    std::shared_ptr<const HollowPlan> cut_for_;  // the plan the cap was built from
+    fruit::Vec2 cut_toward_;                     // horizontal, from the model towards the camera
+    fruit::Vec3 cut_mid_;
+    std::vector<Renderer::CapGroup> cut_cap_;
+    int cut_key_ = 0;
     std::vector<fruit::TriangleMesh> tip_meshes_;      // one per tip kind
     int scene_key_ = 0;
     std::shared_ptr<const SupportResult> sliced_for_;  // last slicing started (it may have been cancelled)

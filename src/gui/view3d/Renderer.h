@@ -42,6 +42,18 @@ public:
     // Tints faces leaning further than `critical_deg` from vertical (0 = off).
     void setOverhangTint(double critical_deg) { overhang_deg_ = critical_deg; }
 
+    // The cut-away: the model and the extras are drawn only where
+    // a·x + b·y + c·z + d >= 0 for `plane` (a, b, c, d), and the cap is
+    // painted over the cut, in the plane: groups of triangles (x, y, z per
+    // corner, printer coordinates) each in one colour (0xRRGGBB), later
+    // groups over earlier ones. Uploaded when `key` changes.
+    struct CapGroup {
+        unsigned rgb = 0;
+        std::vector<float> triangles;
+    };
+    void setCut(const float plane[4], const std::vector<CapGroup>& cap, int key);
+    void clearCut();
+
     // A `w` × `h` picture in colour `rgb` (0xRRGGBB) with `alpha` as its
     // coverage, for the UI to show; free it with freeTexture.
     unsigned uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb);
@@ -74,6 +86,16 @@ private:
     };
     std::vector<Extra> extras_;
     int extras_key_ = -1;
+    bool cut_ = false;
+    float cut_plane_[4] = {0, 0, 0, 1};
+    struct Cap {
+        unsigned vao = 0, vbo = 0;
+        int count = 0;  // corners
+        unsigned rgb = 0;
+    };
+    std::vector<Cap> cap_;
+    int cap_key_ = -1;
+    void destroyCap();
     double overhang_deg_ = 0;
     float model_matrix_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     unsigned fbo_ms_ = 0, rb_color_ = 0, rb_depth_ = 0;  // multisampled target

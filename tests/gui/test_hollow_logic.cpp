@@ -280,3 +280,46 @@ TEST_CASE("Hollow: what the step bar, the Orient card and the 3D view say", "[gu
     CHECK(s.ok);
     CHECK(s.title == "No hollows found");
 }
+
+TEST_CASE("Hollow: the cut through the middle shows the wall, the hollow and the holes", "[gui][hollow]") {
+    const auto doc = load(sealed(), "hollow_cut.stl");
+    const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
+    REQUIRE(p.holes.size() == 2);
+    // Straight through the middle of the block, along x (printer coordinates).
+    const fruit::Vec3 mid = doc->transform().apply({10, 10, 6});
+    const HollowSection s = hollowSection(p, mid.xy(), {1, 0});
+    auto bands = [&](const std::vector<SectionBand>& v, double z) {
+        std::vector<std::pair<double, double>> out;
+        for (const SectionBand& b : v)
+            if (b.layer == p.solid->layerAt(z)) out.emplace_back(b.t0, b.t1);
+        return out;
+    };
+    // Half-way up the hollow: the block 20 mm across, the hollow its middle 12.
+    const double z = mid.z;
+    auto o = bands(s.outline, z), h = bands(s.hollow, z), pr = bands(s.prints, z);
+    REQUIRE(o.size() == 1);
+    CHECK(o[0].first == Approx(-10).margin(0.01));
+    CHECK(o[0].second == Approx(10).margin(0.01));
+    REQUIRE(h.size() == 1);
+    CHECK(h[0].first == Approx(-6).margin(0.01));
+    CHECK(h[0].second == Approx(6).margin(0.01));
+    REQUIRE(pr.size() == 2);  // the two walls
+    CHECK(pr[0].second == Approx(-6).margin(0.01));
+    // In the floor, the drain hole: a gap in what prints, not in the outline.
+    const double floor = mid.z - 4.5;
+    o = bands(s.outline, floor);
+    pr = bands(s.prints, floor);
+    REQUIRE(o.size() == 1);
+    REQUIRE(pr.size() == 2);
+    CHECK(pr[0].second < 0);
+    CHECK(pr[1].first > 0);
+    CHECK(pr[1].first - pr[0].second == Approx(3).margin(0.3));  // the 3 mm hole
+    CHECK(bands(s.hollow, floor).empty());
+
+    // Printed solid: no hollow to show.
+    HollowChoices fill;
+    fill.fix = HollowChoices::Fix::Fill;
+    const HollowSection f = hollowSection(planHollow(*doc, fill, {}, kH, fruit::JobControl::none()), mid.xy(), {1, 0});
+    CHECK(f.hollow.empty());
+    CHECK(bands(f.prints, z).size() == 1);
+}

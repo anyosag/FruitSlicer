@@ -349,6 +349,8 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                                fruit::normalized({a[3].get<double>(), a[4].get<double>(), a[5].get<double>()}), &pos, &n))
                 throw std::runtime_error("hole_ray: misses the model");
             app.addHoleAt(pos, n);
+        } else if (step.contains("cut")) {
+            app.setCutAway(step["cut"].get<bool>());
         } else if (step.contains("hole_remove")) {
             app.removeHole(step["hole_remove"].get<int>() - 1);  // 1 = the first
         } else if (step.contains("use")) {

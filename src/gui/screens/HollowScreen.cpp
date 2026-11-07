@@ -252,6 +252,9 @@ void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const fl
             if (!project(cavityLabelAt(cav, i, p.layer_height), &a)) continue;
             const HollowOutcome l = cavityLabel(p, i, hs.applied);
             const ImVec2 ts = ImGui::CalcTextSize(l.title.c_str());
+            // On a dark backing: it may sit over the model or the cut.
+            dl->AddRectFilled(ImVec2(a.x - ts.x / 2 - 10, a.y - ts.y / 2 - 5), ImVec2(a.x + ts.x / 2 + 10, a.y + ts.y / 2 + 5),
+                              IM_COL32(0x0E, 0x10, 0x14, 210), 8);
             dl->AddText(ImVec2(a.x - ts.x / 2, a.y - ts.y / 2), l.ok ? col::TextSecondary : col::Warn, l.title.c_str());
         }
         ImGui::PopFont();
@@ -270,7 +273,10 @@ void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const fl
             const char* what = !p.choices.auto_holes ? "hole" : p.holes[i].air ? "air" : "drain";
             const std::string label = reaches ? strf("%s · %g mm", what, p.holes[i].diameter)
                                               : std::string("reaches no hollow");
-            dl->AddText(ImVec2(a.x + r + 6, a.y - 8), reaches ? col::TextSecondary : col::Warn, label.c_str());
+            const ImVec2 lp(a.x + r + 8, a.y - 8), ls = ImGui::CalcTextSize(label.c_str());
+            dl->AddRectFilled(ImVec2(lp.x - 6, lp.y - 3), ImVec2(lp.x + ls.x + 6, lp.y + ls.y + 3),
+                              IM_COL32(0x0E, 0x10, 0x14, 210), 6);
+            dl->AddText(lp, reaches ? col::TextSecondary : col::Warn, label.c_str());
         }
         ImGui::PopFont();
     }

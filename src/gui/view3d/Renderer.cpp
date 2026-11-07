@@ -16,10 +16,12 @@ const char* kMeshVs = R"(#version 330 core
 layout(location = 0) in vec3 aPos;
 uniform mat4 uViewProj;
 uniform mat4 uModel;   // model -> printer coordinates
+uniform vec4 uClip;    // kept where dot(uClip, (p, 1)) >= 0, when clipping is on
 out vec3 vWorld;
 void main() {
     vWorld = (uModel * vec4(aPos, 1.0)).xyz;
     gl_Position = uViewProj * vec4(vWorld, 1.0);
+    gl_ClipDistance[0] = dot(uClip, vec4(vWorld, 1.0));
 }
 )";
 
@@ -117,6 +119,7 @@ Renderer::~Renderer() {
     destroyMesh(plate_lines_);
     destroyMesh(model_);
     clearExtras();
+    destroyCap();
     glDeleteProgram(mesh_prog_);
     glDeleteProgram(line_prog_);
     if (fbo_ms_) glDeleteFramebuffers(1, &fbo_ms_);
@@ -226,6 +229,45 @@ void Renderer::clearExtras() {
     for (Extra& e : extras_) destroyMesh(e.mesh);
     extras_.clear();
     extras_key_ = -1;
+}
+
+void Renderer::destroyCap() {
+    for (Cap& c : cap_) {
+        if (c.vao) glDeleteVertexArrays(1, &c.vao);
+        if (c.vbo) glDeleteBuffers(1, &c.vbo);
+    }
+    cap_.clear();
+    cap_key_ = -1;
+}
+
+void Renderer::setCut(const float plane[4], const std::vector<CapGroup>& cap, int key) {
+    cut_ = true;
+    for (int i = 0; i < 4; ++i) cut_plane_[i] = plane[i];
+    if (key == cap_key_) return;
+    destroyCap();
+    for (const CapGroup& g : cap) {
+        Cap c;
+        c.rgb = g.rgb;
+        c.count = static_cast<int>(g.triangles.size() / 3);
+        if (c.count > 0) {
+            glGenVertexArrays(1, &c.vao);
+            glBindVertexArray(c.vao);
+            glGenBuffers(1, &c.vbo);
+            glBindBuffer(GL_ARRAY_BUFFER, c.vbo);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(g.triangles.size() * sizeof(float)),
+                         g.triangles.data(), GL_STATIC_DRAW);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+            glBindVertexArray(0);
+        }
+        cap_.push_back(c);
+    }
+    cap_key_ = key;
+}
+
+void Renderer::clearCut() {
+    cut_ = false;
+    destroyCap();
 }
 
 void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible) {
@@ -359,6 +401,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
     glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
     glUniform3f(glGetUniformLocation(mesh_prog_, "uEye"), eye.x, eye.y, eye.z);
     glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
+    glUniform4f(glGetUniformLocation(mesh_prog_, "uClip"), 0, 0, 0, 1);
     float c[3];
     rgb(0x1C2028, c);
     glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
@@ -379,7 +422,12 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
     glUniform4f(glGetUniformLocation(line_prog_, "uColor"), g * 0x2E / 255.0f, g * 0x34 / 255.0f, g * 0x3F / 255.0f, 1);
     glBindVertexArray(plate_lines_.vao);
     glDrawElements(GL_LINES, plate_lines_.count, GL_UNSIGNED_INT, nullptr);
-    // Model.
+    // Model, and what stands on it, cut away on one side of the plane.
+    if (cut_) {
+        glUseProgram(mesh_prog_);
+        glUniform4fv(glGetUniformLocation(mesh_prog_, "uClip"), 1, cut_plane_);
+        glEnable(GL_CLIP_DISTANCE0);
+    }
     if (model_.vao) {
         glUseProgram(mesh_prog_);
         rgb(0xAEB6C4, c);
@@ -408,6 +456,21 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
             glBindVertexArray(e.mesh.vao);
             glDrawElements(GL_TRIANGLES, e.mesh.count, GL_UNSIGNED_INT, nullptr);
         }
+    }
+    if (cut_) {
+        glDisable(GL_CLIP_DISTANCE0);
+        // The cap, flat, in the plane: tested against what is behind it
+        // but not against itself, so each group paints over the last.
+        glUseProgram(line_prog_);
+        glDepthMask(GL_FALSE);
+        for (const Cap& cp : cap_) {
+            if (!cp.vao) continue;
+            rgb(cp.rgb, c);
+            glUniform4f(glGetUniformLocation(line_prog_, "uColor"), c[0], c[1], c[2], 1);
+            glBindVertexArray(cp.vao);
+            glDrawArrays(GL_TRIANGLES, 0, cp.count);
+        }
+        glDepthMask(GL_TRUE);
     }
     glBindVertexArray(0);
     glUseProgram(0);
