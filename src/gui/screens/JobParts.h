@@ -37,6 +37,14 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
 // Layers: the whole body of the step.
 void layersView(App& app, Document& doc, ImVec2 size);
 
+// Print: the whole body of the step, and the "save before checking the
+// image orientation?" question (drawn with the other dialogs).
+void printView(App& app, Document& doc, ImVec2 size);
+void orientationQuestion(App& app);
+bool showingSaved(const Document& doc);  // the "saved" page, for the file just written
+// In place of the Layers or Print step when the supports no longer match the model.
+void staleSupports(App& app, ImVec2 size);
+
 // Orient.
 void orientLeft(App& app, Document& doc, float h);
 void orientRight(App& app, Document& doc, float h);

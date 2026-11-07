@@ -12,6 +12,7 @@
 
 #include "Document.h"
 #include "Jobs.h"
+#include "platform/Platform.h"
 #include "printer/PrinterProfile.h"
 #include "view3d/Camera.h"
 #include "view3d/Renderer.h"
@@ -97,6 +98,23 @@ public:
     void focusOn(const fruit::Vec3& where);  // turn the camera to look at a point
     // Puts this step's extras (supports, tips, overhang tint) in the 3D view.
     void syncScene();
+    // Print.
+    void chooseSample();                                  // pick a SatelLite .goo for its settings
+    void useSample(const std::string& path);
+    void setExposures(double normal_s, double bottom_s);  // typed; 0 keeps the sample's
+    std::shared_ptr<const PrintPlan> printPlan();         // for the current layers and settings
+    std::string printBlocker();                           // what stops saving, in a few words ("" if nothing)
+    void savePrint();                                     // asks where (and once about orientation)
+    void savePrintAfterAsking();                          // "Save anyway" in the orientation question
+    void savePrintTo(const std::string& path, const std::string& drive);
+    void ejectDrive();
+    void revealSaved();   // the saved file in Finder
+    void dismissSaved();  // leave the "saved" page for the Print step
+    void exportStl(bool supports_only);
+    void exportStlTo(const std::string& path, bool supports_only);
+    std::vector<platform::Volume>& drives() { return drives_; }
+    int& driveChoice() { return drive_choice_; }          // index into drives(), -1 = choose a folder
+    bool& orientationAsk() { return orientation_ask_; }  // the "save before checking?" question is open
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -163,6 +181,14 @@ private:
     std::shared_ptr<const LayerResult> layer_tex_result_;
     int layer_tex_index_ = -1, layer_tex_w_ = 0, layer_tex_h_ = 0;
     bool layer_tex_below_ = false;
+    std::vector<platform::Volume> drives_;
+    int drive_choice_ = -1;
+    double drives_checked_ = -1;  // when the drive list was last read (seconds)
+    bool orientation_ask_ = false, orientation_asked_ = false;
+    std::shared_ptr<const PrintPlan> plan_;
+    std::shared_ptr<const LayerResult> plan_layers_;
+    PrintSettings plan_settings_;
+    double plan_raft_ = -1;
 };
 
 }  // namespace gui

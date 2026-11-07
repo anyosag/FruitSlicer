@@ -25,6 +25,7 @@ set(app_sources
   Layers.cpp
   Log.cpp
   Orient.cpp
+  Print.cpp
   Script.cpp
   Supports.cpp
   Theme.cpp
@@ -33,6 +34,7 @@ set(app_sources
   screens/HomeScreen.cpp
   screens/JobScreen.cpp
   screens/LayersStep.cpp
+  screens/PrintStep.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
   view3d/Camera.cpp

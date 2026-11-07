@@ -24,7 +24,7 @@ behind it, and the milestone plan are in
 | Physical validation: overlap coupon, calibration plates, A/B plate | **needs your printer** |
 | Native `.goo` writer/reader (`goo`, `goo-info`, `goo-compare`, orientation coupon) | done; header verified against SatelLite 1.0.2.43's 16K file; image orientation pending the F comparison |
 | macOS (Apple Silicon) build in CI | done |
-| Desktop app for macOS: window, 3D view, open STL/OBJ (first of several stages) | early build, downloadable from CI; job screens next |
+| Desktop app for macOS: open and check, orient, supports, layers, save a checked `.goo` | early build, downloadable from CI; calibration and hollowing next |
 | Grey-level tips (weaker contacts, smaller marks) | next |
 
 ## Build
@@ -63,8 +63,20 @@ the model and its supports into the printer's layers and shows any of them
 at the printer's own pixel shape (14 × 19 µm), with the layer below, the
 area of every layer by height, and checks on the whole print (nothing in
 mid-air, suction cups and resin traps); ↑ ↓, Page Up/Down and Home/End move
-through the layers. Saving the `.goo` file comes next. It is one universal app for Apple silicon and Intel Macs, macOS 14 or
-later.
+through the layers. The Print step checks the job before saving (nothing in
+mid-air, model and supports inside the build volume, a raft at least as
+thick as the bottom and transition layers) and takes exposure and motion
+settings from a `.goo` that SatelLite saved for your printer, or exposure
+times you type. It shows the print time, resin and layer count. **Save
+.goo** writes to a USB drive it finds, or a folder you choose; if your
+SatelLite file uses another layer height, the layers are cut again at that
+height so the exposures fit. Then it reads the whole file back: every
+layer's checksum, no grey pixels, and the decoded volume against what was
+written. The drive can be ejected from the app, and **Export STL** writes
+the model with its supports for another slicer. Until the image-orientation
+check exists, the app asks once per launch before saving, because a wrong
+guess prints mirrored. It is one universal app for Apple silicon and Intel
+Macs, macOS 14 or later.
 
 **Download.** Every CI run builds it. On GitHub, open the run (a pull
 request's *Checks* tab, or *Actions* → **CI**), scroll to *Artifacts*, and

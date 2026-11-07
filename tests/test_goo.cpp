@@ -339,3 +339,52 @@ TEST_CASE("float32 layer heights from a print file do not add a layer", "[goo]")
                                         GooExportOptions{}, tmp("float_layers.goo"));
     CHECK(r.layers == 100);
 }
+
+TEST_CASE("verifyGoo reads a file back from its runs and finds a damaged layer", "[goo]") {
+    const TriangleMesh cube = makeBox({-5, -5, 0}, {5, 5, 2});
+    GooHeader h;
+    h.layer_height = 0.05f;
+    h.print.exposure = 2.5f;
+    h.print.bottom_exposure = 25.0f;
+    h.print.bottom_layers = 4;
+    const RasterGrid grid = RasterGrid::fromPrinter(PrinterProfile::saturn4Ultra16k());
+    const std::string path = tmp("verify.goo");
+    exportGoo(cube, h, grid, GooExportOptions{}, path);  // anti-aliasing off: pure black and white
+    GooVerifyResult v = verifyGoo(path);
+    CHECK(v.layers == 40);
+    CHECK(v.footer_ok);
+    // The header alone, without the layers.
+    const GooHeader only = readGooHeader(path);
+    CHECK(only.layer_count == 40);
+    CHECK(only.print.exposure == Approx(2.5));
+    CHECK(only.print.bottom_layers == 4);
+    CHECK(only.layer_offset == readGoo(path).header.layer_offset);
+    CHECK(v.checksums_ok);
+    CHECK(v.grey_values == 0);
+    CHECK(v.lit_values == 1);
+    CHECK(v.volume_mm3 == Approx(200.0).epsilon(0.01));
+
+    GooExportOptions aa;
+    aa.aa_levels = 8;
+    exportGoo(cube, h, grid, aa, path);
+    CHECK(verifyGoo(path).grey_values > 0);
+
+    // Flip one data byte of the last layer: its checksum no longer matches.
+    exportGoo(cube, h, grid, GooExportOptions{}, path);
+    {
+        std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekg(0, std::ios::end);
+        const auto size = static_cast<std::streamoff>(f.tellg());
+        f.seekg(size - 15);
+        char c = 0;
+        f.read(&c, 1);
+        c = static_cast<char>(c ^ 0x5A);
+        f.seekp(size - 15);
+        f.write(&c, 1);
+    }
+    v = verifyGoo(path);
+    CHECK_FALSE(v.checksums_ok);
+    CHECK(v.first_bad_layer == 39);
+    CHECK_FALSE(v.error.empty());
+    CHECK_THROWS(verifyGoo(tmp("no such file.goo")));
+}
