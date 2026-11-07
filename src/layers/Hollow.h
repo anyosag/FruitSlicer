@@ -70,7 +70,8 @@ struct HollowOptions {
 // One enclosed cavity: interior pieces that overlap from layer to layer.
 struct Cavity {
     int first_layer = 0, last_layer = 0;
-    double volume = 0;  // mm³
+    double volume = 0;      // mm³
+    bool opens_up = false;  // closedHollows: open towards the film, a suction cup (else sealed, a resin trap)
 };
 
 // A piece of one layer's interior: paths [begin, begin + count) of that

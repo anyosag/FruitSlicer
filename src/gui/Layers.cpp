@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "Document.h"
+#include "Hollows.h"
 #include "Orient.h"
 #include "geometry/Polygon.h"
 #include "raster/Rasterizer.h"
@@ -24,13 +25,21 @@ std::size_t LayerResult::traps() const {
 }
 
 LayerResult sliceLayers(const Document& doc, const fruit::TriangleMesh& supports, double raft_top,
-                        const fruit::JobControl& ctl) {
+                        const fruit::JobControl& ctl, std::shared_ptr<const HollowPlan> hollow) {
     const auto t0 = std::chrono::steady_clock::now();
     LayerResult r;
     fruit::TriangleMesh all = doc.placed();
     all.append(supports);
     r.bounds = all.bbox();
-    auto ls = std::make_shared<fruit::LayerStack>(fruit::sliceModel(all, kLayerHeight, nullptr, 0, ctl.sub(0.0, 0.8)));
+    std::shared_ptr<fruit::LayerStack> ls;
+    if (hollow && hollow->layer_height == kLayerHeight) {
+        // The model's layers as the Hollow screen left them, with the supports'.
+        ls = std::make_shared<fruit::LayerStack>(fruit::unionLayers(
+            *hollow->layers, fruit::sliceModel(supports, kLayerHeight, nullptr, 0, ctl.sub(0.0, 0.8))));
+        r.hollow = std::move(hollow);
+    } else {
+        ls = std::make_shared<fruit::LayerStack>(fruit::sliceModel(all, kLayerHeight, nullptr, 0, ctl.sub(0.0, 0.8)));
+    }
     r.area.reserve(ls->size());
     for (const auto& s : ls->slices) r.area.push_back(std::max(0.0, fruit::area(s)));
     for (double a : r.area) r.resin_ml += a * ls->layer_height / 1000.0;

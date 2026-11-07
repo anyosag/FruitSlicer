@@ -342,7 +342,7 @@ TEST_CASE("Tip edits: when the tips are planned again, the planner works around 
     CHECK(r.plan_edits == edits);
     CHECK(planStillFits(r.plan_edits, edits));
     const SupportResult again =
-        finishWithEdits(*doc, SupportChoices{}, SupportPlan{r.planned, r.plan_warnings, r.plan_edits}, edits, none);
+        finishWithEdits(*doc, SupportChoices{}, SupportPlan{r.planned, r.plan_warnings, r.plan_edits, r.hollow}, edits, none);
     REQUIRE(again.points.size() == r.points.size());
     for (std::size_t i = 0; i < r.points.size(); ++i) CHECK(dist(again.points[i].pos, r.points[i].pos) < 1e-9);
     // A new edit goes on top; taking one back means planning again.

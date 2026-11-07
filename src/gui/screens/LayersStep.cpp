@@ -285,7 +285,7 @@ void layersRight(App& app, Document& doc, float h) {
 }  // namespace
 
 void layersView(App& app, Document& doc, ImVec2 size) {
-    if (!doc.supports.fresh(doc.revision(), doc.orient.settings)) {
+    if (!doc.supports.fresh(doc.revision(), doc.supportSettings())) {
         staleSupports(app, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
         return;
     }

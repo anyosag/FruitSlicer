@@ -574,10 +574,30 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
         if (const auto at = yourTip(e))
             po.manual.push_back(manualTip(t.apply(*at), unit(t.applyLinear(e.normal)), e.diameter));
     }
-    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, ctl);
+    // Hollowed, drilled or filled on the Hollow screen: the tips are planned
+    // on those layers, and none goes in a hole's mouth.
+    std::shared_ptr<const HollowPlan> hollow;
+    fruit::JobControl rest = ctl;
+    if (doc.hollow.applied) {
+        if (doc.hollow.planFresh(doc.revision()) && doc.hollow.plan->layer_height == kLayerHeight) {
+            hollow = doc.hollow.plan;
+        } else {
+            hollow = std::make_shared<const HollowPlan>(
+                planHollow(doc, doc.hollow.choices, doc.hollow.manual, kLayerHeight, ctl.sub(0.0, 0.3)));
+            rest = ctl.sub(0.3, 1.0);
+        }
+        if (!hollow->changes()) hollow.reset();
+    }
+    if (hollow) {
+        po.layers = hollow->layers;
+        for (std::size_t i = 0; i < hollow->holes.size(); ++i)
+            if (hollow->placed[i].cavity >= 0)
+                cos.exclusions.push_back({t.apply(hollow->holes[i].at), hollow->placed[i].radius + kHoleMouthMargin});
+    }
+    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, rest);
     // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
     std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });
-    return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits};
+    return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits, std::move(hollow)};
 }
 
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
@@ -795,6 +815,7 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     resolve(p, c, r.cfg, r.tree_cfg);
     r.points = std::move(plan.points);
     r.plan_warnings = std::move(plan.warnings);
+    r.hollow = std::move(plan.hollow);
 
     // Progress as generate() reports it: the tree from 0.55, the check from 0.85.
     const double min_raft =
@@ -803,9 +824,16 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     ctl.step("mesh", 0.55);
     r.mesh = r.tree.mesh(r.tree_cfg);
     ctl.step("check", 0.67);
-    r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
-                                            r.cfg.absorb_island_area, doc.printer.pixelX() * doc.printer.pixelY(),
-                                            ctl.sub(0.67, 1.0));
+    const double pixel = doc.printer.pixelX() * doc.printer.pixelY();
+    if (r.hollow) {
+        // The hollowed model's own layers with the supports': nothing floats.
+        const fruit::LayerStack print =
+            fruit::unionLayers(*r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9)));
+        r.validation = fruit::validateLayers(print, r.cfg.link_grow, r.cfg.absorb_island_area, pixel, ctl.sub(0.9, 1.0));
+    } else {
+        r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
+                                                r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0));
+    }
 
     // Counts.
     r.tips = r.points.size();

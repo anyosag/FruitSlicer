@@ -375,6 +375,12 @@ HollowResult closedHollows(const LayerStack& layers, double min_volume) {
     });
     collectCavities(r.interior, layers.layer_height, min_volume, 0, r.cavities, r.pieces, JobControl::none());
     for (const Cavity& c : r.cavities) r.volume += c.volume;
+    for (size_t j = 0; j < r.pieces.size(); ++j) {
+        if (report.cup_regions[j].empty()) continue;
+        for (const InteriorPiece& k : r.pieces[j])
+            if (!r.cavities[k.cavity].opens_up && !nothing(intersection(r.piece(j, k), report.cup_regions[j])))
+                r.cavities[k.cavity].opens_up = true;
+    }
     return r;
 }
 

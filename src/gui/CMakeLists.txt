@@ -58,6 +58,7 @@ set(app_sources
   Document.cpp
   Fit.cpp
   GooTools.cpp
+  Hollows.cpp
   Icons.cpp
   JobFile.cpp
   Jobs.cpp

@@ -221,7 +221,7 @@ void App::remember(const Document& d) {
     r.path = d.job_path;
     r.name = d.name;
     const auto& s = d.supports;
-    r.state = d.layers.fresh(s.result) ? "layers cut" : s.fresh(d.revision(), d.orient.settings) ? "supports ready"
+    r.state = d.layers.fresh(s.result) ? "layers cut" : s.fresh(d.revision(), d.supportSettings()) ? "supports ready"
                                                                                                     : "placed";
     if (opts_.deterministic) {
         r.when = "today";
@@ -279,7 +279,7 @@ void App::installJob(std::shared_ptr<Document> d) {
     advanced_ = doc_->supports.choices.advanced;
     applyPrinterSetup();
     screen_ = Screen::Job;
-    step_ = doc_->supports.fresh(doc_->revision(), doc_->orient.settings) ? Step::Supports : Step::Model;
+    step_ = doc_->supports.fresh(doc_->revision(), doc_->supportSettings()) ? Step::Supports : Step::Model;
     orient_view_ = OrientView::Settings;
     advanced_open_ = false;
     frameModel();
@@ -449,9 +449,9 @@ bool App::canGoTo(Step s) const {
         case Step::Orient:
         case Step::Supports: return doc_ && doc_->fit().fits;
         case Step::Layers:
-            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings);
+            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->supportSettings());
         case Step::Print:
-            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings) &&
+            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->supportSettings()) &&
                    doc_->layers.fresh(doc_->supports.result);
         default: return false;  // the next updates
     }
@@ -516,7 +516,7 @@ void App::maintain() {
         // Cut the layers for the current supports, once per supports result.
         const auto& sup = doc_->supports.result;
         if (sup && !doc_->layers.fresh(sup) && sliced_for_ != sup &&
-            doc_->supports.fresh(doc_->revision(), doc_->orient.settings)) {
+            doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) {
             sliced_for_ = sup;
             auto snap = std::make_shared<const Document>(*doc_);
             auto out = std::make_shared<LayerResult>();
@@ -524,7 +524,9 @@ void App::maintain() {
             std::weak_ptr<Document> target = doc_;
             jobs_.start(
                 "Cutting layers",
-                [snap, sup, raft, out](const fruit::JobControl& ctl) { *out = sliceLayers(*snap, sup->mesh, raft, ctl); },
+                [snap, sup, raft, out](const fruit::JobControl& ctl) {
+                    *out = sliceLayers(*snap, sup->mesh, raft, ctl, sup->hollow);
+                },
                 [this, target, sup, out](std::exception_ptr err) {
                     const auto d = target.lock();
                     if (!d) return;
@@ -637,7 +639,7 @@ void App::generateSupports() {
     advanced_open_ = false;  // the run shows in the 3D view
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
-    const int rev = doc_->revision(), settings = doc_->orient.settings;
+    const int rev = doc_->revision(), settings = doc_->supportSettings();
     const SupportChoices choices = doc_->supports.choices;
     const std::vector<TipEdit> edits = doc_->supports.edits;  // hand edits stay: they apply again
     std::weak_ptr<Document> target = doc_;
@@ -709,11 +711,11 @@ void App::resetAdvanced() {
 
 void App::applyAdvanced() {
     advanced_open_ = false;
-    if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->orient.settings)) generateSupports();
+    if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) generateSupports();
 }
 
 void App::editTips(bool on) {
-    tip_editing_ = on && doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings);
+    tip_editing_ = on && doc_ && doc_->supports.fresh(doc_->revision(), doc_->supportSettings());
     if (tip_editing_) {
         step_ = Step::Supports;
         advanced_open_ = false;
@@ -780,7 +782,7 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
             if (replan) {
                 *out = generate(*snap, choices, snap->orient.visible, ctl, edits);
             } else {
-                SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits};
+                SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits, prev->hollow};
                 *out = finishWithEdits(*snap, choices, std::move(plan), edits, ctl);
             }
         },
@@ -944,7 +946,7 @@ void App::syncScene() {
     std::vector<const fruit::TriangleMesh*> meshes{&s.result->mesh};
     for (const auto& t : tip_meshes_) meshes.push_back(&t);
     renderer_.setExtras(meshes, scene_key_);
-    const bool fresh = s.fresh(doc_->revision(), doc_->orient.settings);
+    const bool fresh = s.fresh(doc_->revision(), doc_->supportSettings());
     const bool why = supports_view_ == SupportsView::Why;
     // While editing, only the tips: the tree and raft would hide them.
     renderer_.setExtraStyle(0, fresh ? (why ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
@@ -1799,7 +1801,7 @@ const fruit::ABPlateFit& App::abFit() {
 std::string App::abBlocker() const {
     if (!doc_) return "Open a job first: the test prints copies of its model.";
     if (!doc_->supports.result) return "Generate the job's supports first: the A copies carry them.";
-    if (!doc_->supports.fresh(doc_->revision(), doc_->orient.settings))
+    if (!doc_->supports.fresh(doc_->revision(), doc_->supportSettings()))
         return "The job's supports are out of date: generate them again first.";
     return "";
 }

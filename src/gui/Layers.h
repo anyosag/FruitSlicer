@@ -20,8 +20,11 @@ namespace gui {
 
 class Document;
 
+struct HollowPlan;
+
 struct LayerResult {
     std::shared_ptr<const fruit::LayerStack> layers;  // model and supports together, as the printer cuts them
+    std::shared_ptr<const HollowPlan> hollow;         // the model's layers came from this, when not null
     std::vector<double> area;        // lit area per layer, mm²
     std::size_t raft_layers = 0;     // layers up to the raft's top
     std::size_t biggest = 0;         // the biggest layer above the raft
@@ -38,9 +41,10 @@ struct LayerResult {
 
 // Slices the placed model of `doc` together with `supports` (empty when it
 // stands flat on the plate). `raft_top` is the raft's top, mm (0 for none).
+// With `hollow`, the model's layers are its (hollowed, drilled or filled).
 // Progress: slicing up to 0.8 (stage "slice"), then "hollows".
 LayerResult sliceLayers(const Document& doc, const fruit::TriangleMesh& supports, double raft_top,
-                        const fruit::JobControl& ctl);
+                        const fruit::JobControl& ctl, std::shared_ptr<const HollowPlan> hollow = nullptr);
 
 // One layer drawn for the screen.
 struct LayerImage {

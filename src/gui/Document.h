@@ -55,6 +55,21 @@ struct SupportState {
     }
 };
 
+// The Hollow screen's choices and plan for this job (canvas board "Hollow").
+// Nothing changes what prints until they are applied.
+struct HollowState {
+    HollowChoices choices;
+    std::vector<fruit::DrainHole> manual;    // holes placed by hand, model coordinates
+    bool applied = false;                    // what prints follows these choices
+    int settings = 0;                        // bumped whenever what prints would change
+    std::shared_ptr<const HollowPlan> plan;  // the latest, for the screen
+    int plan_revision = -1;
+
+    bool planFresh(int revision) const {
+        return plan && plan_revision == revision && plan->choices == choices && plan->manual == manual;
+    }
+};
+
 // The Layers step: the sliced print and where the viewer is.
 struct LayerState {
     std::shared_ptr<const LayerResult> result;
@@ -100,6 +115,7 @@ public:
     fruit::PrinterProfile printer;
     int geometry_id = 0;         // unique per load: the renderer re-uploads when it changes
     OrientState orient;
+    HollowState hollow;
     SupportState supports;
     LayerState layers;
     PrintState print;
@@ -113,6 +129,9 @@ public:
     const fruit::TriangleMesh& placed() const { return placed_; }      // printer coordinates
     const fruit::PlateFit& fit() const { return fit_; }
     int revision() const { return revision_; }  // bumped on every change; results carry it
+    // What supports are made for besides the placement: the sides people
+    // see and, once applied, the Hollow screen's choices.
+    int supportSettings() const { return orient.settings * 100003 + (hollow.applied ? 1 + hollow.settings : 0); }
 
     // Sets the placement without recording it (loading, the health dialog).
     void place(const fruit::Placement& p);
