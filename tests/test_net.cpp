@@ -10,6 +10,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -21,6 +22,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <thread>
 
 using namespace fruit::net;
 using fruit::net::testing::MockPrinter;
@@ -251,6 +253,56 @@ TEST_CASE("Cancelling an upload stops it and sends Cmd 255", "[net]") {
     CHECK(mock.chunksReceived() == 2);
     CHECK(mock.files().empty());
     CHECK(c.status().idle());
+}
+
+TEST_CASE("Upload keeps reading the WebSocket so printer pushes never block it", "[net]") {
+    MockPrinterConfig cfg;
+    cfg.pushPaddingPerChunk = 512 * 1024;  // 40 chunks -> ~20 MB of unread pushes otherwise
+    MockPrinter mock(cfg);
+    auto opts = optionsFor(mock);
+    opts.chunkSize = 16 * 1024;
+    opts.chunkTimeout = 3000ms;  // a stalled upload fails fast instead of hanging
+    SdcpClient c("127.0.0.1", opts);
+    const auto path = tempFile("pushy.goo", 40 * 16 * 1024);
+    const auto r = c.upload(path);
+    CHECK(mock.files().at("/local/pushy.goo") == readAll(path));
+    CHECK(c.status().has(MachineStatus::FileTransferring));
+    (void)r;
+}
+
+TEST_CASE("A WebSocket dropped during the upload is reopened for the start", "[net]") {
+    MockPrinterConfig cfg;
+    cfg.verifyTime = 50ms;
+    cfg.dropWebSocketsAfterUpload = true;
+    MockPrinter mock(cfg);
+    SdcpClient c("127.0.0.1", optionsFor(mock));
+    const auto r = c.upload(tempFile("drop.goo", 10000));
+    std::this_thread::sleep_for(150ms);  // let the drop land
+    c.startPrint(r.remotePath, fastStart());
+    CHECK(mock.printing() == "/local/drop.goo");
+    CHECK(mock.webSocketConnections() == 2);
+    CHECK(mock.startRequests() == 1);  // the start was not sent twice
+}
+
+TEST_CASE("A connection lost right after Cmd 128 is never answered by a second start", "[net]") {
+    using Drop = MockPrinterConfig::StartDrop;
+    for (Drop d : {Drop::AfterStarting, Drop::WithoutStarting}) {
+        MockPrinterConfig cfg;
+        cfg.dropOnStart = d;
+        MockPrinter mock(cfg);
+        mock.addFile("/local/a.goo", "x");
+        SdcpClient c("127.0.0.1", optionsFor(mock));
+        if (d == Drop::AfterStarting) {
+            c.startPrint("/local/a.goo", fastStart());
+            CHECK(mock.printing() == "/local/a.goo");
+        } else {
+            CHECK_THROWS_WITH(c.startPrint("/local/a.goo", fastStart()),
+                              ContainsSubstring("check its screen"));
+            CHECK_FALSE(mock.printing());
+        }
+        CHECK(mock.startRequests() == 1);
+        CHECK(mock.webSocketConnections() == 2);
+    }
 }
 
 TEST_CASE("Start after upload waits for verification", "[net]") {

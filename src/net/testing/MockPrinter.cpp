@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -78,42 +79,70 @@ MockPrinter::MockPrinter(MockPrinterConfig config)
             return reply(uploadFailure(-4));
         }
         if (offset < 0) return reply(uploadFailure(-1));
-        std::lock_guard lock(mu_);
-        ++chunks_;
-        auto& t = transfers_[f.get_field("Uuid")];
-        if (offset == 0) {
-            t = Transfer{file.filename, f.get_field("S-File-MD5"), std::uint64_t(total), {}};
-        }
-        if (std::uint64_t(offset) != t.data.size() || t.name != file.filename) {
-            return reply(uploadFailure(-2));
-        }
-        std::string chunk = file.content;
-        if (cfg_.corruptUploads && !chunk.empty()) chunk[0] = char(chunk[0] ^ 0x5A);
-        t.data += chunk;
-        verifyUntil_ = Clock::now() + std::chrono::hours(1);  // transferring
-        if (t.data.size() >= t.total) {
-            const std::string uuid = f.get_field("Uuid");
-            Transfer done = std::move(t);
-            transfers_.erase(uuid);
-            verifyUntil_ = Clock::now() + cfg_.verifyTime;
-            if (f.get_field("Check") == "1" && Md5::hex(done.data) != done.md5) {
-                verifyUntil_ = {};
-                return reply(json{{"code", "111111"},
-                                  {"messages", json::array({{{"field", "S-File-MD5"},
-                                                             {"message", "md5 check failed"}}})},
-                                  {"data", nullptr},
-                                  {"success", false}});
+        bool completed = false;
+        const json result = [&]() -> json {
+            std::lock_guard lock(mu_);
+            ++chunks_;
+            auto& t = transfers_[f.get_field("Uuid")];
+            if (offset == 0) {
+                t = Transfer{file.filename, f.get_field("S-File-MD5"), std::uint64_t(total), {}};
             }
-            files_["/local/" + done.name] = std::move(done.data);
+            if (std::uint64_t(offset) != t.data.size() || t.name != file.filename) {
+                return uploadFailure(-2);
+            }
+            std::string chunk = file.content;
+            if (cfg_.corruptUploads && !chunk.empty()) chunk[0] = char(chunk[0] ^ 0x5A);
+            t.data += chunk;
+            verifyUntil_ = Clock::now() + std::chrono::hours(1);  // transferring
+            if (t.data.size() >= t.total) {
+                const std::string uuid = f.get_field("Uuid");
+                Transfer done = std::move(t);
+                transfers_.erase(uuid);
+                verifyUntil_ = Clock::now() + cfg_.verifyTime;
+                completed = true;
+                if (f.get_field("Check") == "1" && Md5::hex(done.data) != done.md5) {
+                    verifyUntil_ = {};
+                    return json{{"code", "111111"},
+                                {"messages", json::array({{{"field", "S-File-MD5"},
+                                                           {"message", "md5 check failed"}}})},
+                                {"data", nullptr},
+                                {"success", false}};
+                }
+                files_["/local/" + done.name] = std::move(done.data);
+            }
+            return uploadSuccess();
+        }();
+        // Pushes and drops happen outside mu_, so a blocked push stalls only
+        // this upload, as it would on a single-threaded mainboard.
+        if (cfg_.pushPaddingPerChunk > 0) {
+            json push = [&] {
+                std::lock_guard lock(mu_);
+                return envelope("sdcp/status", json{{"Status", statusObject()}});
+            }();
+            push["Padding"] = std::string(cfg_.pushPaddingPerChunk, '.');
+            const std::string text = push.dump();
+            std::lock_guard l(wsMu_);
+            for (void* w : sockets_) static_cast<httplib::ws::WebSocket*>(w)->send(text);
         }
-        reply(uploadSuccess());
+        if (completed && cfg_.dropWebSocketsAfterUpload) ++dropGeneration_;
+        reply(result);
     });
 
     // ---- WebSocket control ----
     svr.WebSocket(std::string(kWebSocketPath),
                   [this](const httplib::Request&, httplib::ws::WebSocket& ws) {
+                      ++wsConnections_;
+                      const int generation = dropGeneration_;
+                      {
+                          std::lock_guard l(wsMu_);
+                          sockets_.push_back(&ws);
+                      }
+                      ws.set_read_timeout(std::chrono::milliseconds(50));
                       std::string msg;
-                      while (!stop_ && ws.read(msg)) {
+                      while (!stop_ && dropGeneration_ == generation) {
+                          const auto r = ws.read(msg);
+                          if (r == httplib::ws::Timeout) continue;
+                          if (r == httplib::ws::Fail) break;
                           if (msg == "ping") {
                               ws.send(std::string("pong"));
                               continue;
@@ -122,9 +151,13 @@ MockPrinter::MockPrinter(MockPrinterConfig config)
                           if (req.is_discarded()) continue;
                           std::vector<json> pushes;
                           json resp = handleCommand(req, pushes);
+                          if (resp.is_object() && resp.contains("Drop")) break;  // no answer
                           if (!resp.is_null()) ws.send(resp.dump());
                           for (const auto& p : pushes) ws.send(p.dump());
                       }
+                      std::lock_guard l(wsMu_);
+                      sockets_.erase(std::find(sockets_.begin(), sockets_.end(), &ws));
+                      // Returning drops the connection without a close handshake.
                   });
 
     const int port = svr.bind_to_any_port("127.0.0.1");
@@ -244,6 +277,12 @@ json MockPrinter::handleCommand(const json& req, std::vector<json>& pushes) {
         case 128: {
             ++startRequests_;
             const std::string name = args.value("Filename", std::string());
+            if (cfg_.dropOnStart != MockPrinterConfig::StartDrop::None) {
+                if (cfg_.dropOnStart == MockPrinterConfig::StartDrop::AfterStarting && files_.count(name))
+                    printing_ = name;
+                cfg_.dropOnStart = MockPrinterConfig::StartDrop::None;  // once
+                return json{{"Drop", true}};
+            }
             if (cfg_.forcedStartAck) data["Ack"] = *cfg_.forcedStartAck;
             else if (printing_ || !transfers_.empty() ||
                      Clock::now() < verifyUntil_ + cfg_.extraBusyTime)
@@ -306,6 +345,7 @@ int MockPrinter::busyAnswers() const { std::lock_guard l(mu_); return busyAnswer
 int MockPrinter::cancelRequests() const { std::lock_guard l(mu_); return cancelRequests_; }
 int MockPrinter::chunksReceived() const { std::lock_guard l(mu_); return chunks_; }
 int MockPrinter::rejectedRequests() const { std::lock_guard l(mu_); return rejected_; }
+int MockPrinter::webSocketConnections() const { return wsConnections_; }
 std::optional<std::string> MockPrinter::printing() const { std::lock_guard l(mu_); return printing_; }
 std::vector<int> MockPrinter::commandsSeen() const { std::lock_guard l(mu_); return commands_; }
 void MockPrinter::addFile(const std::string& p, const std::string& c) { std::lock_guard l(mu_); files_[p] = c; }
