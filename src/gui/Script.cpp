@@ -143,6 +143,9 @@ Screen screenFrom(const std::string& s) {
     if (s == "home") return Screen::Home;
     if (s == "job" || s == "model") return Screen::Job;
     if (s == "about") return Screen::About;
+    if (s == "calibrate") return Screen::Calibrate;
+    if (s == "orientation_check") return Screen::OrientationCheck;
+    if (s == "printer") return Screen::Printer;
     throw std::runtime_error("unknown screen " + s);
 }
 
@@ -245,6 +248,30 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             std::string p = step["save_to"].get<std::string>();
             if (p == "@demo" && app.document()) p = (demoDir() / (app.document()->name + ".goo")).string();
             app.savePrintTo(p, "");
+        } else if (step.contains("orientation_piece")) {
+            // "@demo": f.stl in the demo folder, as the Save f.stl… button would.
+            std::string p = step["orientation_piece"].get<std::string>();
+            if (p == "@demo") p = (demoDir() / "f.stl").string();
+            app.saveOrientationPieceTo(p);
+        } else if (step.contains("orientation_sample")) {
+            // "@stand-in-flip-y" (or -flip-x, -as-is): a stand-in for SatelLite's slice of the F.
+            std::string p = step["orientation_sample"].get<std::string>();
+            if (p.rfind("@stand-in", 0) == 0) {
+                const bool fx = p.find("flip-x") != std::string::npos, fy = p.find("flip-y") != std::string::npos;
+                p = (demoDir() / "f_satellite.goo").string();
+                writeStandInSatelliteF(p, fx, fy);
+            }
+            app.checkOrientationWith(p);
+        } else if (step.contains("orientation_fix")) {
+            app.useOrientationFix();
+        } else if (step.contains("hinge")) {
+            const std::string h = step["hinge"].get<std::string>();
+            if (h == "none") app.setHinge(std::nullopt);
+            else if (h == "back") app.setHinge(HingeChoice::Back);
+            else if (h == "left") app.setHinge(HingeChoice::Left);
+            else if (h == "right") app.setHinge(HingeChoice::Right);
+            else if (h == "front") app.setHinge(HingeChoice::Front);
+            else throw std::runtime_error("unknown hinge side " + h);
         } else if (step.contains("answer")) {
             // The "save before checking the image orientation?" question.
             const std::string a = step["answer"].get<std::string>();

@@ -224,6 +224,9 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
     // The raft row's help: the print file's bottom and transition layers.
     x.raft_layers = doc.printer.bottom_layers + doc.printer.transition_layers;
     x.raft_layer_height = doc.printer.layer_height;
+    const PrinterSetup& ps = app.printerSetup();
+    if (const auto side = hingeChoice(ps.hinge))
+        x.hinge = std::string(hingeLabel(*side)) + (ps.orientation_confirmed ? "" : ", waiting");
     if (doc.layers.result) {
         const auto plan = app.printPlan();
         if (plan && plan->ready) {

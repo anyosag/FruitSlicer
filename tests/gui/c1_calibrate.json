@@ -1,0 +1,18 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "calibrate"}, {"shot": "c1_calibrate"},
+    {"screen": "orientation_check"}, {"shot": "c1_orientation_start"},
+    {"orientation_piece": "@demo"}, {"orientation_sample": "@stand-in-flip-y"}, {"wait": "jobs"},
+    {"shot": "c1_orientation_result"},
+    {"orientation_fix": "use"}, {"shot": "c1_orientation_in_use"},
+    {"screen": "printer"}, {"shot": "c1_printer"},
+    {"hinge": "left"}, {"shot": "c1_printer_hinge"},
+    {"screen": "calibrate"}, {"shot": "c1_calibrate_done"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
+    {"step": "print"}, {"exposures": [2.5, 30]}, {"shot": "c1_print_confirmed"}
+  ]
+}

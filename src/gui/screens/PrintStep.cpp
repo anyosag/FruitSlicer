@@ -92,8 +92,15 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
             app.showProblems(true);
         }
     }
-    verdictRow("orientation", Verdict::Warn, "Image orientation not confirmed",
-               "Lettering and left- or right-handed parts could print mirrored. The check arrives with calibration.");
+    if (app.printerSetup().orientation_confirmed) {
+        verdictRow("orientation", Verdict::Ok, "Image orientation confirmed",
+                   "Checked against SatelLite's slice of the F; this file uses the fix it found.");
+    } else {
+        verdictRow("orientation", Verdict::Warn, "Image orientation not confirmed",
+                   "Lettering and left- or right-handed parts could print mirrored. The check takes 5 minutes and "
+                   "no resin.");
+        if (linkButton("Run the check")) app.setScreen(Screen::OrientationCheck);
+    }
     endCard();
 }
 
@@ -403,10 +410,16 @@ void orientationQuestion(App& app) {
              "right-handed.",
              fonts().regular, size::Body, col::TextSecondary, true);
         ImGui::Dummy(ImVec2(0, 2));
-        text("The check arrives with calibration in a later update. Until then FruitSlicer asks once each time it "
-             "starts.",
+        text("The check, under Calibrate, takes 5 minutes and no resin. Until it confirms the orientation, "
+             "FruitSlicer asks once each time it starts.",
              fonts().regular, size::Body, col::TextSecondary, true);
         ImGui::Dummy(ImVec2(0, 10));
+        if (secondaryButton("Run the check", ImVec2(0, 40))) {
+            open = false;
+            ImGui::CloseCurrentPopup();
+            app.setScreen(Screen::OrientationCheck);
+        }
+        ImGui::SameLine(0, 0);
         ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 24 - 110 - 10 - 80);
         if (secondaryButton("Cancel", ImVec2(80, 40)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             open = false;

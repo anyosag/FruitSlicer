@@ -27,8 +27,10 @@
 //   {"mock_printer": true | "silent"} a printer on loopback (or none answering); {"search": true}
 //   {"save_target": "wifi" | "folder"}
 //   {"printer": n (1-based)} {"start_print": bool} {"send": "go" | "close"}
+//   {"orientation_piece": path | "@demo"} {"orientation_sample": path | "@stand-in-flip-y" (-flip-x, -as-is)}
+//   {"orientation_fix": "use"} {"hinge": "back" | "left" | "right" | "front" | "none"}
 //   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)
-//   {"screen": "home" | "job" | "about"} {"view": "front" | "side" | "angled" | "below"}
+//   {"screen": "home" | "job" | "calibrate" | "orientation_check" | "printer" | "about"} {"view": "front" | "side" | "angled" | "below"}
 // Shots are written as <dir>/<name>.png once two consecutive frames are
 // identical.
 

@@ -611,11 +611,14 @@ void statusBar(App& app) {
     ImGui::SameLine(0, 20);
     text(strf("Problems: %d", problems).c_str(), fonts().regular, size::Body,
          problems ? col::Warn : col::TextSecondary);
-    ImGui::SameLine(0, 20);
-    ImGui::SetCursorPosY(cy - 15);
-    chip("orientation", "Image orientation unconfirmed", col::Warn, col::Warn, col::WarnBg, col::WarnBorder);
-    tooltip("Until a printed test confirms which way the 16K shows images, text and left/right-handed parts could "
-            "print mirrored. The check arrives with calibration.");
+    if (!app.printerSetup().orientation_confirmed) {
+        ImGui::SameLine(0, 20);
+        ImGui::SetCursorPosY(cy - 15);
+        if (chip("orientation", "Image orientation unconfirmed", col::Warn, col::Warn, col::WarnBg, col::WarnBorder))
+            app.setScreen(Screen::OrientationCheck);
+        tooltip("Until the check confirms which way the 16K shows images, text and left- or right-handed parts could "
+                "print mirrored. Click to run it: 5 minutes, no resin.");
+    }
     if (!totals.empty()) {  // right end of the bar
         ImGui::PushFont(fonts().regular, size::Body);
         const float tw = ImGui::CalcTextSize(totals.c_str()).x;

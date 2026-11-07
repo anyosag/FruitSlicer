@@ -11,5 +11,9 @@ namespace gui::screens {
 void home(App& app);
 void job(App& app);  // the job: step bar, the current step, status bar
 void about(App& app);
+// Calibrate: the hub, the image orientation check, the Printer page.
+void calibrate(App& app);
+void orientationCheck(App& app);
+void printer(App& app);
 
 }  // namespace gui::screens
