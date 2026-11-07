@@ -6,6 +6,7 @@
 // scripts all go through the same commands below.
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -94,6 +95,13 @@ public:
     void setSupportsView(SupportsView v) { supports_view_ = v; }
     SupportsView supportsView() const { return supports_view_; }
     void showProblems(bool show) { problems_open_ = show; }
+    // The advanced support settings page. Values apply to the job at once
+    // (making supports out of date) and carry over to the next model opened.
+    void showAdvanced(bool show) { advanced_open_ = show; }
+    bool advancedOpen() const { return advanced_open_; }
+    void setAdvanced(const std::string& key, double value);
+    void resetAdvanced();
+    void applyAdvanced();  // back to the Supports step, generating with these values
     bool problemsOpen() const { return problems_open_; }
     void focusOn(const fruit::Vec3& where);  // turn the camera to look at a point
     // Puts this step's extras (supports, tips, overhang tint) in the 3D view.
@@ -172,6 +180,8 @@ private:
     std::vector<unsigned> pictures_;  // options, then how it sits now
     SupportsView supports_view_ = SupportsView::Supports;
     bool problems_open_ = false;
+    bool advanced_open_ = false;
+    std::map<std::string, double> advanced_;  // carried over to the next model opened
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from
     std::vector<fruit::TriangleMesh> tip_meshes_;      // one per tip kind
     int scene_key_ = 0;

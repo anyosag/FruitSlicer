@@ -5,6 +5,7 @@
 // check the result, and say what needs a look. No UI here.
 
 #include <cstddef>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,8 +26,59 @@ struct SupportChoices {
     int usual_tip = 2;     // tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm
     double density = 1.0;  // 1 = normal spacing; up to 2 = closer together
     bool merge = true;     // neighbouring supports join into trunks
+    // Values set on the advanced page, by field key (see advancedSettings());
+    // every other value is FruitSlicer's own.
+    std::map<std::string, double> advanced;
     bool operator==(const SupportChoices&) const = default;
 };
+
+// ---- The advanced page: every value the planner and tree builder use ----
+
+// One value a row lets you set, in the row's own units.
+struct AdvancedField {
+    const char* key;
+    const char* prefix;  // words before the value ("up to")
+    const char* suffix;  // after it ("mm")
+    double lo, hi;       // allowed range
+    int decimals;        // shown precision (0 = whole numbers)
+    double (*get)(const fruit::SupportConfig&, const fruit::TreeConfig&);
+    void (*set)(fruit::SupportConfig&, fruit::TreeConfig&, double);
+};
+
+// What a row's help and fixed text are drawn from.
+struct AdvancedContext {
+    const fruit::SupportConfig& cfg;
+    const fruit::TreeConfig& tc;
+    const SupportChoices& choices;
+    const fruit::Placement& placement;
+    int raft_layers = 8;            // bottom + transition layers of the print file
+    double raft_layer_height = 0.05;
+};
+
+struct AdvancedSetting {
+    // Number: one or two number fields. TipClass: one of the tip sizes from
+    // fields[0].lo to .hi. Toggle: fields[0] is 1 or 0. Fixed: nothing to set.
+    enum class Kind { Number, TipClass, Toggle, Fixed };
+    // Where the starting value comes from (shown as a badge).
+    enum class Source { Default, Borrowed, Assumption };
+    const char* group;
+    const char* label;
+    Kind kind;
+    Source source;
+    std::vector<AdvancedField> fields = {};
+    std::string (*help)(const AdvancedContext&) = nullptr;
+    std::string (*text)(const AdvancedContext&) = nullptr;  // Fixed: the value; Toggle: the "on" words
+    const char* off_text = nullptr;                         // Toggle: the "off" words
+};
+
+// The rows, in page order, grouped by `group`.
+const std::vector<AdvancedSetting>& advancedSettings();
+// The key of the usual tip size, which lives in SupportChoices::usual_tip.
+inline constexpr const char* kUsualTipKey = "usual_tip";
+// Applies `values` (clamped to each field's range) over `cfg` and `tc`.
+void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportConfig& cfg, fruit::TreeConfig& tc);
+// Whether the row holds a value of the user's own.
+bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c);
 
 // One line of the result's checks.
 struct SupportCheck {

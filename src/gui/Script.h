@@ -18,6 +18,7 @@
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate"} {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
 //   {"supports_view": "supports" | "tips" | "why"} {"select_tip": index} {"problems": bool}
+//   {"advanced": "open" | "close" | "reset" | "apply"} {"setting": [key, value]} (keys: advancedSettings())
 //   {"exposures": [normal_s, bottom_s]} {"sample": path | "@demo-sample"} (a 0.03 mm print file)
 //   {"drive": name} adds a stand-in USB drive (a folder) and picks it
 //   {"save": true} as the Save .goo button (asks about orientation once; with no drive, a dialog)

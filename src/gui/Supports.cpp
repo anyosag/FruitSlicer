@@ -9,6 +9,7 @@
 #include <map>
 
 #include "Document.h"
+#include "Format.h"
 #include "Orient.h"
 #include "support/CosmeticField.h"
 #include "support/PointGenerator.h"
@@ -32,6 +33,245 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     fruit::resolveSettings(nullptr, ch, cfg, &tc);
     cfg.default_tip = std::clamp(c.usual_tip, 0, static_cast<int>(cfg.tip_classes.size()) - 1);
     tc.merge_pillars = c.merge;
+    applyAdvanced(c.advanced, cfg, tc);
+}
+
+using C = fruit::SupportConfig;
+using T = fruit::TreeConfig;
+using X = AdvancedContext;
+
+std::vector<AdvancedSetting> makeAdvanced() {
+    using K = AdvancedSetting::Kind;
+    using S = AdvancedSetting::Source;
+    std::vector<AdvancedSetting> v;
+    // ---- Tips ----
+    v.push_back({.group = "Tips", .label = "Usual tip size", .kind = K::TipClass, .source = S::Default,
+                 .fields = {{kUsualTipKey, "", "", 1, 3, 0, [](const C& c, const T&) { return double(c.default_tip); },
+                             [](C& c, T&, double x) { c.default_tip = int(std::lround(x)); }}},
+                 .help = [](const X&) { return std::string("Most tips use this size."); }});
+    v.push_back({.group = "Tips", .label = "Tips at low points", .kind = K::TipClass, .source = S::Default,
+                 .fields = {{"minima_tip", "", "", 0, 3, 0, [](const C& c, const T&) { return double(c.minima_tip); },
+                             [](C& c, T&, double x) { c.minima_tip = int(std::lround(x)); }}},
+                 .help = [](const X&) {
+                     return std::string("Bigger where a part starts in mid-air, unless the spot is too small for it.");
+                 }});
+    v.push_back({.group = "Tips", .label = "Tips near edges and visible faces", .kind = K::TipClass,
+                 .source = S::Default,
+                 .fields = {{"edge_tip", "", "", 0, 3, 0, [](const C& c, const T&) { return double(c.edge_tip); },
+                             [](C& c, T&, double x) { c.edge_tip = int(std::lround(x)); }}},
+                 .help = [](const X&) { return std::string("Smaller marks where they would show."); }});
+    v.push_back({.group = "Tips", .label = "How much a tip holds", .kind = K::Number, .source = S::Borrowed,
+                 .fields = {{"capacity", "", "mm²", 2, 40, 1,
+                             [](const C& c, const T&) { return c.capacity.reference_capacity; },
+                             [](C& c, T&, double x) { c.capacity.reference_capacity = x; }}},
+                 .help = [](const X& x) {
+                     return strf("Layer area one %.1f mm tip can hold as it peels. Scales with tip area: %.1f, %.1f "
+                                 "and %.1f mm² for 0.2, 0.3 and 0.6 mm.",
+                                 x.cfg.capacity.reference_diameter, x.cfg.capacity.capacity(0.2),
+                                 x.cfg.capacity.capacity(0.3), x.cfg.capacity.capacity(0.6));
+                 }});
+    v.push_back({.group = "Tips", .label = "Contact depth", .kind = K::Fixed, .source = S::Default,
+                 .help = [](const X& x) {
+                     return strf("How far the tip reaches into the model, kept between %.2f and %.2f mm.",
+                                 fruit::tipPenetration(0.0, x.tc), fruit::tipPenetration(10.0, x.tc));
+                 },
+                 .text = [](const X&) { return std::string("½ the tip size"); }});
+    // ---- Where tips go ----
+    v.push_back({.group = "Where tips go", .label = "Faces that need tips", .kind = K::Number, .source = S::Borrowed,
+                 .fields = {{"critical_angle", "lean >", "°", 20, 70, 0,
+                             [](const C& c, const T&) { return c.critical_angle_deg; },
+                             [](C& c, T&, double x) { c.critical_angle_deg = x; }}},
+                 .help = [](const X&) { return std::string("Faces closer to flat than this are held from below."); }});
+    v.push_back({.group = "Where tips go", .label = "Short ledges", .kind = K::Number, .source = S::Default,
+                 .fields = {{"ledge", "up to", "mm", 0, 3, 1,
+                             [](const C& c, const T&) { return c.self_supported_reach; },
+                             [](C& c, T&, double x) { c.self_supported_reach = x; }}},
+                 .help = [](const X&) { return std::string("A ledge this short holds itself without a tip."); }});
+    v.push_back({.group = "Where tips go", .label = "Tip reach", .kind = K::Fixed, .source = S::Borrowed,
+                 .help = [](const X& x) {
+                     return strf("Distance one tip covers: %.1f mm right above it, growing to %.1f mm 40 mm higher. "
+                                 "Tip spacing on the Supports panel brings tips closer.",
+                                 x.cfg.coverage.radius(0), x.cfg.coverage.radius(40));
+                 },
+                 .text = [](const X& x) {
+                     return strf("%.1f → %.1f mm", x.cfg.coverage.radius(0), x.cfg.coverage.radius(40));
+                 }});
+    v.push_back({.group = "Where tips go", .label = "Spots in mid-air", .kind = K::Number, .source = S::Borrowed,
+                 .fields = {{"island_one", "1 tip ≤", "", 0.5, 5, 1,
+                             [](const C& c, const T&) { return c.island_one_tip_length; },
+                             [](C& c, T&, double x) { c.island_one_tip_length = x; }},
+                            {"island_two", "· 2 ≤", "mm", 2, 20, 1,
+                             [](const C& c, const T&) { return c.island_two_tip_length; },
+                             [](C& c, T&, double x) { c.island_two_tip_length = x; }}},
+                 .help = [](const X& x) {
+                     return strf("One tip up to %.1f mm across, two up to %.1f mm, at least %d above that.",
+                                 x.cfg.island_one_tip_length, std::max(x.cfg.island_one_tip_length,
+                                                                       x.cfg.island_two_tip_length),
+                                 x.cfg.large_island_min_tips);
+                 }});
+    v.push_back({.group = "Where tips go", .label = "Tiny specks", .kind = K::Toggle, .source = S::Assumption,
+                 .fields = {{"tiny_left_alone", "", "", 0, 1, 0,
+                             [](const C& c, const T&) { return c.tiny_island_area > 0 ? 1.0 : 0.0; },
+                             [](C& c, T&, double x) {
+                                 if (x < 0.5) c.tiny_island_area = c.absorb_island_area = 0;
+                             }}},
+                 .help = [](const X& x) {
+                     if (x.cfg.tiny_island_area <= 0) return std::string("Every speck gets a tip, however small.");
+                     return strf("Under %.2f mm² and joining the model within %d layers, or under %.2f mm² and "
+                                 "joining it on the next layer: a tip would leave a bigger mark.",
+                                 x.cfg.tiny_island_area, x.cfg.tiny_island_merge_layers, x.cfg.absorb_island_area);
+                 },
+                 .text = [](const X&) { return std::string("left alone"); },
+                 .off_text = "given tips"});
+    v.push_back({.group = "Where tips go", .label = "Side tips", .kind = K::Number, .source = S::Default,
+                 .fields = {{"side_tips", "over", "mm tall", 1, 50, 0,
+                             [](const C& c, const T&) { return c.stabilize_min_height; },
+                             [](C& c, T&, double x) { c.stabilize_min_height = x; }}},
+                 .help = [](const X& x) {
+                     return strf("Added to tall, thin parts (%.0f × taller than their tips are wide) so they don't "
+                                 "wobble.",
+                                 x.cfg.slenderness);
+                 }});
+    // ---- Keeping marks off ----
+    v.push_back({.group = "Keeping marks off", .label = "Visible faces and keep-out boxes", .kind = K::Number,
+                 .source = S::Default,
+                 .fields = {{"visible_cost", "", "× the cost", 1, 20, 0,
+                             [](const C& c, const T&) { return 1 + c.cosmetic_weight; },
+                             [](C& c, T&, double x) { c.cosmetic_weight = x - 1; }}},
+                 .help = [](const X&) { return std::string("Tips go there only when nothing else works."); }});
+    v.push_back({.group = "Keeping marks off", .label = "Sharp edges", .kind = K::Number, .source = S::Default,
+                 .fields = {{"sharp_edges", "sharper than", "°", 10, 90, 0,
+                             [](const C& c, const T&) { return c.sharp_edge_angle_deg; },
+                             [](C& c, T&, double x) { c.sharp_edge_angle_deg = x; }}},
+                 .help = [](const X& x) {
+                     const double k = 1 + x.cfg.edge_weight;
+                     return k == 2 ? std::string("Tips near them cost twice as much, because a mark on an edge shows.")
+                                   : strf("Tips near them cost %g times as much, because a mark on an edge shows.", k);
+                 }});
+    // ---- Heads ----
+    v.push_back({.group = "Heads", .label = "Head tilt", .kind = K::Number, .source = S::Default,
+                 .fields = {{"head_tilt", "up to", "°", 0, 60, 0,
+                             [](const C&, const T& t) { return t.max_head_tilt_deg; },
+                             [](C&, T& t, double x) { t.max_head_tilt_deg = x; }}},
+                 .help = [](const X&) {
+                     return std::string("Heads lean to meet sloped faces, never more than this from vertical.");
+                 }});
+    v.push_back({.group = "Heads", .label = "Head length", .kind = K::Number, .source = S::Default,
+                 .fields = {{"head_length", "", "mm", 0.4, 3, 1, [](const C&, const T& t) { return t.head_length; },
+                             [](C&, T& t, double x) { t.head_length = x; }}},
+                 .help = [](const X&) { return std::string("From the tip to where it joins the support."); }});
+    v.push_back({.group = "Heads", .label = "Gap to the model", .kind = K::Number, .source = S::Default,
+                 .fields = {{"gap", "", "mm", 0.05, 1, 2, [](const C&, const T& t) { return t.clearance; },
+                             [](C&, T& t, double x) { t.clearance = x; }}},
+                 .help = [](const X&) {
+                     return std::string("Supports keep this clear of the model everywhere except at the tip.");
+                 }});
+    // ---- Pillars and trunks ----
+    v.push_back({.group = "Pillars and trunks", .label = "Heads per pillar", .kind = K::Number, .source = S::Default,
+                 .fields = {{"heads_per_pillar", "up to", "", 1, 6, 0,
+                             [](const C&, const T& t) { return double(t.max_heads_per_pillar); },
+                             [](C&, T& t, double x) { t.max_heads_per_pillar = int(std::lround(x)); }}},
+                 .help = [](const X& x) {
+                     return strf("Nearby heads share a pillar through 45° bridges up to %.1f mm long.",
+                                 x.tc.max_bridge_length);
+                 }});
+    v.push_back({.group = "Pillars and trunks", .label = "Finding a way down", .kind = K::Number,
+                 .source = S::Default,
+                 .fields = {{"route", "up to", "mm", 0, 40, 0, [](const C&, const T& t) { return t.max_route_length; },
+                             [](C&, T& t, double x) { t.max_route_length = x; }}},
+                 .help = [](const X&) {
+                     return std::string("A blocked head walks diagonally outward until it can drop to the raft.");
+                 }});
+    v.push_back({.group = "Pillars and trunks", .label = "Standing on the model", .kind = K::Number,
+                 .source = S::Default,
+                 .fields = {{"anchor_drop", "drops up to", "mm", 0, 30, 0,
+                             [](const C&, const T& t) { return t.max_model_anchor_drop; },
+                             [](C&, T& t, double x) { t.max_model_anchor_drop = x; }}},
+                 .help = [](const X& x) {
+                     if (x.tc.max_model_anchor_drop <= 0)
+                         return std::string("Never: a head with no way down is left out and reported.");
+                     return std::string("A last resort, always reported, because it marks an upper surface. 0 turns "
+                                        "it off.");
+                 }});
+    v.push_back({.group = "Pillars and trunks", .label = "Merge into trunks", .kind = K::Number,
+                 .source = S::Default,
+                 .fields = {{"merge_distance", "within", "mm", 1, 20, 0,
+                             [](const C&, const T& t) { return t.max_merge_distance; },
+                             [](C&, T& t, double x) { t.max_merge_distance = x; }}},
+                 .help = [](const X& x) {
+                     if (!x.choices.merge) return std::string("Off: merging is turned off on the Supports panel.");
+                     return strf("Up to %d tips share one trunk, never thicker than %.1f mm.", x.tc.max_tips_per_trunk,
+                                 x.tc.max_trunk_diameter);
+                 }});
+    // ---- Braces ----
+    v.push_back({.group = "Braces", .label = "Which pillars", .kind = K::Number, .source = S::Default,
+                 .fields = {{"brace_height", "taller than", "mm", 5, 100, 0,
+                             [](const C&, const T& t) { return t.brace_min_height; },
+                             [](C&, T& t, double x) { t.brace_min_height = x; }}},
+                 .help = [](const X& x) {
+                     return strf("Braced to neighbours within %.0f mm, every %.0f mm of height, %.1f mm thick.",
+                                 x.tc.brace_max_distance, x.tc.brace_step, x.tc.brace_diameter);
+                 }});
+    v.push_back({.group = "Braces", .label = "Snap-off zone", .kind = K::Number, .source = S::Default,
+                 .fields = {{"snap_zone", "", "mm", 0, 10, 1, [](const C&, const T& t) { return t.flex_zone; },
+                             [](C&, T& t, double x) { t.flex_zone = x; }}},
+                 .help = [](const X&) {
+                     return std::string("No braces just below a head, so tips flex and snap off at the model.");
+                 }});
+    v.push_back({.group = "Braces", .label = "Never around the model", .kind = K::Fixed, .source = S::Default,
+                 .help = [](const X&) {
+                     return std::string("Two pillars are never braced if the model passes between them; the "
+                                        "supports could not come off.");
+                 },
+                 .text = [](const X&) { return std::string("always on"); }});
+    // ---- Raft ----
+    v.push_back({.group = "Raft", .label = "Raft thickness", .kind = K::Number, .source = S::Default,
+                 .fields = {{"raft_thickness", "", "mm", 0.2, 5, 1,
+                             [](const C&, const T& t) { return t.raft_thickness; },
+                             [](C&, T& t, double x) { t.raft_thickness = x; }}},
+                 .help = [](const X& x) {
+                     return strf("At least as thick as your bottom and transition layers: %d × %.2f = %.2f mm.",
+                                 x.raft_layers, x.raft_layer_height, x.raft_layers * x.raft_layer_height);
+                 }});
+    v.push_back({.group = "Raft", .label = "Pads", .kind = K::Number, .source = S::Default,
+                 .fields = {{"pad_diameter", "", "mm base", 1, 8, 1,
+                             [](const C&, const T& t) { return t.base_diameter; },
+                             [](C&, T& t, double x) { t.base_diameter = x; }}},
+                 .help = [](const X& x) {
+                     return strf("Each trunk stands on a %.1f mm tall pad with a %.1f mm brim.", x.tc.base_height,
+                                 x.tc.pad_brim);
+                 }});
+    v.push_back({.group = "Raft", .label = "Links", .kind = K::Number, .source = S::Default,
+                 .fields = {{"link_width", "", "mm wide", 0.5, 4, 1, [](const C&, const T& t) { return t.link_width; },
+                             [](C&, T& t, double x) { t.link_width = x; }}},
+                 .help = [](const X&) {
+                     return std::string("Flat bars join the pads, so the raft and supports come off in one piece.");
+                 }});
+    v.push_back({.group = "Raft", .label = "Lift", .kind = K::Fixed, .source = S::Default,
+                 .help = [](const X&) {
+                     return std::string("Gap between the plate and the lowest point of the model. Set in the Model "
+                                        "step.");
+                 },
+                 .text = [](const X& x) {
+                     return x.placement.on_plate ? std::string("on the plate") : strf("%.0f mm", x.placement.lift());
+                 }});
+    // ---- Peel side ----
+    v.push_back({.group = "Peel side", .label = "Vat hinge", .kind = K::Fixed, .source = S::Default,
+                 .help = [](const X&) {
+                     return std::string("Which side the tilting vat hinges on. You set it with the image-orientation "
+                                        "check, which arrives with calibration.");
+                 },
+                 .text = [](const X&) { return std::string("not set"); }});
+    v.push_back({.group = "Peel side", .label = "Extra hold away from the hinge", .kind = K::Fixed,
+                 .source = S::Assumption,
+                 .help = [](const X&) {
+                     return std::string("Peel pulls hardest on the far side: up to +25 % more hold there once the "
+                                        "hinge side is set. The right amount hasn't been measured.");
+                 },
+                 .text = [](const X& x) {
+                     return x.cfg.peel_bias > 0 ? strf("up to +%.0f %%", x.cfg.peel_bias * 100) : std::string("off");
+                 }});
+    return v;
 }
 
 struct Known {
@@ -97,6 +337,31 @@ std::size_t SupportResult::count(SupportProblem::Level l) const {
     std::size_t n = 0;
     for (const auto& p : problems) n += p.level == l;
     return n;
+}
+
+const std::vector<AdvancedSetting>& advancedSettings() {
+    static const std::vector<AdvancedSetting> rows = makeAdvanced();
+    return rows;
+}
+
+void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportConfig& cfg, fruit::TreeConfig& tc) {
+    for (const AdvancedSetting& s : advancedSettings())
+        for (const AdvancedField& f : s.fields) {
+            const auto it = values.find(f.key);
+            if (it != values.end() && f.set && std::string(f.key) != kUsualTipKey)
+                f.set(cfg, tc, std::clamp(it->second, f.lo, f.hi));
+        }
+}
+
+bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c) {
+    for (const AdvancedField& f : s.fields) {
+        if (std::string(f.key) == kUsualTipKey) {
+            if (c.usual_tip != SupportChoices{}.usual_tip) return true;
+        } else if (c.advanced.count(f.key)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fruit::SupportConfig supportConfig(const fruit::Placement& p, const SupportChoices& c) {

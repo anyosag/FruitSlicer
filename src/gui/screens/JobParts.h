@@ -33,6 +33,8 @@ void viewport3d(App& app, ImVec2 size, const char* hint = nullptr, const Overlay
 void supportsLeft(App& app, Document& doc, float h);
 void supportsRight(App& app, Document& doc, float h);
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// The advanced settings page, in place of the whole step.
+void supportsAdvanced(App& app, Document& doc, ImVec2 size);
 
 // Layers: the whole body of the step.
 void layersView(App& app, Document& doc, ImVec2 size);

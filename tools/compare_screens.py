@@ -7,7 +7,8 @@ usage: compare_screens.py <golden_dir> <actual_dir> <diff_dir>
 
 A pixel counts as different when any channel differs by more than
 --channel (default 24); a screenshot fails when more than --fraction
-(default 0.2 %) of its pixels differ, or when its size changed. Diff images
+(default 0.05 %) of its pixels differ, or when its size changed: enough to
+catch a changed line of text at 1440 × 900. Diff images
 (differences in red over a dimmed copy) are written for failures. Exits 1
 when a golden is missing, a screenshot is missing, or any comparison fails.
 Update goldens by copying the actual screenshots over them after checking
@@ -26,7 +27,7 @@ def main() -> int:
     ap.add_argument("actual")
     ap.add_argument("diff")
     ap.add_argument("--channel", type=int, default=24)
-    ap.add_argument("--fraction", type=float, default=0.002)
+    ap.add_argument("--fraction", type=float, default=0.0005)
     a = ap.parse_args()
     golden, actual, diff = Path(a.golden), Path(a.actual), Path(a.diff)
     diff.mkdir(parents=True, exist_ok=True)

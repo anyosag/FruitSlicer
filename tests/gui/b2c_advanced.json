@@ -1,0 +1,13 @@
+{
+  "size": [1440, 1640],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"advanced": "open"}, {"shot": "b2c_advanced"},
+    {"setting": ["critical_angle", 50]}, {"setting": ["head_length", 1.4]}, {"setting": ["minima_tip", 2]},
+    {"setting": ["tiny_left_alone", 0]}, {"setting": ["island_two", 5]}, {"shot": "b2c_advanced_changed"},
+    {"advanced": "apply"}, {"wait": "jobs"}, {"shot": "b2c_supports_changed"},
+    {"advanced": "open"}, {"advanced": "reset"}, {"advanced": "close"}, {"shot": "b2c_supports_reset"}
+  ]
+}
