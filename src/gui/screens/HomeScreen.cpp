@@ -30,7 +30,7 @@ void home(App& app) {
         icon::cube(dl, ImVec2(p.x + zw / 2 - 18, p.y + 34), 36, col::TextMuted);
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 88));
         ImGui::PushFont(fonts().semibold, size::Section);
-        const char* t1 = "Drop an STL or OBJ file here";
+        const char* t1 = "Drop an STL, OBJ or 3MF file here";
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (zw - ImGui::CalcTextSize(t1).x) / 2);
         ImGui::PushStyleColor(ImGuiCol_Text, col::Text);
         ImGui::TextUnformatted(t1);

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "geometry/Transform.h"
 #include "mesh/TriangleMesh.h"
 #include "printer/PrinterProfile.h"
 #include "view3d/Camera.h"
@@ -24,8 +25,10 @@ public:
     // the GL context cannot do it.
     bool init(const fruit::PrinterProfile& printer, std::string* error);
 
-    // Uploads the model unless `revision` is already on the GPU.
-    void setModel(const fruit::TriangleMesh& mesh, int revision);
+    // Uploads the model (its own coordinates) unless `geometry` is already
+    // on the GPU; placement changes only change the transform.
+    void setModel(const fruit::TriangleMesh& mesh, int geometry);
+    void setModelTransform(const fruit::Transform& model_to_printer);
     void clearModel();
 
     // Draws into a `w` × `h` pixel target and returns its colour texture.
@@ -45,6 +48,7 @@ private:
     unsigned mesh_prog_ = 0, line_prog_ = 0;
     Mesh plate_fill_, plate_lines_, model_;
     int model_revision_ = -1;
+    float model_matrix_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     unsigned fbo_ms_ = 0, rb_color_ = 0, rb_depth_ = 0;  // multisampled target
     unsigned fbo_ = 0, tex_ = 0, rb_depth_plain_ = 0;    // resolved target
     int w_ = 0, h_ = 0, samples_ = -1;

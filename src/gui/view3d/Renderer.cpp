@@ -14,10 +14,11 @@ namespace {
 const char* kMeshVs = R"(#version 330 core
 layout(location = 0) in vec3 aPos;
 uniform mat4 uViewProj;
+uniform mat4 uModel;   // model -> printer coordinates
 out vec3 vWorld;
 void main() {
-    vWorld = aPos;
-    gl_Position = uViewProj * vec4(aPos, 1.0);
+    vWorld = (uModel * vec4(aPos, 1.0)).xyz;
+    gl_Position = uViewProj * vec4(vWorld, 1.0);
 }
 )";
 
@@ -196,6 +197,17 @@ void Renderer::setModel(const fruit::TriangleMesh& mesh, int revision) {
     model_revision_ = revision;
 }
 
+void Renderer::setModelTransform(const fruit::Transform& t) {
+    // Column-major 4x4 from p' = R p + t.
+    for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r) model_matrix_[c * 4 + r] = static_cast<float>(t.m[r][c]);
+    model_matrix_[3] = model_matrix_[7] = model_matrix_[11] = 0;
+    model_matrix_[12] = static_cast<float>(t.t.x);
+    model_matrix_[13] = static_cast<float>(t.t.y);
+    model_matrix_[14] = static_cast<float>(t.t.z);
+    model_matrix_[15] = 1;
+}
+
 void Renderer::clearModel() {
     destroyMesh(model_);
     model_revision_ = -1;
@@ -263,6 +275,8 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
     // Plate: filled, pushed back so a model standing on it wins the depth test.
     glUseProgram(mesh_prog_);
     glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uViewProj"), 1, GL_FALSE, vp.m);
+    const M4 identity;
+    glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
     glUniform3f(glGetUniformLocation(mesh_prog_, "uEye"), eye.x, eye.y, eye.z);
     glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
     float c[3];
@@ -290,6 +304,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         glUseProgram(mesh_prog_);
         rgb(0xAEB6C4, c);
         glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
+        glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, model_matrix_);
         glBindVertexArray(model_.vao);
         glDrawElements(GL_TRIANGLES, model_.count, GL_UNSIGNED_INT, nullptr);
     }

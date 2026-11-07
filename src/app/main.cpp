@@ -807,14 +807,14 @@ int main(int argc, char** argv) {
 
     std::string in_path;
     auto* info = app.add_subcommand("info", "Mesh statistics (shells, manifoldness, volume, minima)");
-    info->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    info->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
 
     PlacementOpts place;
     double layer_h = 0.05, png_px = 0.05;
     int every = 1;
     std::string png_dir, json_out;
     auto* slice = app.add_subcommand("slice", "Slice a placed model and report layers and islands");
-    slice->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    slice->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
     addPlacement(slice, place);
     slice->add_option("--layer", layer_h, "Layer height (mm)");
     slice->add_option("--png-dir", png_dir, "Write debug PNGs of the layers here");
@@ -841,7 +841,7 @@ int main(int argc, char** argv) {
 
     PointsOpts popts;
     auto* points = app.add_subcommand("points", "Generate support points (M1): coverage + capacity + islands");
-    points->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    points->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
     addPlacement(points, place);
     points->add_option("--layer", layer_h, "Layer height (mm)");
     points->add_option("--density", popts.density, "Support density (1 = default, >1 denser)");
@@ -859,7 +859,7 @@ int main(int argc, char** argv) {
     double az = 30, el = -35;
     int render_size = 900;
     auto* render = app.add_subcommand("render", "Preview PNG of the placed model and its support points");
-    render->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    render->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
     addPlacement(render, place);
     render->add_option("--points", render_points, "points.json to draw");
     render->add_option("-o,--output", render_out, "Output PNG");
@@ -869,7 +869,7 @@ int main(int argc, char** argv) {
 
     SupportOpts sopts;
     auto* support = app.add_subcommand("support", "Generate points, heads, pillars and raft; write model + supports STL");
-    support->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    support->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
     addPlacement(support, place);
     support->add_option("--layer", layer_h, "Layer height (mm)");
     support->add_option("--density", popts.density, "Support density (1 = default)");
@@ -886,7 +886,7 @@ int main(int argc, char** argv) {
 
     OrientCli ocli;
     auto* orient = app.add_subcommand("orient", "Search build orientations; prints the best --rotate values");
-    orient->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    orient->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
     addPlacement(orient, place);
     orient->add_option("--layer", layer_h, "Layer height used to evaluate finalists (mm)");
     addGenOptions(orient, ocli.gen);
@@ -900,7 +900,7 @@ int main(int argc, char** argv) {
 
     ABCli abcli;
     auto* abplate = app.add_subcommand("abplate", "Same-plate A/B test: FruitSlicer-supported vs bare copies");
-    abplate->add_option("model", in_path, "STL or OBJ file")->required()->check(CLI::ExistingFile);
+    abplate->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
     addPlacement(abplate, place);
     abplate->add_option("--layer", layer_h, "Layer height (mm)");
     addGenOptions(abplate, popts.gen);
@@ -910,7 +910,7 @@ int main(int argc, char** argv) {
 
     GooCli gcli;
     auto* goo = app.add_subcommand("goo", "Write an Elegoo .goo print file from a placed, supported model");
-    goo->add_option("model", in_path, "STL or OBJ (e.g. the STL written by `fruitslicer support`)")
+    goo->add_option("model", in_path, "STL, OBJ or 3MF (e.g. the STL written by `fruitslicer support`)")
         ->required()
         ->check(CLI::ExistingFile);
     goo->add_option("-o,--output", gcli.out, "Output .goo");

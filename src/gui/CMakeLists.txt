@@ -18,6 +18,7 @@ set(app_sources
   main.cpp
   App.cpp
   Capture.cpp
+  Dialogs.cpp
   Document.cpp
   Icons.cpp
   Jobs.cpp
@@ -27,7 +28,7 @@ set(app_sources
   Widgets.cpp
   screens/AboutScreen.cpp
   screens/HomeScreen.cpp
-  screens/ModelScreen.cpp
+  screens/JobScreen.cpp
   view3d/Camera.cpp
   view3d/Renderer.cpp
   platform/Platform.cpp
@@ -66,6 +67,7 @@ if(APPLE)
     DearImGui ${imgui_SOURCE_DIR}/LICENSE.txt
     glad ${PROJECT_SOURCE_DIR}/third_party/glad/LICENSES.txt
     miniz ${miniz_SOURCE_DIR}/LICENSE
+    pugixml ${pugixml_SOURCE_DIR}/LICENSE.md
     Inter ${inter_SOURCE_DIR}/LICENSE.txt)
   set(copy_licences)
   while(licences)

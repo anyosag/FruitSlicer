@@ -27,7 +27,8 @@ void Camera::zoom(float steps) { distance_ = std::clamp(distance_ * std::pow(0.8
 
 void Camera::frame(V3 center, float radius) {
     target_ = center;
-    distance_ = std::max(10.0f, radius / std::sin(fov_deg_ * kDeg / 2) * 1.15f);
+    // Room around the model, so the plate under it stays in view.
+    distance_ = std::max(10.0f, radius / std::sin(fov_deg_ * kDeg / 2) * 1.6f);
 }
 
 void Camera::preset(ViewPreset p) {

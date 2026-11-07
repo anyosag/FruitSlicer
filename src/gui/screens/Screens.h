@@ -9,7 +9,7 @@ class App;
 namespace gui::screens {
 
 void home(App& app);
-void model(App& app);
+void job(App& app);  // the job: step bar, the current step, status bar
 void about(App& app);
 
 }  // namespace gui::screens

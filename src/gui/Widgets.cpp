@@ -5,7 +5,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <unordered_map>
 
+#include <imgui_internal.h>
+
+#include "Icons.h"
 #include "Theme.h"
 
 namespace gui {
@@ -129,6 +134,199 @@ void keyValue(const char* key, const std::string& value, ImU32 value_color) {
     ImGui::TextUnformatted(value.c_str());
     ImGui::PopStyleColor();
     ImGui::PopFont();
+}
+
+bool numberField(const char* id, double* v, float width, const char* format, double lo, double hi) {
+    // While the field is being edited its value lives here, so the commit
+    // (which happens on the frame focus leaves) sees what was typed.
+    static std::unordered_map<ImGuiID, double> pending;
+    ImGui::PushID(id);
+    const ImGuiID item = ImGui::GetID("##v");
+    double& p = pending[item];
+    if (ImGui::GetActiveID() != item) p = *v;
+    ImGui::PushFont(fonts().regular, size::Body);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Viewport);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col::Viewport);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col::Viewport);
+    ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1);
+    ImGui::SetNextItemWidth(width);
+    ImGui::InputDouble("##v", &p, 0, 0, format);
+    const bool commit = ImGui::IsItemDeactivatedAfterEdit();
+    if (ImGui::IsItemActive()) {  // accent outline while typing
+        ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), col::Accent, 6, 1.5f);
+    }
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(4);
+    ImGui::PopFont();
+    ImGui::PopID();
+    if (!commit) return false;
+    const double nv = std::clamp(p, lo, hi);
+    if (nv == *v) return false;
+    *v = nv;
+    return true;
+}
+
+bool radioCard(const char* id, const char* title, const char* body, bool selected) {
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float pad = 12, mark = 16;
+    ImGui::PushFont(fonts().regular, size::Body);
+    const float text_w = w - pad * 2 - mark - 10;
+    const float body_h = ImGui::CalcTextSize(body, nullptr, false, text_w).y;
+    ImGui::PopFont();
+    const float h = pad * 2 + 18 + body_h + 2;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::SetNextItemAllowOverlap();  // a field drawn on top (Custom size) stays usable
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q(p.x + w, p.y + h);
+    dl->AddRectFilled(p, q, selected ? IM_COL32(0x2A, 0x1E, 0x14, 255) : (hovered ? col::Card : col::Panel), 10);
+    dl->AddRect(p, q, selected ? col::Accent : (hovered ? col::BorderStrong : col::Border), 10, selected ? 1.5f : 1.0f);
+    const ImVec2 c(p.x + pad + mark / 2, p.y + pad + 9);
+    dl->AddCircle(c, mark / 2 - 0.5f, selected ? col::Accent : col::TextMuted, 24, 1.5f);
+    if (selected) dl->AddCircleFilled(c, mark / 2 - 4, col::Accent, 24);
+    const float tx = p.x + pad + mark + 10;
+    ImGui::PushFont(fonts().semibold, size::Body);
+    dl->AddText(ImVec2(tx, p.y + pad + 1), col::Text, title);
+    ImGui::PopFont();
+    ImGui::PushFont(fonts().regular, size::Body);
+    dl->AddText(nullptr, 0, ImVec2(tx, p.y + pad + 21), col::TextSecondary, body, nullptr, text_w);
+    ImGui::PopFont();
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
+bool segmentButton(const char* label, bool active) {
+    ImGui::PushFont(active ? fonts().semibold : fonts().medium, size::Body);
+    ImGui::PushStyleColor(ImGuiCol_Button, active ? col::Active : col::Panel);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col::Active);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col::BorderStrong);
+    ImGui::PushStyleColor(ImGuiCol_Text, active ? col::Text : col::TextSecondary);
+    ImGui::PushStyleColor(ImGuiCol_Border, active ? col::BorderStrong : col::Border);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11, 7));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1);
+    const bool clicked = ImGui::Button(label);
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(5);
+    ImGui::PopFont();
+    return clicked;
+}
+
+bool chip(const char* id, const char* label, ImU32 dot, ImU32 fg, ImU32 bg, ImU32 border) {
+    ImGui::PushFont(fonts().medium, size::Body);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const float dot_w = dot ? 14.0f : 0.0f;
+    const ImVec2 sz(ts.x + 26 + dot_w, 30);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, sz);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), bg, sz.y / 2);
+    if (border) dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y), border, sz.y / 2);
+    if (dot) dl->AddCircleFilled(ImVec2(p.x + 17, p.y + sz.y / 2), 3.5f, dot);
+    dl->AddText(ImVec2(p.x + 13 + dot_w, p.y + (sz.y - ts.y) / 2), fg, label);
+    ImGui::PopFont();
+    return clicked;
+}
+
+bool stepPill(int number, const char* label, StepState state, bool enabled) {
+    ImGui::PushFont(state == StepState::Current ? fonts().semibold : fonts().medium, size::Body);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const ImVec2 sz(ts.x + 54, 38);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::PushID(number);
+    const bool clicked = ImGui::InvisibleButton("step", sz) && enabled;
+    ImGui::PopID();
+    const bool hovered = ImGui::IsItemHovered() && enabled;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (state == StepState::Current || hovered)
+        dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), state == StepState::Current ? col::Active : col::Card,
+                          sz.y / 2);
+    const ImVec2 c(p.x + 19, p.y + sz.y / 2);
+    char num[4];
+    std::snprintf(num, sizeof num, "%d", number);
+    if (state == StepState::Current) {
+        dl->AddCircleFilled(c, 13, col::Accent, 32);
+    } else if (state == StepState::Done) {
+        dl->AddCircleFilled(c, 13, col::OkBg, 32);
+    } else {
+        dl->AddCircle(c, 12.5f, col::BorderStrong, 32, 1.0f);
+    }
+    const ImU32 fg = state == StepState::Current ? col::Text : (enabled ? col::TextSecondary : col::TextMuted);
+    if (state == StepState::Done) {
+        icon::check(dl, ImVec2(c.x - 7, c.y - 7), 14, col::Ok);
+    } else {
+        ImGui::PushFont(fonts().semibold, size::Help);
+        const ImVec2 ns = ImGui::CalcTextSize(num);
+        dl->AddText(ImVec2(c.x - ns.x / 2, c.y - ns.y / 2), state == StepState::Current ? col::OnAccent : fg, num);
+        ImGui::PopFont();
+    }
+    dl->AddText(ImVec2(p.x + 40, p.y + (sz.y - ts.y) / 2), fg, label);
+    ImGui::PopFont();
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
+float keyBadgeWidth(const char* keys) {
+    ImGui::PushFont(fonts().medium, size::Help);
+    const float w = ImGui::CalcTextSize(keys).x + 14;
+    ImGui::PopFont();
+    return w;
+}
+
+void keyBadge(const char* keys) {
+    ImGui::PushFont(fonts().medium, size::Help);
+    const ImVec2 ts = ImGui::CalcTextSize(keys);
+    const ImVec2 sz(ts.x + 14, 22);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(sz);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), col::Viewport, 5);
+    dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y), col::BorderStrong, 5);
+    dl->AddText(ImVec2(p.x + 7, p.y + (sz.y - ts.y) / 2), col::TextSecondary, keys);
+    ImGui::PopFont();
+}
+
+bool closeButton(const char* id) {
+    const ImVec2 sz(36, 36);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, sz);
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), hovered ? col::Active : col::Input, 8);
+    dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y), col::BorderStrong, 8);
+    icon::cross(dl, ImVec2(p.x + 11, p.y + 11), 14, col::TextSecondary);
+    return clicked;
+}
+
+void verdictRow(const char* id, Verdict v, const char* title, const char* body) {
+    const ImU32 bg = v == Verdict::Error ? col::ErrorBg : (v == Verdict::Warn ? col::WarnBg : col::Panel);
+    const ImU32 border = v == Verdict::Error ? IM_COL32(0x6B, 0x2A, 0x2A, 255)
+                                             : (v == Verdict::Warn ? col::WarnBorder : col::Border);
+    beginCard(id, ImVec2(0, 0), 10, bg, border);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 c(p.x + 10, p.y + 9);
+    const ImU32 fg = v == Verdict::Error ? col::Error : (v == Verdict::Warn ? col::Warn : col::Ok);
+    dl->AddCircleFilled(c, 10, v == Verdict::Error ? IM_COL32(0x4A, 0x1C, 0x1C, 255)
+                                                   : (v == Verdict::Warn ? IM_COL32(0x4A, 0x3A, 0x12, 255) : col::OkBg),
+                        24);
+    if (v == Verdict::Ok) icon::check(dl, ImVec2(c.x - 6, c.y - 6), 12, fg);
+    else if (v == Verdict::Error) icon::cross(dl, ImVec2(c.x - 5, c.y - 5), 10, fg);
+    else {
+        ImGui::PushFont(fonts().bold, size::Help);
+        dl->AddText(ImVec2(c.x - 2, c.y - 7), fg, "!");
+        ImGui::PopFont();
+    }
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 32);
+    ImGui::BeginGroup();
+    text(title, fonts().semibold, size::Body, col::Text);
+    text(body, fonts().regular, size::Body, col::TextSecondary, true);
+    ImGui::EndGroup();
+    endCard();
 }
 
 void dashedRect(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 c, float thickness, float dash, float gap) {

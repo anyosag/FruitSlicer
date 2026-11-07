@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "Script.h"
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -11,6 +12,8 @@
 #include "Document.h"
 #include "Log.h"
 #include "mesh/StlIO.h"
+
+#include <miniz.h>
 
 namespace gui {
 
@@ -28,12 +31,72 @@ Script::Script(const std::string& path) {
 
 namespace {
 
-std::string demoPath() {
+std::filesystem::path demoDir() {
     const auto dir = std::filesystem::temp_directory_path() / "fruitslicer-demo";
     std::filesystem::create_directories(dir);
-    const auto p = (dir / "bracket.stl").string();
-    fruit::writeStl(p, demoModel());
+    return dir;
+}
+
+// A 3MF package holding `m` (geometry only), to exercise the 3MF reader.
+void writeDemo3mf(const std::string& path, const fruit::TriangleMesh& m) {
+    std::string xml =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<model unit=\"millimeter\" "
+        "xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\"><resources><object id=\"1\" "
+        "type=\"model\"><mesh><vertices>";
+    char b[160];
+    for (const fruit::Vec3& v : m.vertices) {
+        std::snprintf(b, sizeof b, "<vertex x=\"%.6f\" y=\"%.6f\" z=\"%.6f\"/>", v.x, v.y, v.z);
+        xml += b;
+    }
+    xml += "</vertices><triangles>";
+    for (const fruit::Face& f : m.faces) {
+        std::snprintf(b, sizeof b, "<triangle v1=\"%d\" v2=\"%d\" v3=\"%d\"/>", f[0], f[1], f[2]);
+        xml += b;
+    }
+    xml += "</triangles></mesh></object></resources><build><item objectid=\"1\"/></build></model>";
+    const std::string rels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Relationships "
+        "xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship "
+        "Target=\"/3D/3dmodel.model\" Id=\"rel0\" "
+        "Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\"/></Relationships>";
+    mz_zip_archive z{};
+    std::filesystem::remove(path);
+    if (!mz_zip_writer_init_file(&z, path.c_str(), 0)) throw std::runtime_error("cannot write " + path);
+    mz_zip_writer_add_mem(&z, "_rels/.rels", rels.data(), rels.size(), MZ_DEFAULT_COMPRESSION);
+    mz_zip_writer_add_mem(&z, "3D/3dmodel.model", xml.data(), xml.size(), MZ_DEFAULT_COMPRESSION);
+    mz_zip_writer_finalize_archive(&z);
+    mz_zip_writer_end(&z);
+}
+
+// "@demo": the bracket; "@demo-big": six times larger (too deep for the
+// plate); "@demo-3mf": the bracket as a 3MF file.
+std::string demoPath(const std::string& which) {
+    fruit::TriangleMesh m = demoModel();
+    if (which == "@demo-big") {
+        fruit::Transform t;
+        for (auto& row : t.m)
+            for (double& v : row) v *= 6;
+        m.transform(t);
+        const auto p = (demoDir() / "big bracket.stl").string();
+        fruit::writeStl(p, m);
+        return p;
+    }
+    if (which == "@demo-3mf") {
+        const auto p = (demoDir() / "bracket.3mf").string();
+        writeDemo3mf(p, m);
+        return p;
+    }
+    const auto p = (demoDir() / "bracket.stl").string();
+    fruit::writeStl(p, m);
     return p;
+}
+
+SizeChoice sizeFrom(const std::string& s) {
+    if (s == "full") return SizeChoice::Full;
+    if (s == "largest") return SizeChoice::Largest;
+    if (s == "custom") return SizeChoice::Custom;
+    if (s == "inches") return SizeChoice::Inches;
+    throw std::runtime_error("unknown size choice " + s);
 }
 
 ViewPreset viewFrom(const std::string& s) {
@@ -62,8 +125,28 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setScreen(screenFrom(step["screen"].get<std::string>()));
         } else if (step.contains("open")) {
             std::string p = step["open"].get<std::string>();
-            if (p == "@demo") p = demoPath();
+            if (!p.empty() && p[0] == '@') p = demoPath(p);
             app.openPath(p);
+        } else if (step.contains("health")) {
+            const std::string what = step["health"].get<std::string>();
+            if (what == "place") app.placeChecked();
+            else if (what == "cancel") app.cancelChecked();
+            else app.chooseSize(sizeFrom(what), step.value("percent", 0.0));
+        } else if (step.contains("scale")) {
+            app.setScalePercent(step["scale"].get<double>());
+        } else if (step.contains("rotate")) {
+            const auto& r = step["rotate"];
+            app.setRotation({r[0].get<double>(), r[1].get<double>(), r[2].get<double>()});
+        } else if (step.contains("sits")) {
+            app.setOnPlate(step["sits"].get<std::string>() == "flat");
+        } else if (step.contains("fit")) {
+            app.scaleToFit();
+        } else if (step.contains("undo")) {
+            for (int i = 0, n = step["undo"].get<int>(); i < n; ++i) app.undo();
+        } else if (step.contains("redo")) {
+            for (int i = 0, n = step["redo"].get<int>(); i < n; ++i) app.redo();
+        } else if (step.contains("shortcuts")) {
+            app.showShortcuts(step["shortcuts"].get<bool>());
         } else if (step.contains("wait")) {
             app.jobs().wait();
         } else if (step.contains("view")) {

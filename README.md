@@ -42,10 +42,15 @@ ctest --test-dir build
 
 ## Desktop app (early build)
 
-A Mac app is being built in stages on top of the same engine. This first
-build opens STL and OBJ files and shows them on the Saturn 4 Ultra 16K's
-plate; orienting, supports, layers and saving `.goo` files come next. It is
-one universal app for Apple silicon and Intel Macs, macOS 14 or later.
+A Mac app is being built in stages on top of the same engine. Today it
+opens STL, OBJ and 3MF files and checks them: closed shells, inside-out
+parts, hollows, low points, and whether the model fits the Saturn 4 Ultra
+16K's plate. You then choose its size (full, the largest that fits, a custom
+percentage, or ×25.4 for models drawn in inches), rotation, and whether it
+stands raised on supports or flat on the plate. Edits undo with ⌘Z, and ⌘/
+lists the shortcuts. Orienting, supports, layers and saving `.goo` files come
+next. It is one universal app for Apple silicon and Intel Macs, macOS 14 or
+later.
 
 **Download.** Every CI run builds it. On GitHub, open the run (a pull
 request's *Checks* tab, or *Actions* → **CI**), scroll to *Artifacts*, and
@@ -84,12 +89,16 @@ scale, and the log is `~/Library/Application Support/FruitSlicer/fruitslicer.log
 in Terminal, checks the engine, the fonts and OpenGL without the interface.
 
 **Screenshot tests.** The scripts in `tests/gui/*.json` drive the app
-(`--script s.json --shots dir`) and CI compares the pictures with
-`tests/gui/golden` using `tools/compare_screens.py`. After an intended visual
-change, check the new pictures (CI uploads them as *app-screens-linux*) and
-copy them over the goldens.
+through the same commands as its buttons (`--script s.json --shots dir`; the
+steps are listed in `src/gui/Script.h`), and CI compares the pictures with
+`tests/gui/golden` using `tools/compare_screens.py`. A run also fails when
+Dear ImGui reports a misuse. After an intended visual change, check the new
+pictures (CI uploads them as *app-screens-linux*) and copy them over the
+goldens. The app's document logic has its own tests (`fruit_gui_tests`).
 
 ## Usage
+
+Every command reads STL (binary or text), OBJ and 3MF models.
 
 ```sh
 # Mesh statistics: shells, manifoldness, volume, downward-facing minima

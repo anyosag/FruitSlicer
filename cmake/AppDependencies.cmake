@@ -29,22 +29,12 @@ FetchContent_Declare(imgui
   GIT_TAG v1.93.0
   GIT_SHALLOW TRUE)
 
-# miniz (MIT) - zlib/zip: compressed PNG screenshots, later 3MF archives.
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(INSTALL_PROJECT OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(miniz
-  GIT_REPOSITORY https://github.com/richgel999/miniz.git
-  GIT_TAG 3.1.2
-  GIT_SHALLOW TRUE)
-
 # Inter 4.1 (SIL Open Font License 1.1) - the UI typeface.
 FetchContent_Declare(inter
   URL https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
   URL_HASH SHA256=9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e)
 
-FetchContent_MakeAvailable(sdl3 imgui miniz inter)
+FetchContent_MakeAvailable(sdl3 imgui inter)
 
 add_library(fruit_imgui STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp
@@ -54,14 +44,15 @@ add_library(fruit_imgui STATIC
   ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
 target_include_directories(fruit_imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_compile_definitions(fruit_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+target_compile_definitions(fruit_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS "IMGUI_USER_CONFIG=\"fruit_imconfig.h\"")
+target_include_directories(fruit_imgui PUBLIC ${PROJECT_SOURCE_DIR}/src/gui/imconfig)
 target_link_libraries(fruit_imgui PUBLIC SDL3::SDL3-static)
 
 add_library(fruit_glad STATIC ${PROJECT_SOURCE_DIR}/third_party/glad/src/gl.c)
 target_include_directories(fruit_glad PUBLIC ${PROJECT_SOURCE_DIR}/third_party/glad/include)
 
 # Third-party code: their warnings are not ours to fix.
-foreach(t SDL3-static fruit_imgui fruit_glad miniz)
+foreach(t SDL3-static fruit_imgui fruit_glad)
   if(TARGET ${t})
     target_compile_options(${t} PRIVATE -w)
   endif()

@@ -7,9 +7,15 @@
 //    "steps": [{"screen": "home"}, {"shot": "home"},
 //              {"open": "@demo"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "model"}]}
 //
-// Steps drive the app through the same commands its buttons use. "@demo"
-// opens a built-in test model. Shots are written as <dir>/<name>.png once
-// two consecutive frames are identical.
+// Steps drive the app through the same commands its buttons use:
+//   {"open": path | "@demo" | "@demo-big" | "@demo-3mf"}  built-in test models
+//   {"wait": "jobs"}            finish background work
+//   {"health": "full" | "largest" | "custom" (+ "percent") | "inches" | "place" | "cancel"}
+//   {"scale": percent} {"rotate": [x, y, z]} {"sits": "raised" | "flat"} {"fit": true}
+//   {"undo": n} {"redo": n} {"shortcuts": true | false}
+//   {"screen": "home" | "job" | "about"} {"view": "front" | "side" | "angled" | "below"}
+// Shots are written as <dir>/<name>.png once two consecutive frames are
+// identical.
 
 #include <cstdint>
 #include <functional>
