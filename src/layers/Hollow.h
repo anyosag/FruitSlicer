@@ -48,6 +48,7 @@
 // - Cavities smaller than `min_volume` stay solid: each needs a drain hole
 //   of its own, more trouble than the resin it saves.
 
+#include <cstdint>
 #include <vector>
 
 #include "core/JobControl.h"
@@ -72,10 +73,23 @@ struct Cavity {
     double volume = 0;  // mm³
 };
 
+// A piece of one layer's interior: paths [begin, begin + count) of that
+// layer's `interior`, its outline first and then its holes.
+struct InteriorPiece {
+    uint32_t begin = 0, count = 0;
+    int cavity = 0;  // index into `cavities`
+};
+
 struct HollowResult {
     std::vector<Paths> interior;   // per layer, what is removed (empty where nothing is)
+    std::vector<std::vector<InteriorPiece>> pieces;  // per layer, which cavity each piece belongs to
     double volume = 0;             // mm³ removed
     std::vector<Cavity> cavities;  // lowest first
+
+    // The cavity that point `p` of layer `layer` lies in, or -1.
+    int cavityAt(size_t layer, const Vec2& p) const;
+    // A piece's outline and holes.
+    Paths piece(size_t layer, const InteriorPiece& k) const;
 };
 
 // Reports stage "hollow". Throws Cancelled when cancelled, and

@@ -18,6 +18,7 @@ add_library(fruit_core
   layers/IslandGraph.cpp
   layers/HollowAnalysis.cpp
   layers/Hollow.cpp
+  layers/Drain.cpp
   printer/PrinterProfile.cpp
   io/PngWriter.cpp
   io/Render.cpp

@@ -38,6 +38,8 @@ struct HollowReport {
     // Per layer, the hollow regions belonging to resin traps (for skipping
     // supports on cavity ceilings).
     std::vector<Paths> trap_regions;
+    // Per layer, the hollow regions belonging to suction cups.
+    std::vector<Paths> cup_regions;
 };
 
 HollowReport analyzeHollows(const LayerStack& layers, double min_area = 0.5, double min_volume = 1.0);

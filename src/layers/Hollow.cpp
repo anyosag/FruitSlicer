@@ -183,7 +183,8 @@ std::vector<Paths> addRoofs(const std::vector<Paths>& in, double d, unsigned thr
 // Pieces of the interior that overlap from layer to layer form one cavity;
 // those under `min_volume` are dropped.
 void collectCavities(std::vector<Paths>& in, double layer_height, double min_volume, unsigned threads,
-                     std::vector<Cavity>& cavities, const JobControl& ctl) {
+                     std::vector<Cavity>& cavities, std::vector<std::vector<InteriorPiece>>& layer_pieces,
+                     const JobControl& ctl) {
     const size_t n = in.size();
     struct Piece {
         Paths shape;
@@ -227,6 +228,7 @@ void collectCavities(std::vector<Paths>& in, double layer_height, double min_vol
     for (size_t j = 0; j < n; ++j)
         for (size_t a = 0; a < pieces[j].size(); ++a) volume[find(first_id[j] + a)] += pieces[j][a].area * layer_height;
     std::vector<int> index(uf.size(), -1);  // cavity of each root
+    layer_pieces.assign(n, {});
     for (size_t j = 0; j < n; ++j) {
         in[j].clear();
         for (size_t a = 0; a < pieces[j].size(); ++a) {
@@ -237,6 +239,8 @@ void collectCavities(std::vector<Paths>& in, double layer_height, double min_vol
                 cavities.push_back({static_cast<int>(j), static_cast<int>(j), volume[root]});
             }
             cavities[index[root]].last_layer = static_cast<int>(j);
+            layer_pieces[j].push_back({static_cast<uint32_t>(in[j].size()),
+                                       static_cast<uint32_t>(pieces[j][a].shape.size()), index[root]});
             append(in[j], pieces[j][a].shape);
         }
     }
@@ -333,11 +337,30 @@ HollowResult hollowInterior(const LayerStack& solid, const HollowOptions& o, con
     ctl.step("hollow", 0.9);
 
     HollowResult r;
-    collectCavities(in, h, o.min_volume, o.threads, r.cavities, ctl);
+    collectCavities(in, h, o.min_volume, o.threads, r.cavities, r.pieces, ctl);
     for (const Cavity& c : r.cavities) r.volume += c.volume;
     r.interior = std::move(in);
     ctl.report("hollow", 1);
     return r;
+}
+
+Paths HollowResult::piece(size_t layer, const InteriorPiece& k) const {
+    const Paths& all = interior[layer];
+    return Paths(all.begin() + k.begin, all.begin() + k.begin + k.count);
+}
+
+int HollowResult::cavityAt(size_t layer, const Vec2& p) const {
+    if (layer >= pieces.size()) return -1;
+    const Point64 q = toPoint(p);
+    for (const InteriorPiece& k : pieces[layer]) {
+        const Paths& all = interior[layer];
+        if (Clipper2Lib::PointInPolygon(q, all[k.begin]) == Clipper2Lib::PointInPolygonResult::IsOutside) continue;
+        bool in_hole = false;
+        for (uint32_t i = 1; i < k.count && !in_hole; ++i)
+            in_hole = Clipper2Lib::PointInPolygon(q, all[k.begin + i]) == Clipper2Lib::PointInPolygonResult::IsInside;
+        if (!in_hole) return k.cavity;
+    }
+    return -1;
 }
 
 LayerStack hollowedLayers(const LayerStack& solid, const HollowResult& h) {
