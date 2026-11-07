@@ -398,6 +398,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 app.setScore(c.id, demoOutcome(app.plateKind(), c.params), demoMark(c.params), "");
                 app.scoreSelected() = nextToScore(*app.scores(), c.id);  // as Save and go to the next coupon does
             }
+        } else if (step.contains("fit_page")) {
+            const std::string a = step["fit_page"].get<std::string>();
+            if (a == "open") app.openFit();
+            else if (a == "use") app.useFit();
+            else throw std::runtime_error("unknown fit_page step " + a);
+        } else if (step.contains("fit_table")) {
+            app.fitTable() = step["fit_table"].get<bool>();
+        } else if (step.contains("fit_save_to")) {
+            // "@demo": the profile as "fitted profile.json" in the demo folder.
+            std::string p = step["fit_save_to"].get<std::string>();
+            if (p == "@demo") p = (demoDir() / "fitted profile.json").string();
+            app.saveFitTo(p);
         } else if (step.contains("score_mirrored")) {
             app.scoreMirrored() = step["score_mirrored"].get<bool>();
         } else if (step.contains("score_import")) {

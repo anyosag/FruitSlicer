@@ -228,10 +228,18 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 std::vector<double> x;
                 std::vector<int> y;
                 double scar_sum = 0;
-                int scar_n = 0;
+                int scar_n = 0, held = 0;
+                double max_held = -1, min_failed = -1;
                 for (const auto* c : cs) {
-                    x.push_back(num(c->params, "load_per_tip_mm2"));
+                    const double load = num(c->params, "load_per_tip_mm2");
+                    x.push_back(load);
                     y.push_back(c->ok ? 1 : 0);
+                    if (c->ok) {
+                        ++held;
+                        max_held = std::max(max_held, load);
+                    } else if (min_failed < 0 || load < min_failed) {
+                        min_failed = load;
+                    }
                     if (c->scar > 0) { scar_sum += c->scar; ++scar_n; }
                 }
                 const LogisticFit lf = fitLogistic(x, y);
@@ -240,10 +248,12 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 double cap;
                 std::string basis;
                 if (std::isinf(lf.l50) && lf.l50 > 0) {
-                    cap = max_x;
+                    // Half would let go somewhere above the heaviest load, so
+                    // the usual fraction of that load is a true lower bound.
+                    cap = o.capacity_fraction * max_x;
                     basis = "lower bound";
-                    notes.push_back("tips " + fmt(d) + " mm: no failures up to " + fmt(max_x) +
-                                    " mm² per tip; capacity set to that (a lower bound; test higher loads)");
+                    notes.push_back("tips " + fmt(d) + " mm: no failures up to " + fmt(max_x) + " mm² per tip; capacity " +
+                                    fmt(cap) + " is a lower bound (test higher loads)");
                 } else if (std::isinf(lf.l50)) {
                     cap = 0.5 * min_x;
                     basis = "upper bound";
@@ -268,6 +278,13 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                     if (c->scar > 0) { pen_scar[p].first += c->scar; pen_scar[p].second += 1; }
                 }
                 double best_pen = -1, best_rate = -1, best_scar = 1e9;
+                json depths = json::array();
+                for (const auto& [p, on] : pen_ok)
+                    depths.push_back({{"penetration", p},
+                                      {"held", on.first},
+                                      {"coupons", on.second},
+                                      {"mean_scar", pen_scar[p].second ? json(pen_scar[p].first / pen_scar[p].second)
+                                                                       : json(nullptr)}});
                 for (const auto& [p, on] : pen_ok) {
                     const double rate = static_cast<double>(on.first) / on.second;
                     const double sc = pen_scar[p].second ? pen_scar[p].first / pen_scar[p].second : 3.0;
@@ -283,6 +300,10 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 cands.push_back({d, cap, mean_scar});
                 detail.push_back({{"tip_diameter", d},
                                   {"coupons", cs.size()},
+                                  {"held", held},
+                                  {"max_held_mm2", max_held >= 0 ? json(max_held) : json(nullptr)},
+                                  {"min_failed_mm2", min_failed >= 0 ? json(min_failed) : json(nullptr)},
+                                  {"penetrations", depths},
                                   {"load_50pct", std::isfinite(lf.l50) ? json(lf.l50) : json(nullptr)},
                                   {"capacity_mm2", cap},
                                   {"basis", basis},
@@ -352,6 +373,9 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 detail["radius0"] = r0;
             }
             if (!wedges_ok.empty()) {
+                json per_wedge = json::array();
+                for (const auto& [ang, good] : wedges_ok) per_wedge.push_back({{"angle_deg", ang}, {"ok", good}});
+                detail["wedges"] = per_wedge;
                 double crit = -1;
                 for (const auto& [ang, good] : wedges_ok) {
                     if (!good) break;

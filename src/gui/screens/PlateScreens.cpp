@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
-// Resin test plates (canvas boards "PlatePreview" and "Results"): the plate
-// from above with what each coupon tests, and scoring it after printing,
-// blind to the settings.
+// Resin test plates (canvas boards "PlatePreview", "Results" and "Fit"): the
+// plate from above with what each coupon tests, scoring it after printing,
+// blind to the settings, and turning the scores into the resin's values.
 #include <imgui.h>
 
 #include <algorithm>
@@ -162,6 +162,131 @@ const PlateLayout::Cell* cellOf(const PlateLayout& l, int id) {
     return nullptr;
 }
 
+// The hold chart's bar colour: the accent, a step darker so it sits in the
+// dark theme's band for data marks (checked for contrast and lightness).
+constexpr ImU32 kYours = IM_COL32(0xD8, 0x6A, 0x26, 255);
+
+// "Measured"; "Bound" where the plates only show a floor; "Guess" where
+// everything tried was too much.
+void fitBadge(Basis b) {
+    const char* label = b == Basis::Bound ? "Bound" : b == Basis::Guess ? "Guess" : "Measured";
+    const ImU32 fg = b == Basis::Measured ? col::Ok : col::Warn;
+    ImGui::PushFont(fonts().medium, size::Label);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 q(p.x + ts.x + 14, p.y + 18);
+    dl->AddRectFilled(p, q, (fg & ~IM_COL32_A_MASK) | (0x26u << IM_COL32_A_SHIFT), 9);
+    dl->AddRect(p, q, (fg & ~IM_COL32_A_MASK) | (0x70u << IM_COL32_A_SHIFT), 9);
+    dl->AddText(ImVec2(p.x + 7, p.y + (18 - ts.y) / 2), fg, label);
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(ts.x + 14, 18));
+}
+
+// A step for the axis: 1, 2 or 5 times a power of ten, giving about four lines.
+float niceStep(float top) {
+    const float raw = top / 4, mag = std::pow(10.0f, std::floor(std::log10(raw)));
+    for (float m : {1.0f, 2.0f, 5.0f, 10.0f})
+        if (m * mag >= raw) return m * mag;
+    return 10 * mag;
+}
+
+// A bar from the baseline up to `top`; a guess is striped, so it never
+// reads as measured.
+void holdBar(ImDrawList* dl, ImVec2 a, ImVec2 b, bool guess) {
+    if (!guess) {
+        dl->AddRectFilled(a, b, kYours, 4, ImDrawFlags_RoundTop);
+        return;
+    }
+    dl->AddRectFilled(a, b, (kYours & ~IM_COL32_A_MASK) | (0x50u << IM_COL32_A_SHIFT), 4, ImDrawFlags_RoundTop);
+    dl->PushClipRect(a, b, true);
+    for (float x = a.x - (b.y - a.y); x < b.x; x += 6) dl->AddLine(ImVec2(x, b.y), ImVec2(x + (b.y - a.y), a.y), kYours, 2);
+    dl->PopClipRect();
+    dl->AddRect(a, b, kYours, 4, 1.0f, ImDrawFlags_RoundTop);
+}
+
+// How much one tip holds: a bar per tip size for this resin, and a tick for
+// FruitSlicer's starting value. A floor says "≥"; a guess is striped.
+void holdChart(const std::vector<TipHold>& holds, float w, float h) {
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    float top = 1;
+    for (const TipHold& t : holds) top = std::max(top, static_cast<float>(std::max(t.yours, t.borrowed)));
+    const float step = niceStep(top * 1.12f);
+    top = step * std::ceil(top * 1.12f / step);
+    const float left = 44, bottom = 26, plot_h = h - bottom - 18;
+    const float x0 = o.x + left, y0 = o.y + 18 + plot_h;  // the baseline
+    auto yAt = [&](double v) { return y0 - static_cast<float>(v / top) * plot_h; };
+    ImGui::PushFont(fonts().regular, size::Help);
+    for (float v = 0; v <= top + 1e-3f; v += step) {
+        const float y = yAt(v);
+        dl->AddLine(ImVec2(x0, y), ImVec2(o.x + w, y), v == 0 ? col::BorderStrong : col::Border);
+        const std::string l = strf("%g", v);
+        dl->AddText(ImVec2(x0 - 8 - ImGui::CalcTextSize(l.c_str()).x, y - 7), col::TextMuted, l.c_str());
+    }
+    const float group = (w - left) / static_cast<float>(std::max<std::size_t>(1, holds.size()));
+    const float bar = std::min(40.0f, group * 0.42f);
+    int hovered = -1;
+    for (std::size_t i = 0; i < holds.size(); ++i) {
+        const TipHold& t = holds[i];
+        const float cx = x0 + group * (static_cast<float>(i) + 0.5f);
+        const float ty = yAt(t.yours);
+        holdBar(dl, ImVec2(cx - bar / 2, ty), ImVec2(cx + bar / 2, y0), t.basis == Basis::Guess);
+        // The starting value: a tick across the bar.
+        const float by = yAt(t.borrowed);
+        dl->AddLine(ImVec2(cx - bar / 2 - 7, by), ImVec2(cx + bar / 2 + 7, by), col::TextSecondary, 2.0f);
+        // The value just above its own bar, clear of the tick when that is close above it.
+        const std::string v = (t.basis == Basis::Bound ? "≥ " : "") + oneDecimal(t.yours);
+        ImGui::PushFont(fonts().semibold, size::Help);
+        const ImVec2 vs = ImGui::CalcTextSize(v.c_str());
+        float ly = ty - vs.y - 4;
+        if (by < ty && ly < by + 3 && ly + vs.y > by - 3) ly = by - vs.y - 4;
+        dl->AddText(ImVec2(cx - vs.x / 2, ly), col::Text, v.c_str());
+        ImGui::PopFont();
+        const std::string x = strf("%g mm", t.tip);
+        const ImVec2 xs = ImGui::CalcTextSize(x.c_str());
+        dl->AddText(ImVec2(cx - xs.x / 2, y0 + 7), col::TextSecondary, x.c_str());
+        if (ImGui::IsMouseHoveringRect(ImVec2(cx - group / 2, o.y), ImVec2(cx + group / 2, y0 + bottom)))
+            hovered = static_cast<int>(i);
+    }
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(w, h));
+    if (hovered >= 0) {
+        const TipHold& t = holds[static_cast<std::size_t>(hovered)];
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24);
+        text(strf("%g mm tips", t.tip).c_str(), fonts().semibold, size::Body, col::Text);
+        text(("Your resin: " + holdText(t)).c_str(), fonts().regular, size::Body, col::TextSecondary);
+        text(("Starting value: " + oneDecimal(t.borrowed) + " mm²").c_str(), fonts().regular, size::Body,
+             col::TextSecondary);
+        text(t.how.c_str(), fonts().regular, size::Help, col::TextMuted, true);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+void holdTable(const std::vector<TipHold>& holds, float w) {
+    const float c1 = w * 0.42f, c2 = w * 0.71f;
+    const float x0 = ImGui::GetCursorPosX();
+    auto row = [&](const char* a, const std::string& b, const std::string& c, bool head) {
+        const float y = ImGui::GetCursorPosY();
+        ImFont* f = head ? fonts().semibold : fonts().regular;
+        const ImU32 fg = head ? col::TextMuted : col::TextSecondary;
+        ImGui::SetCursorPos(ImVec2(x0, y));
+        text(a, f, size::Body, head ? col::TextMuted : col::Text);
+        ImGui::SetCursorPos(ImVec2(x0 + c1, y));
+        text(b.c_str(), f, size::Body, fg);
+        ImGui::SetCursorPos(ImVec2(x0 + c2, y));
+        text(c.c_str(), f, size::Body, fg);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x, p.y + 3), ImVec2(p.x + w, p.y + 3), col::Border);
+        ImGui::Dummy(ImVec2(0, 8));
+    };
+    row("Tip size", "Your resin", "Starting value", true);
+    for (const TipHold& t : holds)
+        row(strf("%g mm", t.tip).c_str(), holdText(t), oneDecimal(t.borrowed) + " mm²", false);
+}
+
 }  // namespace
 
 // ---- The plate, from above ----
@@ -280,8 +405,17 @@ void score(App& app) {
                                : total > 0 && done == total ? strf("All %d scored", total)
                                                             : strf("%d of %d scored", done, total);
     header(app, "Score the " + lowerFirst(plateTitle(kind)), status, [&](float right, float y) {
+               float x = right;
+               if (done > 0) {
+                   const float fw = textWidth("Fit the scores", fonts().bold, size::Body) + 34;
+                   x -= fw;
+                   ImGui::SetCursorPos(ImVec2(x, y + 4));
+                   if (primaryButton("Fit the scores", ImVec2(fw, 38))) app.openFit();
+                   tooltip("Turn the scores so far into this resin's values, and see how each was found.");
+                   x -= 8;
+               }
                const float iw = textWidth("Import a filled CSV…", fonts().semibold, size::Body) + 28;
-               ImGui::SetCursorPos(ImVec2(right - iw, y + 4));
+               ImGui::SetCursorPos(ImVec2(x - iw, y + 4));
                if (secondaryButton("Import a filled CSV…", ImVec2(iw, 38))) app.importScores();
                tooltip("A score sheet filled in by hand (.results.csv), with the plate's manifest (.json) beside it.");
            });
@@ -411,6 +545,139 @@ void score(App& app) {
     }
     if (outcome == App::Outcome::None) tooltip("Choose whether it held first.");
     endCard();
+    endPage();
+}
+
+// ---- The fit: what the resin can do ----
+
+void fit(App& app) {
+    beginPage("fit");
+    const FitSummary* f = app.fitSummary();
+    const Resin& resin = app.newJobResin();
+    const bool fitted = f && !f->kinds.empty();
+    const bool in_use = app.fitInUse();
+    header(app, "What your resin can do", "For " + resin.name + " · " + (f ? f->from : std::string()),
+           [&](float right, float y) {
+               const std::string use = in_use ? "In use" : "Use for " + resin.name;
+               const float uw = textWidth(use.c_str(), fonts().bold, size::Body) + 34;
+               ImGui::SetCursorPos(ImVec2(right - uw, y + 4));
+               if (primaryButton(use.c_str(), ImVec2(uw, 38), fitted && !in_use)) app.useFit();
+               if (in_use) tooltip("New jobs in this resin use these values. Jobs saved before keep theirs.");
+               else if (fitted) tooltip("New jobs in this resin will use these values. Jobs saved before keep theirs.");
+               const float sw = textWidth("Save profile as…", fonts().semibold, size::Body) + 28;
+               ImGui::SetCursorPos(ImVec2(right - uw - 8 - sw, y + 4));
+               if (secondaryButton("Save profile as…", ImVec2(sw, 38), fitted)) app.saveFitAs();
+           });
+    const float w = ImGui::GetContentRegionAvail().x, left_w = w - kSideW - 16;
+    if (!fitted) {
+        beginCard("none", ImVec2(std::min(w, 640.0f), 0), 18, col::Panel, col::Border);
+        text("Nothing is scored yet", fonts().semibold, size::Section, col::Text);
+        text("Score a printed plate first: its scores are what the fit turns into this resin's values.",
+             fonts().regular, size::Body, col::TextSecondary, true);
+        ImGui::Dummy(ImVec2(0, 4));
+        if (secondaryButton("Back to Calibrate", ImVec2(0, 34))) app.setScreen(Screen::Calibrate);
+        endCard();
+        endPage();
+        return;
+    }
+    ImGui::BeginGroup();
+    beginCard("holds", ImVec2(left_w, 0), 18, col::Panel, col::Border);
+    {
+        const float x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
+        text("How much one tip holds", fonts().semibold, size::Section, col::Text);
+        text("Layer area per tip, in mm²", fonts().regular, size::Help, col::TextMuted);
+        if (!f->holds.empty()) {
+            bool& table = app.fitTable();
+            const float tw = textWidth("Table", fonts().medium, size::Body) + 24,
+                        cw = textWidth("Chart", fonts().medium, size::Body) + 24;
+            ImGui::SetCursorPos(ImVec2(x0 + ImGui::GetContentRegionAvail().x - tw - cw - 4, y0));
+            if (segmentButton("Chart", !table)) table = false;
+            ImGui::SameLine(0, 4);
+            if (segmentButton("Table", table)) table = true;
+            ImGui::SetCursorPos(ImVec2(x0, y0 + 46));
+            if (table) {
+                holdTable(f->holds, ImGui::GetContentRegionAvail().x);
+            } else {
+                holdChart(f->holds, ImGui::GetContentRegionAvail().x, 240);
+                // The key: two kinds of mark.
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(ImVec2(p.x, p.y + 3), ImVec2(p.x + 12, p.y + 15), kYours, 3);
+                ImGui::Dummy(ImVec2(16, 18));
+                ImGui::SameLine(0, 4);
+                text(("Your resin, " + resin.name).c_str(), fonts().regular, size::Help, col::TextMuted);
+                ImGui::SameLine(0, 18);
+                const ImVec2 q = ImGui::GetCursorScreenPos();
+                dl->AddLine(ImVec2(q.x, q.y + 9), ImVec2(q.x + 16, q.y + 9), col::TextSecondary, 2.0f);
+                ImGui::Dummy(ImVec2(20, 18));
+                ImGui::SameLine(0, 4);
+                text("FruitSlicer's starting value", fonts().regular, size::Help, col::TextMuted);
+                if (std::any_of(f->holds.begin(), f->holds.end(), [](const TipHold& t) { return t.basis == Basis::Guess; })) {
+                    ImGui::SameLine(0, 18);
+                    const ImVec2 g = ImGui::GetCursorScreenPos();
+                    holdBar(dl, ImVec2(g.x, g.y + 3), ImVec2(g.x + 12, g.y + 15), true);
+                    ImGui::Dummy(ImVec2(16, 18));
+                    ImGui::SameLine(0, 4);
+                    text("A guess: none held, even at the lightest load", fonts().regular, size::Help, col::TextMuted);
+                }
+            }
+            ImGui::Dummy(ImVec2(0, 2));
+            text("FruitSlicer keeps 70 % of the load at which half the tips let go, so there is a safety margin. "
+                 "A coupon that held only partly counts as letting go.",
+                 fonts().regular, size::Help, col::TextMuted, true);
+        } else {
+            ImGui::SetCursorPos(ImVec2(x0, y0 + 46));
+            text("Score the tips plate to see how much each tip size holds.", fonts().regular, size::Body,
+                 col::TextSecondary, true);
+        }
+    }
+    endCard();
+    ImGui::Dummy(ImVec2(0, 4));
+    beginCard("values", ImVec2(left_w, 0), 18, col::Panel, col::Border);
+    text("Each value, and how it was found", fonts().semibold, size::Section, col::Text);
+    ImGui::Dummy(ImVec2(0, 2));
+    for (std::size_t i = 0; i < f->values.size(); ++i) {
+        const FitValue& v = f->values[i];
+        const float rw = ImGui::GetContentRegionAvail().x;
+        if (i) {
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + rw, p.y), col::Border);
+        }
+        ImGui::Dummy(ImVec2(rw, 6));
+        const float x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
+        fitBadge(v.basis);
+        ImGui::SetCursorPos(ImVec2(x0 + 92, y0));
+        text(v.label.c_str(), fonts().semibold, size::Body, col::Text);
+        const float vw = textWidth(v.value.c_str(), fonts().semibold, size::Body);
+        ImGui::SetCursorPos(ImVec2(x0 + rw - vw, y0));
+        text(v.value.c_str(), fonts().semibold, size::Body, col::Text);
+        ImGui::SetCursorPos(ImVec2(x0 + 92, y0 + 21));
+        ImGui::PushTextWrapPos(x0 + rw);
+        text(v.how.c_str(), fonts().regular, size::Help, col::TextMuted, true);
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, 2));
+    }
+    endCard();
+    ImGui::EndGroup();
+    ImGui::SameLine(0, 16);
+    ImGui::BeginGroup();
+    beginCard("next", ImVec2(kSideW, 0), 18, col::Panel, col::Border);
+    text("Worth printing next", fonts().semibold, size::Section, col::Text);
+    ImGui::Dummy(ImVec2(0, 2));
+    if (f->next.empty())
+        text("Nothing: every plate is scored.", fonts().regular, size::Body, col::TextSecondary, true);
+    for (const std::string& n : f->next) text(("· " + n).c_str(), fonts().regular, size::Body, col::TextSecondary, true);
+    endCard();
+    if (!f->unsure.empty()) {
+        ImGui::Dummy(ImVec2(0, 4));
+        beginCard("unsure", ImVec2(kSideW, 0), 18, col::Panel, col::Border);
+        text("What the plates couldn't pin down", fonts().semibold, size::Section, col::Text);
+        ImGui::Dummy(ImVec2(0, 2));
+        for (const std::string& n : f->unsure)
+            text(("· " + n).c_str(), fonts().regular, size::Body, col::TextSecondary, true);
+        endCard();
+    }
+    ImGui::EndGroup();
     endPage();
 }
 

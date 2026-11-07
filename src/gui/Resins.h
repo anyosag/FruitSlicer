@@ -69,11 +69,13 @@ std::string resinState(const Resin& r);
 // Whether a fit of that plate ("tips", "spacing", "islands") is in `profile`.
 bool plateMeasured(const nlohmann::json& profile, const std::string& kind);
 // What to do next with a resin's test plates: for the first, in order, not
-// done yet (fully scored, or fitted), print it or score it.
+// done yet (fully scored, or fitted), print it or score it; once all are,
+// fit any scores not in its values yet.
 struct PlateStep {
-    std::string kind;    // empty: all done
-    bool score = false;  // score it (it was saved); else print it
-    std::string text;    // for the Calibrate page's Next card
+    enum class Action { Print, Score, Fit, None };
+    Action action = Action::None;
+    std::string kind;  // the plate to print or score
+    std::string text;  // for the Calibrate page's Next card
 };
 PlateStep nextPlateStep(const Resin& r);
 std::string profileState(const nlohmann::json& profile);

@@ -17,6 +17,7 @@
 #include "JobFile.h"
 #include "Jobs.h"
 #include "Preferences.h"
+#include "Fit.h"
 #include "Resins.h"
 #include "Send.h"
 #include "platform/Platform.h"
@@ -29,7 +30,7 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score };
+enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -276,6 +277,15 @@ public:
     void setScore(int id, Outcome o, int scar, const std::string& notes);
     void importScores();                          // a filled sheet, through a dialog
     void importScoresFile(const std::string& csv);
+    // The fit (canvas board "Fit"): the new-job resin's scored plates turned
+    // into its support values.
+    void openFit();
+    const FitSummary* fitSummary() const { return fit_.get(); }
+    bool fitInUse() const;                        // the resin's values are these already
+    void useFit();                                // into the resin's values
+    void saveFitAs();                             // as a profile (.json), through a dialog
+    void saveFitTo(const std::string& path);
+    bool& fitTable() { return fit_table_; }       // the chart as a table
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -396,6 +406,10 @@ private:
     bool score_mirrored_ = false;
     std::shared_ptr<PlateScores> scores_;
     std::string scores_resin_;  // whose they are
+    std::shared_ptr<const FitSummary> fit_;
+    std::string fit_resin_;     // whose plates it fitted
+    bool fit_table_ = false;
+    nlohmann::json fittedProfile() const;  // the resin's profile with the fit in it
     // Where a resin's plate of this kind is kept: the file it was saved as
     // (if it was), and its manifest and score sheet in FruitSlicer's folder.
     PlateFiles keptPlate(const Resin& r, const std::string& kind) const;

@@ -97,11 +97,36 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     std::map<double, double> cap;
     for (const auto& e : prof["capacity_table"]) cap[e[0].get<double>()] = e[1].get<double>();
     CHECK(cap.at(0.4) == Approx(0.7 * 15));
-    CHECK(cap.at(0.6) == Approx(20));      // never failed: lower bound = max load
+    // Never failed: half would let go somewhere above 20, so 0.7 × 20 is a
+    // true lower bound. (The truth here is 0.7 × 27 = 18.9; reporting 20, as
+    // the fit once did, would overstate it.)
+    CHECK(cap.at(0.6) == Approx(0.7 * 20));
     CHECK(cap.at(0.2) == Approx(2.5));     // always failed: half the smallest load
     CHECK(prof["minima_tip_diameter"].get<double>() == Approx(0.6));
     // Default: lowest scar among tips holding >= 4 mm² → 0.3 mm (capacity 0.7 × 7.5).
     CHECK(prof["default_tip_diameter"].get<double>() == Approx(0.3));
+
+    // What each tip size's value rests on, for saying how it was found.
+    std::map<double, json> tip;
+    for (const auto& t : prof["fits"]["tips"]) tip[t["tip_diameter"].get<double>()] = t;
+    CHECK(tip.at(0.4)["basis"] == "gap midpoint");
+    CHECK(tip.at(0.4)["held"].get<int>() == 8);  // 5 and 10 mm², at 2 depths, twice
+    CHECK(tip.at(0.4)["coupons"].get<int>() == 12);
+    CHECK(tip.at(0.4)["max_held_mm2"].get<double>() == Approx(10));
+    CHECK(tip.at(0.4)["min_failed_mm2"].get<double>() == Approx(20));
+    CHECK(tip.at(0.6)["basis"] == "lower bound");
+    CHECK(tip.at(0.6)["held"].get<int>() == 12);
+    CHECK(tip.at(0.6)["min_failed_mm2"].is_null());
+    CHECK(tip.at(0.2)["max_held_mm2"].is_null());
+    REQUIRE(tip.at(0.4)["penetrations"].size() == 2);
+    for (const auto& d : tip.at(0.4)["penetrations"]) {
+        CHECK(d["held"].get<int>() == 4);
+        CHECK(d["coupons"].get<int>() == 6);
+        CHECK(d["mean_scar"].get<double>() > 0);
+    }
+    REQUIRE(prof["fits"]["spacing"]["wedges"].size() == 7);
+    for (const auto& w : prof["fits"]["spacing"]["wedges"])
+        CHECK(w["ok"].get<bool>() == (w["angle_deg"].get<double>() <= 50));
 
     // Spacing: 3 mm pitch → r0 = 3/√2, seed curve scaled.
     CHECK(prof["coverage_curve"][0][1].get<double>() == Approx(3.0 / std::sqrt(2.0)));
