@@ -63,6 +63,7 @@ set(app_sources
   Orient.cpp
   Preferences.cpp
   Print.cpp
+  Resins.cpp
   Send.cpp
   Setup.cpp
   Script.cpp
@@ -76,6 +77,7 @@ set(app_sources
   screens/JobScreen.cpp
   screens/LayersStep.cpp
   screens/PrintStep.cpp
+  screens/ResinsScreen.cpp
   screens/SendDialog.cpp
   screens/SettingsScreens.cpp
   screens/SupportsAdvanced.cpp

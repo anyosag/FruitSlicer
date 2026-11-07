@@ -28,6 +28,8 @@ struct BadgeStyle {
     ImU32 fg, bg, border;
 };
 
+BadgeStyle measuredBadge() { return {"Measured", col::Ok, col::OkBg, IM_COL32(0x1E, 0x5A, 0x3E, 255)}; }
+
 BadgeStyle badgeFor(Source s, bool yours) {
     if (yours) return {"Yours", col::Accent, IM_COL32(0x2A, 0x1D, 0x12, 255), IM_COL32(0x5A, 0x3A, 0x1E, 255)};
     switch (s) {
@@ -126,7 +128,7 @@ void drawValue(App& app, const AdvancedSetting& s, const AdvancedContext& x, flo
         }
         case Kind::TipClass: {
             const AdvancedField& f = s.fields[0];
-            const int now = static_cast<int>(std::lround(f.get(x.cfg, x.tc)));
+            const int now = standardTipClass(x.cfg, static_cast<int>(std::lround(f.get(x.cfg, x.tc))));
             ImGui::PushID(f.key);
             for (int c = static_cast<int>(f.lo); c <= static_cast<int>(f.hi); ++c) {
                 ImGui::SetCursorPosY(row_y);
@@ -186,7 +188,7 @@ void row(App& app, const AdvancedSetting& s, const AdvancedContext& x, float w, 
     drawValue(app, s, x, row_y);
     ImGui::EndGroup();
     ImGui::SetCursorPos(ImVec2(x0 + w - kBadgeW, row_y + 5));
-    badge(badgeFor(s.source, advancedChanged(s, x.choices)));
+    badge(measuredByResin(s, x.choices) ? measuredBadge() : badgeFor(s.source, advancedChanged(s, x.choices)));
     // Next row below whichever part is taller.
     const float bottom = std::max(text_bottom, row_y + 34);
     ImGui::SetCursorPos(ImVec2(x0, bottom + 6));
@@ -241,7 +243,7 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
     ImGui::Dummy(ImVec2(0, 2));
     const float ty = ImGui::GetCursorPosY();
     text("Advanced support settings", fonts().bold, size::DialogTitle + 2, col::Text);
-    text("For: My resin · Defaults", fonts().regular, size::Body, col::TextMuted);
+    text(("For: " + resinLabel(c.resin, c.profile)).c_str(), fonts().regular, size::Body, col::TextMuted);
     {
         const float right = ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x;
         ImGui::PushFont(fonts().bold, size::Body);
@@ -280,6 +282,13 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
             ImGui::SetCursorPosY(y);
             text(k.what, fonts().regular, size::Help, col::TextMuted);
             ImGui::SameLine(0, 16);
+        }
+        if (c.profile.is_object()) {  // the job's resin was measured
+            ImGui::SetCursorPosY(y - 2);
+            badge(measuredBadge(), 76);
+            ImGui::SameLine(0, 6);
+            ImGui::SetCursorPosY(y);
+            text("on your resin's test plates", fonts().regular, size::Help, col::TextMuted);
         }
         ImGui::NewLine();
     }

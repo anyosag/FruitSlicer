@@ -158,6 +158,9 @@ void saveJob(const std::string& path, const Document& doc) {
     json sup = {{"choices", {{"usual_tip", c.usual_tip}, {"density", c.density}, {"merge", c.merge},
                              {"advanced", c.advanced}}}};
     if (c.hinge) sup["choices"]["hinge"] = fruit::hingeName(*c.hinge);
+    // The resin's name and a copy of its measured values: the job keeps them.
+    if (!c.resin.empty()) sup["choices"]["resin"] = c.resin;
+    if (c.profile.is_object()) sup["choices"]["profile"] = c.profile;
     // Tips only for supports made for the job as it is now.
     sup["edits"] = editsJson(doc.supports.edits);
     if (doc.supports.fresh(doc.revision(), doc.orient.settings)) {
@@ -262,6 +265,8 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.merge = cj.value("merge", true);
     c.advanced = cj.value("advanced", std::map<std::string, double>{});
     if (cj.contains("hinge") && cj["hinge"].is_string()) c.hinge = fruit::parseHinge(cj["hinge"].get<std::string>());
+    c.resin = cj.value("resin", std::string());
+    if (cj.contains("profile") && cj["profile"].is_object()) c.profile = cj["profile"];
     doc->supports.edits = editsFrom(sj.value("edits", json::array()));
 
     if (j.contains("print")) {
@@ -313,9 +318,15 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
         out.push_back(n == 1 ? "edited a tip by hand" : n > 1 ? "edited " + std::to_string(n) + " tips by hand"
                                                               : "undid tip edits");
     }
+    const bool resin = a.choices.resin != b.choices.resin || a.choices.profile != b.choices.profile;
+    if (resin) out.push_back("changed the resin to " + (b.choices.resin.empty() ? "My resin" : b.choices.resin));
+    SupportChoices other = b.choices;  // the rest of the support settings
+    other.resin = a.choices.resin;
+    other.profile = a.choices.profile;
+    other.usual_tip = resin ? a.choices.usual_tip : other.usual_tip;  // a resin sets its usual tip
     if (a.supports != b.supports && a.edits == b.edits)
         out.push_back(a.supports ? "generated the supports again" : "generated supports");
-    else if (a.supports == b.supports && !(a.choices == b.choices)) out.push_back("changed support settings");
+    else if (a.supports == b.supports && !(a.choices == other)) out.push_back("changed support settings");
     if (a.sample_path != b.sample_path || a.exposure != b.exposure || a.bottom_exposure != b.bottom_exposure ||
         a.bottom_layers != b.bottom_layers || a.transition_layers != b.transition_layers)
         out.push_back("changed the print settings");

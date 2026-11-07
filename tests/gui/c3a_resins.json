@@ -1,0 +1,17 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "resins"}, {"shot": "c3a_resins"},
+    {"resin_import": "@demo-profile"}, {"shot": "c3a_resin_measured"},
+    {"resin_new_from": "@demo-sample"}, {"shot": "c3a_resin_from_goo"},
+    {"resin_delete": "sample 0.03 mm"}, {"frames": 2}, {"shot": "c3a_resin_delete"},
+    {"resin_delete_confirm": true}, {"frames": 2},
+    {"new_job_resin": "Demo resin"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"shot": "c3a_job_demo_resin"},
+    {"advanced": "open"}, {"shot": "c3a_advanced_measured"}, {"advanced": "close"},
+    {"job_resin": "My resin"}, {"shot": "c3a_job_resin_changed"},
+    {"resin_menu": true}, {"frames": 2}, {"shot": "c3a_job_resin_menu"}
+  ]
+}

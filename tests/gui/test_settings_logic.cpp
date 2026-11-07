@@ -13,6 +13,7 @@
 #include "Licences.h"
 #include "Preferences.h"
 #include "Print.h"
+#include "Resins.h"
 #include "Setup.h"
 #include "formats/GooExport.h"
 #include "formats/GooFile.h"
@@ -72,7 +73,8 @@ TEST_CASE("Preferences: the core counts offered", "[gui][settings]") {
     CHECK(coreChoices(1) == std::vector<unsigned>{1});
 }
 
-TEST_CASE("Printer setup: setup and the print defaults are kept; older files read as not set up", "[gui][settings]") {
+TEST_CASE("Printer setup: setup and the resin for new jobs are kept; older files read as not set up",
+          "[gui][settings]") {
     const auto file = (dir() / "setup" / "settings.json").string();
     fs::remove_all(dir() / "setup");
     fs::create_directories(dir() / "setup");
@@ -80,15 +82,9 @@ TEST_CASE("Printer setup: setup and the print defaults are kept; older files rea
     PrinterSetup s = loadPrinterSetup(file);
     CHECK(s.orientation_confirmed);
     CHECK_FALSE(s.setup_done);
-    CHECK(s.sample_path.empty());
-    CHECK(s.bottom_layers == -1);
+    CHECK(s.resin.empty());
     s.setup_done = true;
-    s.sample_path = "/data/print settings/a.goo";
-    s.sample_name = "a.goo";
-    s.exposure = 2.0;
-    s.bottom_exposure = 25;
-    s.bottom_layers = 5;
-    s.transition_layers = 3;
+    s.resin = "siraya-fast";
     savePrinterSetup(file, s);
     CHECK(loadPrinterSetup(file) == s);
 }
@@ -124,27 +120,27 @@ TEST_CASE("Setup: a SatelLite file's settings are kept for new jobs; another pri
     const std::string copy = keepSampleHeader(sample, keep.string());
     CHECK(fs::path(copy).filename() == "my sample.goo");
     CHECK(fs::file_size(copy) == fruit::kGooHeaderSize);
-    // New jobs start from the copy, even once the file it came from is gone.
+    // Jobs in a resin start from the copy, even once the file it came from is gone.
     fs::remove(sample);
-    PrinterSetup s;
+    Resin s;
     s.sample_path = copy;
     s.sample_name = "my sample.goo";
-    PrintSettings p = printDefaults(s);
+    PrintSettings p = printSettingsFor(s);
     REQUIRE(p.sample);
     CHECK(p.sample->print.exposure == Approx(1.5));
     CHECK(p.sample_path == copy);
-    CHECK(printDefaultsSummary(s) == "From my sample.goo");
+    CHECK(printSummary(s) == "From my sample.goo");
     // A copy that has gone leaves the job to ask; typed values pass through.
     s.sample_path = (keep / "gone.goo").string();
     s.exposure = 2;
     s.bottom_exposure = 30;
-    p = printDefaults(s);
+    p = printSettingsFor(s);
     CHECK_FALSE(p.sample);
     CHECK(p.exposure == 2);
     CHECK(p.bottom_exposure == 30);
     s.sample_path.clear();
-    CHECK(printDefaultsSummary(s) == "Typed in: 2 s, bottom 30 s");
-    CHECK(printDefaultsSummary(PrinterSetup{}) == "None yet: each job asks");
+    CHECK(printSummary(s) == "Typed in: 2 s, bottom 30 s");
+    CHECK(printSummary(Resin{}) == "None yet: each job asks");
 
     // A file made for another printer: its exposures are for another light.
     fruit::GooHeader other = fruit::readGooHeader(copy);

@@ -34,12 +34,14 @@ const char* sideName(Side s) {
     return names[static_cast<int>(s)];
 }
 
-fruit::SupportConfig supportConfig(const fruit::Placement& p) {
+// The planner's settings for scoring: built-in values, then the job's
+// resin's measured ones (the same the Supports step uses).
+fruit::SupportConfig supportConfig(const fruit::Placement& p, const nlohmann::json& profile) {
     fruit::SupportConfig cfg;
     fruit::SupportChoices ch;
     ch.layer_height = kLayerHeight;
     ch.on_plate = p.on_plate;
-    fruit::resolveSettings(nullptr, ch, cfg, nullptr);
+    fruit::resolveSettings(profile.is_object() ? &profile : nullptr, ch, cfg, nullptr);
     return cfg;
 }
 
@@ -80,7 +82,7 @@ std::string fmt(const char* f, double a, double b = 0) {
 OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visible_model,
                       const fruit::JobControl& ctl) {
     const fruit::Placement& p = doc.placement();
-    const fruit::SupportConfig cfg = supportConfig(p);
+    const fruit::SupportConfig cfg = supportConfig(p, doc.supports.choices.profile);
     // The same planner run as the search's finalists, so the numbers compare.
     fruit::CosmeticSpec cos;
     cos.visible_from = visibleInPrinter(visible_model, p);
@@ -116,7 +118,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     for (int i = 0; i < 3; ++i) scale.m[i][i] = p.scale;
     m.transform(scale);
     fruit::OrientOptions o;
-    o.cfg = supportConfig(p);
+    o.cfg = supportConfig(p, doc.supports.choices.profile);
     o.elevation = p.lift();
     o.visible_from = visible_model;
     o.keep_points = false;

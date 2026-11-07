@@ -11,6 +11,8 @@
 #include "Capture.h"
 #include "Document.h"
 #include "Log.h"
+#include "calibration/CalibrationFit.h"
+#include "calibration/CalibrationPlates.h"
 #include "formats/GooExport.h"
 #include "formats/GooSetup.h"
 #include "mesh/Primitives.h"
@@ -94,6 +96,31 @@ std::string demoPath(const std::string& which) {
     return p;
 }
 
+// "@demo-profile": a resin profile from `fruitslicer fit`, fitted to a tips
+// plate scored as a resin a little weaker than the borrowed values would be.
+std::string demoProfile() {
+    const fruit::CalibrationPlate plate =
+        fruit::tipsPlate(fruit::TipsPlateOptions{}, fruit::PrinterProfile::saturn4Ultra16k());
+    fruit::PlateResults res;
+    res.kind = plate.kind;
+    res.settings = plate.settings;
+    for (const auto& c : plate.coupons) {
+        fruit::CouponResult r;
+        r.id = c.id;
+        r.params = c.params;
+        r.recorded = true;
+        const double d = c.params["tip_diameter"].get<double>(), load = c.params["load_per_tip_mm2"].get<double>();
+        r.ok = load <= 0.8 * fruit::CapacityModel{}.capacity(d);
+        r.scar = r.ok ? (d >= 0.6 ? 4 : d >= 0.4 ? 2 : 1) : 0;
+        res.coupons.push_back(r);
+    }
+    fruit::FitOptions o;
+    o.resin = "Demo resin";
+    const auto p = (demoDir() / "demo resin.json").string();
+    std::ofstream(p) << fruit::fitProfile({res}, o).dump(2) << "\n";
+    return p;
+}
+
 // "@demo-sample": a print file like one SatelLite saves, with 0.03 mm
 // layers and its own exposures, for the Print step's settings.
 std::string demoSample() {
@@ -148,6 +175,7 @@ Screen screenFrom(const std::string& s) {
     if (s == "printer") return Screen::Printer;
     if (s == "settings") return Screen::Settings;
     if (s == "setup") return Screen::Setup;
+    if (s == "resins") return Screen::Resins;
     throw std::runtime_error("unknown screen " + s);
 }
 
@@ -270,6 +298,33 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setupTyped() = true;
         } else if (step.contains("setup_typed")) {
             app.setupTyped() = step["setup_typed"].get<bool>();
+        } else if (step.contains("resin_import")) {
+            std::string p = step["resin_import"].get<std::string>();
+            if (p == "@demo-profile") p = demoProfile();
+            app.importResinFile(p);
+        } else if (step.contains("resin_new_from")) {
+            std::string p = step["resin_new_from"].get<std::string>();
+            if (p == "@demo-sample") p = demoSample();
+            app.newResinFromGooFile(p);
+        } else if (step.contains("resin_select") || step.contains("job_resin") || step.contains("new_job_resin") ||
+                   step.contains("resin_delete")) {
+            const char* key = step.contains("resin_select") ? "resin_select"
+                              : step.contains("job_resin")   ? "job_resin"
+                              : step.contains("resin_delete") ? "resin_delete"
+                                                              : "new_job_resin";
+            const std::string name = step[key].get<std::string>();
+            std::string id;
+            for (const Resin& r : app.resins())
+                if (r.name == name) id = r.id;
+            if (id.empty()) throw std::runtime_error("no resin called " + name);
+            if (std::string(key) == "resin_select") app.resinSelected() = id;
+            else if (std::string(key) == "job_resin") app.useResinForJob(id);
+            else if (std::string(key) == "resin_delete") app.resinToDelete() = id;
+            else app.setNewJobResin(id);
+        } else if (step.contains("resin_delete_confirm")) {
+            app.deleteResin(app.resinToDelete());
+        } else if (step.contains("resin_menu")) {
+            app.resinMenu() = step["resin_menu"].get<bool>();
         } else if (step.contains("licence")) {
             app.licenceOpen() = step["licence"].get<std::string>();
         } else if (step.contains("prefs")) {

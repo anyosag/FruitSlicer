@@ -35,15 +35,8 @@ PrinterSetup loadPrinterSetup(const std::string& file) {
         }
         if (j.contains("hinge") && j["hinge"].is_string()) s.hinge = fruit::parseHinge(j["hinge"].get<std::string>());
         s.setup_done = j.value("setup_done", false);
-        if (j.contains("print_defaults")) {
-            const json& d = j["print_defaults"];
-            s.sample_path = d.value("sample_path", std::string());
-            s.sample_name = d.value("sample_name", std::string());
-            s.exposure = d.value("exposure", 0.0);
-            s.bottom_exposure = d.value("bottom_exposure", 0.0);
-            s.bottom_layers = d.value("bottom_layers", -1);
-            s.transition_layers = d.value("transition_layers", -1);
-        }
+        s.resin = j.value("resin", std::string());
+        // An earlier version's "print_defaults" become a resin (firstResins).
     } catch (const std::exception&) {
         return PrinterSetup{};
     }
@@ -58,12 +51,7 @@ void savePrinterSetup(const std::string& file, const PrinterSetup& s) {
                         {"checked_with", s.checked_with}};
     if (s.hinge) j["hinge"] = fruit::hingeName(*s.hinge);
     j["setup_done"] = s.setup_done;
-    j["print_defaults"] = {{"sample_path", s.sample_path},
-                           {"sample_name", s.sample_name},
-                           {"exposure", s.exposure},
-                           {"bottom_exposure", s.bottom_exposure},
-                           {"bottom_layers", s.bottom_layers},
-                           {"transition_layers", s.transition_layers}};
+    j["resin"] = s.resin;
     const std::filesystem::path p(file);
     if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path());
     const std::string tmp = file + ".tmp";

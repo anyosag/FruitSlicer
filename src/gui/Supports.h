@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "core/JobControl.h"
 #include "geometry/Transform.h"
 #include "mesh/Placement.h"
@@ -35,8 +37,21 @@ struct SupportChoices {
     // The vat's hinge side, in plate coordinates: extra hold on the far side.
     // Set by the app from the printer's settings once the orientation is confirmed.
     std::optional<fruit::HingeSide> hinge;
+    // The resin the job is printed in, and a copy of the support values
+    // measured for it (a fitted profile; null: FruitSlicer's own), so a saved
+    // job keeps its values whatever happens to the resin later.
+    std::string resin;
+    nlohmann::json profile;
     bool operator==(const SupportChoices&) const = default;
 };
+
+// Tip sizes are chosen as FruitSlicer's own classes (0.2, 0.3, 0.4, 0.6 mm,
+// by index). A resin profile may have measured other sizes: a choice then
+// means the class nearest that size, and a class shows as the nearest one.
+int nearestTipClass(const fruit::SupportConfig& cfg, int standard_class);
+// The usual tip (1 = 0.3, 2 = 0.4, 3 = 0.6 mm) a resin profile measured, or the default.
+int usualTipFor(const nlohmann::json& profile);
+int standardTipClass(const fruit::SupportConfig& cfg, int cls);
 
 // ---- The advanced page: every value the planner and tree builder use ----
 
@@ -86,6 +101,10 @@ inline constexpr const char* kUsualTipKey = "usual_tip";
 void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportConfig& cfg, fruit::TreeConfig& tc);
 // Whether the row holds a value of the user's own.
 bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c);
+// The resin profile key that measures a row's value ("" if none measures it).
+const char* measuredKey(const AdvancedSetting& s);
+// Whether the job's resin measured the row's value (and the job keeps it).
+bool measuredByResin(const AdvancedSetting& s, const SupportChoices& c);
 
 // A change made by hand to the tips, in model coordinates so it survives
 // turning or resizing the model. Between plans an edit applies on top of the
