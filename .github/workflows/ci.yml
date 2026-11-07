@@ -30,6 +30,7 @@ jobs:
         run: |
           ./build/src/fruitslicer coupon overlap -o overlap.stl
           ./build/src/fruitslicer slice overlap.stl --elevate 0
+          ./build/src/net/fruitslicer-printer --help
 
   # Engine work now runs on background threads under a GUI: catch data races.
   thread-sanitizer:
