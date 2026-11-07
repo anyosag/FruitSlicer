@@ -12,6 +12,7 @@ add_library(fruit_core
   mesh/MeshAnalysis.cpp
   mesh/Placement.cpp
   mesh/ModelLoad.cpp
+  mesh/ModelCheck.cpp
   slice/MeshSlicer.cpp
   layers/LayerStack.cpp
   layers/IslandGraph.cpp
@@ -24,6 +25,7 @@ add_library(fruit_core
   formats/GooExport.cpp
   formats/GooCompare.cpp
   formats/GooSetup.cpp
+  formats/ThreeMf.cpp
   support/SupportGeometry.cpp
   support/SupportModels.cpp
   support/CosmeticField.cpp
@@ -39,7 +41,7 @@ add_library(fruit_core
   calibration/ABPlate.cpp
 )
 target_include_directories(fruit_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(fruit_core PUBLIC Clipper2 nlohmann_json::nlohmann_json)
+target_link_libraries(fruit_core PUBLIC Clipper2 nlohmann_json::nlohmann_json PRIVATE miniz pugixml::pugixml)
 find_package(Threads REQUIRED)
 target_link_libraries(fruit_core PUBLIC Threads::Threads)
 

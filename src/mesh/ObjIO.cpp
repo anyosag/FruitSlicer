@@ -2,6 +2,8 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "mesh/ObjIO.h"
 
+#include "formats/ThreeMf.h"
+
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -49,6 +51,7 @@ TriangleMesh readMesh(const std::string& path) {
     std::string ext = path.size() >= 4 ? path.substr(path.size() - 4) : "";
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
     if (ext == ".obj") return readObj(path);
+    if (ext == ".3mf") return read3mf(path);
     return readStl(path);
 }
 

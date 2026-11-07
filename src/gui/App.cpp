@@ -4,8 +4,11 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 
+#include "Dialogs.h"
 #include "Icons.h"
 #include "Log.h"
 #include "Theme.h"
@@ -34,34 +37,44 @@ void App::showError(std::string title, std::string message) {
 }
 
 void App::frameModel() {
-    if (!doc_ || doc_->placed.empty()) {
+    if (!doc_ || doc_->placed().empty()) {
         camera_.frame({0, 0, 15}, 110);
         return;
     }
-    const fruit::BBox3 b = doc_->placed.bbox();
+    const fruit::BBox3 b = doc_->placed().bbox();
     const fruit::Vec3 c = b.center();
-    const double r = 0.5 * std::sqrt((b.max.x - b.min.x) * (b.max.x - b.min.x) +
-                                     (b.max.y - b.min.y) * (b.max.y - b.min.y) +
-                                     (b.max.z - b.min.z) * (b.max.z - b.min.z));
-    camera_.frame({static_cast<float>(c.x), static_cast<float>(c.y), static_cast<float>(c.z)},
+    const fruit::Vec3 s = b.size();
+    // Frame the model and the plate under it, so the lift stays readable.
+    const double r = 0.5 * std::sqrt(s.x * s.x + s.y * s.y + (s.z + b.min.z) * (s.z + b.min.z));
+    camera_.frame({static_cast<float>(c.x), static_cast<float>(c.y), static_cast<float>((b.max.z) / 2)},
                   static_cast<float>(std::max(r, 20.0)));
 }
 
 void App::setView(ViewPreset v) {
     camera_.preset(v);
+    view_ = v;
+    view_set_ = true;
     frameModel();
 }
+
+void App::fitView() { frameModel(); }
 
 void App::openPath(const std::string& path) {
     const std::string name = std::filesystem::path(path).filename().string();
     screen_ = Screen::Job;
     auto result = std::make_shared<std::shared_ptr<Document>>();
+    const fruit::PrinterProfile printer = printer_;
     jobs_.start(
-        "Opening " + name, [path, result](const fruit::JobControl& ctl) { *result = loadDocument(path, ctl); },
+        "Opening " + name,
+        [path, printer, result](const fruit::JobControl& ctl) { *result = loadDocument(path, printer, ctl); },
         [this, result, name](std::exception_ptr err) {
             if (!err) {
-                doc_ = *result;
-                frameModel();
+                checking_ = *result;
+                const fruit::PlateFit& f = checking_->fit();
+                health_ = HealthDialog{};
+                health_.open = true;
+                health_.choice = f.fits ? SizeChoice::Full : SizeChoice::Largest;
+                health_.custom_percent = f.fits ? 100 : std::round(std::max(f.largest, f.largest_turned) * 100);
                 return;
             }
             try {
@@ -74,9 +87,93 @@ void App::openPath(const std::string& path) {
 }
 
 void App::openDialog() {
-    platform::openFileDialog(window_, {{"3D models", "stl;obj"}}, [this](const std::string& path) {
+    platform::openFileDialog(window_, {{"3D models", "stl;obj;3mf"}}, [this](const std::string& path) {
         if (!path.empty()) openPath(path);
     });
+}
+
+fruit::Placement App::healthPlacement() const {
+    fruit::Placement p;
+    if (!checking_) return p;
+    const fruit::PlateFit& f = checking_->fit();
+    switch (health_.choice) {
+        case SizeChoice::Full: p.scale = 1.0; break;
+        case SizeChoice::Largest:
+            p.scale = std::max(f.largest, f.largest_turned);
+            if (f.largest_turned > f.largest) p.rotation_deg.z = 90;
+            break;
+        case SizeChoice::Custom: p.scale = health_.custom_percent / 100.0; break;
+        case SizeChoice::Inches: p.scale = 25.4; break;
+    }
+    return p;
+}
+
+void App::chooseSize(SizeChoice c, double custom_percent) {
+    health_.choice = c;
+    if (c == SizeChoice::Custom && custom_percent > 0) health_.custom_percent = custom_percent;
+}
+
+void App::placeChecked() {
+    if (!checking_) return;
+    checking_->place(healthPlacement());
+    doc_ = std::move(checking_);
+    checking_.reset();
+    health_.open = false;
+    step_ = Step::Model;
+    screen_ = Screen::Job;
+    log::info("placed " + doc_->name + " at " + std::to_string(doc_->placement().scale * 100) + " %");
+    frameModel();
+}
+
+void App::cancelChecked() {
+    checking_.reset();
+    health_.open = false;
+}
+
+void App::setScalePercent(double percent) {
+    if (!doc_ || percent <= 0) return;
+    fruit::Placement p = doc_->placement();
+    p.scale = percent / 100.0;
+    doc_->edit(p);
+}
+
+void App::setRotation(const fruit::Vec3& degrees) {
+    if (!doc_) return;
+    fruit::Placement p = doc_->placement();
+    p.rotation_deg = degrees;
+    doc_->edit(p);
+}
+
+void App::setOnPlate(bool on_plate) {
+    if (!doc_ || doc_->placement().on_plate == on_plate) return;
+    fruit::Placement p = doc_->placement();
+    p.on_plate = on_plate;
+    doc_->edit(p);
+    frameModel();
+}
+
+void App::scaleToFit() {
+    if (!doc_) return;
+    const fruit::PlateFit& f = doc_->fit();
+    fruit::Placement p = doc_->placement();
+    // Largest at the current rotation, or a quarter turn more if that is
+    // larger. Both are absolute scales (1.0 = 100 %).
+    if (f.largest_turned > f.largest) {
+        p.rotation_deg.z = std::fmod(p.rotation_deg.z + 90, 360);
+        p.scale = f.largest_turned;
+    } else {
+        p.scale = f.largest;
+    }
+    doc_->edit(p);
+    frameModel();
+}
+
+void App::undo() {
+    if (doc_ && doc_->canUndo()) doc_->undo();
+}
+
+void App::redo() {
+    if (doc_ && doc_->canRedo()) doc_->redo();
 }
 
 void App::rail() {
@@ -132,11 +229,33 @@ void App::errorDialog() {
         ImGui::Dummy(ImVec2(0, 10));
         const float bw = 90;
         ImGui::SetCursorPosX(ImGui::GetWindowWidth() - bw - 24);
-        if (primaryButton("Close", ImVec2(bw, 0))) ImGui::CloseCurrentPopup();
+        if (primaryButton("Close", ImVec2(bw, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar(2);
+}
+
+// Keyboard shortcuts that work anywhere (listed in the shortcuts dialog).
+// ImGuiMod_Ctrl is the Command key on macOS.
+void App::keys() {
+    // Dialogs handle their own keys; nothing reaches the job behind them.
+    if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+    const ImGuiInputFlags global = ImGuiInputFlags_RouteGlobal;
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, global)) openDialog();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, global)) undo();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, global)) redo();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper) return;
+    if (screen_ == Screen::Job) {
+        if (ImGui::IsKeyPressed(ImGuiKey_1, false)) setView(ViewPreset::Front);
+        if (ImGui::IsKeyPressed(ImGuiKey_2, false)) setView(ViewPreset::Side);
+        if (ImGui::IsKeyPressed(ImGuiKey_3, false)) setView(ViewPreset::Below);
+        if (ImGui::IsKeyPressed(ImGuiKey_4, false)) setView(ViewPreset::Angled);
+        if (ImGui::IsKeyPressed(ImGuiKey_F, false)) fitView();
+    }
+    if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) shortcuts_open_ = true;  // "?"
 }
 
 void App::frame() {
@@ -146,16 +265,19 @@ void App::frame() {
     ImGui::Begin("root", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    keys();
     rail();
     ImGui::SameLine(0, 0);
     ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     switch (screen_) {
         case Screen::Home: screens::home(*this); break;
-        case Screen::Job: screens::model(*this); break;
+        case Screen::Job: screens::job(*this); break;
         case Screen::About: screens::about(*this); break;
     }
     ImGui::EndChild();
+    dialogs::health(*this);
+    dialogs::shortcuts(*this, shortcuts_open_);
     errorDialog();
     ImGui::End();
 }

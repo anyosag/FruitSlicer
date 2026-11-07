@@ -1,0 +1,16 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "job"}, {"shot": "b1_job_empty"},
+    {"open": "@demo-big"}, {"wait": "jobs"}, {"shot": "b1_health_too_big"},
+    {"health": "custom", "percent": 40}, {"shot": "b1_health_custom"},
+    {"health": "place"}, {"view": "angled"}, {"shot": "b1_model_placed"},
+    {"fit": true}, {"shot": "b1_model_fit"},
+    {"sits": "flat"}, {"shot": "b1_model_flat"},
+    {"undo": 2}, {"rotate": [0, 0, 45]}, {"shot": "b1_model_rotated"},
+    {"shortcuts": true}, {"shot": "b1_shortcuts"}, {"shortcuts": false},
+    {"open": "@demo-3mf"}, {"wait": "jobs"}, {"shot": "b1_health_3mf"},
+    {"health": "place"}, {"shot": "b1_model_3mf"}
+  ]
+}

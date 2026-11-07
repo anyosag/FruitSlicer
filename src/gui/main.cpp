@@ -13,6 +13,7 @@
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
 
+#include <atomic>
 #include <cfloat>
 #include <cstdio>
 #include <filesystem>
@@ -35,6 +36,18 @@ extern const std::size_t kFontInter_regular_size;
 extern const std::uint8_t kFontInter_regular[];
 
 using namespace gui;
+
+namespace {
+std::atomic<int> g_imgui_failures{0};
+}
+
+// Dear ImGui's checks (see imconfig/fruit_imconfig.h): logged, and counted so
+// a scripted run fails. The first few are enough to find the cause.
+void fruitImGuiCheckFailed(const char* expr, const char* file, int line) {
+    if (g_imgui_failures++ < 10)
+        gui::log::error(std::string("Dear ImGui check failed: ") + expr + " (" +
+                        std::filesystem::path(file).filename().string() + ":" + std::to_string(line) + ")");
+}
 
 namespace {
 
@@ -204,6 +217,10 @@ int main(int argc, char** argv) {
             } catch (const std::exception& e) {
                 log::error(std::string("script: ") + e.what());
                 code = 2;
+            }
+            if (code == 0 && g_imgui_failures > 0) {
+                log::error("script: Dear ImGui reported " + std::to_string(g_imgui_failures.load()) + " failed checks");
+                code = 3;
             }
         } else {
             const auto px = render();

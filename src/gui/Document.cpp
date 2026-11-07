@@ -2,31 +2,61 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "Document.h"
 
+#include <atomic>
 #include <filesystem>
+#include <stdexcept>
 
 #include "mesh/Primitives.h"
 
 namespace gui {
 
-void Document::place() {
-    placed = fruit::placeModel(model.mesh, placement);
-    ++revision;
+void Document::place(const fruit::Placement& p) {
+    placement_ = p;
+    transform_ = fruit::placementTransform(model.mesh, p);
+    placed_ = model.mesh;
+    placed_.transform(transform_);
+    fit_ = fruit::checkFit(model.mesh, p, printer);
+    ++revision_;
 }
 
-bool Document::fitsPlate(const fruit::PrinterProfile& printer) const {
-    if (placed.empty()) return false;
-    const fruit::BBox3 b = placed.bbox();
-    return printer.fitsXY(b.min.x, b.min.y) && printer.fitsXY(b.max.x, b.max.y) && b.max.z <= printer.build_z;
+void Document::edit(const fruit::Placement& p) {
+    undo_.push_back(placement_);
+    redo_.clear();
+    place(p);
 }
 
-std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::JobControl& ctl) {
+void Document::undo() {
+    if (undo_.empty()) return;
+    redo_.push_back(placement_);
+    const fruit::Placement p = undo_.back();
+    undo_.pop_back();
+    place(p);
+}
+
+void Document::redo() {
+    if (redo_.empty()) return;
+    undo_.push_back(placement_);
+    const fruit::Placement p = redo_.back();
+    redo_.pop_back();
+    place(p);
+}
+
+std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::PrinterProfile& printer,
+                                       const fruit::JobControl& ctl) {
     ctl.report("load", 0);
     auto doc = std::make_shared<Document>();
     doc->path = path;
     doc->name = std::filesystem::path(path).stem().string();
+    doc->printer = printer;
+    static std::atomic<int> next_id{1};
+    doc->geometry_id = next_id++;
     doc->model = fruit::loadModel(path);
-    ctl.step("load", 0.8);
-    doc->place();
+    if (doc->model.mesh.empty()) throw std::runtime_error("the file holds no triangles");
+    ctl.step("load", 0.5);
+    doc->check = fruit::checkMesh(doc->model);
+    ctl.step("load", 0.7);
+    doc->place(fruit::Placement{});
+    doc->low_points = fruit::countLowPoints(doc->placed(), false);
     ctl.report("load", 1);
     return doc;
 }

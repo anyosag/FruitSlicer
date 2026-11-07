@@ -73,17 +73,20 @@ jobs:
       - name: Renderer version
         run: dpkg-query -W libgl1-mesa-dri mesa-libgallium
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON -DFRUIT_BUILD_TESTS=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON
       - name: Build
-        run: cmake --build build -j --target fruitslicer_app
+        run: cmake --build build -j --target fruitslicer_app fruit_gui_tests
+      - name: App logic tests
+        run: ./build/tests/fruit_gui_tests
       - name: Self-test
         run: ./build/src/gui/fruitslicer_app --self-test
       - name: Self-test with OpenGL
         run: xvfb-run -a -s "-screen 0 1920x1080x24" ./build/src/gui/fruitslicer_app --self-test-gl
       - name: Screenshots
+        # Every script in tests/gui; a Dear ImGui misuse fails the run too.
         run: |
-          for s in b0 b0_2x; do
-            xvfb-run -a -s "-screen 0 1920x1080x24" ./build/src/gui/fruitslicer_app --script tests/gui/$s.json --shots shots
+          for s in tests/gui/*.json; do
+            xvfb-run -a -s "-screen 0 1920x1080x24" ./build/src/gui/fruitslicer_app --script "$s" --shots shots
           done
       - name: Compare with goldens
         run: python3 tools/compare_screens.py tests/gui/golden shots diffs
@@ -139,8 +142,8 @@ jobs:
       - name: Screenshots with Apple's OpenGL (for review, not compared)
         continue-on-error: true
         run: |
-          for s in b0 b0_2x; do
-            "$APP/Contents/MacOS/FruitSlicer" --script tests/gui/$s.json --shots shots-macos
+          for s in tests/gui/*.json; do
+            "$APP/Contents/MacOS/FruitSlicer" --script "$s" --shots shots-macos
           done
       - name: Upload macOS screenshots
         if: always()

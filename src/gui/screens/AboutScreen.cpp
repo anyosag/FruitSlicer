@@ -34,8 +34,9 @@ void about(App& app) {
     beginCard("preview", ImVec2(w, 0), 18);
     sectionTitle("This is an early build");
     ImGui::Dummy(ImVec2(0, 2));
-    text("It opens STL and OBJ files and shows them on the Saturn 4 Ultra 16K's plate. Orienting, supports, layers "
-         "and saving .goo files arrive in the next updates.",
+    text("It opens STL, OBJ and 3MF files, checks them, and places them on the Saturn 4 Ultra 16K's plate at the "
+         "size, rotation and height you choose. Orienting, supports, layers and saving .goo files arrive in the "
+         "next updates.",
          fonts().regular, size::Body, col::TextSecondary, true);
     endCard();
     ImGui::Dummy(ImVec2(0, 14));
@@ -64,7 +65,8 @@ void about(App& app) {
         {"SDL 3 · window and input", "zlib"},
         {"Dear ImGui · interface", "MIT"},
         {"glad · OpenGL loader", "CC0-1.0 / WTFPL, Apache-2.0"},
-        {"miniz · compression", "MIT"},
+        {"miniz · compression, 3MF packages", "MIT"},
+        {"pugixml · 3MF models", "MIT"},
         {"Inter · typeface", "SIL Open Font License 1.1"},
     };
     for (const auto& [name, lic] : libs) keyValue(name, lic, col::TextSecondary);

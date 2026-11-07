@@ -45,6 +45,7 @@
       <array>
         <string>stl</string>
         <string>obj</string>
+        <string>3mf</string>
       </array>
     </dict>
   </array>

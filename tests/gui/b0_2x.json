@@ -2,7 +2,9 @@
   "size": [1440, 900],
   "scale": 2,
   "steps": [
-    {"open": "@demo"}, {"wait": "jobs"}, {"screen": "job"}, {"view": "angled"}, {"shot": "job_model_angled_2x"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"screen": "job"}, {"view": "angled"},
+    {"shot": "job_model_angled_2x"},
+    {"open": "@demo-big"}, {"wait": "jobs"}, {"shot": "health_2x"}, {"health": "place"},
     {"screen": "home"}, {"shot": "home_with_job_2x"}
   ]
 }

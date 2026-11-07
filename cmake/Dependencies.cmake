@@ -35,7 +35,39 @@ FetchContent_Declare(httplib
   GIT_TAG v0.62.0
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(clipper2 cli11 json httplib)
+# miniz (MIT) - zip archives (3MF packages) and zlib (PNG).
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(INSTALL_PROJECT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(miniz
+  GIT_REPOSITORY https://github.com/richgel999/miniz.git
+  GIT_TAG 3.1.2
+  GIT_SHALLOW TRUE)
+
+# pugixml (MIT) - XML parsing (3MF model parts).
+set(PUGIXML_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(pugixml
+  GIT_REPOSITORY https://github.com/zeux/pugixml.git
+  GIT_TAG v1.16
+  GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(clipper2 cli11 json httplib miniz pugixml)
+
+# Our code uses miniz's mz_ names only; its zlib-style aliases are unused
+# static functions that warn in every file including miniz.h.
+target_compile_definitions(miniz INTERFACE MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+
+# Third-party code: their warnings are not ours to fix.
+foreach(t miniz pugixml-static pugixml)
+  if(TARGET ${t})
+    get_target_property(real ${t} ALIASED_TARGET)
+    get_target_property(type ${t} TYPE)
+    if(NOT real AND NOT type STREQUAL "INTERFACE_LIBRARY")
+      target_compile_options(${t} PRIVATE -w)
+    endif()
+  endif()
+endforeach()
 
 if(FRUIT_BUILD_TESTS)
   # Catch2 (BSL-1.0) - unit tests.
