@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 #include "core/Parallel.h"
+#include "layers/HollowAnalysis.h"
 
 namespace fruit {
 
@@ -361,6 +362,30 @@ int HollowResult::cavityAt(size_t layer, const Vec2& p) const {
         if (!in_hole) return k.cavity;
     }
     return -1;
+}
+
+HollowResult closedHollows(const LayerStack& layers, double min_volume) {
+    const HollowReport report = analyzeHollows(layers);
+    HollowResult r;
+    r.interior.resize(layers.size());
+    parallelFor(layers.size(), 0, [&](size_t j) {
+        Paths p = report.trap_regions[j];
+        append(p, report.cup_regions[j]);
+        if (!p.empty()) r.interior[j] = unionNonZero(p);
+    });
+    collectCavities(r.interior, layers.layer_height, min_volume, 0, r.cavities, r.pieces, JobControl::none());
+    for (const Cavity& c : r.cavities) r.volume += c.volume;
+    return r;
+}
+
+LayerStack filledLayers(const LayerStack& layers, const HollowResult& h) {
+    if (h.interior.size() != layers.size())
+        throw std::invalid_argument("the hollows were found for a different set of slices");
+    LayerStack out = layers;
+    parallelFor(layers.size(), 0, [&](size_t i) {
+        if (!h.interior[i].empty()) out.slices[i] = unionOf(layers.slices[i], h.interior[i]);
+    });
+    return out;
 }
 
 LayerStack hollowedLayers(const LayerStack& solid, const HollowResult& h) {

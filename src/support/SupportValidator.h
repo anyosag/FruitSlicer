@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/JobControl.h"
+#include "layers/LayerStack.h"
 #include "mesh/TriangleMesh.h"
 
 namespace fruit {
@@ -28,5 +29,10 @@ struct ValidationReport {
 ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh& supports, double layer_height,
                                    double link_grow, double small_area = 0.12, double pixel_area = 2.7e-4,
                                    const JobControl& ctl = JobControl::none());
+
+// The same check on layers already cut: a hollowed model's together with its
+// supports'. Reports stage "islands".
+ValidationReport validateLayers(const LayerStack& layers, double link_grow, double small_area = 0.12,
+                                double pixel_area = 2.7e-4, const JobControl& ctl = JobControl::none());
 
 }  // namespace fruit

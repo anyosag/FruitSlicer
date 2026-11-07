@@ -59,23 +59,30 @@ TEST_CASE("a hollow cube gets a hole straight up through the middle of its floor
     const Transform placed = Transform::identity();
 
     const std::vector<DrainHole> holes = suggestDrainHoles(cube, placed, ls, hollow, 3.0);
-    REQUIRE(holes.size() == 1);
+    REQUIRE(holes.size() == 2);
+    CHECK_FALSE(holes[0].air);  // to drain, in the middle of the floor
     CHECK(holes[0].at.x == Approx(10).margin(0.05));
     CHECK(holes[0].at.y == Approx(10).margin(0.05));
     CHECK(holes[0].at.z == Approx(0).margin(1e-6));
     CHECK(holes[0].axis.z == Approx(1));
     CHECK(holes[0].diameter == 3.0);
+    CHECK(holes[1].air);  // to let air in, in the middle of the roof
+    CHECK(holes[1].at.x == Approx(10).margin(0.05));
+    CHECK(holes[1].at.z == Approx(20).margin(1e-6));
+    CHECK(holes[1].axis.z == Approx(-1));
 
     const std::vector<PlacedHole> drilled = placeHoles(holes, placed, ls, hollow);
-    REQUIRE(drilled.size() == 1);
+    REQUIRE(drilled.size() == 2);
     CHECK(drilled[0].cavity == 0);
     CHECK(drilled[0].from.z < 0);                          // from outside the floor
     CHECK(drilled[0].to.z == Approx(2.0 + 3.0).margin(0.06));  // through it, one diameter into the cavity
+    CHECK(drilled[1].cavity == 0);
+    CHECK(drilled[1].to.z == Approx(18.0 - 3.0).margin(0.06));
     const LayerStack d = drilledLayers(ls, hollow, drilled);
     CHECK_FALSE(inside(d.slices[10], {10, 10}));  // the floor has a hole...
     CHECK(inside(d.slices[10], {10, 12}));         // ...3 mm across
     CHECK(area(d.slices[10]) == Approx(400 - kPi * 1.5 * 1.5).margin(0.05));
-    CHECK(area(d.slices[390]) == Approx(400).margin(1e-6));  // the ceiling isn't touched
+    CHECK(area(d.slices[390]) == Approx(400 - kPi * 1.5 * 1.5).margin(0.05));  // and so has the roof
 
     CHECK(cavitiesDrain(hollowedLayers(ls, hollow), hollow) == std::vector<char>{0});
     CHECK(cavitiesDrain(d, hollow) == std::vector<char>{1});
@@ -86,9 +93,9 @@ TEST_CASE("a hole keeps to the model when it is turned, and may then not drain",
     const LayerStack first = sliceModel(model, 0.1);
     const HollowResult hollow_first = hollowInterior(first, flatCeilings());
     const std::vector<DrainHole> holes = suggestDrainHoles(model, Transform::identity(), first, hollow_first, 3.0);
-    REQUIRE(holes.size() == 1);
+    REQUIRE(holes.size() == 2);
 
-    // Turned onto its side: the hole now enters halfway up a wall, level.
+    // Turned onto its side: both holes now enter halfway up a wall, level.
     Placement p;
     p.rotation_deg = {90, 0, 0};
     p.on_plate = true;
@@ -97,15 +104,17 @@ TEST_CASE("a hole keeps to the model when it is turned, and may then not drain",
     const LayerStack ls = sliceModel(placed, 0.1);
     const HollowResult hollow = hollowInterior(ls, flatCeilings());
     const std::vector<PlacedHole> drilled = placeHoles(holes, turned, ls, hollow);
-    REQUIRE(drilled.size() == 1);
-    CHECK(drilled[0].cavity == 0);
-    CHECK(std::abs(drilled[0].to.z - drilled[0].from.z) < 1e-6);  // level
-    CHECK(drilled[0].to.z == Approx(10).margin(0.01));
-    // Resin under it stays put: the cavity doesn't drain.
+    REQUIRE(drilled.size() == 2);
+    for (const PlacedHole& h : drilled) {
+        CHECK(h.cavity == 0);
+        CHECK(std::abs(h.to.z - h.from.z) < 1e-6);  // level
+        CHECK(h.to.z == Approx(10).margin(0.01));
+    }
+    // Resin under them stays put: the cavity doesn't drain.
     CHECK(cavitiesDrain(drilledLayers(ls, hollow, drilled), hollow) == std::vector<char>{0});
     // A hole suggested for the new way round does.
     const std::vector<DrainHole> again = suggestDrainHoles(placed, turned, ls, hollow, 3.0);
-    REQUIRE(again.size() == 1);
+    REQUIRE(again.size() == 2);
     const LayerStack d = drilledLayers(ls, hollow, placeHoles(again, turned, ls, hollow));
     CHECK(cavitiesDrain(d, hollow) == std::vector<char>{1});
 }
@@ -151,15 +160,17 @@ TEST_CASE("each cavity gets a hole of its own", "[drain]") {
     const HollowResult hollow = hollowInterior(ls, HollowOptions{});
     REQUIRE(hollow.cavities.size() == 2);
     const std::vector<DrainHole> holes = suggestDrainHoles(m, Transform::identity(), ls, hollow, 2.5);
-    REQUIRE(holes.size() == 2);
+    REQUIRE(holes.size() == 4);  // a drain and an air hole each
     const std::vector<PlacedHole> drilled = placeHoles(holes, Transform::identity(), ls, hollow);
-    CHECK(((drilled[0].cavity == 0 && drilled[1].cavity == 1) || (drilled[0].cavity == 1 && drilled[1].cavity == 0)));
+    CHECK(drilled[0].cavity == drilled[1].cavity);
+    CHECK(drilled[2].cavity == drilled[3].cavity);
+    CHECK(drilled[0].cavity != drilled[2].cavity);
     for (const PlacedHole& p : drilled) CHECK(p.radius == 1.25);
     CHECK(cavitiesDrain(drilledLayers(ls, hollow, drilled), hollow) == std::vector<char>{1, 1});
-    // One of the two alone leaves the other undrained.
-    const std::vector<char> one = cavitiesDrain(drilledLayers(ls, hollow, {drilled[0]}), hollow);
+    // The first cavity's holes alone leave the other undrained.
+    const std::vector<char> one = cavitiesDrain(drilledLayers(ls, hollow, {drilled[0], drilled[1]}), hollow);
     CHECK(one[drilled[0].cavity] == 1);
-    CHECK(one[drilled[1].cavity] == 0);
+    CHECK(one[drilled[2].cavity] == 0);
 }
 
 TEST_CASE("the cavity a point lies in", "[drain]") {
@@ -176,4 +187,51 @@ TEST_CASE("the cavity a point lies in", "[drain]") {
     CHECK(hollow.cavityAt(j, {1, 10}) == -1);    // in the wall
     CHECK(hollow.cavityAt(j, {25, 10}) == -1);   // between the cubes
     CHECK(hollow.cavityAt(ls.layerAt(1), {10, 10}) == -1);  // in the floor
+}
+
+TEST_CASE("a model's own closed hollow gets holes, or is filled", "[drain]") {
+    // A block with a sealed void inside: a box turned inside out within it.
+    TriangleMesh m = makeBox({0, 0, 0}, {20, 20, 12});
+    TriangleMesh void_ = makeBox({4, 4, 3}, {16, 16, 9});
+    for (auto& f : void_.faces) std::swap(f[1], f[2]);
+    m.append(void_);
+    const LayerStack ls = sliceModel(m, 0.1);
+    const HollowResult closed = closedHollows(ls);
+    REQUIRE(closed.cavities.size() == 1);
+    CHECK(closed.volume == Approx(12 * 12 * 6).margin(1));
+    CHECK(ls.layerBottom(closed.cavities[0].first_layer) == Approx(3.0));
+    CHECK(cavitiesDrain(ls, closed) == std::vector<char>{0});
+    // Holes through the 3 mm floor and roof: it drains.
+    const std::vector<DrainHole> holes = suggestDrainHoles(m, Transform::identity(), ls, closed, 3.0);
+    REQUIRE(holes.size() == 2);
+    CHECK(holes[0].at.z == Approx(0).margin(1e-6));
+    CHECK(holes[1].at.z == Approx(12).margin(1e-6));
+    const std::vector<PlacedHole> cut = placeHoles(holes, Transform::identity(), ls, closed);
+    CHECK(cut[0].cavity == 0);
+    CHECK(cut[1].cavity == 0);
+    CHECK(cavitiesDrain(drilledLayers(ls, closed, cut), closed) == std::vector<char>{1});
+    // Or printed solid: nothing left to hold resin.
+    const LayerStack filled = filledLayers(ls, closed);
+    CHECK(area(filled.slices[ls.layerAt(6)]) == Approx(400).margin(1e-6));
+    CHECK(closedHollows(filled).cavities.empty());
+}
+
+TEST_CASE("only hollows that hold resin count as closed", "[drain]") {
+    // An open box: its floor 2 mm thick, its walls 10 mm high.
+    auto box = [](bool mouth_up) {
+        TriangleMesh m;
+        if (mouth_up) appendBox(m, {0, 0, 0}, {20, 20, 2});
+        else appendBox(m, {0, 0, 8}, {20, 20, 10});
+        appendBox(m, {0, 0, 0}, {2, 20, 10});
+        appendBox(m, {18, 0, 0}, {20, 20, 10});
+        appendBox(m, {0, 0, 0}, {20, 2, 10});
+        appendBox(m, {0, 18, 0}, {20, 20, 10});
+        return m;
+    };
+    // Mouth down, towards the plate: it drains.
+    CHECK(closedHollows(sliceModel(box(false), 0.1)).cavities.empty());
+    // Mouth up: a cup that pulls on every peel.
+    const HollowResult cup = closedHollows(sliceModel(box(true), 0.1));
+    REQUIRE(cup.cavities.size() == 1);
+    CHECK(cup.volume == Approx(16 * 16 * 8).margin(2));
 }

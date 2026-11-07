@@ -12,7 +12,12 @@ ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh
     TriangleMesh all = model;
     all.append(supports);
     const LayerStack ls = sliceModel(all, layer_height, nullptr, 0, ctl.sub(0, 0.8));
-    ctl.step("islands", 0.8);
+    return validateLayers(ls, link_grow, small_area, pixel_area, ctl.sub(0.8, 1));
+}
+
+ValidationReport validateLayers(const LayerStack& ls, double link_grow, double small_area, double pixel_area,
+                                const JobControl& ctl) {
+    ctl.step("islands", 0);
     const IslandGraph g(ls, link_grow);
     ctl.report("islands", 1);
     ValidationReport r;
