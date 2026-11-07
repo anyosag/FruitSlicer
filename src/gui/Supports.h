@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/JobControl.h"
+#include "geometry/Transform.h"
 #include "mesh/Placement.h"
 #include "mesh/TriangleMesh.h"
 #include "support/SupportConfig.h"
@@ -86,6 +87,22 @@ void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportCo
 // Whether the row holds a value of the user's own.
 bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c);
 
+// A change made by hand to the tips, in model coordinates so it survives
+// turning or resizing the model. Edits apply on top of the planner's tips,
+// in order; regenerating plans afresh and applies them again.
+struct TipEdit {
+    enum class Kind { Add, Move, Delete, Resize, Pin, Zone };
+    Kind kind = Kind::Add;
+    fruit::Vec3 at;         // the tip (Move: where from); a zone's centre
+    fruit::Vec3 to;         // Move: where to
+    fruit::Vec3 normal;     // the surface's outward normal where the tip ends up
+    double diameter = 0.4;  // the tip's size after the edit
+    double radius = 0;      // Delete, Zone: tips within this are taken away
+    bool operator==(const TipEdit&) const = default;
+};
+inline constexpr double kDeletedZone = 0.5;  // mm, radius: a deleted tip's no-tip zone
+inline constexpr double kZoneRadius = 1.5;   // mm, radius: a no-tip zone drawn by hand
+
 // One line of the result's checks.
 struct SupportCheck {
     bool ok = true;
@@ -121,6 +138,8 @@ struct SupportResult {
     std::vector<SupportCheck> checks;
     std::vector<SupportProblem> problems;
     std::vector<fruit::Warning> plan_warnings;  // the tip planner's, kept so a saved job can rebuild its problems
+    std::vector<fruit::SupportPoint> planned;   // the planner's tips, before hand edits
+    std::vector<TipEdit> edits;                 // the hand edits `points` has
     double seconds = 0;
 
     std::size_t count(SupportProblem::Level l) const;
@@ -133,7 +152,7 @@ fruit::TreeConfig treeConfig(const SupportChoices& c);
 // Plans tips, builds the tree and checks the result. Progress: tips up to
 // 0.55, the tree up to 0.85, the check after (stage "check").
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
-                       const fruit::JobControl& ctl);
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
 
 // The tip planner's part: the tips and what it warned about.
 struct SupportPlan {
@@ -146,6 +165,21 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
 // when a saved job comes back with its tips.
 SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,
                              const fruit::JobControl& ctl);
+// The planner's tips with hand edits applied, then the rest (keeps both).
+SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
+
+// `planned` (printer coordinates) with `edits` applied in order; the model
+// is placed by `model_to_printer`.
+std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> planned, const std::vector<TipEdit>& edits,
+                                            const fruit::Transform& model_to_printer);
+// The edit as a line of "Your edits": a title and a detail.
+std::pair<std::string, std::string> describeEdit(const TipEdit& e, const fruit::Transform& model_to_printer);
+// How many tips the edits added, moved and deleted.
+struct EditCounts {
+    std::size_t added = 0, moved = 0, deleted = 0, changed = 0;  // changed: resized or pinned
+};
+EditCounts countEdits(const std::vector<TipEdit>& edits);
 
 // The stages the running card lists, and which one a progress report is in.
 const std::vector<std::string>& supportStages();

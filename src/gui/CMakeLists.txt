@@ -44,6 +44,7 @@ set(app_sources
   screens/SupportsAdvanced.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
+  screens/TipEdit.cpp
   view3d/Camera.cpp
   view3d/Renderer.cpp
   platform/Platform.cpp

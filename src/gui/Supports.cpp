@@ -411,11 +411,105 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
 }
 
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
-                       const fruit::JobControl& ctl) {
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     const auto t0 = std::chrono::steady_clock::now();
-    SupportResult r = finishSupports(doc, c, planTips(doc, c, visible_model, ctl.sub(0.0, 0.55)), ctl.sub(0.55, 1.0));
+    SupportResult r =
+        finishWithEdits(doc, c, planTips(doc, c, visible_model, ctl.sub(0.0, 0.55)), edits, ctl.sub(0.55, 1.0));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
+}
+
+SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
+    std::vector<fruit::SupportPoint> planned = plan.points;
+    plan.points = applyEdits(std::move(plan.points), edits, doc.transform());
+    SupportResult r = finishSupports(doc, c, std::move(plan), ctl);
+    r.planned = std::move(planned);
+    r.edits = edits;
+    return r;
+}
+
+namespace {
+
+fruit::Vec3 unit(const fruit::Vec3& v) {
+    const double n = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return n > 0 ? fruit::Vec3{v.x / n, v.y / n, v.z / n} : fruit::Vec3{0, 0, -1};
+}
+
+double dist(const fruit::Vec3& a, const fruit::Vec3& b) {
+    const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+fruit::SupportPoint manualTip(const fruit::Vec3& pos, const fruit::Vec3& normal, double d) {
+    fruit::SupportPoint p;
+    p.pos = pos;
+    p.normal = unit(normal);
+    p.tip_diameter = d;
+    p.category = fruit::PointCategory::Manual;
+    p.pinned = true;
+    p.layer = static_cast<int>(std::floor(pos.z / kLayerHeight));
+    // Stable for the same place: quantised position, as the planner's ids are.
+    const auto q = [](double v) { return static_cast<std::uint64_t>(std::llround(v * 1000)) & 0xFFFFF; };
+    p.id = (q(pos.x) << 40) ^ (q(pos.y) << 20) ^ q(pos.z) ^ 0x4D414E00000000ULL;
+    return p;
+}
+
+constexpr double kMatch = 0.05;  // mm: an edit's tip is the one this close to where it was
+
+}  // namespace
+
+std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pts, const std::vector<TipEdit>& edits,
+                                            const fruit::Transform& t) {
+    using K = TipEdit::Kind;
+    auto drop = [&](const fruit::Vec3& at, double r) {
+        std::erase_if(pts, [&](const fruit::SupportPoint& p) { return dist(p.pos, at) <= r; });
+    };
+    for (const TipEdit& e : edits) {
+        const fruit::Vec3 at = t.apply(e.at);
+        const fruit::Vec3 n = unit(t.applyLinear(e.normal));
+        switch (e.kind) {
+            case K::Add: pts.push_back(manualTip(at, n, e.diameter)); break;
+            case K::Delete:
+            case K::Zone: drop(at, std::max(e.radius, kMatch)); break;
+            case K::Move:
+                drop(at, kMatch);
+                pts.push_back(manualTip(t.apply(e.to), n, e.diameter));
+                break;
+            case K::Resize:
+            case K::Pin:
+                drop(at, kMatch);
+                pts.push_back(manualTip(at, n, e.diameter));
+                break;
+        }
+    }
+    return pts;
+}
+
+std::pair<std::string, std::string> describeEdit(const TipEdit& e, const fruit::Transform& t) {
+    using K = TipEdit::Kind;
+    const double z = t.apply(e.at).z;
+    switch (e.kind) {
+        case K::Add: return {"Added a tip", fmt("%.1f mm, %.1f mm up", e.diameter, z)};
+        case K::Move: return {"Moved a tip", fmt("%.1f mm, now %.1f mm up", dist(t.apply(e.at), t.apply(e.to)),
+                                                 t.apply(e.to).z)};
+        case K::Delete: return {"Deleted a tip", fmt("Leaves a %.1f mm no-tip zone, %.1f mm up", 2 * e.radius, z)};
+        case K::Resize: return {"Resized a tip", fmt("Now %.1f mm, %.1f mm up", e.diameter, z)};
+        case K::Pin: return {"Pinned a tip", fmt("Kept when supports are regenerated, %.1f mm up", z)};
+        case K::Zone: return {"No-tip zone", fmt("%.1f mm across, %.1f mm up", 2 * e.radius, z)};
+    }
+    return {"", ""};
+}
+
+EditCounts countEdits(const std::vector<TipEdit>& edits) {
+    EditCounts c;
+    for (const TipEdit& e : edits) switch (e.kind) {
+            case TipEdit::Kind::Add: ++c.added; break;
+            case TipEdit::Kind::Move: ++c.moved; break;
+            case TipEdit::Kind::Delete: ++c.deleted; break;
+            default: ++c.changed; break;
+        }
+    return c;
 }
 
 SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,

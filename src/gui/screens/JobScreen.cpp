@@ -122,6 +122,8 @@ void topBar(App& app) {
         next = "Next: Orient";
         enabled = app.canGoTo(Step::Orient);
         if (!enabled) why = "Make it fit the plate first.";
+    } else if (doc && app.step() == Step::Supports && app.editingTips()) {
+        next = "Done editing";
     } else if (doc && app.step() == Step::Supports) {
         const SupportState& sp = doc->supports;
         const bool running = app.jobs().busy() && app.jobs().progress().name == "Generating supports";
@@ -172,6 +174,7 @@ void topBar(App& app) {
         else if (next == "Generate supports" || next == "Regenerate supports") app.generateSupports();
         else if (next == "Next: Layers") app.goToStep(Step::Layers);
         else if (next == "Next: Print") app.goToStep(Step::Print);
+        else if (next == "Done editing") app.editTips(false);
         else if (next == "Save .goo" || next == "Send to printer") app.savePrint();
         else if (next == "Eject the drive") app.ejectDrive();
         else if (next == "Show in Finder") app.revealSaved();
@@ -506,7 +509,7 @@ void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = 
                          (io.KeyShift && ImGui::IsMouseDragging(ImGuiMouseButton_Left));
         if (pan) {
             app.camera().pan(io.MouseDelta.x, io.MouseDelta.y, avail.y);
-        } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        } else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && app.draggingTip() < 0) {
             app.camera().orbit(io.MouseDelta.x, io.MouseDelta.y);
             app.viewChanged();
         }
@@ -597,6 +600,10 @@ void statusBar(App& app) {
              col::TextSecondary);
         problems = static_cast<int>(r.count(SupportProblem::Level::Review) + r.count(SupportProblem::Level::Blocks));
         totals = strf("%zu tips · %.1f ml of supports at most", r.tips, r.support_ml);
+        if (!doc->supports.edits.empty()) {
+            const EditCounts n = countEdits(doc->supports.edits);
+            totals = strf("%zu tips · %zu added, %zu moved, %zu deleted by you", r.tips, n.added, n.moved, n.deleted);
+        }
     } else if (doc) {
         const bool fits = doc->fit().fits;
         problems = (fits ? 0 : 1) + (doc->check.closed() ? 0 : 1) + (doc->check.cavities ? 1 : 0);
@@ -649,6 +656,19 @@ void job(App& app) {
         layersView(app, *doc, ImVec2(0, body_h));
     } else if (doc && app.step() == Step::Supports && app.advancedOpen()) {
         supportsAdvanced(app, *doc, ImVec2(0, body_h));
+    } else if (doc && app.step() == Step::Supports && app.editingTips()) {
+        tipEditLeft(app, *doc, body_h);
+        ImGui::SameLine(0, 0);
+        Document& d = *doc;
+        const char* hint = app.tipTool() == App::TipTool::Add
+                               ? "Click the model to add a tip · [ and ] change the selected tip's size"
+                           : app.tipTool() == App::TipTool::Zone
+                               ? "Click the model to keep tips away from there"
+                               : "Click a tip to select it · drag it to move it · Delete removes it · [ and ] change its size";
+        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h), hint,
+                 [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { tipEditOverlay(app, d, o, s, vp); }, false);
+        ImGui::SameLine(0, 0);
+        tipEditRight(app, *doc, body_h);
     } else if (doc && app.step() == Step::Supports) {
         supportsLeft(app, *doc, body_h);
         ImGui::SameLine(0, 0);

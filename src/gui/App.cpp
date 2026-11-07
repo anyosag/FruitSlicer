@@ -424,7 +424,10 @@ bool App::canGoTo(Step s) const {
 
 void App::goToStep(Step s) {
     if (!canGoTo(s)) return;
-    if (s != step_) advanced_open_ = false;
+    if (s != step_) {
+        advanced_open_ = false;
+        tip_editing_ = false;
+    }
     step_ = s;
     screen_ = Screen::Job;
     if (s == Step::Orient && !(doc_ && doc_->orient.resultsFresh(doc_->revision()))) orient_view_ = OrientView::Settings;
@@ -601,10 +604,13 @@ void App::generateSupports() {
     auto out = std::make_shared<SupportResult>();
     const int rev = doc_->revision(), settings = doc_->orient.settings;
     const SupportChoices choices = doc_->supports.choices;
+    const std::vector<TipEdit> edits = doc_->supports.edits;  // hand edits stay: they apply again
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
         "Generating supports",
-        [snap, out, choices](const fruit::JobControl& ctl) { *out = generate(*snap, choices, snap->orient.visible, ctl); },
+        [snap, out, choices, edits](const fruit::JobControl& ctl) {
+            *out = generate(*snap, choices, snap->orient.visible, ctl, edits);
+        },
         [this, target, out, rev, settings](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
@@ -668,6 +674,174 @@ void App::applyAdvanced() {
     if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->orient.settings)) generateSupports();
 }
 
+void App::editTips(bool on) {
+    tip_editing_ = on && doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings);
+    if (tip_editing_) {
+        step_ = Step::Supports;
+        advanced_open_ = false;
+    }
+    dragging_tip_ = -1;
+}
+
+void App::addTipEdit(TipEdit e) {
+    if (!doc_ || !doc_->supports.result) return;
+    doc_->supports.edits.push_back(e);
+    rebuildTips();
+}
+
+void App::undoTipEdit(int index) {
+    if (!doc_) return;
+    auto& edits = doc_->supports.edits;
+    if (edits.empty()) return;
+    if (index < 0 || index >= static_cast<int>(edits.size())) index = static_cast<int>(edits.size()) - 1;
+    edits.erase(edits.begin() + index);
+    rebuildTips();
+}
+
+void App::undoAllTipEdits() {
+    if (!doc_ || doc_->supports.edits.empty()) return;
+    doc_->supports.edits.clear();
+    rebuildTips();
+}
+
+void App::rebuildTips() {
+    // The planner's tips with the edits on top: only the tree is built again.
+    if (!doc_ || !doc_->supports.result) return;
+    const auto prev = doc_->supports.result;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<SupportResult>();
+    const SupportChoices choices = prev->choices;
+    const std::vector<TipEdit> edits = doc_->supports.edits;
+    const int rev = doc_->supports.result_revision, settings = doc_->supports.result_settings;
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Updating the tips",
+        [snap, prev, out, choices, edits](const fruit::JobControl& ctl) {
+            *out = finishWithEdits(*snap, choices, SupportPlan{prev->planned, prev->plan_warnings}, edits, ctl);
+        },
+        [this, target, out, rev, settings](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't update the supports", e.what());
+                }
+                return;
+            }
+            SupportState& s = d->supports;
+            s.result = std::make_shared<const SupportResult>(std::move(*out));
+            s.result_revision = rev;
+            s.result_settings = settings;
+            if (s.selected_tip >= static_cast<int>(s.result->points.size())) s.selected_tip = -1;
+        });
+}
+
+fruit::Transform App::modelFromPrinter() const { return doc_ ? doc_->transform().inverse() : fruit::Transform{}; }
+
+void App::addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
+    if (!doc_) return;
+    const fruit::Transform m = modelFromPrinter();
+    TipEdit e;
+    e.kind = TipEdit::Kind::Add;
+    e.at = m.apply(pos);
+    e.normal = m.applyLinear(normal);
+    e.diameter = supportConfig(doc_->placement(), doc_->supports.choices)
+                     .tip_classes[static_cast<std::size_t>(std::clamp(new_tip_class_, 0, 3))]
+                     .diameter;
+    addTipEdit(e);
+}
+
+void App::addZoneAt(const fruit::Vec3& pos) {
+    if (!doc_) return;
+    TipEdit e;
+    e.kind = TipEdit::Kind::Zone;
+    e.at = modelFromPrinter().apply(pos);
+    e.radius = kZoneRadius;
+    addTipEdit(e);
+}
+
+namespace {
+const fruit::SupportPoint* tipAt(const std::shared_ptr<Document>& d, int index) {
+    if (!d || !d->supports.result || index < 0 || index >= static_cast<int>(d->supports.result->points.size()))
+        return nullptr;
+    return &d->supports.result->points[static_cast<std::size_t>(index)];
+}
+}  // namespace
+
+void App::moveTip(int index, const fruit::Vec3& to, const fruit::Vec3& normal) {
+    const fruit::SupportPoint* p = tipAt(doc_, index);
+    if (!p) return;
+    const fruit::Transform m = modelFromPrinter();
+    TipEdit e;
+    e.kind = TipEdit::Kind::Move;
+    e.at = m.apply(p->pos);
+    e.to = m.apply(to);
+    e.normal = m.applyLinear(normal);
+    e.diameter = p->tip_diameter;
+    doc_->supports.selected_tip = -1;
+    addTipEdit(e);
+}
+
+void App::deleteTip(int index) {
+    const fruit::SupportPoint* p = tipAt(doc_, index);
+    if (!p) return;
+    TipEdit e;
+    e.kind = TipEdit::Kind::Delete;
+    e.at = modelFromPrinter().apply(p->pos);
+    e.normal = modelFromPrinter().applyLinear(p->normal);
+    e.diameter = p->tip_diameter;
+    e.radius = kDeletedZone;
+    doc_->supports.selected_tip = -1;
+    addTipEdit(e);
+}
+
+void App::resizeTip(int index, double diameter) {
+    const fruit::SupportPoint* p = tipAt(doc_, index);
+    if (!p || std::abs(p->tip_diameter - diameter) < 1e-9) return;
+    TipEdit e;
+    e.kind = TipEdit::Kind::Resize;
+    e.at = modelFromPrinter().apply(p->pos);
+    e.normal = modelFromPrinter().applyLinear(p->normal);
+    e.diameter = diameter;
+    addTipEdit(e);
+}
+
+void App::pinTip(int index) {
+    const fruit::SupportPoint* p = tipAt(doc_, index);
+    if (!p || p->category == fruit::PointCategory::Manual) return;
+    TipEdit e;
+    e.kind = TipEdit::Kind::Pin;
+    e.at = modelFromPrinter().apply(p->pos);
+    e.normal = modelFromPrinter().applyLinear(p->normal);
+    e.diameter = p->tip_diameter;
+    addTipEdit(e);
+}
+
+bool App::pickModel(const fruit::Vec3& origin, const fruit::Vec3& dir, fruit::Vec3* pos, fruit::Vec3* normal) {
+    if (!doc_) return false;
+    if (!pick_tree_ || pick_doc_ != doc_.get() || pick_revision_ != doc_->revision()) {
+        pick_tree_ = std::make_shared<fruit::AabbTree>(doc_->placed());
+        pick_doc_ = doc_.get();
+        pick_revision_ = doc_->revision();
+    }
+    const auto hit = pick_tree_->raycast(origin, dir);
+    if (!hit) return false;
+    const fruit::TriangleMesh& m = doc_->placed();
+    const auto& f = m.faces[static_cast<std::size_t>(hit->face)];
+    const fruit::Vec3 a = m.vertices[static_cast<std::size_t>(f[0])], b = m.vertices[static_cast<std::size_t>(f[1])],
+                      c = m.vertices[static_cast<std::size_t>(f[2])];
+    const fruit::Vec3 u{b.x - a.x, b.y - a.y, b.z - a.z}, v{c.x - a.x, c.y - a.y, c.z - a.z};
+    fruit::Vec3 n{u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
+    const double len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+    if (len > 0) n = {n.x / len, n.y / len, n.z / len};
+    *pos = hit->point;
+    *normal = n;
+    return true;
+}
+
 void App::selectTip(int index) {
     if (!doc_ || !doc_->supports.result) return;
     const int n = static_cast<int>(doc_->supports.result->points.size());
@@ -716,11 +890,13 @@ void App::syncScene() {
     renderer_.setExtras(meshes, scene_key_);
     const bool fresh = s.fresh(doc_->revision(), doc_->orient.settings);
     const bool why = supports_view_ == SupportsView::Why;
+    // While editing, only the tips: the tree and raft would hide them.
     renderer_.setExtraStyle(0, fresh ? (why ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
-                            supports_view_ != SupportsView::TipsOnly);
-    // Island, overhang, extra hold, steadying, by hand.
+                            supports_view_ != SupportsView::TipsOnly && !tip_editing_);
+    // Island, overhang, extra hold, steadying, by hand (yours: the accent while editing).
     static const unsigned kWhy[5] = {0xFF8F3F, 0x5B9BD5, 0xB48EF0, 0x5BD69A, 0xF2F4F7};
     for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : 0xF2F4F7, fresh);
+    if (tip_editing_) renderer_.setExtraStyle(5, 0xFF8F3F, true);
 }
 
 void App::chooseSample() {
@@ -1328,11 +1504,38 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, global)) saveJob();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, global)) saveJobAs();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, global)) requestQuit();
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, global)) undo();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, global)) {
+        // While editing tips, undo takes back the last tip edit.
+        if (tip_editing_ && doc_ && !doc_->supports.edits.empty()) undoTipEdit(-1);
+        else undo();
+    }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, global)) redo();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper) return;
+    if (screen_ == Screen::Job && step_ == Step::Supports && tip_editing_ && doc_) {
+        const int sel = doc_->supports.selected_tip;
+        if (ImGui::IsKeyPressed(ImGuiKey_V, false)) tip_tool_ = TipTool::Select;
+        if (ImGui::IsKeyPressed(ImGuiKey_A, false)) tip_tool_ = TipTool::Add;
+        if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) tip_tool_ = TipTool::Zone;
+        if (sel >= 0 && (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)))
+            deleteTip(sel);
+        if (sel >= 0 && doc_->supports.result &&
+            (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false) || ImGui::IsKeyPressed(ImGuiKey_RightBracket, false))) {
+            static const double sizes[] = {0.2, 0.3, 0.4, 0.6};
+            const double d = doc_->supports.result->points[static_cast<std::size_t>(sel)].tip_diameter;
+            int c = 0;
+            for (int i = 1; i < 4; ++i)
+                if (std::abs(sizes[i] - d) < std::abs(sizes[c] - d)) c = i;
+            c = std::clamp(c + (ImGui::IsKeyPressed(ImGuiKey_RightBracket, false) ? 1 : -1), 0, 3);
+            resizeTip(sel, sizes[c]);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            if (sel >= 0) selectTip(-1);
+            else editTips(false);
+        }
+        return;
+    }
     if (screen_ == Screen::Job && step_ == Step::Supports && advanced_open_) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) advanced_open_ = false;
         return;

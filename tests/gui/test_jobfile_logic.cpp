@@ -150,3 +150,38 @@ TEST_CASE("Jobs: recent jobs, newest first, each once", "[gui][jobs]") {
     CHECK(jobs[1].path == "/jobs/9.fruitjob");
     for (std::size_t i = 1; i < jobs.size(); ++i) CHECK(jobs[i].path != jobs[0].path);
 }
+
+TEST_CASE("Jobs: tip edits come back, applied to the planner's tips", "[gui][jobs][slow]") {
+    const auto doc = bracketAt(dir() / "edited.stl");
+    auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, {}, fruit::JobControl::none()));
+    const fruit::Transform to_model = doc->transform().inverse();
+    TipEdit del;
+    del.kind = TipEdit::Kind::Delete;
+    del.at = to_model.apply(r->points[0].pos);
+    del.radius = kDeletedZone;
+    TipEdit add;
+    add.kind = TipEdit::Kind::Add;
+    add.at = to_model.apply(r->points[1].pos + fruit::Vec3{1.5, 0, 0});
+    add.normal = {0, 0, -1};
+    add.diameter = 0.3;
+    doc->supports.edits = {del, add};
+    r = std::make_shared<SupportResult>(finishWithEdits(*doc, doc->supports.choices,
+                                                        SupportPlan{r->planned, r->plan_warnings},
+                                                        doc->supports.edits, fruit::JobControl::none()));
+    doc->supports.result = r;
+    doc->supports.result_revision = doc->revision();
+    doc->supports.result_settings = doc->orient.settings;
+    const auto job = (dir() / "edited.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    const SupportState& s = o.doc->supports;
+    CHECK(s.edits == doc->supports.edits);
+    REQUIRE(s.result);
+    CHECK(s.fresh(o.doc->revision(), o.doc->orient.settings));
+    CHECK(s.result->points.size() == r->points.size());
+    CHECK(s.result->planned.size() == r->planned.size());
+    std::size_t yours = 0;
+    for (const auto& p : s.result->points) yours += p.category == fruit::PointCategory::Manual;
+    CHECK(yours == 1);
+    CHECK_FALSE(o.doc->unsaved());
+}

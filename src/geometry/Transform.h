@@ -20,6 +20,9 @@ struct Transform {
     Vec3 applyLinear(const Vec3& v) const;  // rotation/scale only
     Transform then(const Transform& next) const;  // returns next ∘ this
     double determinant() const;
+    // The transform that undoes this one. Throws std::domain_error when it
+    // can't be undone (a zero scale).
+    Transform inverse() const;
 };
 
 }  // namespace fruit

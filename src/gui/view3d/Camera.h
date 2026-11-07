@@ -24,6 +24,9 @@ public:
     V3 eye() const;
     M4 view() const;
     M4 proj(float aspect) const;
+    // The ray through a point of the view, given in normalised device
+    // coordinates (-1..1, y up).
+    void ray(float ndc_x, float ndc_y, float aspect, V3* origin, V3* dir) const;
     V3 target() const { return target_; }
     float distance() const { return distance_; }
 

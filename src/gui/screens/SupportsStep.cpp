@@ -193,8 +193,9 @@ void supportsLeft(App& app, Document& doc, float h) {
     // Bottom: editing by hand (later) and every other setting.
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 8, h - 22 - 80));
     if (have) {
-        secondaryButton("Edit tips by hand", ImVec2(-1, 40), false);
-        tooltip("Editing tips arrives in a later update.");
+        const bool fresh = doc.supports.fresh(doc.revision(), doc.orient.settings);
+        if (secondaryButton("Edit tips by hand", ImVec2(-1, 40), fresh && !running(app))) app.editTips(true);
+        if (!fresh) tooltip("Regenerate the supports first.");
     }
     ImGui::Dummy(ImVec2(0, 4));
     if (linkButton("Advanced settings")) app.showAdvanced(true);

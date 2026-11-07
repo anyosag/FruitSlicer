@@ -64,7 +64,12 @@ first), shows the run's stages with Cancel, and then the tree in 3D with
 three views (Supports, Tips only, Why), why any tip you click is there, the
 checks (nothing starts in mid-air, the raft comes off in one piece, no
 support stands on the model) and a drawer of things to review. Changing
-the model afterwards marks the supports out of date. **Advanced settings**
+the model afterwards marks the supports out of date. **Edit tips by hand**
+adds tips where you click the model, moves (drag), deletes, resizes and pins
+them, and draws no-tip zones; a deleted tip leaves a small no-tip zone. Every
+edit is listed and can be undone on its own, is kept in the model's own
+coordinates (so it follows the model when it turns), stays when you
+regenerate, and is saved with the job. **Advanced settings**
 lists every value the tip planner and the tree builder use (29 rows, from
 tip sizes and how much a tip holds to braces and the raft) with where each
 comes from: built in, borrowed from PrusaSlicer until you calibrate, or an

@@ -189,3 +189,67 @@ TEST_CASE("Supports: a hinge side adds hold away from the hinge", "[gui][support
     CHECK(cfg.peel_axis.x > 0.99);
     CHECK_FALSE(left == none);  // so supports made without it read out of date
 }
+
+TEST_CASE("Tip edits: add, move, delete, resize and pin apply on top of the planner's tips", "[gui][supports]") {
+    using K = TipEdit::Kind;
+    const fruit::Transform t = fruit::Transform::translation({10, 0, 5});
+    std::vector<fruit::SupportPoint> planned(2);
+    planned[0].pos = {10, 0, 5};
+    planned[1].pos = {14, 0, 5};
+    // Model coordinates: the first planned tip is at the model's origin.
+    TipEdit del{K::Delete, {0, 0, 0}, {}, {0, 0, -1}, 0.4, kDeletedZone};
+    TipEdit add{K::Add, {2, 1, 0}, {}, {0, 0, -1}, 0.3, 0};
+    TipEdit move{K::Move, {4, 0, 0}, {4, 2, 0}, {0, 0, -1}, 0.6, 0};
+    auto pts = applyEdits(planned, {del}, t);
+    REQUIRE(pts.size() == 1);
+    CHECK(pts[0].pos.x == 14);
+    pts = applyEdits(planned, {del, add, move}, t);
+    REQUIRE(pts.size() == 2);
+    CHECK(pts[0].category == fruit::PointCategory::Manual);
+    CHECK(pts[0].pinned);
+    CHECK(pts[0].pos.x == 12);  // the added tip, placed by the transform
+    CHECK(pts[0].tip_diameter == 0.3);
+    CHECK(pts[1].pos.y == 2);   // the moved one
+    CHECK(pts[1].tip_diameter == 0.6);
+    // Resizing or pinning replaces the planner's tip with one of your own, once.
+    TipEdit resize{K::Resize, {4, 0, 0}, {}, {0, 0, -1}, 0.6, 0};
+    pts = applyEdits(planned, {resize}, t);
+    REQUIRE(pts.size() == 2);
+    CHECK(pts[1].tip_diameter == 0.6);
+    CHECK(pts[1].category == fruit::PointCategory::Manual);
+    // A zone takes away every tip within it.
+    pts = applyEdits(planned, {TipEdit{K::Zone, {2, 0, 0}, {}, {}, 0.4, 2.5}}, t);
+    CHECK(pts.empty());
+    const auto [title, detail] = describeEdit(del, t);
+    CHECK(title == "Deleted a tip");
+    CHECK_THAT(detail, ContainsSubstring("1.0 mm no-tip zone"));
+    const EditCounts n = countEdits({del, add, move, resize});
+    CHECK(n.added == 1);
+    CHECK(n.moved == 1);
+    CHECK(n.deleted == 1);
+    CHECK(n.changed == 1);
+}
+
+TEST_CASE("Tip edits: kept in model coordinates, they follow the model when it turns", "[gui][supports][slow]") {
+    const auto doc = bracket();
+    SupportResult r = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+    REQUIRE(r.points.size() > 3);
+    // Delete the first planned tip, by hand, where it is on the model.
+    const fruit::Transform to_model = doc->transform().inverse();
+    TipEdit del{TipEdit::Kind::Delete, to_model.apply(r.points[0].pos), {}, {0, 0, -1}, 0.4, kDeletedZone};
+    SupportResult e = finishWithEdits(*doc, SupportChoices{}, SupportPlan{r.planned, r.plan_warnings}, {del},
+                                      fruit::JobControl::none());
+    CHECK(e.points.size() == r.points.size() - 1);
+    CHECK(e.planned.size() == r.planned.size());
+    CHECK(e.edits.size() == 1);
+    // Turn the model: the deletion moves with it.
+    fruit::Placement p = doc->placement();
+    p.rotation_deg = {0, 0, 90};
+    doc->edit(p);
+    const fruit::Vec3 now = doc->transform().apply(del.at);
+    const SupportResult turned = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none(), {del});
+    for (const auto& pt : turned.points) {
+        const double dx = pt.pos.x - now.x, dy = pt.pos.y - now.y, dz = pt.pos.z - now.z;
+        CHECK(std::sqrt(dx * dx + dy * dy + dz * dz) > kDeletedZone);
+    }
+}

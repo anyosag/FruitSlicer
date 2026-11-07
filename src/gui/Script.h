@@ -29,6 +29,9 @@
 //   {"mock_printer": true | "silent"} a printer on loopback (or none answering); {"search": true}
 //   {"save_target": "wifi" | "folder"}
 //   {"printer": n (1-based)} {"start_print": bool} {"send": "go" | "close"}
+//   {"edit_tips": bool} {"tip_tool": "select" | "add" | "zone"} {"tip_select": i} {"tip_delete": i}
+//   {"tip_resize": [i, mm]} {"tip_pin": i} {"tip_undo": i | -1 | "all"}
+//   {"tip_add_near" | "tip_zone_near" | "tip_move_near": [i, dx, dy]} (up from below the plate, near tip i)
 //   {"orientation_piece": path | "@demo"} {"orientation_sample": path | "@stand-in-flip-y" (-flip-x, -as-is)}
 //   {"orientation_fix": "use"} {"hinge": "back" | "left" | "right" | "front" | "none"}
 //   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)

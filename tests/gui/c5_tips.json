@@ -1,0 +1,16 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"edit_tips": true}, {"view": "below"}, {"shot": "c5_editing"},
+    {"tip_select": 3}, {"shot": "c5_selected"},
+    {"tip_add_near": [3, 2, 0]}, {"wait": "jobs"},
+    {"tip_delete": 5}, {"wait": "jobs"},
+    {"tip_resize": [0, 0.3]}, {"wait": "jobs"},
+    {"tip_zone_near": [10, 1, 1]}, {"wait": "jobs"}, {"shot": "c5_edits"},
+    {"tip_undo": 1}, {"wait": "jobs"}, {"shot": "c5_undone_one"},
+    {"edit_tips": false}, {"view": "angled"}, {"shot": "c5_done"}
+  ]
+}
