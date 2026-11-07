@@ -6,11 +6,13 @@
 // measured for it (a `fruitslicer fit` profile). A job keeps a copy of its
 // resin's values, so changing the resin later never changes a saved job.
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include "Plates.h"
 #include "Print.h"
 #include "formats/GooFile.h"
 #include "printer/PrinterProfile.h"
@@ -29,6 +31,8 @@ struct Resin {
     // Support values measured for this resin (a fitted profile); null:
     // FruitSlicer's own starting values.
     nlohmann::json profile;
+    // The test plates saved for it, by kind ("tips", "spacing", "islands").
+    std::map<std::string, PlateFiles> plates;
     bool operator==(const Resin&) const = default;
 };
 
@@ -62,6 +66,16 @@ std::string printSummary(const Resin& r);
 std::string resinSummary(const Resin& r, const fruit::GooHeader* sample);
 // "Defaults", or which plates were measured: "Measured: tips, spacing".
 std::string resinState(const Resin& r);
+// Whether a fit of that plate ("tips", "spacing", "islands") is in `profile`.
+bool plateMeasured(const nlohmann::json& profile, const std::string& kind);
+// What to do next with a resin's test plates: for the first, in order, not
+// done yet (fully scored, or fitted), print it or score it.
+struct PlateStep {
+    std::string kind;    // empty: all done
+    bool score = false;  // score it (it was saved); else print it
+    std::string text;    // for the Calibrate page's Next card
+};
+PlateStep nextPlateStep(const Resin& r);
 std::string profileState(const nlohmann::json& profile);
 // A job's resin as its chip shows it: "My resin · Defaults".
 std::string resinLabel(const std::string& name, const nlohmann::json& profile);

@@ -89,19 +89,36 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
         r.written = fruit::exportGooLayers(*layers.layers, &all, plan.setup.header, plan.setup.grid, o, path,
                                            ctl.sub(0.0, 0.85));
     }
+    readBack(r, ctl.sub(0.85, 1.0));
+    r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    return r;
+}
+
+void readBack(SaveResult& r, const fruit::JobControl& ctl) {
     try {
-        r.check = fruit::verifyGoo(path, ctl.sub(0.85, 1.0));
+        r.check = fruit::verifyGoo(r.path, ctl);
     } catch (...) {
         // Cancelled or unreadable: a file that was not checked is not left
         // looking saved.
         std::error_code ec;
-        std::filesystem::remove(path, ec);
+        std::filesystem::remove(r.path, ec);
         throw;
     }
     r.volume_matches = r.written.volume_mm3 > 0 &&
                        std::abs(r.check.volume_mm3 - r.written.volume_mm3) <= 0.005 * r.written.volume_mm3;
     r.good = r.check.checksums_ok && r.check.footer_ok && r.check.layers == r.written.layers && r.volume_matches &&
              r.check.grey_values == 0;
+}
+
+SaveResult saveMeshPrint(const fruit::TriangleMesh& mesh, const fruit::GooPrintSetup& setup, const std::string& path,
+                         bool removable, const fruit::JobControl& ctl) {
+    const auto t0 = std::chrono::steady_clock::now();
+    SaveResult r;
+    r.path = path;
+    fruit::GooExportOptions o;
+    o.sync_to_device = removable;
+    r.written = fruit::exportGoo(mesh, setup.header, setup.grid, o, path, ctl.sub(0.0, 0.85));
+    readBack(r, ctl.sub(0.85, 1.0));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
 }

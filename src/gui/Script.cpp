@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 
 #include "App.h"
@@ -119,6 +120,49 @@ std::string demoProfile() {
     const auto p = (demoDir() / "demo resin.json").string();
     std::ofstream(p) << fruit::fitProfile({res}, o).dump(2) << "\n";
     return p;
+}
+
+// How the demo scorer finds a coupon: the tips hold up to 80 % of the
+// borrowed capacity, and let go partly up to all of it; steep enough or
+// close enough tips hold elsewhere.
+App::Outcome demoOutcome(const std::string& kind, const nlohmann::json& p) {
+    if (kind == "tips") {
+        const double d = p["tip_diameter"].get<double>(), load = p["load_per_tip_mm2"].get<double>();
+        const double cap = fruit::CapacityModel{}.capacity(d);
+        return load <= 0.8 * cap ? App::Outcome::Held : load <= cap ? App::Outcome::Partly : App::Outcome::FellOff;
+    }
+    if (kind == "spacing") {
+        const double a = p["angle_deg"].get<double>();
+        if (p["kind"] == "wedge") return a <= 45 ? App::Outcome::Held : a <= 55 ? App::Outcome::Partly : App::Outcome::FellOff;
+        const double s = p["spacing_mm"].get<double>();
+        return s <= 2 + a / 15 ? App::Outcome::Held : s <= 3 + a / 15 ? App::Outcome::Partly : App::Outcome::FellOff;
+    }
+    const double D = p["island_diameter"].get<double>(), k = p["tips"].get<double>();
+    return D <= 1.7 * k ? App::Outcome::Held : App::Outcome::FellOff;
+}
+
+int demoMark(const nlohmann::json& p) {
+    const double d = p.value("tip_diameter", 0.4);
+    return d >= 0.6 ? 4 : d >= 0.4 ? 2 : 1;
+}
+
+// "@demo" for score_import: a sheet filled in by hand for `p`, as
+// `fruitslicer calibrate` writes them (settings columns and all), with its
+// manifest beside it. Every seventh coupon fell off.
+std::string demoFilledSheet(const fruit::CalibrationPlate& p) {
+    const std::string base = (demoDir() / ("by hand " + p.kind + ".stl")).string();
+    std::ofstream(base + ".json") << p.manifest().dump(2) << "\n";
+    std::istringstream in(p.csvTemplate());
+    std::ostringstream out;
+    std::string line;
+    std::getline(in, line);
+    out << line << "\n";
+    for (int i = 1; std::getline(in, line); ++i) {
+        line.resize(line.size() - 3);  // the empty result, scar and notes
+        out << line << (i % 7 == 0 ? ",failed,,\"came off, film clean\"" : ",ok,2,") << "\n";
+    }
+    std::ofstream(base + ".results.csv") << out.str();
+    return base + ".results.csv";
 }
 
 // "@demo-sample": a print file like one SatelLite saves, with 0.03 mm
@@ -325,6 +369,41 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.deleteResin(app.resinToDelete());
         } else if (step.contains("resin_menu")) {
             app.resinMenu() = step["resin_menu"].get<bool>();
+        } else if (step.contains("plate")) {
+            const std::string kind = step["plate"].get<std::string>();
+            if (!isPlateKind(kind)) throw std::runtime_error("no plate called " + kind);
+            app.openPlate(kind);
+        } else if (step.contains("plate_select")) {
+            app.plateSelected() = step["plate_select"].get<int>();
+        } else if (step.contains("plate_save_to")) {
+            // "@demo": <kind>.goo in the demo folder, "@demo-stl": <kind>.stl, as the Save buttons would.
+            std::string p = step["plate_save_to"].get<std::string>();
+            if (p == "@demo") p = (demoDir() / (app.plateKind() + ".goo")).string();
+            else if (p == "@demo-stl") p = (demoDir() / (app.plateKind() + ".stl")).string();
+            app.savePlateTo(p);
+        } else if (step.contains("score")) {
+            const std::string kind = step["score"].get<std::string>();
+            if (!isPlateKind(kind)) throw std::runtime_error("no plate called " + kind);
+            app.openScores(kind);
+        } else if (step.contains("score_select")) {
+            app.scoreSelected() = step["score_select"].get<int>();
+        } else if (step.contains("score_demo")) {
+            // The first n coupons scored as by someone holding a resin a
+            // little weaker than the borrowed values (as "@demo-profile").
+            const int n = step["score_demo"].get<int>();
+            if (!app.scores()) throw std::runtime_error("score_demo: no scores open");
+            const std::vector<fruit::CouponResult> cs = app.scores()->coupons;
+            for (int i = 0; i < n && i < static_cast<int>(cs.size()); ++i) {
+                const auto& c = cs[static_cast<std::size_t>(i)];
+                app.setScore(c.id, demoOutcome(app.plateKind(), c.params), demoMark(c.params), "");
+                app.scoreSelected() = nextToScore(*app.scores(), c.id);  // as Save and go to the next coupon does
+            }
+        } else if (step.contains("score_mirrored")) {
+            app.scoreMirrored() = step["score_mirrored"].get<bool>();
+        } else if (step.contains("score_import")) {
+            std::string p = step["score_import"].get<std::string>();
+            if (p == "@demo") p = demoFilledSheet(app.plate());
+            app.importScoresFile(p);
         } else if (step.contains("licence")) {
             app.licenceOpen() = step["licence"].get<std::string>();
         } else if (step.contains("prefs")) {

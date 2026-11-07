@@ -29,7 +29,7 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins };
+enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -259,6 +259,23 @@ public:
     void replaceResinSample(const std::string& id);     // another .goo, through a dialog
     void replaceResinSampleFile(const std::string& id, const std::string& goo);
     std::shared_ptr<const fruit::GooHeader> resinSample(const Resin& r);  // its kept header (read once)
+    // Resin test plates (canvas boards "PlatePreview" and "Results"), for the
+    // resin new jobs use: its manifests and scores are kept with it.
+    void openPlate(const std::string& kind);
+    const std::string& plateKind() const { return plate_kind_; }
+    const fruit::CalibrationPlate& plate();       // the open kind's, made once
+    int& plateSelected() { return plate_selected_; }  // a coupon id
+    void savePlate(bool goo);                     // through a dialog
+    void savePlateTo(const std::string& path);    // .stl, or .goo with the resin's print settings
+    void openScores(const std::string& kind);     // scoring, for a plate saved before
+    const PlateScores* scores() const { return scores_.get(); }
+    int scoresRevision() const { return scores_revision_; }  // changes whenever the scores do
+    int& scoreSelected() { return score_selected_; }
+    bool& scoreMirrored() { return score_mirrored_; }  // the plate printed mirrored
+    enum class Outcome { None, Held, Partly, FellOff };
+    void setScore(int id, Outcome o, int scar, const std::string& notes);
+    void importScores();                          // a filled sheet, through a dialog
+    void importScoresFile(const std::string& csv);
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -373,6 +390,18 @@ private:
     void storeResin(const Resin& r);  // into the library and its file (outside scripted runs)
     void applyResin(Document& d, const Resin& r);
     std::string keepHeader(const std::string& goo);  // a SatelLite file's header in FruitSlicer's folder
+    std::string plate_kind_ = "tips";
+    std::map<std::string, std::shared_ptr<const fruit::CalibrationPlate>> plates_;
+    int plate_selected_ = 1, score_selected_ = 1, scores_revision_ = 0;
+    bool score_mirrored_ = false;
+    std::shared_ptr<PlateScores> scores_;
+    std::string scores_resin_;  // whose they are
+    // Where a resin's plate of this kind is kept: the file it was saved as
+    // (if it was), and its manifest and score sheet in FruitSlicer's folder.
+    PlateFiles keptPlate(const Resin& r, const std::string& kind) const;
+    std::string platesDir(const std::string& resin_id) const;
+    void notePlate(const std::string& resin_id, const std::string& kind, const PlateFiles& f);
+    bool onRemovableDrive(const std::string& path) const;
     std::string dataFolder() const;   // FruitSlicer's own folder (a scratch one in scripted runs)
     std::string orient_piece_;
     std::shared_ptr<const OrientationCheck> orient_check_;

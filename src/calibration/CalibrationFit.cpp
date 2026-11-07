@@ -57,6 +57,34 @@ std::string manifestForResults(const std::string& csv) {
     throw std::runtime_error("cannot infer the manifest for " + csv + " (expected <plate>.stl.results.csv)");
 }
 
+std::string blindResultsCsv(const json& manifest, const std::vector<CouponResult>& scores) {
+    std::map<int, const CouponResult*> by_id;
+    for (const auto& s : scores) by_id[s.id] = &s;
+    std::ostringstream out;
+    out << "id,row,col,result,scar,notes\n";
+    for (const auto& c : manifest.at("coupons")) {
+        const int id = c.at("id").get<int>();
+        out << id << "," << c.value("row", 0) << "," << c.value("col", 0) << ",";
+        const auto it = by_id.find(id);
+        const CouponResult* s = it == by_id.end() ? nullptr : it->second;
+        if (s && s->recorded) out << (s->ok ? "ok" : s->partial ? "partial" : "failed");
+        out << ",";
+        if (s && s->scar > 0) out << s->scar;
+        out << ",";
+        if (s && !s->notes.empty()) {
+            // Quoted, so commas and spaces stay; line breaks and double quotes don't.
+            std::string n = s->notes;
+            for (char& ch : n) {
+                if (ch == '\n' || ch == '\r') ch = ' ';
+                else if (ch == '"') ch = '\'';
+            }
+            out << '"' << n << '"';
+        }
+        out << "\n";
+    }
+    return out.str();
+}
+
 PlateResults loadPlateResults(const std::string& manifest_path, const std::string& csv_path) {
     std::ifstream mf(manifest_path);
     if (!mf) throw std::runtime_error("cannot open " + manifest_path);
@@ -97,6 +125,7 @@ PlateResults loadPlateResults(const std::string& manifest_path, const std::strin
                                          ": result must be ok, failed or partial, got '" + res + "'");
             c.recorded = true;
             c.ok = res == "ok";
+            c.partial = res == "partial";
         }
         if (static_cast<int>(f.size()) > c_scar && !f[c_scar].empty()) {
             c.scar = std::stoi(f[c_scar]);  // 0 or empty = not scored

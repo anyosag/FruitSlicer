@@ -9,16 +9,21 @@
 #include <ctime>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 
 #include <SDL3/SDL.h>
 
 #include "core/Parallel.h"
+#include "formats/GooExport.h"
+#include "formats/GooSetup.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
 #include "mesh/StlIO.h"
 #include "net/testing/MockPrinter.h"
+#include "support/SupportSettings.h"
 
 #include "Dialogs.h"
+#include "Format.h"
 #include "Icons.h"
 #include "Log.h"
 #include "Setup.h"
@@ -38,6 +43,12 @@ std::string preferencesFile() { return (std::filesystem::path(platform::dataDir(
 App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
     : window_(window), opts_(opts), jobs_(std::move(wake)) {
     camera_.preset(ViewPreset::Angled);
+    if (opts_.deterministic) {
+        // Each scripted run starts from an empty scratch folder (never this machine's own).
+        const std::filesystem::path scratch = dataFolder();
+        std::error_code ec;
+        if (scratch.filename() == "fruitslicer-script-data") std::filesystem::remove_all(scratch, ec);
+    }
     // Scripted captures start from FruitSlicer's own settings, never this machine's.
     if (!opts_.deterministic) {
         printer_setup_ = loadPrinterSetup(settingsFile());
@@ -1417,6 +1428,7 @@ void App::duplicateResin(const std::string& id) {
     Resin r = *from;
     r.name = freeResinName(resins_, from->name);
     r.id = newResinId(resins_, r.name);
+    r.plates.clear();  // the plates printed were for the other one
     storeResin(r);
     resin_selected_ = r.id;
 }
@@ -1435,6 +1447,8 @@ void App::deleteResin(const std::string& which) {
     if (resins_.size() <= 1 || !resinById(id)) return;  // one always stays
     std::erase_if(resins_, [&](const Resin& r) { return r.id == id; });
     if (!opts_.deterministic) removeResin(resinsDir(), id);
+    std::error_code ec;
+    std::filesystem::remove_all(platesDir(id), ec);  // its plates' manifests and scores
     if (printer_setup_.resin == id) setNewJobResin(resins_.front().id);
     if (resin_selected_ == id) resin_selected_ = newJobResin().id;
 }
@@ -1459,6 +1473,236 @@ void App::replaceResinSampleFile(const std::string& id, const std::string& goo) 
         log::info("print settings for " + r.name + " from " + goo);
     } catch (const std::exception& e) {
         showError("Couldn't use that print file", e.what());
+    }
+}
+
+// ---- Resin test plates ----
+
+std::string App::platesDir(const std::string& resin_id) const {
+    return (std::filesystem::path(dataFolder()) / "plates" / resin_id).string();
+}
+
+PlateFiles App::keptPlate(const Resin& r, const std::string& kind) const {
+    PlateFiles f;
+    if (const auto it = r.plates.find(kind); it != r.plates.end()) f = it->second;
+    const std::string base = (std::filesystem::path(platesDir(r.id)) / kind).string();
+    f.manifest = base + ".json";
+    f.results = base + ".results.csv";
+    return f;
+}
+
+void App::notePlate(const std::string& resin_id, const std::string& kind, const PlateFiles& f) {
+    const Resin* found = resinById(resin_id);
+    if (!found) return;  // deleted meanwhile
+    Resin r = *found;
+    PlateFiles noted = f;
+    noted.manifest.clear();  // these follow from the resin's id
+    noted.results.clear();
+    r.plates[kind] = noted;
+    storeResin(r);
+}
+
+bool App::onRemovableDrive(const std::string& path) const {
+    for (const platform::Volume& v : platform::removableVolumes()) {
+        const std::string root = !v.path.empty() && v.path.back() == '/' ? v.path : v.path + "/";
+        if (path.rfind(root, 0) == 0) return true;
+    }
+    return false;
+}
+
+void App::openPlate(const std::string& kind) {
+    if (!isPlateKind(kind)) return;
+    plate_kind_ = kind;
+    plate_selected_ = 1;
+    screen_ = Screen::Plate;
+}
+
+const fruit::CalibrationPlate& App::plate() {
+    auto& p = plates_[plate_kind_];
+    if (!p) p = std::make_shared<const fruit::CalibrationPlate>(makePlate(plate_kind_, printer_));
+    return *p;
+}
+
+void App::savePlate(bool goo) {
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    std::error_code ec;
+    // A print file starts where the last one went.
+    const std::filesystem::path folder = goo && !prefs_.goo_folder.empty() &&
+                                                 std::filesystem::is_directory(prefs_.goo_folder, ec)
+                                             ? std::filesystem::path(prefs_.goo_folder)
+                                             : std::filesystem::path(docs ? docs : ".");
+    const std::string name = plate_kind_ + (goo ? ".goo" : ".stl");
+    platform::saveFileDialog(window_, {{goo ? "Print files" : "STL", goo ? "goo" : "stl"}}, (folder / name).string(),
+                             [this, goo](const std::string& path) {
+                                 if (path.empty()) return;
+                                 if (goo) {
+                                     Preferences p = prefs_;
+                                     p.goo_folder = std::filesystem::path(path).parent_path().string();
+                                     setPreferences(p);
+                                 }
+                                 savePlateTo(path);
+                             });
+}
+
+void App::savePlateTo(const std::string& path) {
+    const std::string kind = plate_kind_;
+    plate();  // made once per kind
+    const std::shared_ptr<const fruit::CalibrationPlate> made = plates_[kind];
+    const Resin& resin = newJobResin();
+    const std::string resin_id = resin.id;
+    PlateFiles files = keptPlate(resin, kind);
+    files.file = path;
+    // Once the plate file is written: its manifest, and a blank score sheet
+    // (or this same plate's scores so far), kept with the resin.
+    auto keep = [this, made, files, resin_id, kind]() mutable {
+        try {
+            keepPlate(*made, files);
+            notePlate(resin_id, kind, files);
+            log::info("saved the " + kind + " plate to " + files.file);
+        } catch (const std::exception& e) {
+            showError("Couldn't keep the plate's score sheet", e.what());
+        }
+    };
+    if (std::filesystem::path(path).extension() != ".goo") {
+        try {
+            fruit::writeStl(path, made->mesh);
+        } catch (const std::exception& e) {
+            showError("Couldn't save the plate", e.what());
+            return;
+        }
+        keep();
+        return;
+    }
+    // A print file with the resin's own print settings, and the image
+    // orientation fix once the check has confirmed it.
+    const PrintSettings ps = printSettingsFor(resin);
+    fruit::GooPrintRequest req;
+    req.layer_height = ps.sample ? fruit::gooLayerHeight(*ps.sample) : printer_.layer_height;
+    req.settings_from = ps.sample.get();
+    req.exposure = ps.exposure;
+    req.bottom_exposure = ps.bottom_exposure;
+    req.bottom_layers = ps.bottom_layers;
+    req.transition_layers = ps.transition_layers;
+    req.flip_x = printer_setup_.orientation_confirmed && printer_setup_.flip_x;
+    req.flip_y = printer_setup_.orientation_confirmed && printer_setup_.flip_y;
+    std::shared_ptr<const fruit::GooPrintSetup> setup;
+    try {
+        setup = std::make_shared<const fruit::GooPrintSetup>(fruit::buildGooSetup(printer_, req));
+    } catch (const std::exception& e) {
+        showError("The resin has no print settings yet",
+                  "Add them on the Resins page, or save the STL and slice it in SatelLite. (" + std::string(e.what()) +
+                      ")");
+        return;
+    }
+    // Tips cured with the bottom or transition exposure would hold more than
+    // they do in a model, and the fit would trust them too much.
+    {
+        const auto& h = setup->header.print;
+        const double first = fruit::minRaftThickness(h.bottom_layers, h.transition_layers,
+                                                     fruit::gooLayerHeight(setup->header));
+        const double tips_from = made->settings.value("elevation", 0.0) - made->settings.value("head_length", 0.0);
+        if (first > tips_from - 1e-9) {
+            showError("The resin's first layers reach the plate's tips",
+                      "Its bottom and transition layers come to " + strf("%.2f mm", first) + ", and the tips start at " +
+                          strf("%.1f mm", tips_from) +
+                          ", so they'd be cured longer than in a model. Use fewer bottom or transition layers.");
+            return;
+        }
+    }
+    const bool removable = onRemovableDrive(path);
+    auto out = std::make_shared<SaveResult>();
+    std::string what = plateTitle(kind);
+    what[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(what[0])));
+    jobs_.start(
+        "Saving the " + what,
+        [made, setup, path, removable, out](const fruit::JobControl& ctl) {
+            *out = saveMeshPrint(made->mesh, *setup, path, removable, ctl);
+        },
+        [this, out, keep](std::exception_ptr err) mutable {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't save the plate", e.what());
+                }
+                return;
+            }
+            if (!out->good) {
+                std::error_code ec;
+                std::filesystem::remove(out->path, ec);
+                showError("The plate's print file didn't read back as it was written",
+                          "It was removed, so it can't be printed by mistake. Save it again, or try another drive.");
+                return;
+            }
+            keep();
+        });
+}
+
+void App::openScores(const std::string& kind) {
+    if (!isPlateKind(kind)) return;
+    plate_kind_ = kind;
+    scores_.reset();
+    ++scores_revision_;
+    screen_ = Screen::Score;
+    const Resin& resin = newJobResin();
+    if (!resin.plates.count(kind)) return;  // the page offers to save the plate first
+    scores_resin_ = resin.id;
+    try {
+        scores_ = std::make_shared<PlateScores>(loadScores(keptPlate(resin, kind)));
+        score_selected_ = nextToScore(*scores_, 0);  // the first not scored yet
+    } catch (const std::exception& e) {
+        showError("Couldn't read the scores", e.what());
+    }
+}
+
+void App::setScore(int id, Outcome o, int scar, const std::string& notes) {
+    const Resin* resin = scores_ ? resinById(scores_resin_) : nullptr;
+    if (!resin) return;
+    PlateScores next = *scores_;
+    bool found = false;
+    for (auto& c : next.coupons) {
+        if (c.id != id) continue;
+        found = true;
+        c.recorded = o != Outcome::None;
+        c.ok = o == Outcome::Held;
+        c.partial = o == Outcome::Partly;
+        c.scar = o == Outcome::Held || o == Outcome::Partly ? std::clamp(scar, 0, 5) : 0;  // nothing left to mark
+        c.notes = notes;
+    }
+    if (!found) return;
+    PlateFiles f = keptPlate(*resin, plate_kind_);
+    try {
+        saveScores(f, next);
+    } catch (const std::exception& e) {
+        showError("Couldn't save the score", e.what());
+        return;
+    }
+    *scores_ = std::move(next);
+    ++scores_revision_;
+    notePlate(scores_resin_, plate_kind_, f);
+}
+
+void App::importScores() {
+    platform::openFileDialog(window_, {{"Score sheets", "csv"}}, [this](const std::string& path) {
+        if (!path.empty()) importScoresFile(path);
+    });
+}
+
+void App::importScoresFile(const std::string& csv) {
+    try {
+        const PlateScores s = readScoreSheet(csv);
+        const Resin& resin = newJobResin();
+        const std::string resin_id = resin.id;
+        PlateFiles f = keptPlate(resin, s.kind);
+        // The plate the sheet came with ("tips.stl.results.csv": "tips.stl").
+        f.file = csv.substr(0, csv.size() - std::string(".results.csv").size());
+        keepScores(s, f);
+        notePlate(resin_id, s.kind, f);
+        openScores(s.kind);
+        log::info("imported " + std::to_string(s.scored()) + " scores for the " + s.kind + " plate from " + csv);
+    } catch (const std::exception& e) {
+        showError("Couldn't read that score sheet", e.what());
     }
 }
 
@@ -1733,7 +1977,8 @@ void App::rail() {
     if (railItem("rail_home", "Home", icon::home, screen_ == Screen::Home)) screen_ = Screen::Home;
     if (railItem("rail_job", "Job", icon::cube, screen_ == Screen::Job)) screen_ = Screen::Job;
     const bool calibrating =
-        screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer;
+        screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer ||
+        screen_ == Screen::Plate || screen_ == Screen::Score;
     if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
     if (railItem("rail_resins", "Resins", icon::droplet, screen_ == Screen::Resins)) {
         if (screen_ != Screen::Resins) resin_selected_ = newJobResin().id;
@@ -1901,6 +2146,8 @@ void App::frame() {
         case Screen::Settings: screens::settings(*this); break;
         case Screen::Setup: screens::setup(*this); break;
         case Screen::Resins: screens::resins(*this); break;
+        case Screen::Plate: screens::plate(*this); break;
+        case Screen::Score: screens::score(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);

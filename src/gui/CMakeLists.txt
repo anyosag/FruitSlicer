@@ -61,6 +61,7 @@ set(app_sources
   Layers.cpp
   Log.cpp
   Orient.cpp
+  Plates.cpp
   Preferences.cpp
   Print.cpp
   Resins.cpp
@@ -76,6 +77,7 @@ set(app_sources
   screens/JobDialogs.cpp
   screens/JobScreen.cpp
   screens/LayersStep.cpp
+  screens/PlateScreens.cpp
   screens/PrintStep.cpp
   screens/ResinsScreen.cpp
   screens/SendDialog.cpp

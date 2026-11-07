@@ -1,0 +1,20 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"plate": "tips"}, {"shot": "c3b_plate_tips"},
+    {"plate": "spacing"}, {"plate_select": 8}, {"shot": "c3b_plate_spacing"},
+    {"plate": "islands"}, {"plate_select": 2}, {"shot": "c3b_plate_islands"},
+    {"orientation_piece": "@demo"}, {"orientation_sample": "@stand-in-flip-y"}, {"wait": "jobs"},
+    {"orientation_fix": "use"}, {"hinge": "left"},
+    {"plate": "tips"}, {"plate_save_to": "@demo-stl"}, {"shot": "c3b_plate_saved"},
+    {"score": "tips"}, {"score_demo": 20}, {"shot": "c3b_score_part"},
+    {"score_select": 9}, {"shot": "c3b_score_partly"},
+    {"score_mirrored": true}, {"shot": "c3b_score_mirrored"}, {"score_mirrored": false},
+    {"screen": "calibrate"}, {"shot": "c3b_hub_scored"},
+    {"score": "spacing"}, {"shot": "c3b_score_unsaved"},
+    {"score_import": "@demo"}, {"shot": "c3b_score_imported"},
+    {"resin_new_from": "@demo-sample"}, {"new_job_resin": "sample 0.03 mm"},
+    {"plate": "islands"}, {"plate_save_to": "@demo"}, {"wait": "jobs"}, {"shot": "c3b_plate_goo_saved"}
+  ]
+}
