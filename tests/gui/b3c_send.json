@@ -1,0 +1,17 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"mock_printer": "silent"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
+    {"step": "print"}, {"exposures": [2.5, 30]}, {"save_target": "wifi"}, {"shot": "b3c_send_target"},
+    {"save": true}, {"answer": "save_anyway"}, {"wait": "jobs"}, {"shot": "b3c_send_none"},
+    {"mock_printer": true}, {"search": true}, {"wait": "jobs"}, {"shot": "b3c_send_found"},
+    {"start_print": true}, {"shot": "b3c_send_start_on"},
+    {"start_print": false}, {"send": "go"}, {"wait": "jobs"}, {"shot": "b3c_send_sent"},
+    {"send": "close"}, {"save": true}, {"wait": "jobs"},
+    {"start_print": true}, {"send": "go"}, {"wait": "jobs"}, {"shot": "b3c_send_printing"}
+  ]
+}

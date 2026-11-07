@@ -96,7 +96,14 @@ TEST_CASE("job control: cancel is shared by children; none() is inert", "[jobs]"
     const JobControl child = ctl.sub(0.2, 0.4);
     const JobControl quiet = ctl.silent();
     CHECK_NOTHROW(child.check());
+    // Code that polls an atomic sees the same flag through every child.
+    const std::atomic<bool>* flag = child.cancelFlag();
+    REQUIRE(flag != nullptr);
+    CHECK(flag == quiet.cancelFlag());
+    CHECK_FALSE(flag->load());
+    CHECK(JobControl::none().cancelFlag() == nullptr);
     ctl.cancel();
+    CHECK(flag->load());
     CHECK(child.cancelled());
     CHECK(quiet.cancelled());
     CHECK_THROWS_AS(child.check(), Cancelled);

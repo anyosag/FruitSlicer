@@ -22,8 +22,8 @@ target_link_libraries(fruit_net_cli PUBLIC fruit_net PRIVATE CLI11::CLI11)
 add_executable(fruitslicer-printer cli/main.cpp)
 target_link_libraries(fruitslicer-printer PRIVATE fruit_net_cli)
 
-# In-process mock printer for the tests (loopback only).
-if(FRUIT_BUILD_TESTS)
+# In-process mock printer for the tests and the app's scripted runs (loopback only).
+if(FRUIT_BUILD_TESTS OR FRUIT_BUILD_APP)
   add_library(fruit_net_mock testing/MockPrinter.cpp)
   target_link_libraries(fruit_net_mock PUBLIC fruit_net PRIVATE httplib::httplib)
   target_compile_definitions(fruit_net_mock PRIVATE ${FRUIT_HTTPLIB_DEFS})

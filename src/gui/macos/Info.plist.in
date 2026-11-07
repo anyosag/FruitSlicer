@@ -30,6 +30,8 @@
   <true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>FruitSlicer finds your printer on the local network and sends print files to it over Wi-Fi.</string>
   <key>NSRemovableVolumesUsageDescription</key>
   <string>FruitSlicer saves print files to the USB stick you take to the printer.</string>
   <key>CFBundleDocumentTypes</key>

@@ -26,6 +26,7 @@ set(app_sources
   Log.cpp
   Orient.cpp
   Print.cpp
+  Send.cpp
   Script.cpp
   Supports.cpp
   Theme.cpp
@@ -35,6 +36,7 @@ set(app_sources
   screens/JobScreen.cpp
   screens/LayersStep.cpp
   screens/PrintStep.cpp
+  screens/SendDialog.cpp
   screens/SupportsAdvanced.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
@@ -50,7 +52,9 @@ endif()
 add_executable(fruitslicer_app ${app_sources})
 target_include_directories(fruitslicer_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(fruitslicer_app PRIVATE GL_SILENCE_DEPRECATION FRUIT_VERSION="${PROJECT_VERSION}")
-target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_imgui fruit_glad miniz)
+# fruit_net_mock: an SDCP printer on loopback, started only by scripted runs
+# ({"mock_printer": true}) so the Wi-Fi screens can be captured without a printer.
+target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_net fruit_net_mock fruit_imgui fruit_glad miniz)
 
 if(APPLE)
   set_source_files_properties(macos/FruitSlicer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -72,6 +76,7 @@ if(APPLE)
     FruitSlicer ${PROJECT_SOURCE_DIR}/LICENSE
     Clipper2 ${clipper2_SOURCE_DIR}/LICENSE
     nlohmann-json ${json_SOURCE_DIR}/LICENSE.MIT
+    cpp-httplib ${httplib_SOURCE_DIR}/LICENSE
     SDL3 ${sdl3_SOURCE_DIR}/LICENSE.txt
     DearImGui ${imgui_SOURCE_DIR}/LICENSE.txt
     glad ${PROJECT_SOURCE_DIR}/third_party/glad/LICENSES.txt

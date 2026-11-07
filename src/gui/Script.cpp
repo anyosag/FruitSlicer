@@ -245,6 +245,25 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             std::string p = step["save_to"].get<std::string>();
             if (p == "@demo" && app.document()) p = (demoDir() / (app.document()->name + ".goo")).string();
             app.savePrintTo(p, "");
+        } else if (step.contains("answer")) {
+            // The "save before checking the image orientation?" question.
+            const std::string a = step["answer"].get<std::string>();
+            if (a == "save_anyway") app.savePrintAfterAsking();
+            else if (a == "cancel") app.orientationAsk() = false;
+            else throw std::runtime_error("unknown answer " + a);
+        } else if (step.contains("save_target")) {
+            app.sendOverWifi() = step["save_target"].get<std::string>() == "wifi";
+        } else if (step.contains("mock_printer")) {
+            app.useMockPrinter(step["mock_printer"].is_string() && step["mock_printer"].get<std::string>() == "silent");
+        } else if (step.contains("search")) {
+            app.findPrinters();
+        } else if (step.contains("printer")) {
+            app.send().chosen = step["printer"].get<int>() - 1;
+        } else if (step.contains("start_print")) {
+            app.send().start_print = step["start_print"].get<bool>();
+        } else if (step.contains("send")) {
+            if (step["send"].get<std::string>() == "close") app.closeSend();
+            else app.sendToPrinter();
         } else if (step.contains("saved")) {
             if (step["saved"].get<std::string>() != "back") throw std::runtime_error("unknown saved step");
             app.dismissSaved();

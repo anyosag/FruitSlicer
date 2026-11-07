@@ -13,6 +13,7 @@
 
 #include "Document.h"
 #include "Jobs.h"
+#include "Send.h"
 #include "platform/Platform.h"
 #include "printer/PrinterProfile.h"
 #include "view3d/Camera.h"
@@ -44,6 +45,20 @@ struct HealthDialog {
     bool open = false;
     SizeChoice choice = SizeChoice::Full;
     double custom_percent = 100;
+};
+
+// The "Send to the printer" dialog (canvas board "SendWifi").
+struct SendDialog {
+    bool open = false;
+    std::shared_ptr<const SaveResult> file;          // written and read back, waiting to go
+    std::vector<fruit::net::PrinterInfo> printers;   // found, or added by address
+    int chosen = -1;                                 // index into printers
+    bool searched = false;                           // a search has finished
+    bool start_print = false;                        // "Start printing when it arrives"; off by default
+    char address[96] = {};                           // "Add a printer by its address…"
+    std::string problem;                             // what went wrong last, in words
+    std::shared_ptr<const SendResult> sent;          // what arrived
+    double send_started = -1;                        // seconds, for the time left
 };
 
 class App {
@@ -114,7 +129,7 @@ public:
     std::string printBlocker();                           // what stops saving, in a few words ("" if nothing)
     void savePrint();                                     // asks where (and once about orientation)
     void savePrintAfterAsking();                          // "Save anyway" in the orientation question
-    void savePrintTo(const std::string& path, const std::string& drive);
+    void savePrintTo(const std::string& path, const std::string& drive, bool to_send = false);
     void ejectDrive();
     void revealSaved();   // the saved file in Finder
     void dismissSaved();  // leave the "saved" page for the Print step
@@ -123,6 +138,15 @@ public:
     std::vector<platform::Volume>& drives() { return drives_; }
     int& driveChoice() { return drive_choice_; }          // index into drives(), -1 = choose a folder
     bool& orientationAsk() { return orientation_ask_; }  // the "save before checking?" question is open
+    // Over Wi-Fi: "Save to" picks the printer; saving writes the file to a
+    // temporary folder, checks it, then opens the send dialog.
+    bool& sendOverWifi() { return send_wifi_; }
+    SendDialog& send() { return send_; }
+    void findPrinters();                       // search the network (and the addresses added by hand)
+    void addPrinter(const std::string& host);  // ask one address and remember it
+    void sendToPrinter();                      // upload to the chosen printer (and start it, if asked)
+    void closeSend();
+    void useMockPrinter(bool silent = false);  // scripts: a printer on loopback (or nothing that answers)
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -195,6 +219,12 @@ private:
     int drive_choice_ = -1;
     double drives_checked_ = -1;  // when the drive list was last read (seconds)
     bool orientation_ask_ = false, orientation_asked_ = false;
+    bool send_wifi_ = false;
+    SendDialog send_;
+    NetPorts net_ports_;
+    std::vector<std::string> printer_hosts_;  // added by hand
+    bool printer_hosts_loaded_ = false;
+    std::shared_ptr<void> mock_printer_;      // scripts only
     std::shared_ptr<const PrintPlan> plan_;
     std::shared_ptr<const LayerResult> plan_layers_;
     PrintSettings plan_settings_;

@@ -11,6 +11,7 @@
 #include <SDL3/SDL.h>
 
 #include "mesh/StlIO.h"
+#include "net/testing/MockPrinter.h"
 
 #include "Dialogs.h"
 #include "Icons.h"
@@ -557,6 +558,14 @@ void App::savePrint() {
         return;
     }
     const std::string name = doc_->name + ".goo";
+    if (send_wifi_) {
+        // Written and checked here first, then sent from the dialog.
+        const auto dir = std::filesystem::temp_directory_path() / "FruitSlicer outgoing";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        savePrintTo((dir / name).string(), "", true);
+        return;
+    }
     if (drive_choice_ >= 0 && drive_choice_ < static_cast<int>(drives_.size())) {
         const platform::Volume& v = drives_[static_cast<std::size_t>(drive_choice_)];
         savePrintTo((std::filesystem::path(v.path) / name).string(), v.name);
@@ -574,7 +583,7 @@ void App::savePrintAfterAsking() {
     savePrint();
 }
 
-void App::savePrintTo(const std::string& path, const std::string& drive) {
+void App::savePrintTo(const std::string& path, const std::string& drive, bool to_send) {
     if (const std::string why = printBlocker(); !why.empty()) {
         showError("Couldn't save the print file", why);
         return;
@@ -593,7 +602,7 @@ void App::savePrintTo(const std::string& path, const std::string& drive) {
         [snap, layers, supports, plan, path, drive, out](const fruit::JobControl& ctl) {
             *out = gui::savePrint(*snap, *layers, supports->mesh, *plan, path, !drive.empty(), ctl);
         },
-        [this, target, layers, drive, out, name](std::exception_ptr err) {
+        [this, target, layers, drive, out, name, to_send](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
             if (err) {
@@ -605,12 +614,157 @@ void App::savePrintTo(const std::string& path, const std::string& drive) {
                 }
                 return;
             }
+            if (to_send) {
+                send_ = SendDialog{};
+                send_.open = true;
+                send_.file = std::make_shared<const SaveResult>(std::move(*out));
+                if (!send_.file->good) {
+                    send_.problem = "The file did not read back as it was written, so it was not sent. Save it again.";
+                    return;
+                }
+                findPrinters();
+                return;
+            }
             d->print.saved = std::make_shared<const SaveResult>(std::move(*out));
             d->print.saved_from = layers;
             d->print.drive = drive;
             log::info("saved " + d->print.saved->path + ": " + std::to_string(d->print.saved->written.layers) +
                       " layers, read back " + (d->print.saved->check.checksums_ok ? "ok" : "FAILED"));
         });
+}
+
+void App::findPrinters() {
+    if (!printer_hosts_loaded_ && !opts_.deterministic) {
+        printer_hosts_ = loadPrinterAddresses((std::filesystem::path(platform::dataDir()) / "printers.json").string());
+        printer_hosts_loaded_ = true;
+    }
+    send_.problem.clear();
+    auto found = std::make_shared<std::vector<fruit::net::PrinterInfo>>();
+    const auto hosts = printer_hosts_;
+    const NetPorts ports = net_ports_;
+    jobs_.start(
+        "Looking for printers",
+        [found, hosts, ports](const fruit::JobControl& ctl) { *found = gui::findPrinters(hosts, ports, ctl); },
+        [this, found](std::exception_ptr err) {
+            send_.searched = true;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    send_.problem = std::string("Couldn't search the network: ") + e.what();
+                }
+                return;
+            }
+            // Keep the one chosen, if it answered again.
+            const std::string was = send_.chosen >= 0 && send_.chosen < static_cast<int>(send_.printers.size())
+                                        ? send_.printers[static_cast<std::size_t>(send_.chosen)].mainboardId
+                                        : std::string();
+            send_.printers = *found;
+            send_.chosen = -1;
+            for (std::size_t i = 0; i < send_.printers.size(); ++i)
+                if (send_.printers[i].mainboardId == was) send_.chosen = static_cast<int>(i);
+            if (send_.chosen < 0 && send_.printers.size() == 1) send_.chosen = 0;
+            log::info("printers found: " + std::to_string(send_.printers.size()));
+        });
+}
+
+void App::addPrinter(const std::string& host_in) {
+    std::string host = host_in;
+    host.erase(0, host.find_first_not_of(" \t"));
+    host.erase(host.find_last_not_of(" \t") + 1);
+    if (host.empty()) return;
+    send_.problem.clear();
+    auto info = std::make_shared<fruit::net::PrinterInfo>();
+    const NetPorts ports = net_ports_;
+    jobs_.start(
+        "Asking " + host, [info, host, ports](const fruit::JobControl&) { *info = probePrinter(host, ports); },
+        [this, info, host](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    send_.problem = e.what();
+                }
+                return;
+            }
+            int at = -1;
+            for (std::size_t i = 0; i < send_.printers.size(); ++i)
+                if (send_.printers[i].mainboardId == info->mainboardId) at = static_cast<int>(i);
+            if (at < 0) {
+                send_.printers.push_back(*info);
+                at = static_cast<int>(send_.printers.size()) - 1;
+            }
+            send_.chosen = at;
+            send_.address[0] = 0;
+            if (std::find(printer_hosts_.begin(), printer_hosts_.end(), host) == printer_hosts_.end()) {
+                printer_hosts_.push_back(host);
+                if (!opts_.deterministic) {
+                    try {
+                        savePrinterAddresses((std::filesystem::path(platform::dataDir()) / "printers.json").string(),
+                                             printer_hosts_);
+                    } catch (const std::exception& e) {
+                        log::error(std::string("printer addresses not saved: ") + e.what());
+                    }
+                }
+            }
+        });
+}
+
+void App::sendToPrinter() {
+    if (!send_.file || !send_.file->good || send_.chosen < 0 ||
+        send_.chosen >= static_cast<int>(send_.printers.size()))
+        return;
+    send_.problem.clear();
+    send_.sent.reset();
+    const fruit::net::PrinterInfo printer = send_.printers[static_cast<std::size_t>(send_.chosen)];
+    const std::string path = send_.file->path;
+    const bool start = send_.start_print;
+    const NetPorts ports = net_ports_;
+    auto out = std::make_shared<SendResult>();
+    send_.send_started = static_cast<double>(SDL_GetTicks()) / 1000.0;
+    jobs_.start(
+        "Sending " + std::filesystem::path(path).filename().string(),
+        [printer, path, start, ports, out](const fruit::JobControl& ctl) {
+            *out = gui::sendToPrinter(printer, path, start, ports, ctl);
+        },
+        [this, out](std::exception_ptr err) {
+            send_.send_started = -1;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                    send_.problem = "Sending was cancelled. Nothing was left on the printer.";
+                } catch (const std::exception& e) {
+                    send_.problem = std::string("Couldn't send it: ") + e.what();
+                }
+                return;
+            }
+            send_.sent = std::make_shared<const SendResult>(std::move(*out));
+            log::info("sent " + send_.sent->upload.remoteName + " to " + send_.sent->printer +
+                      (send_.sent->started ? ", printing" : ""));
+        });
+}
+
+void App::closeSend() {
+    if (jobs_.busy()) jobs_.cancel();
+    send_.open = false;
+}
+
+void App::useMockPrinter(bool silent) {
+    printer_hosts_ = {"127.0.0.1"};
+    printer_hosts_loaded_ = true;
+    net_ports_.broadcast = false;  // scripts never ask the real network
+    if (silent) {
+        mock_printer_.reset();
+        net_ports_.udp = net_ports_.control = 9;  // the discard port: nothing answers
+        return;
+    }
+    auto mock = std::make_shared<fruit::net::testing::MockPrinter>();
+    net_ports_.udp = mock->udpPort();
+    net_ports_.control = mock->controlPort();
+    mock_printer_ = mock;
 }
 
 void App::ejectDrive() {
@@ -893,6 +1047,7 @@ void App::frame() {
     dialogs::health(*this);
     dialogs::shortcuts(*this, shortcuts_open_);
     screens::parts::orientationQuestion(*this);
+    screens::parts::sendDialog(*this);
     errorDialog();
     ImGui::End();
 }

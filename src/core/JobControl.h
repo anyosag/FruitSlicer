@@ -38,6 +38,9 @@ public:
     void cancel() const noexcept;
     bool cancelled() const noexcept;
     void check() const;  // throws Cancelled if cancel() was called
+    // The flag itself, for code that polls an atomic while it blocks (network
+    // transfers). Null for none(), which is never cancelled.
+    const std::atomic<bool>* cancelFlag() const noexcept;
 
     // `f` is a fraction (0..1) of this control's range.
     void report(std::string_view stage, double f) const;
