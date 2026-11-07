@@ -25,6 +25,7 @@ struct LayerStack {
 };
 
 // Slice `mesh` (already placed in printer coordinates, Z >= 0) from the plate up.
-LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats = nullptr);
+LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats = nullptr,
+                      unsigned threads = 0, const JobControl& ctl = JobControl::none());
 
 }  // namespace fruit

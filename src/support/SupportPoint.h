@@ -30,7 +30,7 @@ struct SupportPoint {
 uint64_t stablePointId(const Vec3& pos, PointCategory c);
 
 struct Warning {
-    std::string code;     // e.g. "peak_area", "flat_face", "capacity_deficit", "tiny_island"
+    std::string code;     // stable key, e.g. "peak_area", "flat_face", "capacity_deficit", "tiny_islands_skipped"
     std::string message;
     int layer = -1;
     Vec3 where;

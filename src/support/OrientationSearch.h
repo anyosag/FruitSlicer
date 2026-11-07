@@ -44,6 +44,10 @@ struct OrientOptions {
     // Cosmetic hints in MODEL coordinates (they rotate with the model).
     std::vector<Vec3> visible_from;
     double visible_cos = 0.3;
+    // Candidates scored at the same time (0 = all cores). Results do not
+    // depend on it.
+    unsigned threads = 0;
+    bool keep_points = true;  // keep each finalist's support points
 };
 
 struct OrientationResult {
@@ -60,11 +64,16 @@ struct OrientationResult {
     size_t points = 0, cosmetic_points = 0, islands = 0;
     size_t uncovered = 0, capacity_deficits = 0;
     double score = 0;
+    // The finalist's points (placed at OrientOptions::elevation), when
+    // keep_points is set, so choosing it needs no second generator run.
+    std::vector<SupportPoint> support_points;
 };
 
 // Returns finalists sorted best first, followed by the other candidates
-// sorted by proxy score.
-std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, const OrientOptions& o);
+// sorted by proxy score. Reports stages "orient.score" (first 25 %) and
+// "orient.evaluate".
+std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, const OrientOptions& o,
+                                                  const JobControl& ctl = JobControl::none());
 
 // Euler angles (deg) with R = Rz·Ry·Rx, matching Transform::rotationXYZ.
 Vec3 eulerXYZ(const Transform& r);

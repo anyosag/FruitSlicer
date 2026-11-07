@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "core/JobControl.h"
 #include "mesh/TriangleMesh.h"
 
 namespace fruit {
@@ -23,7 +24,9 @@ struct ValidationReport {
 
 // `small_area`: islands below this are expected (the point generator skips
 // islands that merge with the model almost at once); larger ones are failures.
+// Reports stages "slice" and "islands".
 ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh& supports, double layer_height,
-                                   double link_grow, double small_area = 0.12, double pixel_area = 2.7e-4);
+                                   double link_grow, double small_area = 0.12, double pixel_area = 2.7e-4,
+                                   const JobControl& ctl = JobControl::none());
 
 }  // namespace fruit

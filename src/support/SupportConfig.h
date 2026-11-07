@@ -98,6 +98,9 @@ struct SupportConfig {
     // Tilt release: extra peel demand towards the side away from the hinge.
     double peel_bias = 0.0;  // 0 = off (hinge side unknown)
     Vec2 peel_axis{0, 0};
+    // Half the build plate's size (mm): the bias ramps from the hinge side to
+    // the far edge. Saturn 4 Ultra 16K: 211.68 × 118.37 mm.
+    Vec2 plate_half{105.84, 59.185};
 
     // Cost weights for where tips should not go.
     double cosmetic_weight = 4.0;

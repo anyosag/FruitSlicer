@@ -18,8 +18,13 @@
 // (gain / cost; cost penalises cosmetic regions and sharp edges), then
 // reverse-delete pruning that re-checks coverage and capacity.
 
+#include <memory>
 #include <vector>
 
+#include "core/JobControl.h"
+#include "layers/HollowAnalysis.h"
+#include "layers/IslandGraph.h"
+#include "layers/LayerStack.h"
 #include "mesh/TriangleMesh.h"
 #include "support/CosmeticField.h"
 #include "support/SupportConfig.h"
@@ -45,10 +50,19 @@ struct PointGenStats {
     double seconds = 0;
 };
 
+// What the generator learned about the model's layers. Shared, read-only,
+// so a GUI can draw islands and hollows without slicing the model again.
+struct LayerAnalysis {
+    std::shared_ptr<const LayerStack> layers;
+    std::shared_ptr<const IslandGraph> islands;
+    std::shared_ptr<const HollowReport> hollows;
+};
+
 struct PointGenResult {
     std::vector<SupportPoint> points;
     std::vector<Warning> warnings;
     PointGenStats stats;
+    LayerAnalysis analysis;  // the layers the points were generated from
 };
 
 enum class CoverStrategy {
@@ -62,11 +76,16 @@ struct PointGenOptions {
     CoverStrategy strategy = CoverStrategy::Greedy;
     std::vector<SupportPoint> manual;  // pinned user points (snapped to the surface)
     const CosmeticSpec* cosmetic = nullptr;
+    // Layers of this exact mesh at cfg.layer_height, if already sliced (they
+    // are checked for a matching layer height); otherwise the generator
+    // slices the mesh itself.
+    std::shared_ptr<const LayerStack> layers;
+    unsigned slice_threads = 0;  // 0 = all cores
 };
 
 // `mesh` must already be placed in printer coordinates (lowest point at the
-// elevation, Z up).
+// elevation, Z up). Reports stages "slice", "islands" and "points".
 PointGenResult generateSupportPoints(const TriangleMesh& mesh, const SupportConfig& cfg,
-                                     const PointGenOptions& opts = {});
+                                     const PointGenOptions& opts = {}, const JobControl& ctl = JobControl::none());
 
 }  // namespace fruit

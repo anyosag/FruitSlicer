@@ -11,6 +11,8 @@ add_executable(fruit_tests
   test_safety.cpp
   test_raster.cpp
   test_goo.cpp
+  test_jobs.cpp
+  test_api.cpp
   test_net.cpp
 )
 target_link_libraries(fruit_tests PRIVATE fruit_core fruit_net_cli fruit_net_mock Catch2::Catch2WithMain)

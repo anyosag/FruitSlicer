@@ -4,12 +4,47 @@
 
 namespace fruit {
 
-void placeOnPlate(TriangleMesh& mesh, const Vec3& rotation_deg, double elevation) {
-    if (rotation_deg.x != 0 || rotation_deg.y != 0 || rotation_deg.z != 0)
-        mesh.transform(Transform::rotationXYZ(rotation_deg.x, rotation_deg.y, rotation_deg.z));
+Transform placeOnPlate(TriangleMesh& mesh, const Vec3& rotation_deg, double elevation) {
+    Transform applied;
+    if (rotation_deg.x != 0 || rotation_deg.y != 0 || rotation_deg.z != 0) {
+        applied = Transform::rotationXYZ(rotation_deg.x, rotation_deg.y, rotation_deg.z);
+        mesh.transform(applied);
+    }
     const BBox3 b = mesh.bbox();
     const Vec3 c = b.center();
-    mesh.translate({-c.x, -c.y, elevation - b.min.z});
+    const Vec3 d{-c.x, -c.y, elevation - b.min.z};
+    mesh.translate(d);
+    return applied.then(Transform::translation(d));
+}
+
+namespace {
+
+Transform scaleRotation(const Placement& p) {
+    Transform s;
+    for (int i = 0; i < 3; ++i) s.m[i][i] = p.scale;
+    return s.then(Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z));
+}
+
+}  // namespace
+
+Transform placementTransform(const TriangleMesh& model, const Placement& p) {
+    const Transform sr = scaleRotation(p);
+    BBox3 b;
+    for (const Vec3& v : model.vertices) b.extend(sr.apply(v));
+    if (model.vertices.empty()) return sr;
+    const Vec3 c = b.center();
+    return sr.then(Transform::translation({-c.x, -c.y, p.lift() - b.min.z}));
+}
+
+TriangleMesh placeModel(const TriangleMesh& model, const Placement& p) {
+    TriangleMesh m = model;
+    if (p.scale != 1.0) {
+        Transform s;
+        for (int i = 0; i < 3; ++i) s.m[i][i] = p.scale;
+        m.transform(s);
+    }
+    placeOnPlate(m, p.rotation_deg, p.lift());
+    return m;
 }
 
 }  // namespace fruit

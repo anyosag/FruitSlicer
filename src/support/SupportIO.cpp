@@ -2,6 +2,11 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "support/SupportIO.h"
 
+#include "core/OutFile.h"
+#include <sstream>
+#include <locale>
+#include <iomanip>
+
 #include <cstdio>
 #include <stdexcept>
 #include <unordered_map>
@@ -97,12 +102,16 @@ std::vector<SupportPoint> applyEdits(const json& edits, const std::vector<Suppor
 }
 
 void writePointsPly(const std::string& path, const std::vector<SupportPoint>& pts) {
-    std::FILE* f = std::fopen(path.c_str(), "w");
-    if (!f) throw std::runtime_error("cannot write " + path);
-    const int nv = 6 * static_cast<int>(pts.size()), nf = 8 * static_cast<int>(pts.size());
-    std::fprintf(f, "ply\nformat ascii 1.0\nelement vertex %d\nproperty float x\nproperty float y\nproperty float z\n"
-                    "property uchar red\nproperty uchar green\nproperty uchar blue\nelement face %d\n"
-                    "property list uchar int vertex_indices\nend_header\n", nv, nf);
+    // Built with the classic locale so a GUI's locale cannot turn decimal
+    // points into commas.
+    std::ostringstream o;
+    o.imbue(std::locale::classic());
+    const size_t nv = 6 * pts.size(), nf = 8 * pts.size();
+    o << "ply\nformat ascii 1.0\nelement vertex " << nv
+      << "\nproperty float x\nproperty float y\nproperty float z\n"
+         "property uchar red\nproperty uchar green\nproperty uchar blue\nelement face "
+      << nf << "\nproperty list uchar int vertex_indices\nend_header\n";
+    o << std::fixed << std::setprecision(4);
     for (const auto& p : pts) {
         int r = 255, g = 255, b = 255;
         switch (p.category) {
@@ -113,14 +122,18 @@ void writePointsPly(const std::string& path, const std::vector<SupportPoint>& pt
             case PointCategory::Manual: r = 60; g = 140; b = 255; break;       // blue
         }
         const double s = std::max(0.15, p.tip_diameter / 2);
-        const Vec3 o[6] = {{s, 0, 0}, {-s, 0, 0}, {0, s, 0}, {0, -s, 0}, {0, 0, s}, {0, 0, -s}};
-        for (const auto& d : o) std::fprintf(f, "%.4f %.4f %.4f %d %d %d\n", p.pos.x + d.x, p.pos.y + d.y, p.pos.z + d.z, r, g, b);
+        const Vec3 off[6] = {{s, 0, 0}, {-s, 0, 0}, {0, s, 0}, {0, -s, 0}, {0, 0, s}, {0, 0, -s}};
+        for (const auto& d : off)
+            o << p.pos.x + d.x << ' ' << p.pos.y + d.y << ' ' << p.pos.z + d.z << ' ' << r << ' ' << g << ' ' << b
+              << '\n';
     }
     const int tri[8][3] = {{0, 2, 4}, {2, 1, 4}, {1, 3, 4}, {3, 0, 4}, {2, 0, 5}, {1, 2, 5}, {3, 1, 5}, {0, 3, 5}};
     for (size_t i = 0; i < pts.size(); ++i)
-        for (const auto& t : tri)
-            std::fprintf(f, "3 %zu %zu %zu\n", 6 * i + t[0], 6 * i + t[1], 6 * i + t[2]);
-    std::fclose(f);
+        for (const auto& t : tri) o << "3 " << 6 * i + t[0] << ' ' << 6 * i + t[1] << ' ' << 6 * i + t[2] << '\n';
+    const std::string text = o.str();
+    OutFile f(path);
+    f.write(text.data(), text.size());
+    f.commit();
 }
 
 }  // namespace fruit

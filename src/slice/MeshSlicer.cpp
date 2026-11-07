@@ -2,6 +2,8 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "slice/MeshSlicer.h"
 
+#include "core/Parallel.h"
+
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -96,7 +98,7 @@ Paths sliceLayer(const TriangleMesh& m, const std::vector<int32_t>& candidates, 
 }  // namespace
 
 std::vector<Paths> sliceMesh(const TriangleMesh& mesh, const std::vector<double>& zs,
-                             SliceStats* stats, unsigned threads) {
+                             SliceStats* stats, unsigned threads, const JobControl& ctl) {
     std::vector<Paths> out(zs.size());
     if (mesh.faces.empty() || zs.empty()) return out;
 
@@ -121,14 +123,16 @@ std::vector<Paths> sliceMesh(const TriangleMesh& mesh, const std::vector<double>
     std::sort(layer_order.begin(), layer_order.end(),
               [&](size_t a, size_t b) { return zs[a] < zs[b] || (zs[a] == zs[b] && a < b); });
 
-    if (threads == 0) threads = std::max(1u, std::thread::hardware_concurrency());
-    threads = std::min<unsigned>(threads, static_cast<unsigned>(zs.size()));
+    threads = std::min<unsigned>(resolveThreads(threads), static_cast<unsigned>(zs.size()));
     const size_t chunk = (zs.size() + threads - 1) / threads;
-    std::atomic<size_t> open_total{0};
-    auto worker = [&](size_t begin, size_t end) {
+    std::atomic<size_t> open_total{0}, done{0};
+    const double total = static_cast<double>(zs.size());
+    auto worker = [&](size_t begin, size_t end, const std::atomic<bool>& stop) {
         std::vector<int32_t> active, candidates;
         size_t open = 0, cursor = 0;
         for (size_t k = begin; k < end; ++k) {
+            if (stop) return;
+            ctl.check();
             const size_t li = layer_order[k];
             const double z = zs[li];
             while (cursor < order.size() && zmin[order[cursor]] <= z) active.push_back(order[cursor++]);
@@ -141,16 +145,15 @@ std::vector<Paths> sliceMesh(const TriangleMesh& mesh, const std::vector<double>
             }
             active.resize(keep);
             out[li] = sliceLayer(mesh, candidates, z, open);
+            ctl.report("slice", static_cast<double>(++done) / total);
         }
         open_total += open;
     };
-    std::vector<std::thread> pool;
-    for (unsigned t = 1; t < threads; ++t) {
+    runThreads(threads, [&](unsigned t, const std::atomic<bool>& stop) {
         const size_t b = t * chunk, e = std::min(zs.size(), b + chunk);
-        if (b < e) pool.emplace_back(worker, b, e);
-    }
-    worker(0, std::min(zs.size(), chunk));
-    for (auto& th : pool) th.join();
+        if (b < e) worker(b, e, stop);
+    });
+    ctl.check();
     if (stats) stats->open_chains = open_total;
     return out;
 }

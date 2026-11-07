@@ -1,4 +1,7 @@
 add_library(fruit_core
+  core/JobControl.cpp
+  core/Parallel.cpp
+  core/OutFile.cpp
   geometry/Transform.cpp
   geometry/Polygon.cpp
   mesh/TriangleMesh.cpp
@@ -8,6 +11,7 @@ add_library(fruit_core
   mesh/AabbTree.cpp
   mesh/MeshAnalysis.cpp
   mesh/Placement.cpp
+  mesh/ModelLoad.cpp
   slice/MeshSlicer.cpp
   layers/LayerStack.cpp
   layers/IslandGraph.cpp
@@ -19,6 +23,7 @@ add_library(fruit_core
   formats/GooFile.cpp
   formats/GooExport.cpp
   formats/GooCompare.cpp
+  formats/GooSetup.cpp
   support/SupportGeometry.cpp
   support/SupportModels.cpp
   support/CosmeticField.cpp
@@ -27,13 +32,14 @@ add_library(fruit_core
   support/SupportTree.cpp
   support/SupportValidator.cpp
   support/OrientationSearch.cpp
+  support/SupportSettings.cpp
   calibration/Coupons.cpp
   calibration/CalibrationPlates.cpp
   calibration/CalibrationFit.cpp
   calibration/ABPlate.cpp
 )
 target_include_directories(fruit_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(fruit_core PUBLIC Clipper2 nlohmann_json::nlohmann_json nanoflann::nanoflann)
+target_link_libraries(fruit_core PUBLIC Clipper2 nlohmann_json::nlohmann_json)
 find_package(Threads REQUIRED)
 target_link_libraries(fruit_core PUBLIC Threads::Threads)
 

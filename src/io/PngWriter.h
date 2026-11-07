@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #pragma once
-// Minimal dependency-free PNG writer (8-bit grayscale, uncompressed deflate)
-// and a debug rasterizer for layer polygons. Debug output only — the printer
-// file rasterizer (anisotropic pixels, analytic anti-aliasing) is milestone M6.
+// Minimal dependency-free PNG writer (8-bit grayscale or RGB, uncompressed
+// deflate) and a debug rasterizer for layer polygons on square pixels. Debug
+// output only: printer images come from raster/Rasterizer.h (anisotropic
+// pixels, exact anti-aliasing).
 
 #include <cstdint>
 #include <string>

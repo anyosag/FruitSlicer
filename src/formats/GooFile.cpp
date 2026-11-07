@@ -395,39 +395,32 @@ void decodeGooRle(const std::vector<uint8_t>& d, std::vector<uint8_t>& px) {
 
 // ---------------------------------------------------------------- writer / reader
 
-GooWriter::GooWriter(const std::string& path, const GooHeader& header) {
-    f_ = std::fopen(path.c_str(), "wb");
-    if (!f_) throw std::runtime_error("cannot write " + path);
+GooWriter::GooWriter(const std::string& path, const GooHeader& header) : out_(path, /*atomic=*/true) {
     const auto hb = serializeHeader(header);  // placeholder, rewritten by finish()
-    std::fwrite(hb.data(), 1, hb.size(), f_);
-}
-
-GooWriter::~GooWriter() {
-    if (f_) std::fclose(f_);
+    out_.write(hb.data(), hb.size());
 }
 
 void GooWriter::addLayer(const GooLayerDef& def, const std::vector<uint8_t>& rle) {
     Out o;
     serializeLayerDef(o, def);
     o.u32(static_cast<uint32_t>(rle.size()));
-    std::fwrite(o.b.data(), 1, o.b.size(), f_);
-    std::fwrite(rle.data(), 1, rle.size(), f_);
-    std::fwrite(kDelim, 1, 2, f_);
+    out_.write(o.b.data(), o.b.size());
+    out_.write(rle.data(), rle.size());
+    out_.write(kDelim, 2);
     ++layers_;
 }
 
-void GooWriter::finish(const GooHeader& header) {
+void GooWriter::finish(const GooHeader& header, bool sync_to_device) {
     if (header.layer_count != layers_)
         throw std::runtime_error("GOO: header says " + std::to_string(header.layer_count) + " layers but " +
                                  std::to_string(layers_) + " were written");
     const uint8_t pad[3] = {0, 0, 0};
-    std::fwrite(pad, 1, 3, f_);
-    std::fwrite(kMagic, 1, 8, f_);
+    out_.write(pad, 3);
+    out_.write(kMagic, 8);
     const auto hb = serializeHeader(header);
-    std::fseek(f_, 0, SEEK_SET);
-    std::fwrite(hb.data(), 1, hb.size(), f_);
-    std::fclose(f_);
-    f_ = nullptr;
+    out_.seek(0);
+    out_.write(hb.data(), hb.size());
+    out_.commit(sync_to_device);
 }
 
 GooFileInfo readGoo(const std::string& path) {

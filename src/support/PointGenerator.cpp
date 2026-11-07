@@ -8,6 +8,7 @@
 #include <numeric>
 #include <queue>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 #include "layers/HollowAnalysis.h"
@@ -74,10 +75,11 @@ private:
 
 class Generator {
 public:
-    Generator(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts)
+    Generator(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts, const JobControl& ctl)
         : mesh_(mesh),
           cfg_(cfg),
           opts_(opts),
+          ctl_(ctl),
           tip_grid_(std::max(cfg.coverage.maxRadius(), 1.0)),
           sample_grid_(std::max(cfg.sample_min_spacing, 0.05)) {}
 
@@ -128,9 +130,13 @@ private:
     const TriangleMesh& mesh_;
     const SupportConfig& cfg_;
     const PointGenOptions& opts_;
+    const JobControl& ctl_;
     AabbTree tree_;
-    LayerStack layers_;
+    std::shared_ptr<const LayerStack> layers_ptr_;
+    LayerStack empty_layers_;
+    const LayerStack* layers_p_ = &empty_layers_;
     IslandGraph graph_;
+    const LayerStack& layers() const { return *layers_p_; }
     SharpEdgeIndex edges_;
     CostField costf_;
     std::vector<MinimumRegion> minima_;
@@ -215,9 +221,11 @@ int Generator::classFor(double max_diameter, int preferred) const {
 
 double Generator::peelFactor(const Vec2& xy) const {
     if (cfg_.peel_bias <= 0 || norm(cfg_.peel_axis) == 0) return 1.0;
-    // Linear ramp across the plate: +bias at the far (high-stress) side.
-    const double half = 100.0;
-    const double t = std::clamp(dot(xy, normalized(cfg_.peel_axis)) / half, -1.0, 1.0);
+    // Linear ramp across the plate: +bias at the far (high-stress) side,
+    // reaching full strength at the plate's edge along the peel axis.
+    const Vec2 a = normalized(cfg_.peel_axis);
+    const double half = std::max(std::abs(a.x) * cfg_.plate_half.x + std::abs(a.y) * cfg_.plate_half.y, 1.0);
+    const double t = std::clamp(dot(xy, a) / half, -1.0, 1.0);
     return 1.0 + cfg_.peel_bias * 0.5 * (t + 1.0);
 }
 
@@ -226,7 +234,7 @@ double Generator::peelFactor(const Vec2& xy) const {
 int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool decimate, bool needs_cover,
                           double spacing) {
     Sample s;
-    project(xy, layers_.layerBottom(layer), s.pos, s.normal);
+    project(xy, layers().layerBottom(layer), s.pos, s.normal);
     if (s.normal.z > (needs_cover ? 0.2 : -0.05)) return -1;  // not a downward-facing surface
     // Ceiling of an enclosed cavity: no support could ever be removed from it.
     if (inTrap(layer - 1, xy)) {
@@ -423,10 +431,10 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
 
     // A mesh minimum inside this island is where it truly starts.
     const MinimumRegion* minimum = nullptr;
-    const double h = layers_.layer_height;
+    const double h = layers().layer_height;
     for (const auto& m : minima_) {
-        if (m.z > layers_.layerTop(L) + 1e-9) break;
-        if (m.z < layers_.layerBottom(L) - h) continue;
+        if (m.z > layers().layerTop(L) + 1e-9) break;
+        if (m.z < layers().layerBottom(L) - h) continue;
         if (P.shape.contains(m.point.xy())) {
             minimum = &m;
             break;
@@ -455,7 +463,7 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
             Vec2 ctr{};
             for (const auto& q : pts) ctr += q;
             ctr = insideOrNear(ctr / static_cast<double>(std::max<size_t>(1, pts.size())));
-            project(ctr, layers_.layerBottom(L), pos, n);
+            project(ctr, layers().layerBottom(L), pos, n);
         }
         addTipAt(pos, n, L, part, cls, PointCategory::Island, true);
         return;
@@ -465,7 +473,7 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
         for (double f : {0.25, 0.75}) {
             const Vec2 q = insideOrNear(ea + (eb - ea) * f);
             Vec3 pos, n;
-            project(q, layers_.layerBottom(L), pos, n);
+            project(q, layers().layerBottom(L), pos, n);
             addTipAt(pos, n, L, part, cls, PointCategory::Island, true);
         }
         return;
@@ -480,7 +488,7 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
         std::ostringstream m;
         m << "island starts with a flat " << P.area << " mm² face in one layer; tilting the part 10-45° would "
           << "spread it over many layers";
-        warn("flat_face", m.str(), L, {P.box.center().x, P.box.center().y, layers_.layerBottom(L)});
+        warn("flat_face", m.str(), L, {P.box.center().x, P.box.center().y, layers().layerBottom(L)});
     }
 }
 
@@ -522,7 +530,7 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
         std::ostringstream m;
         m << "flat overhang of " << new_area << " mm² appears in a single layer; tilting the part 10-45° "
           << "would spread it over many layers";
-        warn("flat_face", m.str(), P.layer, {P.box.center().x, P.box.center().y, layers_.layerBottom(P.layer)});
+        warn("flat_face", m.str(), P.layer, {P.box.center().x, P.box.center().y, layers().layerBottom(P.layer)});
     }
     // Material within `self_supported_reach` of what existed `anchor_window`
     // below holds itself up.
@@ -656,7 +664,7 @@ void Generator::enforceCapacity(int layer) {
             C.capacity += capacityOf(t);
         }
         if (C.capacity + 1e-9 < need) {
-            const double z = layers_.layerBottom(layer);
+            const double z = layers().layerBottom(layer);
             if (z - C.last_warn_z >= 1.0) {
                 C.last_warn_z = z;
                 BBox2 where;
@@ -672,7 +680,7 @@ void Generator::enforceCapacity(int layer) {
 }
 
 void Generator::stabilize(int layer) {
-    const double z = layers_.layerBottom(layer);
+    const double z = layers().layerBottom(layer);
     std::vector<int> roots;
     for (int p : graph_.partsInLayer(layer)) {
         const int r = find(p);
@@ -712,7 +720,7 @@ void Generator::stabilize(int layer) {
         }
         if (best_part < 0) continue;
         Vec3 pos, n;
-        project(best_pt, z + layers_.layer_height / 2, pos, n);
+        project(best_pt, z + layers().layer_height / 2, pos, n);
         if (costf_.excluded(pos)) continue;
         addTipAt(pos, n, layer, best_part, cfg_.edge_tip, PointCategory::Stabilization, true);
         C.last_stab_z = z;
@@ -723,8 +731,18 @@ void Generator::stabilize(int layer) {
 
 void Generator::setup() {
     tree_.build(mesh_);
-    layers_ = sliceModel(mesh_, cfg_.layer_height);
-    graph_ = IslandGraph(layers_, cfg_.link_grow);
+    if (opts_.layers) {
+        if (std::abs(opts_.layers->layer_height - cfg_.layer_height) > 1e-9)
+            throw std::invalid_argument("precomputed layers have a different layer height");
+        layers_ptr_ = opts_.layers;
+    } else {
+        layers_ptr_ = std::make_shared<const LayerStack>(
+            sliceModel(mesh_, cfg_.layer_height, nullptr, opts_.slice_threads, ctl_.sub(0, 0.25)));
+    }
+    layers_p_ = layers_ptr_.get();
+    ctl_.step("islands", 0);
+    graph_ = IslandGraph(layers(), cfg_.link_grow);
+    ctl_.step("islands", 1);
     edges_ = SharpEdgeIndex(mesh_, cfg_.sharp_edge_angle_deg);
     costf_.cosmetic = opts_.cosmetic;
     costf_.edges = &edges_;
@@ -732,9 +750,10 @@ void Generator::setup() {
     costf_.edge_weight = cfg_.edge_weight;
     costf_.edge_margin = cfg_.edge_margin;
     minima_ = findMinima(mesh_);
-    hollows_ = analyzeHollows(layers_);
-    traps_.assign(layers_.size(), {});
-    for (size_t L = 0; L < layers_.size(); ++L)
+    hollows_ = analyzeHollows(layers());
+    ctl_.check();
+    traps_.assign(layers().size(), {});
+    for (size_t L = 0; L < layers().size(); ++L)
         if (!hollows_.trap_regions[L].empty()) traps_[L] = toExPolygons(hollows_.trap_regions[L]);
     s_off_ = cfg_.layer_height * std::tan(deg2rad(cfg_.critical_angle_deg));
     anchor_layers_ = std::max(1, static_cast<int>(std::lround(cfg_.anchor_window / cfg_.layer_height)));
@@ -743,10 +762,10 @@ void Generator::setup() {
     std::iota(uf_.begin(), uf_.end(), 0);
     comp_.assign(np, Comp{});
     tips_on_part_.assign(np, 0);
-    manual_by_layer_.assign(layers_.size(), {});
+    manual_by_layer_.assign(layers().size(), {});
     for (size_t i = 0; i < opts_.manual.size(); ++i) {
         const auto& m = opts_.manual[i];
-        const size_t L = std::min(layers_.layerAt(m.pos.z), layers_.size() ? layers_.size() - 1 : 0);
+        const size_t L = std::min(layers().layerAt(m.pos.z), layers().size() ? layers().size() - 1 : 0);
         manual_by_layer_[L].push_back(static_cast<int>(i));
     }
 }
@@ -755,13 +774,16 @@ PointGenResult Generator::run() {
     const auto t0 = std::chrono::steady_clock::now();
     setup();
     PointGenStats& st = result_.stats;
-    st.layers = layers_.size();
+    st.layers = layers().size();
     st.parts = graph_.parts().size();
     st.islands = graph_.islands().size();
 
     const int stab_every = std::max(1, static_cast<int>(std::lround(0.5 / cfg_.layer_height)));
-    for (size_t L = 0; L < layers_.size(); ++L) {
+    const JobControl per_layer = ctl_.sub(0.3, 0.9);
+    const double nl = static_cast<double>(std::max<size_t>(layers().size(), 1));
+    for (size_t L = 0; L < layers().size(); ++L) {
         const int layer = static_cast<int>(L);
+        if ((L & 15) == 0) per_layer.step("points", static_cast<double>(L) / nl);
         double layer_area = 0;
         std::vector<int> layer_samples;
         std::vector<std::pair<int, std::vector<int>>> large_islands;
@@ -808,10 +830,15 @@ PointGenResult Generator::run() {
         std::ostringstream m;
         m << "peak layer area " << st.peak_layer_area << " mm² at layer " << st.peak_layer
           << "; large cross-sections raise peel force — consider tilting";
-        warn("peak_area", m.str(), st.peak_layer, {0, 0, layers_.layerBottom(st.peak_layer)});
+        warn("peak_area", m.str(), st.peak_layer, {0, 0, layers().layerBottom(st.peak_layer)});
     }
+    ctl_.step("points", 0.9);
     finalize();
+    ctl_.report("points", 1);
     st.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    result_.analysis.layers = layers_ptr_;
+    result_.analysis.islands = std::make_shared<const IslandGraph>(std::move(graph_));
+    result_.analysis.hollows = std::make_shared<const HollowReport>(std::move(hollows_));
     return std::move(result_);
 }
 
@@ -853,9 +880,9 @@ void Generator::finalize() {
             while (uf[a] != a) a = uf[a] = uf[uf[a]];
             return a;
         };
-        std::vector<std::vector<int>> tips_by_layer(layers_.size());
+        std::vector<std::vector<int>> tips_by_layer(layers().size());
         for (size_t ti = 0; ti < tips_.size(); ++ti) tips_by_layer[tips_[ti].layer].push_back(static_cast<int>(ti));
-        for (size_t L = 0; L < layers_.size(); ++L) {
+        for (size_t L = 0; L < layers().size(); ++L) {
             for (int p : graph_.partsInLayer(L))
                 for (int q : graph_.part(p).parents) {
                     int a = f(p), b = f(q);
@@ -930,7 +957,7 @@ void Generator::finalize() {
     st.tiny_islands_skipped = skipped_islands_.size();
     st.cavity_samples_skipped = cavity_skipped_;
     for (const HollowComponent& h : hollows_.components) {
-        const double z0 = layers_.layerBottom(h.first_layer), z1 = layers_.layerTop(h.last_layer);
+        const double z0 = layers().layerBottom(h.first_layer), z1 = layers().layerTop(h.last_layer);
         std::ostringstream m;
         m.precision(3);
         if (h.kind == HollowKind::SuctionCup) {
@@ -960,7 +987,7 @@ void Generator::finalize() {
           << cfg_.absorb_island_area << " mm² on the next layer) and were left unsupported";
         const LayerPart& first = graph_.part(skipped_islands_.front());
         warn("tiny_islands_skipped", m.str(), first.layer,
-             {first.box.center().x, first.box.center().y, layers_.layerBottom(first.layer)});
+             {first.box.center().x, first.box.center().y, layers().layerBottom(first.layer)});
     }
     if (st.uncovered > 0) {
         std::ostringstream m;
@@ -991,8 +1018,9 @@ void Generator::finalize() {
 
 }  // namespace
 
-PointGenResult generateSupportPoints(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts) {
-    Generator g(mesh, cfg, opts);
+PointGenResult generateSupportPoints(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts,
+                                     const JobControl& ctl) {
+    Generator g(mesh, cfg, opts, ctl);
     return g.run();
 }
 

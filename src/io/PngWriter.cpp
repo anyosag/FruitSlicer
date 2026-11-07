@@ -2,7 +2,10 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "io/PngWriter.h"
 
+#include "core/OutFile.h"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -18,12 +21,12 @@ uint32_t crcTable(int n) {
 }
 
 uint32_t crc32(const uint8_t* data, size_t len, uint32_t crc = 0xFFFFFFFFu) {
-    static uint32_t table[256];
-    static bool init = false;
-    if (!init) {
-        for (int i = 0; i < 256; ++i) table[i] = crcTable(i);
-        init = true;
-    }
+    // Function-local static: initialised exactly once, thread-safely.
+    static const std::array<uint32_t, 256> table = [] {
+        std::array<uint32_t, 256> t{};
+        for (int i = 0; i < 256; ++i) t[i] = crcTable(i);
+        return t;
+    }();
     for (size_t i = 0; i < len; ++i) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
     return crc;
 }
@@ -35,14 +38,14 @@ void put32(std::vector<uint8_t>& v, uint32_t x) {
     v.push_back(uint8_t(x));
 }
 
-void chunk(std::FILE* f, const char* type, const std::vector<uint8_t>& data) {
+void chunk(OutFile& f, const char* type, const std::vector<uint8_t>& data) {
     std::vector<uint8_t> buf;
     put32(buf, static_cast<uint32_t>(data.size()));
     buf.insert(buf.end(), type, type + 4);
     buf.insert(buf.end(), data.begin(), data.end());
     const uint32_t crc = crc32(buf.data() + 4, buf.size() - 4) ^ 0xFFFFFFFFu;
     put32(buf, crc);
-    std::fwrite(buf.data(), 1, buf.size(), f);
+    f.write(buf.data(), buf.size());
 }
 
 }  // namespace
@@ -50,10 +53,9 @@ void chunk(std::FILE* f, const char* type, const std::vector<uint8_t>& data) {
 namespace {
 
 void writePng(const std::string& path, int w, int h, int channels, const std::vector<uint8_t>& px) {
-    std::FILE* f = std::fopen(path.c_str(), "wb");
-    if (!f) throw std::runtime_error("cannot write " + path);
+    OutFile f(path);
     const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
-    std::fwrite(sig, 1, 8, f);
+    f.write(sig, 8);
     std::vector<uint8_t> ihdr;
     put32(ihdr, static_cast<uint32_t>(w));
     put32(ihdr, static_cast<uint32_t>(h));
@@ -90,7 +92,7 @@ void writePng(const std::string& path, int w, int h, int channels, const std::ve
     put32(z, (b << 16) | a);
     chunk(f, "IDAT", z);
     chunk(f, "IEND", {});
-    std::fclose(f);
+    f.commit();
 }
 
 }  // namespace

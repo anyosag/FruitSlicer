@@ -17,11 +17,13 @@
 #include "formats/GooCompare.h"
 #include "formats/GooExport.h"
 #include "formats/GooFile.h"
+#include "formats/GooSetup.h"
 #include "io/PngWriter.h"
 #include "io/Render.h"
 #include "layers/IslandGraph.h"
 #include "layers/LayerStack.h"
 #include "mesh/MeshAnalysis.h"
+#include "mesh/ModelLoad.h"
 #include "mesh/Placement.h"
 #include "mesh/ObjIO.h"
 #include "mesh/StlIO.h"
@@ -29,6 +31,7 @@
 #include "support/PointGenerator.h"
 #include "support/OrientationSearch.h"
 #include "support/SupportIO.h"
+#include "support/SupportSettings.h"
 #include "support/SupportTree.h"
 #include "support/SupportValidator.h"
 
@@ -50,21 +53,26 @@ void addPlacement(CLI::App* cmd, PlacementOpts& o) {
     cmd->add_option("--scale", o.scale, "Uniform scale applied before rotation (e.g. 1000 for metres)");
 }
 
+Placement toPlacement(const PlacementOpts& o) {
+    Placement p;
+    p.scale = o.scale;
+    p.rotation_deg = {o.rotate[0], o.rotate[1], o.rotate[2]};
+    p.elevation = o.elevate;
+    return p;
+}
+
 TriangleMesh loadPlaced(const std::string& path, const PlacementOpts& o, json* report = nullptr) {
-    TriangleMesh mesh = readMesh(path);
-    int cavities = 0;
-    const int flipped = mesh.orientShellsOutward(&cavities);
-    if (o.scale != 1.0) {
-        Transform s;
-        for (int i = 0; i < 3; ++i) s.m[i][i] = o.scale;
-        mesh.transform(s);
-    }
-    placeOnPlate(mesh, {o.rotate[0], o.rotate[1], o.rotate[2]}, o.elevate);
+    const LoadedModel m = loadModel(path);
     if (report) {
-        (*report)["shells_flipped"] = flipped;
-        (*report)["cavities"] = cavities;
+        (*report)["shells_flipped"] = m.shells_flipped;
+        (*report)["cavities"] = m.cavities;
     }
-    return mesh;
+    return placeModel(m.mesh, toPlacement(o));
+}
+
+json placementJson(const PlacementOpts& o, bool on_plate, double layer_h) {
+    return {{"rotate", o.rotate}, {"elevate", o.elevate}, {"scale", o.scale}, {"on_plate", on_plate},
+            {"layer_height", layer_h}};
 }
 
 json bboxJson(const BBox3& b) {
@@ -72,17 +80,15 @@ json bboxJson(const BBox3& b) {
 }
 
 int cmdInfo(const std::string& path) {
-    TriangleMesh mesh = readMesh(path);
-    int shells = 0;
-    mesh.shellIds(&shells);
-    const int flipped = mesh.orientShellsOutward();
+    const LoadedModel m = loadModel(path);
+    const TriangleMesh& mesh = m.mesh;
     const auto minima = findMinima(mesh);
     json r;
     r["file"] = path;
     r["triangles"] = mesh.faceCount();
     r["vertices"] = mesh.vertexCount();
-    r["shells"] = shells;
-    r["shells_flipped"] = flipped;
+    r["shells"] = m.shells;
+    r["shells_flipped"] = m.shells_flipped;
     r["closed_manifold"] = mesh.isClosedManifold();
     r["bbox"] = bboxJson(mesh.bbox());
     r["volume_mm3"] = mesh.volume();
@@ -156,10 +162,11 @@ int cmdCoupon(const std::string& kind, const std::string& out, double layer_h, c
         return 2;
     }
     const Coupon c = kind == "overlap" ? overlapCoupon() : orientationCoupon();
-    writeStl(out, c.mesh);
+    const std::string stl = out.empty() ? kind + "_coupon.stl" : out;
+    writeStl(stl, c.mesh);
     json r;
     r["coupon"] = c.name;
-    r["stl"] = out;
+    r["stl"] = stl;
     r["triangles"] = c.mesh.faceCount();
     json checks = json::array();
     for (const auto& k : c.checks) checks.push_back({{"z_mm", k.z}, {"expect", k.expect}});
@@ -168,16 +175,19 @@ int cmdCoupon(const std::string& kind, const std::string& out, double layer_h, c
         // Reference slices from FruitSlicer's own (union) slicer, to compare
         // against the third-party slicer preview.
         std::filesystem::create_directories(png_dir);
+        // The coupon's own footprint plus a 1 mm margin (the orientation
+        // coupon's F sits off-centre on purpose).
+        const BBox3 cb = c.mesh.bbox();
         RasterWindow win;
-        win.area.extend({-16, -16});
-        win.area.extend({16, 16});
+        win.area.extend({cb.min.x - 1, cb.min.y - 1});
+        win.area.extend({cb.max.x + 1, cb.max.y + 1});
         win.pixel = 0.05;
         for (const auto& k : c.checks) {
             const double z = (std::floor(k.z / layer_h) + 0.5) * layer_h;
             int w = 0, h = 0;
             const auto img = rasterize(sliceMeshAt(c.mesh, z), win, w, h);
             char name[64];
-            std::snprintf(name, sizeof name, "overlap_z%05.2f.png", k.z);
+            std::snprintf(name, sizeof name, "%s_z%05.2f.png", kind.c_str(), k.z);
             writePngGray((std::filesystem::path(png_dir) / name).string(), w, h, img);
         }
     }
@@ -248,31 +258,28 @@ void addGenOptions(CLI::App* cmd, GenCli& g) {
     cmd->add_flag("--on-plate", g.on_plate, "Print standing on the build plate: no elevation, no raft");
 }
 
-// Resin profile first, then explicit command-line overrides.
+// Resin profile first, then explicit command-line overrides (cfg's layer
+// height and density are set by the caller).
 void applySettings(const GenCli& g, SupportConfig& cfg, TreeConfig* tc, json& r) {
+    if (g.peel_bias >= 0 && g.hinge.empty()) throw std::runtime_error("--peel-bias needs --hinge");
+    json profile;
     if (!g.profile.empty()) {
         std::ifstream in(g.profile);
         if (!in) throw std::runtime_error("cannot open profile " + g.profile);
-        std::vector<std::string> notes;
-        applyProfile(json::parse(in), cfg, tc, &notes);
+        profile = json::parse(in);
         r["profile"] = g.profile;
-        if (!notes.empty()) r["profile_notes"] = notes;
     }
-    if (g.critical_angle > 0) cfg.critical_angle_deg = g.critical_angle;
-    if (!g.hinge.empty()) {
-        // Peel stress is highest on the side away from the hinge (Wu 2016).
-        const double sgn = g.hinge[0] == '+' ? -1.0 : 1.0;
-        cfg.peel_axis = g.hinge[1] == 'x' ? Vec2{sgn, 0} : Vec2{0, sgn};
-        cfg.peel_bias = g.peel_bias >= 0 ? g.peel_bias : 0.25;
-        r["peel"] = {{"hinge", g.hinge}, {"bias", cfg.peel_bias}};
-    } else if (g.peel_bias >= 0) {
-        throw std::runtime_error("--peel-bias needs --hinge");
-    }
-    if (g.on_plate) {
-        cfg.on_plate = true;
-        if (tc) tc->raft = RaftStyle::None;
-        r["on_plate"] = true;
-    }
+    SupportChoices c;
+    c.layer_height = cfg.layer_height;
+    c.density = cfg.coverage.density;
+    c.critical_angle = g.critical_angle;
+    if (!g.hinge.empty()) c.hinge = parseHinge(g.hinge);
+    c.peel_bias = g.peel_bias;
+    c.on_plate = g.on_plate;
+    const auto notes = resolveSettings(g.profile.empty() ? nullptr : &profile, c, cfg, tc);
+    if (!notes.empty()) r["profile_notes"] = notes;
+    if (c.hinge) r["peel"] = {{"hinge", g.hinge}, {"bias", cfg.peel_bias}};
+    if (g.on_plate) r["on_plate"] = true;
 }
 
 struct PointsOpts {
@@ -309,7 +316,7 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
     const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
 
     json out = pointsToJson(res.points);
-    out["placement"] = {{"rotate", place.rotate}, {"elevate", place.elevate}, {"layer_height", layer_h}};
+    out["placement"] = placementJson(place, o.gen.on_plate, layer_h);
     out["source"] = path;
     std::ofstream(o.out) << out.dump(1) << "\n";
     if (!o.ply.empty()) writePointsPly(o.ply, res.points);
@@ -374,10 +381,44 @@ struct SupportOpts {
     bool no_merge = false;
 };
 
-int cmdSupport(const std::string& path, const PlacementOpts& place, double layer_h, const PointsOpts& popts,
-               const SupportOpts& o) {
+// A points file records the placement it was made for. Without an explicit
+// placement on the command line, `support --points` adopts it; an explicit,
+// different placement is an error (the points would float off the model).
+PlacementOpts placementFor(const json& points_file, PlacementOpts place, bool place_given, bool& on_plate) {
+    if (!points_file.contains("placement")) return place;
+    const json& pl = points_file["placement"];
+    PlacementOpts f = place;
+    if (pl.contains("rotate")) f.rotate = pl["rotate"].get<std::vector<double>>();
+    if (pl.contains("elevate")) f.elevate = pl["elevate"].get<double>();
+    if (pl.contains("scale")) f.scale = pl["scale"].get<double>();
+    const bool f_on_plate = pl.value("on_plate", false);
+    if (!place_given) {
+        on_plate = on_plate || f_on_plate;
+        return f;
+    }
+    auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::max(1.0, std::abs(a)); };
+    bool differs = !same(f.elevate, place.elevate) || !same(f.scale, place.scale);
+    for (int i = 0; i < 3; ++i) differs = differs || !same(f.rotate[i], place.rotate[i]);
+    if (differs)
+        throw std::runtime_error("these points were made for --rotate " + std::to_string(f.rotate[0]) + " " +
+                                 std::to_string(f.rotate[1]) + " " + std::to_string(f.rotate[2]) + " --elevate " +
+                                 std::to_string(f.elevate) + " --scale " + std::to_string(f.scale) +
+                                 "; pass the same placement or leave it out");
+    return place;
+}
+
+int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, PointsOpts popts, const SupportOpts& o,
+               bool place_given) {
     const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
     json r;
+    json points_file;
+    if (!o.points_in.empty()) {
+        std::ifstream in(o.points_in);
+        if (!in) throw std::runtime_error("cannot open " + o.points_in);
+        points_file = json::parse(in);
+        place = placementFor(points_file, place, place_given, popts.gen.on_plate);
+        if (popts.gen.on_plate) place.elevate = 0;
+    }
     TriangleMesh mesh = loadPlaced(path, place, &r);
     std::vector<SupportPoint> pts;
     SupportConfig cfg;
@@ -386,7 +427,7 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
     if (!o.points_in.empty()) {
-        pts = pointsFromJson(json::parse(std::ifstream(o.points_in)));
+        pts = pointsFromJson(points_file);
     } else {
         CosmeticSpec cosmetic;
         if (!popts.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(popts.cosmetic)));
@@ -402,17 +443,23 @@ int cmdSupport(const std::string& path, const PlacementOpts& place, double layer
         json w = json::array();
         for (const auto& x : res.warnings) w.push_back({{"code", x.code}, {"message", x.message}});
         r["point_warnings"] = w;
-        std::ofstream(o.out + ".points.json") << pointsToJson(pts).dump(1) << "\n";
+        json pj = pointsToJson(pts);
+        pj["placement"] = placementJson(place, popts.gen.on_plate, layer_h);
+        pj["source"] = path;
+        std::ofstream(o.out + ".points.json") << pj.dump(1) << "\n";
     }
     tc.merge_pillars = !o.no_merge;
     if (o.raft == "none") tc.raft = RaftStyle::None;
     else if (o.raft != "pads") throw std::runtime_error("--raft must be pads or none");
-    const SupportTree tree = buildSupportTree(mesh, pts, tc, printer.minRaftThickness());
+    // The raft must cover the long-exposure layers at this layer height.
+    const double min_raft = minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h);
+    const SupportTree tree = buildSupportTree(mesh, pts, tc, min_raft);
     const TriangleMesh sup = tree.mesh(tc);
     {
         StlWriter w(o.out);
         w.add(mesh);
         w.add(sup);
+        w.close();
     }
     if (!o.supports_only.empty()) writeStl(o.supports_only, sup);
 
@@ -469,8 +516,7 @@ struct OrientCli {
 };
 
 int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_h, const OrientCli& o) {
-    TriangleMesh mesh = readMesh(path);
-    mesh.orientShellsOutward();
+    TriangleMesh mesh = loadModel(path).mesh;
     Transform base;
     for (int i = 0; i < 3; ++i) base.m[i][i] = place.scale;
     base = base.then(Transform::rotationXYZ(place.rotate[0], place.rotate[1], place.rotate[2]));
@@ -508,22 +554,23 @@ int cmdOrient(const std::string& path, const PlacementOpts& place, double layer_
         if (shown < o.top) {
             list.push_back(j);
             if (!o.preview_dir.empty()) {
+                // The same placement (lift or on-plate) and the very points the
+                // search scored.
                 std::filesystem::create_directories(o.preview_dir);
                 TriangleMesh m = mesh;
                 m.transform(c.rotation);
-                placeOnPlate(m, {0, 0, 0}, place.elevate);
-                PointGenOptions po;
-                const auto pr = generateSupportPoints(m, opt.cfg, po);
+                placeOnPlate(m, {0, 0, 0}, opt.elevation);
                 RenderView v;
                 const std::string png = (std::filesystem::path(o.preview_dir) / ("orient_" + std::to_string(shown + 1) + ".png")).string();
-                renderPreview(png, m, pr.points, v);
+                renderPreview(png, m, c.support_points, v);
                 list.back()["preview"] = png;
             }
             ++shown;
         }
     }
     json r{{"file", path}, {"candidates", res.size()}, {"best", list}, {"input", input}};
-    if (settings_report.contains("profile_notes")) r["profile_notes"] = settings_report["profile_notes"];
+    for (const char* k : {"profile", "profile_notes", "peel", "on_plate"})
+        if (settings_report.contains(k)) r[k] = settings_report[k];
     std::cout << r.dump(2) << "\n";
     return 0;
 }
@@ -544,7 +591,8 @@ int cmdABPlate(const std::string& path, const PlacementOpts& place, double layer
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
     const PointGenResult res = generateSupportPoints(mesh, cfg, {});
-    const SupportTree tree = buildSupportTree(mesh, res.points, tc, printer.minRaftThickness());
+    const SupportTree tree =
+        buildSupportTree(mesh, res.points, tc, minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h));
     const TriangleMesh sup = tree.mesh(tc);
     ABPlateOptions ao;
     ao.copies = o.copies;
@@ -586,37 +634,24 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     if (b.min.z < -1e-6 || !printer.fitsXY(b.min.x, b.min.y) || !printer.fitsXY(b.max.x, b.max.y))
         r["warning"] = "model extends below the plate or outside the printable area; it is used as is "
                        "(use the STL written by `fruitslicer support`, which is already placed)";
-    GooHeader h;
-    h.layer_height = static_cast<float>(layer_h);
+    GooPrintRequest req;
+    req.layer_height = layer_h;
+    GooFileInfo sample;
     if (!o.settings_from.empty()) {
-        const GooFileInfo sample = readGoo(o.settings_from);
-        copyPrintSettings(sample.header, h);
+        sample = readGoo(o.settings_from);
+        req.settings_from = &sample.header;
         r["settings_from"] = o.settings_from;
-        if (std::abs(h.layer_height - layer_h) > 1e-6)
-            r["layer_height_note"] = "layer height taken from the sample";
     }
-    if (o.exposure > 0) h.print.exposure = static_cast<float>(o.exposure);
-    if (o.bottom_exposure > 0) h.print.bottom_exposure = static_cast<float>(o.bottom_exposure);
-    if (o.bottom_layers >= 0) h.print.bottom_layers = static_cast<uint32_t>(o.bottom_layers);
-    if (o.transition_layers >= 0) h.print.transition_layers = static_cast<uint16_t>(o.transition_layers);
-    if (h.print.exposure <= 0 || h.print.bottom_exposure <= 0)
-        throw std::runtime_error("exposure times are required: pass --exposure and --bottom-exposure (and "
-                                 "--bottom-layers), or --settings-from a .goo exported by SatelLite");
-    RasterGrid grid = RasterGrid::fromPrinter(printer);
-    grid.width = h.res_x;
-    grid.height = h.res_y;
-    grid.px = h.size_x / h.res_x;
-    grid.py = h.size_y / h.res_y;
-    grid.x_left = -h.size_x / 2;
-    grid.y_top = h.size_y / 2;
-    // Orientation: the sample's flags if given, else the printer default
-    // (SatelLite-style: Y mirrored); --flip-x / --flip-y invert either.
-    if (o.settings_from.empty()) {
-        h.mirror_x = printer.image_mirror_x;
-        h.mirror_y = printer.image_mirror_y;
-    }
-    grid.mirror_x = h.mirror_x != o.flip_x;
-    grid.mirror_y = h.mirror_y != o.flip_y;
+    req.exposure = o.exposure;
+    req.bottom_exposure = o.bottom_exposure;
+    req.bottom_layers = o.bottom_layers;
+    req.transition_layers = o.transition_layers;
+    req.flip_x = o.flip_x;
+    req.flip_y = o.flip_y;
+    const GooPrintSetup setup = buildGooSetup(printer, req);
+    const GooHeader& h = setup.header;
+    const RasterGrid& grid = setup.grid;
+    if (!setup.notes.empty()) r["layer_height_note"] = setup.notes.front();
     GooExportOptions eo;
     eo.aa_levels = o.aa;
     eo.threads = o.threads;
@@ -734,12 +769,7 @@ int cmdGooCompare(const std::string& a_path, const std::string& b_path, double z
     for (const auto& s : c.scores) sc[s.transform] = std::round(s.iou * 1000) / 1000;
     r["image"] = {{"layer_a", c.layer_a}, {"z_a", c.z_a}, {"layer_b", c.layer_b}, {"z_b", c.z_b},
                   {"lit_cells_a", c.cells_a}, {"lit_cells_b", c.cells_b}, {"iou", sc}, {"best", c.best}};
-    std::string verdict;
-    if (c.best_iou < 0.5) verdict = "images differ (different models, scale or layer?); orientation not determined";
-    else if (c.best == "identity") verdict = "orientation matches";
-    else if (c.best == "flip_x") verdict = "A is mirrored in X relative to B: use --flip-x";
-    else if (c.best == "flip_y") verdict = "A is mirrored in Y relative to B: use --flip-y";
-    else verdict = "A is rotated 180 degrees relative to B: use --flip-x --flip-y";
+    const std::string verdict = verdictText(orientationVerdict(c));
     r["verdict"] = verdict;
     std::cout << r.dump(2) << "\n";
     return 0;
@@ -792,10 +822,10 @@ int main(int argc, char** argv) {
     slice->add_option("--every", every, "Only write every Nth layer PNG");
     slice->add_option("--json", json_out, "Write the full report (including islands) here");
 
-    std::string coupon_kind = "overlap", coupon_out = "overlap_coupon.stl";
+    std::string coupon_kind = "overlap", coupon_out;  // default: <kind>_coupon.stl
     auto* coupon = app.add_subcommand("coupon", "Generate a test print");
     coupon->add_option("kind", coupon_kind, "Coupon kind: overlap | orientation");
-    coupon->add_option("-o,--output", coupon_out, "Output STL");
+    coupon->add_option("-o,--output", coupon_out, "Output STL (default <kind>_coupon.stl)");
     coupon->add_option("--layer", layer_h, "Layer height for reference slices (mm)");
     coupon->add_option("--png-dir", png_dir, "Write reference slice PNGs here");
 
@@ -933,7 +963,11 @@ int main(int argc, char** argv) {
         if (*goo) return cmdGoo(in_path, layer_h, gcli);
         if (*gooinfo) return cmdGooInfo(in_path, goo_decode);
         if (*goocmp) return cmdGooCompare(cmp_a, cmp_b, cmp_z);
-        if (*support) return cmdSupport(in_path, place, layer_h, popts, sopts);
+        if (*support) {
+            const bool place_given = support->count("--rotate") + support->count("--elevate") +
+                                         support->count("--scale") > 0;
+            return cmdSupport(in_path, place, layer_h, popts, sopts, place_given);
+        }
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);
     } catch (const std::exception& e) {

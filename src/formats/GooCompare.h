@@ -38,4 +38,13 @@ GooCompareResult compareGoo(const GooFileInfo& a, const GooFileInfo& b, double z
 
 std::vector<GooFieldDiff> diffHeaders(const GooHeader& a, const GooHeader& b);
 
+// What a comparison of the same model sliced by FruitSlicer (A) and by
+// SatelLite (B) says about the image orientation.
+enum class OrientationVerdict { Matches, FlipX, FlipY, Rotated180, Undetermined };
+
+// Undetermined when even the best overlap is below `min_iou` (different
+// models, scale or layer).
+OrientationVerdict orientationVerdict(const GooCompareResult& c, double min_iou = 0.5);
+const char* verdictText(OrientationVerdict v);  // one line, as the CLI prints it
+
 }  // namespace fruit

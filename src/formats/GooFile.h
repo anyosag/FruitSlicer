@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include "core/OutFile.h"
+
 namespace fruit {
 
 constexpr int kGooSmallPreview = 116;
@@ -112,21 +114,23 @@ private:
 void decodeGooRle(const std::vector<uint8_t>& data, std::vector<uint8_t>& pixels);
 
 // Streaming writer: header placeholder, layers in order, footer, then the
-// final header (with totals) is rewritten in place.
+// final header (with totals) is rewritten in place. Data goes to
+// "<path>.part" and replaces `path` only when finish() succeeds; a writer
+// destroyed before that (error, cancelled export) deletes the partial file.
 class GooWriter {
 public:
     GooWriter(const std::string& path, const GooHeader& header);
-    ~GooWriter();
     GooWriter(const GooWriter&) = delete;
     GooWriter& operator=(const GooWriter&) = delete;
 
     void addLayer(const GooLayerDef& def, const std::vector<uint8_t>& rle);
     // Writes the footer and the final header. `header` totals may be updated
-    // (layer count is checked against the layers added).
-    void finish(const GooHeader& header);
+    // (layer count is checked against the layers added). `sync_to_device`
+    // forces the data onto the drive before returning (USB sticks).
+    void finish(const GooHeader& header, bool sync_to_device = false);
 
 private:
-    std::FILE* f_ = nullptr;
+    OutFile out_;
     uint32_t layers_ = 0;
 };
 

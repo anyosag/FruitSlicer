@@ -75,25 +75,22 @@ TriangleMesh readStl(const std::string& path) {
     throw std::runtime_error("STL: unrecognised format in " + path);
 }
 
-StlWriter::StlWriter(const std::string& path) {
-    file_ = std::fopen(path.c_str(), "wb");
-    if (!file_) throw std::runtime_error("cannot write " + path);
+StlWriter::StlWriter(const std::string& path) : out_(path, /*atomic=*/true) {
     char header[80] = {};
     std::snprintf(header, sizeof header, "FruitSlicer binary STL");
-    std::fwrite(header, 1, 80, file_);
+    out_.write(header, 80);
     const uint32_t zero = 0;
-    std::fwrite(&zero, 4, 1, file_);
+    out_.write(&zero, 4);
 }
-
-StlWriter::~StlWriter() { close(); }
 
 void StlWriter::add(const Vec3& a, const Vec3& b, const Vec3& c) {
     const Vec3 n = normalized(cross(b - a, c - a));
-    float buf[12] = {float(n.x), float(n.y), float(n.z), float(a.x), float(a.y), float(a.z),
-                     float(b.x), float(b.y), float(b.z), float(c.x), float(c.y), float(c.z)};
-    std::fwrite(buf, 4, 12, file_);
-    const uint16_t attr = 0;
-    std::fwrite(&attr, 2, 1, file_);
+    unsigned char rec[50];
+    const float buf[12] = {float(n.x), float(n.y), float(n.z), float(a.x), float(a.y), float(a.z),
+                           float(b.x), float(b.y), float(b.z), float(c.x), float(c.y), float(c.z)};
+    std::memcpy(rec, buf, 48);
+    rec[48] = rec[49] = 0;  // attribute byte count
+    out_.write(rec, 50);
     ++count_;
 }
 
@@ -101,17 +98,16 @@ void StlWriter::add(const TriangleMesh& mesh) {
     for (const auto& f : mesh.faces) add(mesh.vertices[f[0]], mesh.vertices[f[1]], mesh.vertices[f[2]]);
 }
 
-void StlWriter::close() {
-    if (!file_) return;
-    std::fseek(file_, 80, SEEK_SET);
-    std::fwrite(&count_, 4, 1, file_);
-    std::fclose(file_);
-    file_ = nullptr;
+void StlWriter::close(bool sync_to_device) {
+    out_.seek(80);
+    out_.write(&count_, 4);
+    out_.commit(sync_to_device);
 }
 
 void writeStl(const std::string& path, const TriangleMesh& mesh) {
     StlWriter w(path);
     w.add(mesh);
+    w.close();
 }
 
 }  // namespace fruit
