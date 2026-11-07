@@ -10,8 +10,14 @@
 
 namespace fruit {
 
-// Number of worker threads to use: `requested`, or all cores when 0.
+// Number of worker threads to use: `requested`, or when 0 the process-wide
+// default (all cores unless setDefaultThreads says fewer).
 unsigned resolveThreads(unsigned requested);
+
+// What a request for 0 threads means from now on: at most `n` threads, or
+// all cores again when 0. For an app's "use fewer cores" setting; work
+// already running keeps the threads it started with.
+void setDefaultThreads(unsigned n);
 
 // Runs body(t, stop) for t = 0..n-1, each on its own thread (the caller runs
 // t = 0). `stop` turns true as soon as any body throws, so the others can

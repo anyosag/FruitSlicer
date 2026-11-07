@@ -16,6 +16,7 @@
 #include "Calibration.h"
 #include "JobFile.h"
 #include "Jobs.h"
+#include "Preferences.h"
 #include "Send.h"
 #include "platform/Platform.h"
 #include "mesh/AabbTree.h"
@@ -27,7 +28,7 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About };
+enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -216,6 +217,28 @@ public:
     void setHinge(std::optional<HingeChoice> side);
     // The check's two layer pictures as textures (0 while there is no result).
     unsigned orientationPicture(bool ours);
+    // Settings, About and first-run setup (canvas boards "Settings",
+    // "About" and "Setup").
+    const Preferences& preferences() const { return prefs_; }
+    void setPreferences(const Preferences& p);  // kept (outside scripted runs) and applied
+    int viewSamples() const;                    // multisampling for the 3D view
+    void revealLog();                           // the log file in Finder
+    void openSourcePage();                      // FruitSlicer's source code, in the browser
+    std::string& licenceOpen() { return licence_open_; }  // About: whose licence text shows ("" none)
+    void startSetup();                          // from Settings: run it again
+    int& setupStep() { return setup_step_; }    // 0 welcome, 1 print settings, 2 orientation, 3 calibration
+    void finishSetup(Screen then);              // marks it done, then shows `then`
+    // Setup's second step: the print settings each new job starts with.
+    struct TypedDefaults {
+        double exposure = 0, bottom_exposure = 0;
+        int bottom_layers = -1, transition_layers = -1;
+    };
+    bool& setupTyped() { return setup_typed_; }  // "Type them in" picked
+    TypedDefaults& typedDefaults() { return typed_defaults_; }
+    void chooseDefaultSample();                 // a SatelLite .goo, through a dialog
+    void useDefaultSample(const std::string& goo);
+    void useTypedDefaults();                    // the values typed in
+    std::shared_ptr<const fruit::GooHeader> defaultSample();  // the kept header, if any
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -317,6 +340,14 @@ private:
     RelinkDialog relink_;
     bool quit_ = false;
     PrinterSetup printer_setup_;
+    Preferences prefs_;
+    std::string licence_open_;
+    int setup_step_ = 0;
+    bool setup_typed_ = false;
+    TypedDefaults typed_defaults_;
+    std::shared_ptr<const fruit::GooHeader> default_sample_;
+    std::string default_sample_for_;  // the path default_sample_ was read from
+    std::string dataFolder() const;   // FruitSlicer's own folder (a scratch one in scripted runs)
     std::string orient_piece_;
     std::shared_ptr<const OrientationCheck> orient_check_;
     void setPrinterSetup(const PrinterSetup& s);  // keeps it (outside scripted runs) and applies it

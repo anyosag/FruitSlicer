@@ -27,6 +27,16 @@ struct PrinterSetup {
     // Side the tilting vat hinges on, in plate coordinates. Extra hold on the
     // far side applies only once the orientation is confirmed.
     std::optional<fruit::HingeSide> hinge;
+    // First-run setup has been through (Settings can run it again).
+    bool setup_done = false;
+    // The print settings each new job starts with (setup's second step):
+    // a SatelLite file's header, kept in FruitSlicer's own folder so moving
+    // the file loses nothing, or exposures typed in (> 0 to apply; layer
+    // counts -1 for the printer's own).
+    std::string sample_path;  // the kept copy
+    std::string sample_name;  // the SatelLite file it came from
+    double exposure = 0, bottom_exposure = 0;
+    int bottom_layers = -1, transition_layers = -1;
     bool operator==(const PrinterSetup&) const = default;
 };
 

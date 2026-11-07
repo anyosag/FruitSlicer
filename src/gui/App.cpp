@@ -12,6 +12,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "core/Parallel.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
 #include "mesh/StlIO.h"
@@ -20,6 +21,7 @@
 #include "Dialogs.h"
 #include "Icons.h"
 #include "Log.h"
+#include "Setup.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "platform/Platform.h"
@@ -30,6 +32,7 @@ namespace gui {
 
 namespace {
 std::string settingsFile() { return (std::filesystem::path(platform::dataDir()) / "settings.json").string(); }
+std::string preferencesFile() { return (std::filesystem::path(platform::dataDir()) / "preferences.json").string(); }
 }  // namespace
 
 App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
@@ -39,7 +42,11 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
     if (!opts_.deterministic) {
         printer_setup_ = loadPrinterSetup(settingsFile());
         recent_ = loadRecentJobs((std::filesystem::path(platform::dataDir()) / "recent.json").string());
+        prefs_ = loadPreferences(preferencesFile());
+        // The first launch starts with setup (Settings can run it again).
+        if (!printer_setup_.setup_done) startSetup();
     }
+    fruit::setDefaultThreads(prefs_.cores);
 }
 
 App::~App() {
@@ -354,6 +361,7 @@ void App::placeChecked() {
     doc_ = std::move(checking_);
     checking_.reset();
     doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
+    doc_->print.settings = printDefaults(printer_setup_);  // from setup, or Settings
     applyPrinterSetup();
     doc_->saved = doc_->stamp();  // nothing to save until something changes
     health_.open = false;
@@ -996,9 +1004,16 @@ void App::savePrint() {
         return;
     }
     const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
-    const std::string start = (std::filesystem::path(docs ? docs : ".") / name).string();
-    platform::saveFileDialog(window_, {{"Print files", "goo"}}, start, [this](const std::string& path) {
-        if (!path.empty()) savePrintTo(path, "");
+    std::error_code ec;
+    const std::filesystem::path folder = !prefs_.goo_folder.empty() && std::filesystem::is_directory(prefs_.goo_folder, ec)
+                                             ? std::filesystem::path(prefs_.goo_folder)
+                                             : std::filesystem::path(docs ? docs : ".");
+    platform::saveFileDialog(window_, {{"Print files", "goo"}}, (folder / name).string(), [this](const std::string& path) {
+        if (path.empty()) return;
+        Preferences p = prefs_;  // the next save starts here
+        p.goo_folder = std::filesystem::path(path).parent_path().string();
+        setPreferences(p);
+        savePrintTo(path, "");
     });
 }
 
@@ -1210,6 +1225,100 @@ void App::applyPrinterSetup() {
     SupportChoices c = doc_->supports.choices;
     c.hinge = printer_setup_.orientation_confirmed ? printer_setup_.hinge : std::nullopt;
     if (!(c == doc_->supports.choices)) setSupportChoices(c);
+}
+
+// ---- Settings, About and first-run setup ----
+
+std::string App::dataFolder() const {
+    // Scripted runs never touch this computer's own folder.
+    return opts_.deterministic ? (std::filesystem::temp_directory_path() / "fruitslicer-script-data").string()
+                               : platform::dataDir();
+}
+
+void App::setPreferences(const Preferences& p) {
+    if (p == prefs_) return;
+    prefs_ = p;
+    fruit::setDefaultThreads(p.cores);
+    if (!opts_.deterministic) {
+        try {
+            savePreferences(preferencesFile(), p);
+        } catch (const std::exception& e) {
+            showError("Couldn't save your settings", e.what());
+        }
+    }
+}
+
+int App::viewSamples() const { return opts_.deterministic || !prefs_.smooth_view ? 0 : opts_.msaa_samples; }
+
+void App::revealLog() { platform::revealFile(log::path()); }
+
+void App::openSourcePage() {
+    if (!opts_.deterministic) SDL_OpenURL("https://github.com/anyosag/FruitSlicer");
+}
+
+void App::startSetup() {
+    setup_step_ = 0;
+    // The print settings step shows what new jobs start with now.
+    setup_typed_ = printer_setup_.sample_path.empty() && printer_setup_.exposure > 0;
+    typed_defaults_ = {printer_setup_.exposure, printer_setup_.bottom_exposure,
+                       printer_setup_.bottom_layers >= 0 ? printer_setup_.bottom_layers : printer_.bottom_layers,
+                       printer_setup_.transition_layers >= 0 ? printer_setup_.transition_layers
+                                                             : printer_.transition_layers};
+    screen_ = Screen::Setup;
+}
+
+void App::finishSetup(Screen then) {
+    PrinterSetup s = printer_setup_;
+    s.setup_done = true;
+    setPrinterSetup(s);
+    screen_ = then;
+}
+
+void App::chooseDefaultSample() {
+    platform::openFileDialog(window_, {{"Print files from SatelLite", "goo"}}, [this](const std::string& path) {
+        if (!path.empty()) useDefaultSample(path);
+    });
+}
+
+void App::useDefaultSample(const std::string& goo) {
+    try {
+        PrinterSetup s = printer_setup_;
+        s.sample_path = keepSampleHeader(goo, (std::filesystem::path(dataFolder()) / "print settings").string());
+        s.sample_name = std::filesystem::path(goo).filename().string();
+        s.exposure = s.bottom_exposure = 0;
+        s.bottom_layers = s.transition_layers = -1;
+        setPrinterSetup(s);
+        setup_typed_ = false;
+        log::info("print settings for new jobs from " + goo);
+    } catch (const std::exception& e) {
+        showError("Couldn't use that print file", e.what());
+    }
+}
+
+void App::useTypedDefaults() {
+    PrinterSetup s = printer_setup_;
+    s.sample_path.clear();
+    s.sample_name.clear();
+    s.exposure = std::max(0.0, typed_defaults_.exposure);
+    s.bottom_exposure = std::max(0.0, typed_defaults_.bottom_exposure);
+    s.bottom_layers = typed_defaults_.bottom_layers;
+    s.transition_layers = typed_defaults_.transition_layers;
+    setPrinterSetup(s);
+}
+
+std::shared_ptr<const fruit::GooHeader> App::defaultSample() {
+    if (printer_setup_.sample_path != default_sample_for_) {
+        default_sample_for_ = printer_setup_.sample_path;
+        default_sample_.reset();
+        if (!default_sample_for_.empty()) {
+            try {
+                default_sample_ = loadSample(default_sample_for_);
+            } catch (const std::exception& e) {
+                log::error("print settings for new jobs: " + std::string(e.what()));
+            }
+        }
+    }
+    return default_sample_;
 }
 
 void App::saveOrientationPiece() {
@@ -1470,9 +1579,10 @@ void App::rail() {
     const bool calibrating =
         screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer;
     if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
-    // About sits at the bottom, where Settings will be.
+    // Settings at the bottom; About opens from it.
     ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 56 - 12);
-    if (railItem("rail_about", "About", icon::gear, screen_ == Screen::About)) screen_ = Screen::About;
+    if (railItem("rail_settings", "Settings", icon::gear, screen_ == Screen::Settings || screen_ == Screen::About))
+        screen_ = Screen::Settings;
     ImGui::EndChild();
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
@@ -1589,10 +1699,23 @@ void App::frame() {
     if (screen_ == Screen::Job && step_ == Step::Print && !opts_.deterministic) {
         const double now = static_cast<double>(SDL_GetTicks()) / 1000.0;
         if (drives_checked_ < 0 || now - drives_checked_ > 2.0) {
-            drives_ = platform::removableVolumes();
             drives_checked_ = now;
-            if (drive_choice_ >= static_cast<int>(drives_.size())) drive_choice_ = -1;
-            if (drive_choice_ < 0 && !drives_.empty()) drive_choice_ = 0;
+            std::vector<platform::Volume> found = platform::removableVolumes();
+            const std::string chosen = drive_choice_ >= 0 && drive_choice_ < static_cast<int>(drives_.size())
+                                           ? drives_[static_cast<std::size_t>(drive_choice_)].path
+                                           : std::string();
+            int plugged_in = -1;  // a drive that wasn't there before
+            for (std::size_t i = 0; i < found.size() && plugged_in < 0; ++i)
+                if (std::none_of(drives_.begin(), drives_.end(),
+                                 [&](const platform::Volume& v) { return v.path == found[i].path; }))
+                    plugged_in = static_cast<int>(i);
+            drives_ = std::move(found);
+            // Your choice stays (a folder too); a drive plugged in is picked
+            // when .goo files go to drives (Settings).
+            drive_choice_ = -1;
+            for (std::size_t i = 0; i < drives_.size(); ++i)
+                if (!chosen.empty() && drives_[i].path == chosen) drive_choice_ = static_cast<int>(i);
+            if (plugged_in >= 0 && prefs_.goo_to_drive) drive_choice_ = plugged_in;
         }
     }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1602,8 +1725,10 @@ void App::frame() {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
     keys();
-    rail();
-    ImGui::SameLine(0, 0);
+    if (screen_ != Screen::Setup) {  // setup has its own steps down the side
+        rail();
+        ImGui::SameLine(0, 0);
+    }
     ImGui::BeginChild("content", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     switch (screen_) {
@@ -1613,6 +1738,8 @@ void App::frame() {
         case Screen::OrientationCheck: screens::orientationCheck(*this); break;
         case Screen::Printer: screens::printer(*this); break;
         case Screen::About: screens::about(*this); break;
+        case Screen::Settings: screens::settings(*this); break;
+        case Screen::Setup: screens::setup(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);

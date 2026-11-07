@@ -109,6 +109,26 @@ TEST_CASE("Jobs: the SatelLite settings travel with the job; a moved model is no
     CHECK(o.doc->model.mesh.faces.size() == demoModel().faces.size());
 }
 
+TEST_CASE("Jobs: the SatelLite settings are kept even when that file went before saving", "[gui][jobs]") {
+    const auto doc = bracketAt(dir() / "gone_sample.stl");
+    fruit::GooPrintRequest req;
+    req.layer_height = 0.03;
+    req.exposure = 1.5;
+    req.bottom_exposure = 27.5;
+    const fruit::GooPrintSetup s = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), req);
+    const auto sample = (dir() / "gone_sample.goo").string();
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 0.3}), s.header, s.grid, fruit::GooExportOptions{}, sample);
+    doc->print.settings.sample_path = sample;
+    doc->print.settings.sample = loadSample(sample);
+    fs::remove(sample);  // moved away before the job is saved
+    const auto job = (dir() / "gone_sample.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    REQUIRE(o.doc->print.settings.sample);
+    CHECK(o.doc->print.settings.sample->print.exposure == Approx(1.5));
+    CHECK(o.doc->print.settings.sample->layer_height == Approx(0.03));
+}
+
 TEST_CASE("Jobs: damaged and newer files are refused plainly", "[gui][jobs]") {
     const auto junk = (dir() / "junk.fruitjob").string();
     std::ofstream(junk) << "not a zip";

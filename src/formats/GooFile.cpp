@@ -508,6 +508,8 @@ GooHeader readGooHeader(const std::string& path) {
     return parseGooHeader(bytes);
 }
 
+std::vector<uint8_t> gooHeaderBytes(const GooHeader& h) { return serializeHeader(h); }
+
 GooHeader parseGooHeader(const std::vector<uint8_t>& bytes) {
     In in{bytes};
     return parseHeader(in);

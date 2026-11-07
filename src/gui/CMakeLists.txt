@@ -14,6 +14,40 @@ foreach(w ${FRUIT_FONTS})
   list(APPEND font_sources ${out})
 endforeach()
 
+# The licence texts of FruitSlicer and of everything built into the app,
+# embedded from the files this build uses (shown under About).
+set(FRUIT_LICENCE_FILES
+  fruitslicer ${PROJECT_SOURCE_DIR}/LICENSE
+  clipper2 ${clipper2_SOURCE_DIR}/LICENSE
+  json ${json_SOURCE_DIR}/LICENSE.MIT
+  httplib ${httplib_SOURCE_DIR}/LICENSE
+  miniz ${miniz_SOURCE_DIR}/LICENSE
+  pugixml ${pugixml_SOURCE_DIR}/LICENSE.md
+  sdl3 ${sdl3_SOURCE_DIR}/LICENSE.txt
+  sdl3_yuv2rgb ${sdl3_SOURCE_DIR}/src/video/yuv2rgb/LICENSE
+  imgui ${imgui_SOURCE_DIR}/LICENSE.txt
+  glad ${PROJECT_SOURCE_DIR}/third_party/glad/LICENSES.txt
+  inter ${inter_SOURCE_DIR}/LICENSE.txt)
+set(licence_sources)
+list(LENGTH FRUIT_LICENCE_FILES n)
+math(EXPR last "${n} - 1")
+foreach(i RANGE 0 ${last} 2)
+  math(EXPR j "${i} + 1")
+  list(GET FRUIT_LICENCE_FILES ${i} id)
+  list(GET FRUIT_LICENCE_FILES ${j} src)
+  if(NOT EXISTS ${src})
+    message(FATAL_ERROR "licence file missing: ${src}")
+  endif()
+  set(out ${CMAKE_CURRENT_BINARY_DIR}/licence_${id}.cpp)
+  add_custom_command(OUTPUT ${out}
+    COMMAND ${CMAKE_COMMAND} -DIN=${src} -DOUT=${out} -DNAME=kLicence_${id} -P ${PROJECT_SOURCE_DIR}/cmake/Bin2Cpp.cmake
+    DEPENDS ${src} ${PROJECT_SOURCE_DIR}/cmake/Bin2Cpp.cmake
+    COMMENT "Embedding the ${id} licence")
+  list(APPEND licence_sources ${out})
+endforeach()
+add_library(fruit_licences STATIC Licences.cpp ${licence_sources})
+target_include_directories(fruit_licences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 set(app_sources
   main.cpp
   App.cpp
@@ -27,8 +61,10 @@ set(app_sources
   Layers.cpp
   Log.cpp
   Orient.cpp
+  Preferences.cpp
   Print.cpp
   Send.cpp
+  Setup.cpp
   Script.cpp
   Supports.cpp
   Theme.cpp
@@ -41,6 +77,7 @@ set(app_sources
   screens/LayersStep.cpp
   screens/PrintStep.cpp
   screens/SendDialog.cpp
+  screens/SettingsScreens.cpp
   screens/SupportsAdvanced.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
@@ -59,7 +96,7 @@ target_include_directories(fruitslicer_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(fruitslicer_app PRIVATE GL_SILENCE_DEPRECATION FRUIT_VERSION="${PROJECT_VERSION}")
 # fruit_net_mock: an SDCP printer on loopback, started only by scripted runs
 # ({"mock_printer": true}) so the Wi-Fi screens can be captured without a printer.
-target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_net fruit_net_mock fruit_imgui fruit_glad miniz)
+target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_net fruit_net_mock fruit_imgui fruit_glad fruit_licences miniz)
 
 if(APPLE)
   set_source_files_properties(macos/FruitSlicer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)

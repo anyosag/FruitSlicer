@@ -17,7 +17,17 @@
 namespace gui {
 
 std::shared_ptr<const fruit::GooHeader> loadSample(const std::string& path) {
-    return std::make_shared<const fruit::GooHeader>(fruit::readGooHeader(path));
+    auto h = std::make_shared<const fruit::GooHeader>(fruit::readGooHeader(path));
+    // Exposures are for one printer's light: a file made for another is no guide.
+    const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
+    if (h->res_x != pr.res_x || h->res_y != pr.res_y) {
+        const std::string who = h->printer_name.empty() ? std::string("another printer") : h->printer_name;
+        throw std::runtime_error("This file was made for " + who + " (" + std::to_string(h->res_x) + " × " +
+                                 std::to_string(h->res_y) + " pixels). FruitSlicer needs one made for the " +
+                                 fruit::GooHeader{}.printer_name + " (" + std::to_string(pr.res_x) + " × " +
+                                 std::to_string(pr.res_y) + ").");
+    }
+    return h;
 }
 
 bool fitsPlate(const fruit::PrinterProfile& pr, const fruit::BBox3& b) {
