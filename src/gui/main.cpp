@@ -240,15 +240,17 @@ int main(int argc, char** argv) {
             else got = SDL_WaitEventTimeout(&e, app.jobs().busy() || hovering ? 100 : 1000);
             while (got) {
                 ImGui_ImplSDL3_ProcessEvent(&e);
-                if (e.type == SDL_EVENT_QUIT) quit = true;
+                // Closing asks first when the job has unsaved changes.
+                if (e.type == SDL_EVENT_QUIT) app.requestQuit();
                 if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(window))
-                    quit = true;
+                    app.requestQuit();
                 if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) app.openPath(e.drop.data);
                 frames = 3;
                 got = SDL_PollEvent(&e);
             }
             platform::pumpCallbacks();
             app.jobs().poll();
+            if (app.quitting()) quit = true;
             if (frames <= 0 && !app.jobs().busy() && !hovering) continue;
             if (frames > 0) --frames;
             if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) continue;

@@ -3,6 +3,9 @@
 // Home: start a print, recent jobs.
 #include <imgui.h>
 
+#include <cctype>
+#include <filesystem>
+
 #include "App.h"
 #include "Icons.h"
 #include "Theme.h"
@@ -53,17 +56,64 @@ void home(App& app) {
     endCard();
 
     ImGui::Dummy(ImVec2(0, 20));
-    sectionTitle("Recent jobs");
-    ImGui::Dummy(ImVec2(0, 4));
-    if (const auto& doc = app.document()) {
-        beginCard("recent", ImVec2(w, 0), 14, col::Panel);
-        text(doc->name.c_str(), fonts().semibold, size::Body, col::Text);
-        textMuted("Open now. Saving jobs comes with the next update.");
-        if (linkButton("Show it")) app.setScreen(Screen::Job);
-        endCard();
-    } else {
-        textMuted("Nothing yet. Jobs you open show up here.");
+    {
+        const float y = ImGui::GetCursorPosY();
+        sectionTitle("Recent jobs");
+        ImGui::PushFont(fonts().semibold, size::Body);
+        const float lw = ImGui::CalcTextSize("Open a job file…").x;
+        ImGui::PopFont();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - lw, y + 2));
+        if (linkButton("Open a job file…")) app.openDialog();
     }
+    ImGui::Dummy(ImVec2(0, 4));
+    // A row: the job's initial, its name, and how far it got.
+    auto row = [&](const char* id, const std::string& name, const std::string& detail, bool there) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 sz(w, 56);
+        const bool clicked = ImGui::InvisibleButton(id, sz) && there;
+        const bool hovered = ImGui::IsItemHovered() && there;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), hovered ? col::Card : col::Panel, 10);
+        dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y), col::Border, 10);
+        dl->AddCircleFilled(ImVec2(p.x + 28, p.y + 28), 15, col::Active, 24);
+        const std::string initial = name.empty() ? "?" : std::string(1, static_cast<char>(std::toupper(
+                                                                          static_cast<unsigned char>(name[0]))));
+        ImGui::PushFont(fonts().bold, size::Body);
+        const ImVec2 is = ImGui::CalcTextSize(initial.c_str());
+        dl->AddText(ImVec2(p.x + 28 - is.x / 2, p.y + 28 - is.y / 2), col::TextSecondary, initial.c_str());
+        ImGui::PopFont();
+        ImGui::PushFont(fonts().semibold, size::Body);
+        dl->AddText(ImVec2(p.x + 56, p.y + 11), there ? col::Text : col::TextMuted, name.c_str());
+        ImGui::PopFont();
+        ImGui::PushFont(fonts().regular, size::Help);
+        dl->AddText(ImVec2(p.x + 56, p.y + 30), col::TextMuted, detail.c_str());
+        ImGui::PopFont();
+        if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::Dummy(ImVec2(0, 2));
+        return clicked;
+    };
+    const auto& doc = app.document();
+    bool any = false;
+    if (doc && doc->job_path.empty()) {
+        if (row("open_now", doc->name, "Open now · not saved yet", true)) app.setScreen(Screen::Job);
+        any = true;
+    }
+    int shown = 0;
+    for (const RecentJob& j : app.recentJobs()) {
+        if (shown == 6) break;
+        const bool there = std::filesystem::exists(j.path);
+        std::string detail = there ? j.state : std::string("moved or deleted");
+        if (there && !j.when.empty()) detail = j.when + (detail.empty() ? "" : " · " + detail);
+        ImGui::PushID(shown);
+        if (row("job", j.name, detail, there)) {
+            if (doc && doc->job_path == j.path) app.setScreen(Screen::Job);
+            else app.openPath(j.path);
+        }
+        ImGui::PopID();
+        ++shown;
+        any = true;
+    }
+    if (!any) textMuted("Nothing yet. Jobs you save show up here.");
     ImGui::EndChild();
     ImGui::PopStyleVar();
 }

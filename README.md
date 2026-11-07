@@ -48,7 +48,13 @@ parts, hollows, low points, and whether the model fits the Saturn 4 Ultra
 16K's plate. You then choose its size (full, the largest that fits, a custom
 percentage, or ×25.4 for models drawn in inches), rotation, and whether it
 stands raised on supports or flat on the plate. Edits undo with ⌘Z, and ⌘/
-lists the shortcuts. The Orient step scores how the model sits (tips, island
+lists the shortcuts. **⌘S saves the job** (a `.fruitjob` file): the model's
+own copy, how it is placed and stands, the support settings and tips, and
+the print settings (with the SatelLite file's header, if one gave them).
+Opening a job brings its supports back as they were. Home lists recent
+jobs; if a job's model file has moved, the job still opens from its copy
+(or you point it at the file). Closing or opening something else asks
+first when there are unsaved changes. The Orient step scores how the model sits (tips, island
 tips, biggest layer, height, layers short of hold), lets you pick the sides
 people will see, and searches 65 directions for better ways to stand it,
 compared side by side with how it sits now; using one is undoable. The

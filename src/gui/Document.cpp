@@ -41,6 +41,27 @@ void Document::redo() {
     place(p);
 }
 
+int newGeometryId() {
+    static std::atomic<int> next_id{1};
+    return next_id++;
+}
+
+JobStamp Document::stamp() const {
+    JobStamp s;
+    s.model_path = path;
+    s.revision = revision_;
+    s.orient_settings = orient.settings;
+    s.orient_decided = orient.decided;
+    s.supports = supports.result.get();
+    s.choices = supports.choices;
+    s.sample_path = print.settings.sample_path;
+    s.exposure = print.settings.exposure;
+    s.bottom_exposure = print.settings.bottom_exposure;
+    s.bottom_layers = print.settings.bottom_layers;
+    s.transition_layers = print.settings.transition_layers;
+    return s;
+}
+
 std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::PrinterProfile& printer,
                                        const fruit::JobControl& ctl) {
     ctl.report("load", 0);
@@ -48,8 +69,7 @@ std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::Pri
     doc->path = path;
     doc->name = std::filesystem::path(path).stem().string();
     doc->printer = printer;
-    static std::atomic<int> next_id{1};
-    doc->geometry_id = next_id++;
+    doc->geometry_id = newGeometryId();
     doc->model = fruit::loadModel(path);
     if (doc->model.mesh.empty()) throw std::runtime_error("the file holds no triangles");
     ctl.step("load", 0.5);

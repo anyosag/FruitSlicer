@@ -505,6 +505,10 @@ GooHeader readGooHeader(const std::string& path) {
     const size_t n = std::fread(bytes.data(), 1, bytes.size(), f);
     std::fclose(f);
     bytes.resize(n);
+    return parseGooHeader(bytes);
+}
+
+GooHeader parseGooHeader(const std::vector<uint8_t>& bytes) {
     In in{bytes};
     return parseHeader(in);
 }

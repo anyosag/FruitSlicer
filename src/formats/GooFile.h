@@ -145,6 +145,9 @@ struct GooFileInfo {
 GooFileInfo readGoo(const std::string& path);
 // Only the header (previews and settings): quick even for a large file.
 GooHeader readGooHeader(const std::string& path);
+// A header from its bytes, as stored at the start of a file (at least
+// kGooHeaderSize bytes); throws on a bad magic or a short buffer.
+GooHeader parseGooHeader(const std::vector<uint8_t>& bytes);
 
 // What reading a .goo back finds. Layers are checked from their runs (no
 // image is built), so this stays quick for thousands of 16K layers.

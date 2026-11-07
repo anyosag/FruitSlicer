@@ -75,7 +75,9 @@ void topBar(App& app) {
     ImGui::SetCursorPos(ImVec2(16, 12));
     ImGui::BeginGroup();
     text(doc ? doc->name.c_str() : "New job", fonts().semibold, size::Body + 1, col::Text);
-    text("Not saved", fonts().regular, size::Help, col::TextMuted);
+    const char* state = !doc || doc->job_path.empty() ? "Not saved" : doc->unsaved() ? "Edited since saving" : "Saved";
+    text(state, fonts().regular, size::Help, col::TextMuted);
+    if (doc) parts::tooltip(doc->job_path.empty() ? "Save the job with ⌘S." : doc->job_path.c_str());
     ImGui::EndGroup();
 
     static const char* kSteps[] = {"Model", "Orient", "Supports", "Layers", "Print"};

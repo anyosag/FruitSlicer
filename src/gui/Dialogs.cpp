@@ -281,7 +281,9 @@ void shortcuts(App&, bool& open) {
     struct Row {
         std::string what, keys;
     };
-    const std::vector<Row> anywhere = {{"Open a model", cmd("O")},
+    const std::vector<Row> anywhere = {{"Open a model or a job", cmd("O")},
+                                       {"Save the job", cmd("S")},
+                                       {"Save the job as…", cmd("S", true)},
                                        {"Undo", cmd("Z")},
                                        {"Redo", cmd("Z", true)},
                                        {"Keyboard shortcuts", cmd("/")}};
@@ -290,10 +292,14 @@ void shortcuts(App&, bool& open) {
                                       {"Zoom", "scroll"},
                                       {"Front · side · from below · angled", "1 · 2 · 3 · 4"},
                                       {"Fit the model", "F"}};
+    const std::vector<Row> layers = {{"Next or previous layer", "↑ · ↓"},
+                                     {"Ten layers at a time", "Page Up · Page Down"},
+                                     {"First or last layer", "Home · End"}};
     const float col_w = (640 - 2 * kPad - 24) / 2;
     const float y0 = ImGui::GetCursorPosY() + 4;
-    auto column = [&](float x, const char* label, const std::vector<Row>& rows) {
-        ImGui::SetCursorPos(ImVec2(x, y0));
+    // One group of rows from (x, y); returns where it ends.
+    auto column = [&](float x, float y, const char* label, const std::vector<Row>& rows) {
+        ImGui::SetCursorPos(ImVec2(x, y));
         ImGui::BeginGroup();
         groupLabel(label);
         ImGui::Dummy(ImVec2(0, 2));
@@ -310,13 +316,13 @@ void shortcuts(App&, bool& open) {
         }
         ImGui::Dummy(ImVec2(0, 0));  // the group ends at the last row
         ImGui::EndGroup();
+        return ImGui::GetCursorPosY();
     };
-    column(kPad, "Anywhere", anywhere);
-    column(kPad + col_w + 24, "Looking around", looking);
-    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), y0 + 6 * 30.0f));
-    ImGui::SetCursorPosX(kPad);
-    text("More arrive with the next steps: saving, layers and editing tips.", fonts().regular, size::Help,
-         col::TextMuted);
+    const float left = column(kPad, y0, "Anywhere", anywhere);
+    const float x1 = kPad + col_w + 24;
+    float right = column(x1, y0, "Looking around", looking);
+    right = column(x1, right + 14, "In the Layers step", layers);
+    ImGui::SetCursorPos(ImVec2(kPad, std::max(left, right)));
     ImGui::Dummy(ImVec2(0, kPad - 4));
     endModal();
 }
