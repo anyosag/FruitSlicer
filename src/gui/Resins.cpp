@@ -226,23 +226,31 @@ bool plateMeasured(const json& profile, const std::string& kind) {
 }
 
 PlateStep nextPlateStep(const Resin& r) {
+    using Action = PlateStep::Action;
+    bool to_fit = false;
     for (const char* kind : kPlateKinds) {
-        if (plateMeasured(r.profile, kind)) continue;
+        const std::string k = kind;
         const auto it = r.plates.find(kind);
+        const bool measured = plateMeasured(r.profile, kind);
         if (it == r.plates.end()) {
-            const std::string k = kind;
-            return {k, false,
+            if (measured) continue;
+            return {Action::Print, k,
                     k == "tips" ? "Print the resin test plates, starting with the tips plate."
                                 : "Print the " + k + " plate next."};
         }
         const PlateFiles& f = it->second;
-        if (f.coupons > 0 && f.scored >= f.coupons) continue;
-        return {kind, true,
-                f.scored == 0 ? "Score the " + std::string(kind) + " plate once it's printed."
-                              : "Score the rest of the " + std::string(kind) + " plate: " + std::to_string(f.scored) +
-                                    " of " + std::to_string(f.coupons) + " so far."};
+        if (f.coupons > 0 && f.scored >= f.coupons) {
+            to_fit |= !measured;
+            continue;
+        }
+        if (measured) continue;  // fitted from an earlier sheet: scoring this one is up to you
+        return {Action::Score, k,
+                f.scored == 0 ? "Score the " + k + " plate once it's printed."
+                              : "Score the rest of the " + k + " plate: " + std::to_string(f.scored) + " of " +
+                                    std::to_string(f.coupons) + " so far."};
     }
-    return {"", false, "The plates are all scored. Turning the scores into this resin's values arrives in a later update."};
+    if (to_fit) return {Action::Fit, "", "Turn the scores into this resin's support values."};
+    return {Action::None, "", "This resin is calibrated: its support values come from its own test plates."};
 }
 
 std::string profileState(const json& profile) {

@@ -366,24 +366,30 @@ TEST_CASE("a resin keeps its saved plates, and which plates it has fitted", "[pl
 }
 
 TEST_CASE("the Calibrate page's next step follows the plates", "[plates]") {
+    using Action = PlateStep::Action;
     Resin r;
+    CHECK(nextPlateStep(r).action == Action::Print);
     CHECK(nextPlateStep(r).kind == "tips");
-    CHECK_FALSE(nextPlateStep(r).score);
     CHECK(nextPlateStep(r).text == "Print the resin test plates, starting with the tips plate.");
     PlateFiles f;
     f.coupons = 48;
     r.plates["tips"] = f;
-    CHECK(nextPlateStep(r).score);
+    CHECK(nextPlateStep(r).action == Action::Score);
     CHECK(nextPlateStep(r).text == "Score the tips plate once it's printed.");
     r.plates["tips"].scored = 20;
     CHECK(nextPlateStep(r).text == "Score the rest of the tips plate: 20 of 48 so far.");
     r.plates["tips"].scored = 48;
+    CHECK(nextPlateStep(r).action == Action::Print);
     CHECK(nextPlateStep(r).kind == "spacing");
     CHECK(nextPlateStep(r).text == "Print the spacing plate next.");
     // A plate fitted already (an imported profile) needs nothing more.
     r.profile = {{"coverage_curve", {{0, 3.2}, {15, 5}}}};
     CHECK(nextPlateStep(r).kind == "islands");
     r.profile["island_one_tip_length"] = 1.7;
-    CHECK(nextPlateStep(r).kind.empty());
-    CHECK_THAT(nextPlateStep(r).text, StartsWith("The plates are all scored."));
+    // Every plate done, but the tips plate's scores aren't in the values yet.
+    CHECK(nextPlateStep(r).action == Action::Fit);
+    CHECK(nextPlateStep(r).text == "Turn the scores into this resin's support values.");
+    r.profile["capacity_table"] = {{0.4, 8.0}};
+    CHECK(nextPlateStep(r).action == Action::None);
+    CHECK_THAT(nextPlateStep(r).text, StartsWith("This resin is calibrated"));
 }

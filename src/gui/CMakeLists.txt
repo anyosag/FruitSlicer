@@ -55,6 +55,7 @@ set(app_sources
   Capture.cpp
   Dialogs.cpp
   Document.cpp
+  Fit.cpp
   Icons.cpp
   JobFile.cpp
   Jobs.cpp

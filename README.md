@@ -133,8 +133,16 @@ coupon (held, partly or fell off; the mark left, 1 to 5; notes) without showing
 any settings, and keeps each score as you go. A sheet filled in by hand can be
 imported instead (`x.results.csv` with `x.json` beside it, as `fruitslicer
 calibrate` writes them). Saving another plate over one with scores sets those
-scores aside as `<kind>.earlier.results.csv`, never over them. Turning the
-scores into the resin's values arrives in a later update.
+scores aside as `<kind>.earlier.results.csv`, never over them.
+
+**Fit the scores** (on the score page, or the hub's *Resin profile* card)
+shows what the resin can do: how much one tip of each size holds against
+FruitSlicer's starting values (as a chart or a table), and every value the fit
+sets with how it was found. A value the plates only bound (every coupon held,
+so the real figure is higher) says so, and so does a guess (none held, even at
+the lightest load). **Use for** puts the values into the resin, replacing only
+the plates that were fitted; jobs saved before keep theirs. **Save profile
+as…** writes them as a profile for `fruitslicer fit`'s users or another Mac.
 
 **Settings** (at the bottom of the rail) has the 3D view's
 smoothing, how many processor cores slicing and saving may use, whether `.goo`
@@ -367,7 +375,9 @@ After printing the plates, fill in the `result` column (`ok`, `failed` or
 
 Estimates resting on incomplete data (nothing failed, or nothing held) are
 listed under `notes` in the profile, so a bound is never mistaken for a
-measurement. `--profile` works with `points`, `support` and `orient`, and
+measurement. A tip size that never let go gets 70 % of the heaviest load
+tried, a floor (half would let go somewhere above it); one that never held
+gets half the lightest load, a guess. `--profile` works with `points`, `support` and `orient`, and
 explicit command-line options still override it.
 
 ### Go/no-go: same-plate comparison with SatelLite

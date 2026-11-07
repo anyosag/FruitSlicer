@@ -1,0 +1,17 @@
+{
+  "size": [1440, 1500],
+  "scale": 1,
+  "steps": [
+    {"fit_page": "open"}, {"shot": "c3b2_fit_none"},
+    {"plate": "tips"}, {"plate_save_to": "@demo-stl"},
+    {"score": "tips"}, {"score_demo": 48},
+    {"fit_page": "open"}, {"shot": "c3b2_fit_tips"},
+    {"fit_table": true}, {"shot": "c3b2_fit_table"}, {"fit_table": false},
+    {"fit_page": "use"}, {"fit_save_to": "@demo"}, {"shot": "c3b2_fit_in_use"},
+    {"plate": "spacing"}, {"plate_save_to": "@demo-stl"}, {"score": "spacing"}, {"score_demo": 37},
+    {"plate": "islands"}, {"plate_save_to": "@demo-stl"}, {"score": "islands"}, {"score_demo": 36},
+    {"fit_page": "open"}, {"shot": "c3b2_fit_all"},
+    {"screen": "calibrate"}, {"shot": "c3b2_hub"},
+    {"fit_page": "use"}, {"screen": "calibrate"}, {"shot": "c3b2_hub_fitted"}
+  ]
+}

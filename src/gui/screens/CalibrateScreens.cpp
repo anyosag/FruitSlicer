@@ -171,14 +171,15 @@ void calibrate(App& app) {
                                              : plates_next.text;
         text("Next", fonts().semibold, size::Help, col::Accent);
         text(what.c_str(), fonts().semibold, size::Section + 1, col::Text, true);
-        if (!ps.orientation_confirmed || !ps.hinge || !plates_next.kind.empty()) {
+        if (!ps.orientation_confirmed || !ps.hinge || plates_next.action != PlateStep::Action::None) {
             const char* label = !ps.orientation_confirmed ? "Start" : "Open";
             const float bw = labelWidth(label, fonts().bold, size::Body) + 34;
             ImGui::SetCursorPos(ImVec2(x0 + ImGui::GetContentRegionAvail().x - bw, y0 + 4));
             if (primaryButton(label, ImVec2(bw, 38))) {
                 if (!ps.orientation_confirmed) app.setScreen(Screen::OrientationCheck);
                 else if (!ps.hinge) app.setScreen(Screen::Printer);
-                else if (plates_next.score) app.openScores(plates_next.kind);
+                else if (plates_next.action == PlateStep::Action::Score) app.openScores(plates_next.kind);
+                else if (plates_next.action == PlateStep::Action::Fit) app.openFit();
                 else app.openPlate(plates_next.kind);
             }
             ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), y0 + 44));
@@ -269,6 +270,18 @@ void calibrate(App& app) {
         endCard();
         ImGui::PopID();
         if (i < 2) ImGui::SameLine(0, 12);
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    {
+        bool any_scores = false;
+        for (const auto& [kind, f] : resin.plates) any_scores |= f.scored > 0;
+        const std::string state = resinState(resin);
+        if (rowCard("profile", "Resin profile",
+                    "The fit turns the plates' scores into this resin's support values, and says how each was found.",
+                    state == "Defaults" ? "FruitSlicer's starting values" : state,
+                    state == "Defaults" ? col::TextMuted : col::Ok, "Fit the scores", any_scores,
+                    "Score a printed plate first."))
+            app.openFit();
     }
     endPage();
 }

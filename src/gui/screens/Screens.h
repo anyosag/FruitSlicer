@@ -16,6 +16,7 @@ void setup(App& app);     // first-run setup, canvas board "Setup"
 void resins(App& app);    // canvas board "Resins"
 void plate(App& app);     // canvas board "PlatePreview"
 void score(App& app);     // canvas board "Results"
+void fit(App& app);       // canvas board "Fit"
 // Calibrate: the hub, the image orientation check, the Printer page.
 void calibrate(App& app);
 void orientationCheck(App& app);

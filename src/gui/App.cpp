@@ -1706,6 +1706,74 @@ void App::importScoresFile(const std::string& csv) {
     }
 }
 
+// ---- Fit ----
+
+void App::openFit() {
+    screen_ = Screen::Fit;
+    fit_.reset();
+    const Resin& r = newJobResin();
+    fit_resin_ = r.id;
+    std::vector<fruit::PlateResults> plates;
+    for (const char* kind : kPlateKinds) {
+        if (!r.plates.count(kind)) continue;
+        const PlateFiles f = keptPlate(r, kind);
+        try {
+            plates.push_back(fruit::loadPlateResults(f.manifest, f.results));
+        } catch (const std::exception& e) {
+            showError("Couldn't read the " + std::string(kind) + " plate's scores", e.what());
+        }
+    }
+    fruit::FitOptions o;
+    o.resin = r.name;
+    const PrintSettings ps = printSettingsFor(r);
+    o.layer_height = ps.sample ? fruit::gooLayerHeight(*ps.sample) : printer_.layer_height;
+    o.exposure_s = ps.exposure > 0 ? ps.exposure : ps.sample ? ps.sample->print.exposure : 0;
+    fit_ = std::make_shared<const FitSummary>(summarizeFit(plates, o, r));
+}
+
+nlohmann::json App::fittedProfile() const {
+    const Resin* r = resinById(fit_resin_);
+    if (!fit_ || !r) return nullptr;
+    return mergedProfile(r->profile, fit_->profile, fit_->kinds);
+}
+
+bool App::fitInUse() const {
+    const Resin* r = resinById(fit_resin_);
+    return fit_ && r && !fit_->kinds.empty() && r->profile == fittedProfile();
+}
+
+void App::useFit() {
+    const Resin* found = resinById(fit_resin_);
+    if (!fit_ || !found || fit_->kinds.empty()) return;
+    Resin r = *found;
+    r.profile = fittedProfile();
+    storeResin(r);
+    log::info("fitted " + r.name + " from its plates: " + profileState(r.profile));
+}
+
+void App::saveFitAs() {
+    const Resin* r = resinById(fit_resin_);
+    if (!fit_ || !r || fit_->kinds.empty()) return;
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    const std::string start = (std::filesystem::path(docs ? docs : ".") / (r->name + " profile.json")).string();
+    platform::saveFileDialog(window_, {{"Resin profiles", "json"}}, start, [this](const std::string& path) {
+        if (!path.empty()) saveFitTo(path);
+    });
+}
+
+void App::saveFitTo(const std::string& path) {
+    const nlohmann::json p = fittedProfile();
+    if (p.is_null()) return;
+    std::ofstream out(path, std::ios::trunc);
+    out << p.dump(2) << "\n";
+    out.flush();
+    if (!out) {
+        showError("Couldn't save the profile", "Writing " + std::filesystem::path(path).filename().string() + " failed.");
+        return;
+    }
+    log::info("saved the fitted profile to " + path);
+}
+
 std::shared_ptr<const fruit::GooHeader> App::resinSample(const Resin& r) {
     if (r.sample_path.empty()) return nullptr;
     auto it = resin_samples_.find(r.sample_path);
@@ -1978,7 +2046,7 @@ void App::rail() {
     if (railItem("rail_job", "Job", icon::cube, screen_ == Screen::Job)) screen_ = Screen::Job;
     const bool calibrating =
         screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer ||
-        screen_ == Screen::Plate || screen_ == Screen::Score;
+        screen_ == Screen::Plate || screen_ == Screen::Score || screen_ == Screen::Fit;
     if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
     if (railItem("rail_resins", "Resins", icon::droplet, screen_ == Screen::Resins)) {
         if (screen_ != Screen::Resins) resin_selected_ = newJobResin().id;
@@ -2148,6 +2216,7 @@ void App::frame() {
         case Screen::Resins: screens::resins(*this); break;
         case Screen::Plate: screens::plate(*this); break;
         case Screen::Score: screens::score(*this); break;
+        case Screen::Fit: screens::fit(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);
