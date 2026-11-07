@@ -54,8 +54,10 @@ bool exists(const std::string& path) {
 
 std::string fileName(const std::string& path) { return fs::path(path).filename().string(); }
 
+}  // namespace
+
 // Written whole or not at all.
-void writeFile(const std::string& path, const std::string& text) {
+void writeWhole(const std::string& path, const std::string& text) {
     std::error_code ec;
     fs::create_directories(fs::path(path).parent_path(), ec);
     const std::string tmp = path + ".tmp";
@@ -72,6 +74,8 @@ void writeFile(const std::string& path, const std::string& text) {
         throw std::runtime_error("Couldn't write " + fileName(path) + ": " + ec.message());
     }
 }
+
+namespace {
 
 std::optional<json> readJson(const std::string& path) {
     std::ifstream in(path);
@@ -94,25 +98,25 @@ bool hasScores(const PlateFiles& f) {
     }
 }
 
-// Moves a kept sheet, and its manifest, to the first free
-// "<name>.earlier[-n].results.csv" / ".json" beside them.
-void setAside(const PlateFiles& f) {
+void setAside(const PlateFiles& f) { setAsideEarlier(f.manifest, f.results); }
+
+}  // namespace
+
+void setAsideEarlier(const std::string& manifest, const std::string& results) {
     const std::string suffix = ".json";
-    if (f.manifest.size() <= suffix.size()) throw std::runtime_error("a plate's manifest must end in .json");
-    const std::string base = f.manifest.substr(0, f.manifest.size() - suffix.size());
+    if (manifest.size() <= suffix.size()) throw std::runtime_error("a manifest must end in .json");
+    const std::string base = manifest.substr(0, manifest.size() - suffix.size());
     for (int n = 1;; ++n) {
         const std::string tag = n == 1 ? ".earlier" : ".earlier-" + std::to_string(n);
         const std::string m = base + tag + ".json", r = base + tag + ".results.csv";
         if (exists(m) || exists(r)) continue;
         std::error_code ec;
-        fs::rename(f.results, r, ec);  // the scores first: they are what matters
-        if (!ec && exists(f.manifest)) fs::rename(f.manifest, m, ec);
+        fs::rename(results, r, ec);  // the scores first: they are what matters
+        if (!ec && exists(manifest)) fs::rename(manifest, m, ec);
         if (ec) throw std::runtime_error("Couldn't set the earlier scores aside: " + ec.message());
         return;
     }
 }
-
-}  // namespace
 
 bool isPlateKind(const std::string& kind) {
     return std::any_of(std::begin(kPlateKinds), std::end(kPlateKinds), [&](const char* k) { return kind == k; });
@@ -255,8 +259,8 @@ void keepPlate(const fruit::CalibrationPlate& p, PlateFiles& f) {
     const std::optional<json> old = readJson(f.manifest);
     if (!(old && samePlate(*old, m) && exists(f.results))) {
         if (hasScores(f)) setAside(f);
-        writeFile(f.manifest, m.dump(2) + "\n");
-        writeFile(f.results, fruit::blindResultsCsv(m, {}));
+        writeWhole(f.manifest, m.dump(2) + "\n");
+        writeWhole(f.results, fruit::blindResultsCsv(m, {}));
     }
     const PlateScores s = loadScores(f);
     f.scored = s.scored();
@@ -310,7 +314,7 @@ PlateScores loadScores(const PlateFiles& f) {
 }
 
 void saveScores(PlateFiles& f, const PlateScores& s) {
-    writeFile(f.results, fruit::blindResultsCsv(s.manifest, s.coupons));
+    writeWhole(f.results, fruit::blindResultsCsv(s.manifest, s.coupons));
     f.scored = s.scored();
     f.coupons = static_cast<int>(s.coupons.size());
 }
@@ -333,7 +337,7 @@ PlateScores readScoreSheet(const std::string& csv) {
 
 void keepScores(const PlateScores& s, PlateFiles& f) {
     if (hasScores(f)) setAside(f);
-    writeFile(f.manifest, s.manifest.dump(2) + "\n");
+    writeWhole(f.manifest, s.manifest.dump(2) + "\n");
     saveScores(f, s);
 }
 

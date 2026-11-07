@@ -91,4 +91,10 @@ void keepScores(const PlateScores& s, PlateFiles& f);
 // (wrapping round), else simply the next one.
 int nextToScore(const PlateScores& s, int id);
 
+// Shared with the A/B test's kept files.
+void writeWhole(const std::string& path, const std::string& text);  // whole or not at all; throws
+// Moves a kept sheet and its manifest ("<name>.json") to the first free
+// "<name>.earlier[-n].results.csv" / ".json" beside them.
+void setAsideEarlier(const std::string& manifest, const std::string& results);
+
 }  // namespace gui

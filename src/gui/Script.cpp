@@ -403,6 +403,16 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (a == "open") app.openFit();
             else if (a == "use") app.useFit();
             else throw std::runtime_error("unknown fit_page step " + a);
+        } else if (step.contains("ab")) {
+            if (step["ab"].get<std::string>() != "open") throw std::runtime_error("unknown ab step");
+            app.openABSetup();
+        } else if (step.contains("ab_copies")) {
+            app.setABCopies(step["ab_copies"].get<int>());
+        } else if (step.contains("ab_save_to")) {
+            // "@demo": "<job> AB_A.stl" (and _B) in the demo folder, as the Save button would.
+            std::string p = step["ab_save_to"].get<std::string>();
+            if (p == "@demo" && app.document()) p = (demoDir() / (app.document()->name + " AB_A.stl")).string();
+            app.saveABTo(p);
         } else if (step.contains("fit_table")) {
             app.fitTable() = step["fit_table"].get<bool>();
         } else if (step.contains("fit_save_to")) {

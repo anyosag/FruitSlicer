@@ -1,0 +1,12 @@
+{
+  "size": [1440, 1200],
+  "scale": 1,
+  "steps": [
+    {"ab": "open"}, {"shot": "c3c1_ab_no_job"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"ab": "open"}, {"shot": "c3c1_ab_setup"},
+    {"ab_save_to": "@demo"}, {"shot": "c3c1_ab_saved"},
+    {"screen": "calibrate"}, {"shot": "c3c1_hub_ab"}
+  ]
+}

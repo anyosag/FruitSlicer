@@ -144,6 +144,15 @@ the lightest load). **Use for** puts the values into the resin, replacing only
 the plates that were fitted; jobs saved before keep theirs. **Save profile
 as…** writes them as a profile for `fruitslicer fit`'s users or another Mac.
 
+The **A/B test** (Calibrate → A/B test) prints copies of the current job's
+model on one plate: half with FruitSlicer's supports (A), half bare for
+SatelLite's auto-supports (B), their places shuffled so the plate position
+favours neither. It offers as many copies as fit, shows where each goes,
+and saves two STL files (`<name>_A.stl` with the supports and the L marker,
+`<name>_B.stl` bare) to load in SatelLite, which supports the B copies only.
+FruitSlicer keeps which copy is where. Scoring the copies and comparing the
+two sides arrives in a later update.
+
 **Settings** (at the bottom of the rail) has the 3D view's
 smoothing, how many processor cores slicing and saving may use, whether `.goo`
 files go to a plugged-in USB drive, the resin for new jobs, the log file, and
