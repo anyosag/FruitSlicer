@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "core/JobControl.h"
 #include "core/OutFile.h"
 
 namespace fruit {
@@ -142,6 +143,24 @@ struct GooFileInfo {
 };
 
 GooFileInfo readGoo(const std::string& path);
+// Only the header (previews and settings): quick even for a large file.
+GooHeader readGooHeader(const std::string& path);
+
+// What reading a .goo back finds. Layers are checked from their runs (no
+// image is built), so this stays quick for thousands of 16K layers.
+struct GooVerifyResult {
+    uint32_t layers = 0;
+    bool footer_ok = false;
+    bool checksums_ok = true;   // every layer decodes: magic, checksum, exact pixel count
+    int first_bad_layer = -1;   // the first that did not, and why
+    std::string error;
+    size_t lit_values = 0;      // distinct non-zero pixel values
+    size_t grey_values = 0;     // distinct values strictly between 0 and 255
+    double volume_mm3 = 0;      // lit coverage × pixel area × layer height
+};
+
+// Reports stage "verify". Throws if the file cannot be read as a .goo at all.
+GooVerifyResult verifyGoo(const std::string& path, const JobControl& ctl = JobControl::none());
 
 // Copies print settings and identity strings (printer, profile, version,
 // resolution, mirrors, AA) from `from` into `to`, leaving geometry-dependent

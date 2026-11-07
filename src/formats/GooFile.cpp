@@ -2,6 +2,8 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "formats/GooFile.h"
 
+#include "core/JobControl.h"
+
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -354,7 +356,12 @@ std::vector<uint8_t> GooRleEncoder::finish() {
     return std::move(out_);
 }
 
-void decodeGooRle(const std::vector<uint8_t>& d, std::vector<uint8_t>& px) {
+namespace {
+
+// Walks a layer's runs, checking the magic byte, the checksum and that the
+// runs cover exactly `pixels`; calls f(colour, run) for each run.
+template <class F>
+void walkGooRuns(const std::vector<uint8_t>& d, size_t pixels, F&& f) {
     if (d.size() < 2 || d[0] != kLayerMagic) throw std::runtime_error("GOO: layer data does not start with 0x55");
     const size_t last = d.size() - 1;
     uint8_t sum = 0;
@@ -385,12 +392,54 @@ void decodeGooRle(const std::vector<uint8_t>& d, std::vector<uint8_t>& px) {
             for (int k = 0; k < extra; ++k) high = high << 8 | byteAt(++i);
             run |= high << 4;  // extra bytes hold bits 4 and up, most significant first
         }
-        if (pos + run > px.size()) throw std::runtime_error("GOO: layer data overruns the image");
-        std::memset(px.data() + pos, color, run);
+        if (pos + run > pixels) throw std::runtime_error("GOO: layer data overruns the image");
+        f(color, pos, run);
         pos += run;
     }
-    if (pos != px.size()) throw std::runtime_error("GOO: layer data covers " + std::to_string(pos) + " of " +
-                                                   std::to_string(px.size()) + " pixels");
+    if (pos != pixels)
+        throw std::runtime_error("GOO: layer data covers " + std::to_string(pos) + " of " + std::to_string(pixels) +
+                                 " pixels");
+}
+
+}  // namespace
+
+void decodeGooRle(const std::vector<uint8_t>& d, std::vector<uint8_t>& px) {
+    walkGooRuns(d, px.size(), [&](uint8_t color, size_t pos, uint32_t run) { std::memset(px.data() + pos, color, run); });
+}
+
+GooVerifyResult verifyGoo(const std::string& path, const JobControl& ctl) {
+    GooVerifyResult v;
+    const GooFileInfo f = readGoo(path);
+    const GooHeader& h = f.header;
+    v.layers = static_cast<uint32_t>(f.rle.size());
+    v.footer_ok = f.footer_ok;
+    const size_t pixels = static_cast<size_t>(h.res_x) * h.res_y;
+    bool seen[256] = {};
+    double lit = 0;
+    for (size_t i = 0; i < f.rle.size(); ++i) {
+        try {
+            walkGooRuns(f.rle[i], pixels, [&](uint8_t color, size_t, uint32_t run) {
+                if (!color) return;
+                seen[color] = true;
+                lit += color / 255.0 * run;
+            });
+        } catch (const std::exception& e) {
+            if (v.checksums_ok) {
+                v.checksums_ok = false;
+                v.first_bad_layer = static_cast<int>(i);
+                v.error = e.what();
+            }
+        }
+        if ((i & 63) == 0) ctl.step("verify", static_cast<double>(i) / static_cast<double>(std::max<size_t>(1, f.rle.size())));
+    }
+    for (int c = 1; c < 256; ++c) {
+        v.lit_values += seen[c];
+        v.grey_values += seen[c] && c != 255;
+    }
+    const double pixel_area = static_cast<double>(h.size_x) / h.res_x * h.size_y / h.res_y;
+    v.volume_mm3 = lit * pixel_area * h.layer_height;
+    ctl.report("verify", 1.0);
+    return v;
 }
 
 // ---------------------------------------------------------------- writer / reader
@@ -447,6 +496,17 @@ GooFileInfo readGoo(const std::string& path) {
                          std::memcmp(bytes.data() + in.pos + 3, kMagic, 8) == 0;
     }
     return info;
+}
+
+GooHeader readGooHeader(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) throw std::runtime_error("cannot open " + path);
+    std::vector<uint8_t> bytes(kGooHeaderSize);
+    const size_t n = std::fread(bytes.data(), 1, bytes.size(), f);
+    std::fclose(f);
+    bytes.resize(n);
+    In in{bytes};
+    return parseHeader(in);
 }
 
 void copyPrintSettings(const GooHeader& from, GooHeader& to) {

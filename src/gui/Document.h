@@ -11,6 +11,7 @@
 
 #include "Layers.h"
 #include "Orient.h"
+#include "Print.h"
 #include "Supports.h"
 #include "core/JobControl.h"
 #include "mesh/ModelCheck.h"
@@ -64,6 +65,14 @@ struct LayerState {
     }
 };
 
+// The Print step: the print file's settings and the last save.
+struct PrintState {
+    PrintSettings settings;
+    std::shared_ptr<const SaveResult> saved;   // the last file written and checked
+    std::shared_ptr<const LayerResult> saved_from;  // the layers it was written from
+    std::string drive;                          // where it went when on a removable drive ("" otherwise)
+};
+
 class Document {
 public:
     std::string path;  // file it came from
@@ -76,6 +85,7 @@ public:
     OrientState orient;
     SupportState supports;
     LayerState layers;
+    PrintState print;
 
     const fruit::Placement& placement() const { return placement_; }
     const fruit::Transform& transform() const { return transform_; }  // model -> printer

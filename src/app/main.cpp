@@ -737,20 +737,11 @@ int cmdGooInfo(const std::string& path, bool decode) {
     }
     r["rle_bytes"] = {{"total", total}, {"max_layer", mx}};
     if (decode) {
-        std::vector<uint8_t> px(static_cast<size_t>(h.res_x) * h.res_y);
-        double lit = 0;
-        std::map<int, uint64_t> greys;
-        for (const auto& d : f.rle) {
-            decodeGooRle(d, px);
-            for (uint8_t v : px)
-                if (v) {
-                    lit += v / 255.0;
-                    ++greys[v];
-                }
-        }
-        const double pa = static_cast<double>(h.size_x) / h.res_x * h.size_y / h.res_y;
-        r["decoded"] = {{"checksums_ok", true}, {"volume_mm3", lit * pa * h.layer_height},
-                        {"distinct_grey_values", greys.size()}};
+        const GooVerifyResult v = verifyGoo(path);
+        if (!v.checksums_ok)
+            throw std::runtime_error("layer " + std::to_string(v.first_bad_layer) + ": " + v.error);
+        r["decoded"] = {{"checksums_ok", v.checksums_ok}, {"volume_mm3", v.volume_mm3},
+                        {"distinct_grey_values", v.lit_values}};
     }
     std::cout << r.dump(2) << "\n";
     return 0;

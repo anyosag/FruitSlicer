@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 // The job: top bar with the step bar, the current step's panels around the
-// 3D view, and the status bar. Only the Model step exists yet.
+// 3D view, and the status bar.
 #include <imgui.h>
 
 #include <algorithm>
@@ -99,9 +99,14 @@ void topBar(App& app) {
         }
         if (stepPill(i + 1, kSteps[i], state, can, badge.empty() ? nullptr : badge.c_str(), badge_col))
             app.goToStep(s);
-        if (i >= 4) tooltip("This step arrives in the next update.");
-        else if (s == Step::Layers && !can && doc) tooltip("Generate supports first.");
-        else if (!can && doc) tooltip("Make it fit the plate first.");
+        if (can || !doc) {
+        } else if (s == Step::Print && app.canGoTo(Step::Layers)) {
+            tooltip("Open the Layers step: it cuts the layers first.");
+        } else if (s == Step::Layers || s == Step::Print) {
+            tooltip("Generate supports first.");
+        } else {
+            tooltip("Make it fit the plate first.");
+        }
         ImGui::SameLine(0, 8);
     }
 
@@ -110,6 +115,7 @@ void topBar(App& app) {
     std::string next = "Open model...";
     bool enabled = true;
     const char* why = nullptr;
+    std::string why_s;
     if (doc && app.step() == Step::Model) {
         next = "Next: Orient";
         enabled = app.canGoTo(Step::Orient);
@@ -129,8 +135,16 @@ void topBar(App& app) {
         }
     } else if (doc && app.step() == Step::Layers) {
         next = "Next: Print";
-        enabled = false;
-        why = "Saving the print file arrives in the next update.";
+        enabled = app.canGoTo(Step::Print);
+        if (!enabled) why = "Wait for the layers to be cut.";
+    } else if (doc && app.step() == Step::Print && showingSaved(*doc)) {
+        next = doc->print.drive.empty() ? "Show in Finder" : "Eject the drive";
+        enabled = !app.jobs().busy();
+    } else if (doc && app.step() == Step::Print) {
+        next = "Save .goo";
+        why_s = app.printBlocker();
+        enabled = why_s.empty();
+        if (!enabled) why = why_s.c_str();
     } else if (doc && app.step() == Step::Orient) {
         const OrientState& o = doc->orient;
         if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
@@ -155,6 +169,10 @@ void topBar(App& app) {
         else if (next == "Next: Supports") app.goToStep(Step::Supports);
         else if (next == "Generate supports" || next == "Regenerate supports") app.generateSupports();
         else if (next == "Next: Layers") app.goToStep(Step::Layers);
+        else if (next == "Next: Print") app.goToStep(Step::Print);
+        else if (next == "Save .goo") app.savePrint();
+        else if (next == "Eject the drive") app.ejectDrive();
+        else if (next == "Show in Finder") app.revealSaved();
     }
     if (why) tooltip(why);
     ImGui::PushFont(fonts().medium, size::Body);
@@ -546,7 +564,8 @@ void statusBar(App& app) {
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(all ? "Every option fits the plate" : "An option does not fit the plate however it is turned", fonts().regular,
              size::Body, col::TextSecondary);
-    } else if (doc && app.step() == Step::Layers && doc->layers.fresh(doc->supports.result)) {
+    } else if (doc && (app.step() == Step::Layers || app.step() == Step::Print) &&
+               doc->layers.fresh(doc->supports.result)) {
         const LayerResult& lr = *doc->layers.result;
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, col::Ok);
@@ -556,6 +575,14 @@ void statusBar(App& app) {
              col::TextSecondary);
         problems = static_cast<int>(lr.cups() + lr.traps());
         totals = strf("%s layers · %.1f ml of resin", thousands(lr.layers->size()).c_str(), lr.resin_ml);
+        if (app.step() == Step::Print) {
+            const auto plan = app.printPlan();
+            if (plan && plan->ready) {
+                const long m = std::max(1L, std::lround(plan->print_time_s / 60));
+                totals = strf("%s layers · %.1f ml of resin · about %s", thousands(plan->layers).c_str(), lr.resin_ml,
+                              (m >= 60 ? strf("%ld h %ld min", m / 60, m % 60) : strf("%ld min", m)).c_str());
+            }
+        }
     } else if (doc && app.step() == Step::Supports && doc->supports.result &&
                doc->supports.fresh(doc->revision(), doc->orient.settings)) {
         const SupportResult& r = *doc->supports.result;
@@ -611,7 +638,9 @@ void job(App& app) {
     topBar(app);
     const float body_h = ImGui::GetContentRegionAvail().y - kStatusH;
     const auto& doc = app.document();
-    if (doc && app.step() == Step::Layers) {
+    if (doc && app.step() == Step::Print) {
+        printView(app, *doc, ImVec2(0, body_h));
+    } else if (doc && app.step() == Step::Layers) {
         layersView(app, *doc, ImVec2(0, body_h));
     } else if (doc && app.step() == Step::Supports) {
         supportsLeft(app, *doc, body_h);

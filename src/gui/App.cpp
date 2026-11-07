@@ -8,12 +8,17 @@
 #include <cmath>
 #include <filesystem>
 
+#include <SDL3/SDL.h>
+
+#include "mesh/StlIO.h"
+
 #include "Dialogs.h"
 #include "Icons.h"
 #include "Log.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "platform/Platform.h"
+#include "screens/JobParts.h"
 #include "screens/Screens.h"
 
 namespace gui {
@@ -181,6 +186,9 @@ bool App::canGoTo(Step s) const {
         case Step::Supports: return doc_ && doc_->fit().fits;
         case Step::Layers:
             return doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings);
+        case Step::Print:
+            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings) &&
+                   doc_->layers.fresh(doc_->supports.result);
         default: return false;  // the next updates
     }
 }
@@ -447,6 +455,198 @@ void App::syncScene() {
     for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : 0xF2F4F7, fresh);
 }
 
+void App::chooseSample() {
+    platform::openFileDialog(window_, {{"Print files from SatelLite", "goo"}}, [this](const std::string& path) {
+        if (!path.empty()) useSample(path);
+    });
+}
+
+void App::useSample(const std::string& path) {
+    if (!doc_) return;
+    try {
+        doc_->print.settings.sample = loadSample(path);
+        doc_->print.settings.sample_path = path;
+        log::info("print settings from " + path);
+    } catch (const std::exception& e) {
+        showError("Couldn't read that print file", e.what());
+    }
+}
+
+void App::setExposures(double normal_s, double bottom_s) {
+    if (!doc_) return;
+    doc_->print.settings.exposure = std::max(0.0, normal_s);
+    doc_->print.settings.bottom_exposure = std::max(0.0, bottom_s);
+}
+
+std::shared_ptr<const PrintPlan> App::printPlan() {
+    if (!doc_ || !doc_->layers.result) return nullptr;
+    const auto& lr = doc_->layers.result;
+    const double raft =
+        doc_->placement().on_plate || !doc_->supports.result ? 0.0 : doc_->supports.result->tree.raft_top;
+    const PrintSettings& s = doc_->print.settings;
+    const bool same = plan_ && plan_layers_ == lr && plan_raft_ == raft && plan_settings_.sample == s.sample &&
+                      plan_settings_.exposure == s.exposure && plan_settings_.bottom_exposure == s.bottom_exposure &&
+                      plan_settings_.bottom_layers == s.bottom_layers &&
+                      plan_settings_.transition_layers == s.transition_layers;
+    if (!same) {
+        plan_ = std::make_shared<const PrintPlan>(planPrint(*doc_, *lr, raft, s));
+        plan_layers_ = lr;
+        plan_settings_ = s;
+        plan_raft_ = raft;
+    }
+    return plan_;
+}
+
+std::string App::printBlocker() {
+    if (!doc_ || !canGoTo(Step::Print)) return "Generate supports, then let the Layers step cut the layers.";
+    if (!doc_->supports.result->validation.floating.empty())
+        return "Parts start in mid-air: add tips in the Supports step.";
+    const auto plan = printPlan();
+    if (!plan->fits) return "The model and supports reach past the printer's build volume.";
+    if (!plan->ready) return plan->why_not;
+    if (jobs_.busy()) return "Wait for the current task to finish.";
+    return "";
+}
+
+void App::savePrint() {
+    if (!printBlocker().empty()) return;
+    // Asked once per session until the orientation check exists (calibration).
+    if (!orientation_asked_) {
+        orientation_ask_ = true;
+        return;
+    }
+    const std::string name = doc_->name + ".goo";
+    if (drive_choice_ >= 0 && drive_choice_ < static_cast<int>(drives_.size())) {
+        const platform::Volume& v = drives_[static_cast<std::size_t>(drive_choice_)];
+        savePrintTo((std::filesystem::path(v.path) / name).string(), v.name);
+        return;
+    }
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    const std::string start = (std::filesystem::path(docs ? docs : ".") / name).string();
+    platform::saveFileDialog(window_, {{"Print files", "goo"}}, start, [this](const std::string& path) {
+        if (!path.empty()) savePrintTo(path, "");
+    });
+}
+
+void App::savePrintAfterAsking() {
+    orientation_asked_ = true;
+    savePrint();
+}
+
+void App::savePrintTo(const std::string& path, const std::string& drive) {
+    if (const std::string why = printBlocker(); !why.empty()) {
+        showError("Couldn't save the print file", why);
+        return;
+    }
+    const auto plan = printPlan();
+    orientation_asked_ = true;
+    orientation_ask_ = false;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto layers = doc_->layers.result;
+    auto supports = doc_->supports.result;
+    auto out = std::make_shared<SaveResult>();
+    std::weak_ptr<Document> target = doc_;
+    const std::string name = std::filesystem::path(path).filename().string();
+    jobs_.start(
+        "Saving " + name,
+        [snap, layers, supports, plan, path, drive, out](const fruit::JobControl& ctl) {
+            *out = gui::savePrint(*snap, *layers, supports->mesh, *plan, path, !drive.empty(), ctl);
+        },
+        [this, target, layers, drive, out, name](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't save " + name, e.what());
+                }
+                return;
+            }
+            d->print.saved = std::make_shared<const SaveResult>(std::move(*out));
+            d->print.saved_from = layers;
+            d->print.drive = drive;
+            log::info("saved " + d->print.saved->path + ": " + std::to_string(d->print.saved->written.layers) +
+                      " layers, read back " + (d->print.saved->check.checksums_ok ? "ok" : "FAILED"));
+        });
+}
+
+void App::ejectDrive() {
+    if (!doc_ || doc_->print.drive.empty()) return;
+    std::string path;
+    for (const auto& v : drives_)
+        if (v.name == doc_->print.drive) path = v.path;
+    if (path.empty()) return;
+    auto error = std::make_shared<std::string>();
+    auto ok = std::make_shared<bool>(false);
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Ejecting " + doc_->print.drive,
+        [path, error, ok](const fruit::JobControl&) { *ok = platform::ejectVolume(path, error.get()); },
+        [this, target, error, ok](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const std::exception& e) {
+                    *error = e.what();
+                }
+            }
+            if (!*ok) {
+                showError("Couldn't eject " + d->print.drive, *error);
+                return;
+            }
+            log::info("ejected " + d->print.drive);
+            d->print.drive.clear();
+            drives_checked_ = -1;  // read the list again
+        });
+}
+
+void App::revealSaved() {
+    if (doc_ && doc_->print.saved) platform::revealFile(doc_->print.saved->path);
+}
+
+void App::dismissSaved() {
+    if (doc_) doc_->print.saved.reset();
+}
+
+void App::exportStl(bool supports_only) {
+    if (!doc_ || !doc_->supports.result) return;
+    const std::string name = doc_->name + (supports_only ? " supports.stl" : " with supports.stl");
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    const std::string start = (std::filesystem::path(docs ? docs : ".") / name).string();
+    platform::saveFileDialog(window_, {{"STL", "stl"}}, start, [this, supports_only](const std::string& path) {
+        if (!path.empty()) exportStlTo(path, supports_only);
+    });
+}
+
+void App::exportStlTo(const std::string& path, bool supports_only) {
+    if (!doc_ || !doc_->supports.result) return;
+    auto supports = doc_->supports.result;
+    auto placed = std::make_shared<const fruit::TriangleMesh>(doc_->placed());
+    const std::string name = std::filesystem::path(path).filename().string();
+    jobs_.start(
+        "Exporting " + name,
+        [supports, placed, path, supports_only](const fruit::JobControl&) {
+            fruit::TriangleMesh m = supports_only ? fruit::TriangleMesh{} : *placed;
+            m.append(supports->mesh);
+            fruit::writeStl(path, m);
+        },
+        [this, name](std::exception_ptr err) {
+            if (!err) {
+                log::info("exported " + name);
+                return;
+            }
+            try {
+                std::rethrow_exception(err);
+            } catch (const std::exception& e) {
+                showError("Couldn't export " + name, e.what());
+            }
+        });
+}
+
 void App::setLayer(int index) {
     if (!doc_ || !doc_->layers.result) return;
     const int n = static_cast<int>(doc_->layers.result->layers->size());
@@ -617,6 +817,17 @@ void App::keys() {
 
 void App::frame() {
     maintain();
+    // Scripted captures keep the drive list they set up: the machine's own
+    // drives would change the pictures.
+    if (screen_ == Screen::Job && step_ == Step::Print && !opts_.deterministic) {
+        const double now = static_cast<double>(SDL_GetTicks()) / 1000.0;
+        if (drives_checked_ < 0 || now - drives_checked_ > 2.0) {
+            drives_ = platform::removableVolumes();
+            drives_checked_ = now;
+            if (drive_choice_ >= static_cast<int>(drives_.size())) drive_choice_ = -1;
+            if (drive_choice_ < 0 && !drives_.empty()) drive_choice_ = 0;
+        }
+    }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
     ImGui::SetNextWindowSize(vp->Size);
@@ -636,6 +847,7 @@ void App::frame() {
     ImGui::EndChild();
     dialogs::health(*this);
     dialogs::shortcuts(*this, shortcuts_open_);
+    screens::parts::orientationQuestion(*this);
     errorDialog();
     ImGui::End();
 }

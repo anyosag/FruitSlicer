@@ -11,6 +11,9 @@
 #include "Capture.h"
 #include "Document.h"
 #include "Log.h"
+#include "formats/GooExport.h"
+#include "formats/GooSetup.h"
+#include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
 
 #include <miniz.h>
@@ -88,6 +91,21 @@ std::string demoPath(const std::string& which) {
     }
     const auto p = (demoDir() / "bracket.stl").string();
     fruit::writeStl(p, m);
+    return p;
+}
+
+// "@demo-sample": a print file like one SatelLite saves, with 0.03 mm
+// layers and its own exposures, for the Print step's settings.
+std::string demoSample() {
+    const auto p = (demoDir() / "sample 0.03 mm.goo").string();
+    fruit::GooPrintRequest r;
+    r.layer_height = 0.03;
+    r.exposure = 1.5;
+    r.bottom_exposure = 27.5;
+    r.bottom_layers = 6;
+    r.transition_layers = 6;
+    const fruit::GooPrintSetup setup = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), r);
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 0.3}), setup.header, setup.grid, fruit::GooExportOptions{}, p);
     return p;
 }
 
@@ -194,6 +212,32 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setShowBelow(step["show_below"].get<bool>());
         } else if (step.contains("problems")) {
             app.showProblems(step["problems"].get<bool>());
+        } else if (step.contains("exposures")) {
+            const auto& e = step["exposures"];
+            app.setExposures(e[0].get<double>(), e[1].get<double>());
+        } else if (step.contains("sample")) {
+            std::string p = step["sample"].get<std::string>();
+            if (p == "@demo-sample") p = demoSample();
+            app.useSample(p);
+        } else if (step.contains("drive")) {
+            // A stand-in USB drive: a folder under the demo directory.
+            platform::Volume v;
+            v.name = step["drive"].get<std::string>();
+            v.path = (demoDir() / v.name).string();
+            v.format = "MS-DOS (FAT32)";
+            v.free_bytes = 15'500'000'000ULL;
+            std::filesystem::create_directories(v.path);
+            app.drives().push_back(v);
+            app.driveChoice() = static_cast<int>(app.drives().size()) - 1;
+        } else if (step.contains("save")) {
+            app.savePrint();  // first time: the orientation question
+        } else if (step.contains("save_to")) {
+            std::string p = step["save_to"].get<std::string>();
+            if (p == "@demo" && app.document()) p = (demoDir() / (app.document()->name + ".goo")).string();
+            app.savePrintTo(p, "");
+        } else if (step.contains("saved")) {
+            if (step["saved"].get<std::string>() != "back") throw std::runtime_error("unknown saved step");
+            app.dismissSaved();
         } else if (step.contains("shortcuts")) {
             app.showShortcuts(step["shortcuts"].get<bool>());
         } else if (step.contains("wait")) {

@@ -1,0 +1,16 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
+    {"step": "print"}, {"shot": "b3_print_no_settings"},
+    {"exposures": [2.5, 30]}, {"shot": "b3_print_ready"},
+    {"save": true}, {"shot": "b3_print_orientation"},
+    {"save_to": "@demo"}, {"wait": "jobs"}, {"shot": "b3_print_saved"},
+    {"saved": "back"}, {"drive": "ELEGOO"}, {"shot": "b3_print_drive"},
+    {"save": true}, {"wait": "jobs"}, {"shot": "b3_print_saved_drive"},
+    {"saved": "back"}, {"exposures": [0, 0]}, {"sample": "@demo-sample"}, {"shot": "b3_print_sample"}
+  ]
+}

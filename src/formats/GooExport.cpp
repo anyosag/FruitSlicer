@@ -36,6 +36,15 @@ double gooLayerHeight(const GooHeader& h) {
     return std::round(static_cast<double>(h.layer_height) * 1e6) / 1e6;
 }
 
+double estimatePrintSeconds(const GooHeader& h, uint32_t layers, const GooExportOptions& o) {
+    double t = 0;
+    for (uint32_t i = 0; i < layers; ++i) {
+        const GooLayerDef d = layerDefFor(h, i);
+        t += d.exposure + d.wait_before_lift + d.wait_after_lift + d.wait_after_retract + o.motion_seconds_per_layer;
+    }
+    return t;
+}
+
 GooExportResult exportGoo(const TriangleMesh& mesh, GooHeader h, const RasterGrid& grid, const GooExportOptions& o,
                           const std::string& path, const JobControl& ctl) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -110,12 +119,7 @@ GooExportResult exportGooLayers(const LayerStack& layers, const TriangleMesh* pr
     ctl.check();
     res.layers = h.layer_count;
     res.volume_mm3 = coverage * grid.px * grid.py * layer_h;
-    double t = 0;
-    for (uint32_t i = 0; i < h.layer_count; ++i) {
-        const GooLayerDef d = layerDefFor(h, i);
-        t += d.exposure + d.wait_before_lift + d.wait_after_lift + d.wait_after_retract + o.motion_seconds_per_layer;
-    }
-    res.print_time_s = static_cast<uint32_t>(t);
+    res.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(h, h.layer_count, o));
     h.print_time = res.print_time_s;
     h.volume = static_cast<float>(res.volume_mm3);
     h.weight = static_cast<float>(res.volume_mm3 / 1000.0 * o.resin_density);

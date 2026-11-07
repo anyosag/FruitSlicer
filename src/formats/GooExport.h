@@ -47,6 +47,10 @@ GooExportResult exportGooLayers(const LayerStack& layers, const TriangleMesh* pr
                                 const RasterGrid& grid, const GooExportOptions& o, const std::string& path,
                                 const JobControl& ctl = JobControl::none());
 
+// Print time the printer will take for `layers` layers with `h`'s settings:
+// each layer's exposure and waits, plus the tilt motion per layer.
+double estimatePrintSeconds(const GooHeader& h, uint32_t layers, const GooExportOptions& o);
+
 // The layer height a header's float32 value stands for (to the µm).
 double gooLayerHeight(const GooHeader& h);
 
