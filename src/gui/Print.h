@@ -72,5 +72,11 @@ struct SaveResult {
 // "verify". On failure or cancel no file is left at `path`.
 SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit::TriangleMesh& supports,
                      const PrintPlan& plan, const std::string& path, bool removable, const fruit::JobControl& ctl);
+// The same for a mesh already where it prints (a test plate).
+SaveResult saveMeshPrint(const fruit::TriangleMesh& mesh, const fruit::GooPrintSetup& setup, const std::string& path,
+                         bool removable, const fruit::JobControl& ctl);
+// Reads back the print file at `r.path` and fills in the checks; a file
+// that can't be read, or a cancel, leaves no file.
+void readBack(SaveResult& r, const fruit::JobControl& ctl);
 
 }  // namespace gui

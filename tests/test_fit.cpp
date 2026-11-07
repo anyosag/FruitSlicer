@@ -147,3 +147,48 @@ TEST_CASE("results CSV errors are reported clearly", "[fit]") {
     CHECK_THROWS(loadPlateResults((dir / "p.stl.json").string(), (dir / "p.stl.results.csv").string()));
     CHECK_THROWS(manifestForResults("plate.csv"));
 }
+
+TEST_CASE("blind score sheets: no parameters, and every score reads back", "[fit]") {
+    const PrinterProfile pr = PrinterProfile::saturn4Ultra16k();
+    const CalibrationPlate plate = tipsPlate(TipsPlateOptions{}, pr);
+    const auto dir = std::filesystem::temp_directory_path() / "fruit_blind_sheet";
+    std::filesystem::create_directories(dir);
+    const std::string manifest = (dir / "tips.stl.json").string(), csv = (dir / "tips.stl.results.csv").string();
+    std::ofstream(manifest) << plate.manifest().dump(2);
+    // A blank sheet: only where each coupon is.
+    const std::string blank = blindResultsCsv(plate.manifest(), {});
+    CHECK(blank.rfind("id,row,col,result,scar,notes\n", 0) == 0);
+    CHECK(blank.find("tip_diameter") == std::string::npos);
+    CHECK(std::count(blank.begin(), blank.end(), '\n') == static_cast<long>(plate.coupons.size()) + 1);
+    // Held, partly and fell off, with marks and notes (commas included).
+    std::vector<CouponResult> scores(3);
+    scores[0].id = plate.coupons[0].id;
+    scores[0].recorded = scores[0].ok = true;
+    scores[0].scar = 2;
+    scores[1].id = plate.coupons[1].id;
+    scores[1].recorded = scores[1].partial = true;
+    scores[1].scar = 4;
+    scores[1].notes = "one tip let go, the far one";
+    scores[2].id = plate.coupons[2].id;
+    scores[2].recorded = true;
+    scores[2].notes = "gone \"completely\"\nline two";
+    std::ofstream(csv) << blindResultsCsv(plate.manifest(), scores);
+    const PlateResults back = loadPlateResults(manifest, csv);
+    REQUIRE(back.coupons.size() == plate.coupons.size());
+    const CouponResult& a = back.coupons[0];
+    CHECK(a.recorded);
+    CHECK(a.ok);
+    CHECK(a.scar == 2);
+    CHECK(a.params == plate.coupons[0].params);  // from the manifest
+    const CouponResult& b = back.coupons[1];
+    CHECK(b.recorded);
+    CHECK_FALSE(b.ok);
+    CHECK(b.partial);
+    CHECK(b.notes == "one tip let go, the far one");
+    const CouponResult& c = back.coupons[2];
+    CHECK(c.recorded);
+    CHECK_FALSE(c.ok);
+    CHECK_FALSE(c.partial);
+    CHECK(c.notes == "gone 'completely' line two");
+    CHECK_FALSE(back.coupons[3].recorded);
+}

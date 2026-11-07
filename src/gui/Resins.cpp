@@ -39,6 +39,26 @@ void readPrint(const json& p, Resin& r) {
 
 bool hasMeasured(const json& p, const char* key) { return p.is_object() && p.contains(key) && !p[key].is_null(); }
 
+json platesJson(const Resin& r) {
+    json j = json::object();
+    for (const auto& [kind, f] : r.plates)
+        j[kind] = {{"file", f.file}, {"scored", f.scored}, {"coupons", f.coupons}};  // the rest is kept by id
+    return j;
+}
+
+void readPlates(const json& j, Resin& r) {
+    if (!j.is_object()) return;
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        const json& f = it.value();
+        if (!f.is_object()) continue;
+        PlateFiles p;
+        p.file = f.value("file", std::string());
+        p.scored = f.value("scored", 0);
+        p.coupons = f.value("coupons", 0);
+        r.plates[it.key()] = p;
+    }
+}
+
 }  // namespace
 
 bool resinOrder(const Resin& a, const Resin& b) {
@@ -64,6 +84,7 @@ std::vector<Resin> loadResins(const std::string& dir) {
             r.name = j.value("name", r.id);
             if (j.contains("print")) readPrint(j["print"], r);
             if (j.contains("profile") && j["profile"].is_object()) r.profile = j["profile"];
+            if (j.contains("plates")) readPlates(j["plates"], r);
             out.push_back(std::move(r));
         } catch (const std::exception&) {
             // Not a resin (or damaged): left out.
@@ -76,7 +97,7 @@ std::vector<Resin> loadResins(const std::string& dir) {
 void saveResin(const std::string& dir, const Resin& r) {
     if (r.id.empty()) throw std::runtime_error("a resin needs an id");
     fs::create_directories(dir);
-    const json j = {{"name", r.name}, {"print", printJson(r)}, {"profile", r.profile}};
+    const json j = {{"name", r.name}, {"print", printJson(r)}, {"profile", r.profile}, {"plates", platesJson(r)}};
     const fs::path file = fs::path(dir) / (r.id + ".json");
     const std::string tmp = file.string() + ".tmp";
     {
@@ -196,13 +217,38 @@ std::string printSummary(const Resin& r) {
 
 std::string resinState(const Resin& r) { return profileState(r.profile); }
 
+bool plateMeasured(const json& profile, const std::string& kind) {
+    if (kind == "tips") return hasMeasured(profile, "capacity_table");
+    if (kind == "spacing") return hasMeasured(profile, "coverage_curve") || hasMeasured(profile, "critical_angle_deg");
+    if (kind == "islands")
+        return hasMeasured(profile, "island_one_tip_length") || hasMeasured(profile, "island_two_tip_length");
+    return false;
+}
+
+PlateStep nextPlateStep(const Resin& r) {
+    for (const char* kind : kPlateKinds) {
+        if (plateMeasured(r.profile, kind)) continue;
+        const auto it = r.plates.find(kind);
+        if (it == r.plates.end()) {
+            const std::string k = kind;
+            return {k, false,
+                    k == "tips" ? "Print the resin test plates, starting with the tips plate."
+                                : "Print the " + k + " plate next."};
+        }
+        const PlateFiles& f = it->second;
+        if (f.coupons > 0 && f.scored >= f.coupons) continue;
+        return {kind, true,
+                f.scored == 0 ? "Score the " + std::string(kind) + " plate once it's printed."
+                              : "Score the rest of the " + std::string(kind) + " plate: " + std::to_string(f.scored) +
+                                    " of " + std::to_string(f.coupons) + " so far."};
+    }
+    return {"", false, "The plates are all scored. Turning the scores into this resin's values arrives in a later update."};
+}
+
 std::string profileState(const json& profile) {
     std::vector<const char*> plates;
-    if (hasMeasured(profile, "capacity_table")) plates.push_back("tips");
-    if (hasMeasured(profile, "coverage_curve") || hasMeasured(profile, "critical_angle_deg"))
-        plates.push_back("spacing");
-    if (hasMeasured(profile, "island_one_tip_length") || hasMeasured(profile, "island_two_tip_length"))
-        plates.push_back("islands");
+    for (const char* kind : kPlateKinds)
+        if (plateMeasured(profile, kind)) plates.push_back(kind);
     if (plates.empty()) return "Defaults";
     std::string s = "Measured: ";
     for (std::size_t i = 0; i < plates.size(); ++i) s += (i ? ", " : "") + std::string(plates[i]);

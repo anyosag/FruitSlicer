@@ -164,18 +164,23 @@ void calibrate(App& app) {
     {
         beginCard("next", ImVec2(w, 0), 18, IM_COL32(0x2A, 0x1E, 0x14, 255), col::Accent);
         const float x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
-        const char* what = !ps.orientation_confirmed ? "Check the image orientation. It takes 5 minutes and uses no resin."
-                           : !ps.hinge              ? "Set the side the vat hinges on, so tips hold harder where peel pulls most."
-                                                    : "Print the resin test plates. They arrive in a later update.";
+        const PlateStep plates_next = nextPlateStep(app.newJobResin());
+        const std::string what = !ps.orientation_confirmed
+                                     ? "Check the image orientation. It takes 5 minutes and uses no resin."
+                                 : !ps.hinge ? "Set the side the vat hinges on, so tips hold harder where peel pulls most."
+                                             : plates_next.text;
         text("Next", fonts().semibold, size::Help, col::Accent);
-        text(what, fonts().semibold, size::Section + 1, col::Text, true);
-        const bool action = !ps.orientation_confirmed || !ps.hinge;
-        if (action) {
+        text(what.c_str(), fonts().semibold, size::Section + 1, col::Text, true);
+        if (!ps.orientation_confirmed || !ps.hinge || !plates_next.kind.empty()) {
             const char* label = !ps.orientation_confirmed ? "Start" : "Open";
             const float bw = labelWidth(label, fonts().bold, size::Body) + 34;
             ImGui::SetCursorPos(ImVec2(x0 + ImGui::GetContentRegionAvail().x - bw, y0 + 4));
-            if (primaryButton(label, ImVec2(bw, 38)))
-                app.setScreen(!ps.orientation_confirmed ? Screen::OrientationCheck : Screen::Printer);
+            if (primaryButton(label, ImVec2(bw, 38))) {
+                if (!ps.orientation_confirmed) app.setScreen(Screen::OrientationCheck);
+                else if (!ps.hinge) app.setScreen(Screen::Printer);
+                else if (plates_next.score) app.openScores(plates_next.kind);
+                else app.openPlate(plates_next.kind);
+            }
             ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), y0 + 44));
             ImGui::Dummy(ImVec2(0, 0));
         }
@@ -211,27 +216,56 @@ void calibrate(App& app) {
          fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 2));
     struct Plate {
+        const char* kind;
         const char* name;
-        const char* size;
+        const char* size;  // plateSubtitle's, kept here so the page needn't make all three (checked by a test)
         const char* measures;
     };
     const Plate plates[] = {
-        {"Tips", "48 coupons · 6 mm tall", "How much each tip size holds and which leaves the smallest mark."},
-        {"Spacing", "37 coupons · 19 mm tall",
+        {"tips", "Tips", "48 coupons · 6 mm tall", "How much each tip size holds and which leaves the smallest mark."},
+        {"spacing", "Spacing", "37 coupons · 19 mm tall",
          "How far apart tips can be on tilted faces, and how steep a face can print without tips."},
-        {"Islands", "36 coupons · 7 mm tall",
+        {"islands", "Islands", "36 coupons · 7 mm tall",
          "How big a spot that starts in mid-air can be before it needs a second or third tip."}};
-    const float pw = std::floor((w - 2 * 12) / 3);
+    const Resin& resin = app.newJobResin();
+    const float pw = std::floor((w - 2 * 12) / 3), ph = 230;
     for (int i = 0; i < 3; ++i) {
         ImGui::PushID(i);
-        beginCard("plate", ImVec2(pw, 170), 16, col::Panel, col::Border);
+        beginCard("plate", ImVec2(pw, ph), 16, col::Panel, col::Border);
         text(plates[i].name, fonts().semibold, size::Section + 1, col::Text);
         text(plates[i].size, fonts().regular, size::Help, col::TextMuted);
         ImGui::Dummy(ImVec2(0, 2));
         text(plates[i].measures, fonts().regular, size::Body, col::TextSecondary, true);
-        ImGui::SetCursorPosY(170 - 16 - 34);
-        secondaryButton("Prepare plate", ImVec2(0, 34), false);
-        tooltip("The resin test plates arrive in a later update.");
+        // Where it stands for this resin: saved, scored, fitted.
+        const auto files = resin.plates.find(plates[i].kind);
+        const bool saved = files != resin.plates.end();
+        const bool scored = saved && files->second.coupons > 0 && files->second.scored >= files->second.coupons;
+        const bool fitted = plateMeasured(resin.profile, plates[i].kind);
+        const struct {
+            const char* label;
+            bool done;
+        } track[] = {{"Saved", saved}, {scored || !saved ? "Scored" : nullptr, scored}, {"Fitted", fitted}};
+        ImGui::SetCursorPosY(ph - 16 - 34 - 34);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        float tx = ImGui::GetCursorScreenPos().x;
+        const float ty = ImGui::GetCursorScreenPos().y;
+        for (int k = 0; k < 3; ++k) {
+            const std::string label = track[k].label ? track[k].label
+                                                     : strf("Scored %d of %d", files->second.scored, files->second.coupons);
+            const ImU32 c = track[k].done ? col::Ok : col::TextMuted;
+            if (track[k].done) dl->AddCircleFilled(ImVec2(tx + 5, ty + 9), 4.5f, col::Ok, 12);
+            else dl->AddCircle(ImVec2(tx + 5, ty + 9), 4.0f, col::BorderStrong, 12, 1.5f);
+            ImGui::PushFont(fonts().medium, size::Help);
+            dl->AddText(ImVec2(tx + 14, ty + 1), c, label.c_str());
+            tx += 14 + ImGui::CalcTextSize(label.c_str()).x + 14;
+            ImGui::PopFont();
+        }
+        ImGui::SetCursorPosY(ph - 16 - 34);
+        const float bw = (ImGui::GetContentRegionAvail().x - 8) / 2;
+        if (secondaryButton("Prepare plate", ImVec2(bw, 34))) app.openPlate(plates[i].kind);
+        ImGui::SameLine(0, 8);
+        if (secondaryButton("Enter results", ImVec2(bw, 34), saved)) app.openScores(plates[i].kind);
+        if (!saved) tooltip("Save the plate first: FruitSlicer keeps its score sheet from then on.");
         endCard();
         ImGui::PopID();
         if (i < 2) ImGui::SameLine(0, 12);

@@ -35,6 +35,7 @@ struct CouponResult {
     nlohmann::json params;
     bool recorded = false;  // result column filled in
     bool ok = false;        // "ok"; "partial" and "failed" count as failures
+    bool partial = false;   // "partial": some tips let go (still a failure)
     int scar = 0;           // 1..5, 0 = not scored
     std::string notes;
 };
@@ -53,6 +54,12 @@ PlateResults loadPlateResults(const std::string& manifest_path, const std::strin
 // Manifest path for a results CSV written by `calibrate`
 // ("x.stl.results.csv" -> "x.stl.json").
 std::string manifestForResults(const std::string& csv_path);
+
+// The score sheet as the app writes it: id,row,col,result,scar,notes for
+// every coupon in `manifest`, with the scores given so far. No parameter
+// columns, so whoever scores can't be swayed by them; loadPlateResults reads
+// it back (the parameters come from the manifest).
+std::string blindResultsCsv(const nlohmann::json& manifest, const std::vector<CouponResult>& scores);
 
 struct LogisticFit {
     double a = 0, b = 0;   // p(ok) = 1 / (1 + exp(-(a + b x)))

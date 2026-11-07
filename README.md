@@ -119,7 +119,24 @@ A job is printed in one resin (the chip at the top of the job switches it) and
 keeps its own copy of that resin's values, so changing the resin later never
 changes a saved job; switching makes the supports out of date. Tip sizes are
 matched by diameter, so a profile that measured other sizes still means what
-you chose. **Settings** (at the bottom of the rail) has the 3D view's
+you chose.
+
+The **resin test plates** (tips, spacing, islands) are on Calibrate, for the
+resin new jobs use. Each opens a preview: the build plate from above as the
+plate is made, with its L marker, and any coupon's settings and what its
+result would mean. **Save .goo to print** writes it with the resin's own print
+settings and the orientation fix, read back like any print file (**Save STL**
+is for slicing in SatelLite). FruitSlicer then keeps the plate's manifest and
+score sheet with the resin in its own folder, so they stay put when the `.goo`
+went onto a USB drive. **Enter results** scores the printed plate coupon by
+coupon (held, partly or fell off; the mark left, 1 to 5; notes) without showing
+any settings, and keeps each score as you go. A sheet filled in by hand can be
+imported instead (`x.results.csv` with `x.json` beside it, as `fruitslicer
+calibrate` writes them). Saving another plate over one with scores sets those
+scores aside as `<kind>.earlier.results.csv`, never over them. Turning the
+scores into the resin's values arrives in a later update.
+
+**Settings** (at the bottom of the rail) has the 3D view's
 smoothing, how many processor cores slicing and saving may use, whether `.goo`
 files go to a plugged-in USB drive, the resin for new jobs, the log file, and
 **Run setup again**; FruitSlicer sends no usage data. **About** says
