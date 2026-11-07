@@ -100,6 +100,15 @@ HollowResult hollowInterior(const LayerStack& solid, const HollowOptions& o,
 // The slices with the interior taken out.
 LayerStack hollowedLayers(const LayerStack& solid, const HollowResult& h);
 
+// A model's own hollows that hold resin (analyzeHollows' suction cups and
+// resin traps), as cavities of their own: drain holes are suggested,
+// drilled and checked for them as for a hollowed model's. Their interior is
+// already empty in `layers`.
+HollowResult closedHollows(const LayerStack& layers, double min_volume = 1.0);
+
+// The slices with `h`'s interior filled: printed solid.
+LayerStack filledLayers(const LayerStack& layers, const HollowResult& h);
+
 // Sliding-window intersection, for any sequence of polygon sets: out[i] is
 // the intersection of in[i − m .. i + m], empty where the window reaches
 // past either end. Exposed for testing.

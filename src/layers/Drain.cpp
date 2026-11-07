@@ -41,10 +41,11 @@ Path convexHull(std::vector<Point64> pts) {
     return hull.size() >= 3 ? hull : Path{};
 }
 
-// Whether points lie inside a stack's slices; each layer's polygons made on first use.
+// Whether points lie inside a stack's slices, or with `outline` inside their
+// outlines (holes counted in); each layer's polygons made on first use.
 class Inside {
 public:
-    explicit Inside(const LayerStack& s) : s_(s) {}
+    explicit Inside(const LayerStack& s, bool outline = false) : s_(s), outline_(outline) {}
     bool operator()(const Vec3& p) {
         if (p.z < 0) return false;
         const size_t j = s_.layerAt(p.z);
@@ -52,12 +53,13 @@ public:
         auto it = cache_.find(j);
         if (it == cache_.end()) it = cache_.emplace(j, toExPolygons(s_.slices[j])).first;
         for (const ExPolygon& e : it->second)
-            if (e.contains(p.xy())) return true;
+            if (outline_ ? ExPolygon{e.contour, {}}.contains(p.xy()) : e.contains(p.xy())) return true;
         return false;
     }
 
 private:
     const LayerStack& s_;
+    bool outline_;
     std::map<size_t, ExPolygons> cache_;
 };
 
@@ -142,11 +144,8 @@ std::vector<PlacedHole> placeHoles(const std::vector<DrainHole>& holes, const Tr
         bool entered = false;
         for (double t = 0; t < 1000; t += step) {  // a metre: no model is bigger
             const Vec3 q = at + axis * t;
-            if (q.z < 0 || q.z >= top) {
-                if (t_in >= 0) t_out = t;
-                break;
-            }
-            const int c = hollow.cavityAt(solid.layerAt(q.z), q.xy());
+            const bool in_stack = q.z >= 0 && q.z < top;
+            const int c = in_stack ? hollow.cavityAt(solid.layerAt(q.z), q.xy()) : -1;
             if (t_in < 0) {
                 if (c >= 0) {
                     t_in = t;
@@ -204,41 +203,64 @@ std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Trans
                                          const LayerStack& solid, const HollowResult& hollow, double diameter) {
     const AabbTree tree(placed);
     const Transform to_model = to_printer.inverse();
-    // Straight down first, then down at 60° and 30°, then level, all round.
-    std::vector<Vec3> ways{{0, 0, -1}};
-    for (const double elevation : {-60.0, -30.0, 0.0})
-        for (int k = 0; k < 12; ++k) {
-            const double az = deg2rad(30.0 * k), el = deg2rad(elevation);
-            ways.push_back({std::cos(el) * std::cos(az), std::cos(el) * std::sin(az), std::sin(el)});
+    // Straight down (up) first, then at 60° and 30°, then level, all round.
+    auto waysOut = [](double sign) {
+        std::vector<Vec3> ways{{0, 0, sign}};
+        for (const double elevation : {60.0, 30.0, 0.0})
+            for (int k = 0; k < 12; ++k) {
+                const double az = deg2rad(30.0 * k), el = deg2rad(sign * elevation);
+                ways.push_back({std::cos(el) * std::cos(az), std::cos(el) * std::sin(az), std::sin(el)});
+            }
+        return ways;
+    };
+    const std::vector<Vec3> down = waysOut(-1), up = waysOut(1);
+    // Where a ray from inside leaves the model for good: the first surface
+    // it crosses beyond which it is outside every outline. (A model's own
+    // sealed hollow has walls in the mesh; the ray crosses those first.)
+    Inside outline(solid, true);
+    auto exit = [&](const Vec3& start, const Vec3& w) -> std::optional<RayHit> {
+        double t0 = 1e-9;
+        for (int k = 0; k < 64; ++k) {
+            const auto hit = tree.raycast(start, w, 1e30, t0);
+            if (!hit) return std::nullopt;
+            if (!outline(hit->point + w * 0.01)) return hit;
+            t0 = hit->t + 1e-6;
         }
-    std::vector<DrainHole> out;
-    for (size_t c = 0; c < hollow.cavities.size(); ++c) {
-        const auto a = static_cast<size_t>(hollow.cavities[c].first_layer);
-        Paths lowest;  // the cavity's biggest piece in its lowest layer
+        return std::nullopt;
+    };
+    // A hole into cavity c from its biggest piece in `layer`, along the
+    // shortest of `ways` out of the model.
+    auto holeFrom = [&](size_t c, size_t layer, const std::vector<Vec3>& ways, bool air) -> std::optional<DrainHole> {
+        Paths biggest;
         double best = 0;
-        for (const InteriorPiece& k : hollow.pieces[a])
+        for (const InteriorPiece& k : hollow.pieces[layer])
             if (k.cavity == static_cast<int>(c)) {
-                Paths piece = hollow.piece(a, k);
+                Paths piece = hollow.piece(layer, k);
                 const double ar = std::abs(area(piece));
                 if (ar > best) {
                     best = ar;
-                    lowest = std::move(piece);
+                    biggest = std::move(piece);
                 }
             }
-        if (lowest.empty()) continue;
-        const Vec2 deep = deepestPoint(lowest);
-        const Vec3 start{deep.x, deep.y, solid.sample_z[a]};
+        if (biggest.empty()) return std::nullopt;
+        const Vec2 deep = deepestPoint(biggest);
+        const Vec3 start{deep.x, deep.y, solid.sample_z[layer]};
         std::optional<RayHit> shortest;
         Vec3 way;
         for (const Vec3& w : ways) {
-            const auto hit = tree.raycast(start, w);
-            if (hit && (!shortest || hit->t < 0.99 * shortest->t)) {  // straight down wins a near tie
+            const auto hit = exit(start, w);
+            if (hit && (!shortest || hit->t < 0.99 * shortest->t)) {  // straight down (up) wins a near tie
                 shortest = hit;
                 way = w;
             }
         }
-        if (!shortest) continue;
-        out.push_back({to_model.apply(shortest->point), normalized(to_model.applyLinear(-way)), diameter});
+        if (!shortest) return std::nullopt;
+        return DrainHole{to_model.apply(shortest->point), normalized(to_model.applyLinear(-way)), diameter, air};
+    };
+    std::vector<DrainHole> out;
+    for (size_t c = 0; c < hollow.cavities.size(); ++c) {
+        if (auto h = holeFrom(c, static_cast<size_t>(hollow.cavities[c].first_layer), down, false)) out.push_back(*h);
+        if (auto h = holeFrom(c, static_cast<size_t>(hollow.cavities[c].last_layer), up, true)) out.push_back(*h);
     }
     return out;
 }

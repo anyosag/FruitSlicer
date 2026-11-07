@@ -16,8 +16,9 @@
 // lowest layer reaches the outside, which is what analyzeHollows calls
 // draining (its other layers then open into ones below). A hole level with
 // or under a cavity's lowest point does that; one higher up leaves a cup
-// beneath it. suggestDrainHoles puts one at each cavity's lowest point,
-// along the shortest way out that runs level or down.
+// beneath it. suggestDrainHoles puts a drain hole at each cavity's lowest
+// point, along the shortest way out that runs level or down, and an air
+// hole at its highest, along the shortest way out that runs level or up.
 
 #include <vector>
 
@@ -33,6 +34,10 @@ struct DrainHole {
     Vec3 at;              // where it enters the surface (model coordinates)
     Vec3 axis;            // the way it runs into the model (model coordinates)
     double diameter = 3;  // mm
+    // An air hole near a cavity's top lets air in while the resin runs out
+    // of the drain hole at its bottom, so it doesn't hold back like a
+    // finger over a straw. Drilled the same way.
+    bool air = false;
     bool operator==(const DrainHole&) const = default;
 };
 
@@ -54,9 +59,11 @@ LayerStack drilledLayers(const LayerStack& solid, const HollowResult& hollow, co
 // For each of `hollow`'s cavities, whether it drains in `drilled`.
 std::vector<char> cavitiesDrain(const LayerStack& drilled, const HollowResult& hollow);
 
-// One hole `diameter` wide for each cavity, at its lowest point, along the
-// shortest way out that runs level or down. `placed` is the model as placed
-// with `to_printer`; the holes come back in model coordinates.
+// Two holes `diameter` wide for each cavity: a drain hole at its lowest
+// point, along the shortest way out that runs level or down, and an air hole
+// at its highest, along the shortest way out that runs level or up. `placed`
+// is the model as placed with `to_printer`; the holes come back in model
+// coordinates, a cavity's drain hole first.
 std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Transform& to_printer,
                                          const LayerStack& solid, const HollowResult& hollow, double diameter = 3);
 

@@ -28,4 +28,9 @@ struct LayerStack {
 LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats = nullptr,
                       unsigned threads = 0, const JobControl& ctl = JobControl::none());
 
+// Both stacks' layers together, as tall as the taller (a hollowed model's
+// layers with its supports'). Throws std::invalid_argument when the layer
+// heights differ.
+LayerStack unionLayers(const LayerStack& a, const LayerStack& b, unsigned threads = 0);
+
 }  // namespace fruit
