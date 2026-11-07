@@ -43,6 +43,7 @@ struct OrientState {
 // The Supports step's choices and result for this job.
 struct SupportState {
     SupportChoices choices;                     // for the next run
+    std::vector<TipEdit> edits;                 // made by hand, in model coordinates
     std::shared_ptr<const SupportResult> result;
     int result_revision = -1, result_settings = -1;  // what it was made for
     int selected_tip = -1;                      // index into result->points
@@ -50,7 +51,7 @@ struct SupportState {
     // Made for this placement, these picks and these choices.
     bool fresh(int revision, int orient_settings) const {
         return result && result_revision == revision && result_settings == orient_settings &&
-               result->choices == choices;
+               result->choices == choices && result->edits == edits;
     }
 };
 
@@ -82,6 +83,7 @@ struct JobStamp {
     bool orient_decided = false;
     const void* supports = nullptr;  // the supports result, by identity
     SupportChoices choices;
+    std::vector<TipEdit> edits;
     std::string sample_path;
     double exposure = 0, bottom_exposure = 0;
     int bottom_layers = -1, transition_layers = -1;

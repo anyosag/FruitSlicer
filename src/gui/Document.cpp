@@ -54,6 +54,7 @@ JobStamp Document::stamp() const {
     s.orient_decided = orient.decided;
     s.supports = supports.result.get();
     s.choices = supports.choices;
+    s.edits = supports.edits;
     s.sample_path = print.settings.sample_path;
     s.exposure = print.settings.exposure;
     s.bottom_exposure = print.settings.bottom_exposure;

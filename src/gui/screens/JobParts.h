@@ -33,6 +33,10 @@ void viewport3d(App& app, ImVec2 size, const char* hint = nullptr, const Overlay
 void supportsLeft(App& app, Document& doc, float h);
 void supportsRight(App& app, Document& doc, float h);
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// Editing tips by hand: the panels and the view's overlay.
+void tipEditLeft(App& app, Document& doc, float h);
+void tipEditRight(App& app, Document& doc, float h);
+void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 // The advanced settings page, in place of the whole step.
 void supportsAdvanced(App& app, Document& doc, ImVec2 size);
 

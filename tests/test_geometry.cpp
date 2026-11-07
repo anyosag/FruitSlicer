@@ -66,3 +66,20 @@ TEST_CASE("ExPolygons group holes and islands-in-holes", "[geometry]") {
     CHECK(outer.contains({1, 1}));
     CHECK_FALSE(outer.contains({3, 3}));  // in the hole
 }
+
+TEST_CASE("transform: the inverse undoes rotation, scale and translation", "[geometry]") {
+    Transform t = Transform::rotationXYZ(10, 25, -40);
+    for (auto& row : t.m)
+        for (double& v : row) v *= 1.7;
+    t.t = {3, -4, 12};
+    const Transform inv = t.inverse();
+    for (const Vec3& p : {Vec3{0, 0, 0}, Vec3{1, 2, 3}, Vec3{-5, 7.5, 0.25}}) {
+        const Vec3 back = inv.apply(t.apply(p));
+        CHECK(back.x == Approx(p.x).margin(1e-12));
+        CHECK(back.y == Approx(p.y).margin(1e-12));
+        CHECK(back.z == Approx(p.z).margin(1e-12));
+    }
+    Transform flat;
+    flat.m[2][2] = 0;
+    CHECK_THROWS_AS(flat.inverse(), std::domain_error);
+}

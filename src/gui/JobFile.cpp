@@ -80,6 +80,36 @@ fruit::TriangleMesh meshFrom(const std::vector<std::uint8_t>& b) {
 json vec(const fruit::Vec3& v) { return json::array({v.x, v.y, v.z}); }
 fruit::Vec3 vecFrom(const json& j) { return {j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>()}; }
 
+const char* const kEditKinds[] = {"add", "move", "delete", "resize", "pin", "zone"};
+
+json editsJson(const std::vector<TipEdit>& edits) {
+    json a = json::array();
+    for (const TipEdit& e : edits)
+        a.push_back({{"kind", kEditKinds[static_cast<int>(e.kind)]}, {"at", vec(e.at)}, {"to", vec(e.to)},
+                     {"normal", vec(e.normal)}, {"diameter", e.diameter}, {"radius", e.radius}});
+    return a;
+}
+
+std::vector<TipEdit> editsFrom(const json& a) {
+    std::vector<TipEdit> out;
+    for (const json& j : a) {
+        TipEdit e;
+        const std::string k = j.value("kind", "");
+        int kind = -1;
+        for (int i = 0; i < 6; ++i)
+            if (k == kEditKinds[i]) kind = i;
+        if (kind < 0) throw std::runtime_error("the job has a tip edit of an unknown kind: " + k);
+        e.kind = static_cast<TipEdit::Kind>(kind);
+        e.at = vecFrom(j.at("at"));
+        e.to = vecFrom(j.at("to"));
+        e.normal = vecFrom(j.at("normal"));
+        e.diameter = j.value("diameter", 0.4);
+        e.radius = j.value("radius", 0.0);
+        out.push_back(e);
+    }
+    return out;
+}
+
 struct Zip {
     mz_zip_archive z{};
     bool open = false;
@@ -129,9 +159,11 @@ void saveJob(const std::string& path, const Document& doc) {
                              {"advanced", c.advanced}}}};
     if (c.hinge) sup["choices"]["hinge"] = fruit::hingeName(*c.hinge);
     // Tips only for supports made for the job as it is now.
+    sup["edits"] = editsJson(doc.supports.edits);
     if (doc.supports.fresh(doc.revision(), doc.orient.settings)) {
         const SupportResult& r = *doc.supports.result;
-        sup["tips"] = fruit::pointsToJson(r.points);
+        sup["tips"] = fruit::pointsToJson(r.planned);  // the planner's; the edits apply on top
+        sup["planned_around"] = editsJson(r.plan_edits);  // the edits the planner worked around
         json ws = json::array();
         for (const auto& w : r.plan_warnings)
             ws.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}});
@@ -230,6 +262,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.merge = cj.value("merge", true);
     c.advanced = cj.value("advanced", std::map<std::string, double>{});
     if (cj.contains("hinge") && cj["hinge"].is_string()) c.hinge = fruit::parseHinge(cj["hinge"].get<std::string>());
+    doc->supports.edits = editsFrom(sj.value("edits", json::array()));
 
     if (j.contains("print")) {
         const json& prj = j["print"];
@@ -249,6 +282,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     if (sj.contains("tips")) {
         SupportPlan plan;
         plan.points = fruit::pointsFromJson(sj["tips"]);
+        plan.edits = editsFrom(sj.value("planned_around", json::array()));
         for (const auto& w : sj.value("warnings", json::array())) {
             fruit::Warning wn;
             wn.code = w.value("code", "");
@@ -257,7 +291,8 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
             if (w.contains("where")) wn.where = vecFrom(w["where"]);
             plan.warnings.push_back(wn);
         }
-        auto r = std::make_shared<SupportResult>(finishSupports(*doc, c, std::move(plan), ctl.sub(0.3, 1.0)));
+        auto r = std::make_shared<SupportResult>(
+            finishWithEdits(*doc, c, std::move(plan), doc->supports.edits, ctl.sub(0.3, 1.0)));
         doc->supports.result = std::move(r);
         doc->supports.result_revision = doc->revision();
         doc->supports.result_settings = doc->orient.settings;
@@ -273,8 +308,14 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     if (a.model_path != b.model_path) out.push_back("found the model in its new place");
     if (a.orient_settings != b.orient_settings || a.orient_decided != b.orient_decided)
         out.push_back("changed how it stands");
-    if (a.supports != b.supports) out.push_back(a.supports ? "generated the supports again" : "generated supports");
-    else if (!(a.choices == b.choices)) out.push_back("changed support settings");
+    if (a.edits != b.edits) {
+        const std::size_t n = b.edits.size() > a.edits.size() ? b.edits.size() - a.edits.size() : 0;
+        out.push_back(n == 1 ? "edited a tip by hand" : n > 1 ? "edited " + std::to_string(n) + " tips by hand"
+                                                              : "undid tip edits");
+    }
+    if (a.supports != b.supports && a.edits == b.edits)
+        out.push_back(a.supports ? "generated the supports again" : "generated supports");
+    else if (a.supports == b.supports && !(a.choices == b.choices)) out.push_back("changed support settings");
     if (a.sample_path != b.sample_path || a.exposure != b.exposure || a.bottom_exposure != b.bottom_exposure ||
         a.bottom_layers != b.bottom_layers || a.transition_layers != b.transition_layers)
         out.push_back("changed the print settings");

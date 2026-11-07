@@ -2,6 +2,10 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "geometry/Transform.h"
 
+#include <stdexcept>
+
+#include <cmath>
+
 namespace fruit {
 
 Transform Transform::translation(const Vec3& d) {
@@ -51,6 +55,25 @@ double Transform::determinant() const {
     return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
            m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
            m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+}
+
+Transform Transform::inverse() const {
+    const double d = determinant();
+    if (std::abs(d) < 1e-15) throw std::domain_error("transform cannot be inverted");
+    Transform r;
+    // Adjugate over determinant.
+    r.m[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) / d;
+    r.m[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / d;
+    r.m[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / d;
+    r.m[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) / d;
+    r.m[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / d;
+    r.m[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / d;
+    r.m[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) / d;
+    r.m[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / d;
+    r.m[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / d;
+    const Vec3 nt = r.applyLinear(t);
+    r.t = {-nt.x, -nt.y, -nt.z};
+    return r;
 }
 
 }  // namespace fruit

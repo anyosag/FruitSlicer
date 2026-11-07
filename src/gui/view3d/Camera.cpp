@@ -48,6 +48,16 @@ V3 Camera::eye() const {
 
 M4 Camera::view() const { return lookAt(eye(), target_, {0, 0, 1}); }
 
+void Camera::ray(float nx, float ny, float aspect, V3* origin, V3* dir) const {
+    const V3 e = eye();
+    const V3 f = normalize(target_ - e);
+    const V3 s = normalize(cross(f, {0, 0, 1}));
+    const V3 u = cross(s, f);
+    const float th = std::tan(fov_deg_ * kDeg / 2);
+    *origin = e;
+    *dir = normalize(f + s * (nx * th * aspect) + u * (ny * th));
+}
+
 M4 Camera::proj(float aspect) const {
     return perspective(fov_deg_ * kDeg, aspect, std::max(0.5f, distance_ * 0.01f), distance_ * 20 + 2000);
 }

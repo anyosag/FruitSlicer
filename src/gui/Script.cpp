@@ -293,6 +293,39 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (h == "right") app.setHinge(HingeChoice::Right);
             else if (h == "front") app.setHinge(HingeChoice::Front);
             else throw std::runtime_error("unknown hinge side " + h);
+        } else if (step.contains("edit_tips")) {
+            app.editTips(step["edit_tips"].get<bool>());
+        } else if (step.contains("tip_tool")) {
+            const std::string t = step["tip_tool"].get<std::string>();
+            app.tipTool() = t == "add" ? App::TipTool::Add : t == "zone" ? App::TipTool::Zone : App::TipTool::Select;
+        } else if (step.contains("tip_add_near") || step.contains("tip_zone_near") || step.contains("tip_move_near")) {
+            // [tip, dx, dy]: straight up from below the plate, (dx, dy) mm from that tip; move: the tip goes there.
+            const char* key = step.contains("tip_add_near") ? "tip_add_near"
+                              : step.contains("tip_zone_near") ? "tip_zone_near" : "tip_move_near";
+            const auto& a = step[key];
+            const int i = a[0].get<int>();
+            const auto& doc = app.document();
+            if (!doc || !doc->supports.result || i < 0 || i >= static_cast<int>(doc->supports.result->points.size()))
+                throw std::runtime_error(std::string(key) + ": no such tip");
+            const fruit::Vec3 p = doc->supports.result->points[static_cast<std::size_t>(i)].pos;
+            fruit::Vec3 pos, n;
+            if (!app.pickModel({p.x + a[1].get<double>(), p.y + a[2].get<double>(), -10}, {0, 0, 1}, &pos, &n))
+                throw std::runtime_error(std::string(key) + ": nothing above that point");
+            if (std::string(key) == "tip_add_near") app.addTipAt(pos, n);
+            else if (std::string(key) == "tip_zone_near") app.addZoneAt(pos);
+            else app.moveTip(i, pos, n);
+        } else if (step.contains("tip_select")) {
+            app.selectTip(step["tip_select"].get<int>());
+        } else if (step.contains("tip_delete")) {
+            app.deleteTip(step["tip_delete"].get<int>());
+        } else if (step.contains("tip_resize")) {
+            app.resizeTip(step["tip_resize"][0].get<int>(), step["tip_resize"][1].get<double>());
+        } else if (step.contains("tip_pin")) {
+            app.pinTip(step["tip_pin"].get<int>());
+        } else if (step.contains("tip_undo")) {
+            const auto& u = step["tip_undo"];
+            if (u.is_string() && u.get<std::string>() == "all") app.undoAllTipEdits();
+            else app.undoTipEdit(u.get<int>());
         } else if (step.contains("answer")) {
             // The "save before checking the image orientation?" question.
             const std::string a = step["answer"].get<std::string>();

@@ -189,3 +189,174 @@ TEST_CASE("Supports: a hinge side adds hold away from the hinge", "[gui][support
     CHECK(cfg.peel_axis.x > 0.99);
     CHECK_FALSE(left == none);  // so supports made without it read out of date
 }
+
+namespace {
+
+double dist(const fruit::Vec3& a, const fruit::Vec3& b) {
+    const double dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Tips within `r` of `at`: all of them, or only the planner's.
+std::size_t tipsNear(const std::vector<fruit::SupportPoint>& pts, const fruit::Vec3& at, double r, bool planners_only) {
+    std::size_t n = 0;
+    for (const auto& p : pts)
+        n += dist(p.pos, at) <= r && (!planners_only || p.category != fruit::PointCategory::Manual);
+    return n;
+}
+
+}  // namespace
+
+TEST_CASE("Tip edits: add, move, delete, resize and pin apply on top of the planner's tips", "[gui][supports]") {
+    using K = TipEdit::Kind;
+    const fruit::Transform t = fruit::Transform::translation({10, 0, 5});
+    std::vector<fruit::SupportPoint> planned(2);
+    planned[0].pos = {10, 0, 5};
+    planned[1].pos = {14, 0, 5};
+    // Model coordinates: the first planned tip is at the model's origin.
+    TipEdit del{K::Delete, {0, 0, 0}, {}, {0, 0, -1}, 0.4, kDeletedZone};
+    TipEdit add{K::Add, {2, 1, 0}, {}, {0, 0, -1}, 0.3, 0};
+    TipEdit move{K::Move, {4, 0, 0}, {4, 2, 0}, {0, 0, -1}, 0.6, kDeletedZone};
+    auto pts = applyEdits(planned, {del}, t);
+    REQUIRE(pts.size() == 1);
+    CHECK(pts[0].pos.x == 14);
+    pts = applyEdits(planned, {del, add, move}, t);
+    REQUIRE(pts.size() == 2);
+    CHECK(pts[0].category == fruit::PointCategory::Manual);
+    CHECK(pts[0].pinned);
+    CHECK(pts[0].pos.x == 12);  // the added tip, placed by the transform
+    CHECK(pts[0].tip_diameter == 0.3);
+    CHECK(pts[1].pos.y == 2);   // the moved one
+    CHECK(pts[1].tip_diameter == 0.6);
+    // Resizing or pinning replaces the planner's tip with one of your own, once.
+    TipEdit resize{K::Resize, {4, 0, 0}, {}, {0, 0, -1}, 0.6, 0};
+    pts = applyEdits(planned, {resize}, t);
+    REQUIRE(pts.size() == 2);
+    CHECK(pts[1].tip_diameter == 0.6);
+    CHECK(pts[1].category == fruit::PointCategory::Manual);
+    // A zone takes away every tip of the planner's within it, and none of yours.
+    const TipEdit zone{K::Zone, {2, 0, 0}, {}, {}, 0.4, 2.5};
+    CHECK(applyEdits(planned, {zone}, t).empty());
+    pts = applyEdits(planned, {add, zone}, t);
+    REQUIRE(pts.size() == 1);
+    CHECK(pts[0].category == fruit::PointCategory::Manual);
+    // A deleted tip's zone keeps the neighbour one sample (1 mm) away.
+    std::vector<fruit::SupportPoint> close = planned;
+    close[1].pos = {11, 0, 5};
+    CHECK(applyEdits(close, {del}, t).size() == 1);
+    const auto [title, detail] = describeEdit(del, t);
+    CHECK(title == "Deleted a tip");
+    CHECK_THAT(detail, ContainsSubstring("1.8 mm no-tip zone"));
+    const EditCounts n = countEdits({del, add, move, resize, zone, zone});
+    CHECK(n.added == 1);
+    CHECK(n.moved == 1);
+    CHECK(n.deleted == 1);
+    CHECK(n.resized == 1);
+    CHECK(n.pinned == 0);
+    CHECK(n.zones == 2);
+    CHECK(describeCounts(n) == "1 added, 1 moved, 1 deleted, 1 resized, 2 no-tip zones");
+    CHECK(describeCounts(countEdits({resize})) == "1 resized");
+}
+
+TEST_CASE("Tip edits: changing a tip of yours changes the edit that made it", "[gui][supports]") {
+    using K = TipEdit::Kind;
+    const fruit::Transform t = fruit::Transform::translation({10, 0, 5});
+    fruit::SupportPoint planner;
+    planner.pos = {14, 0, 5};
+    planner.normal = {0, 0, -1};
+    const std::vector<fruit::SupportPoint> planned{planner};
+    std::vector<TipEdit> edits;
+    // Resized, then moved, then deleted: one edit all along, about the planner's tip.
+    REQUIRE(recordResize(edits, planner, 0.6, t));
+    CHECK_FALSE(recordResize(edits, applyEdits(planned, edits, t)[0], 0.6, t));  // the size it has
+    REQUIRE(recordMove(edits, applyEdits(planned, edits, t)[0], {14, 2, 5}, {0, 0, -1}, t));
+    REQUIRE(edits.size() == 1);
+    CHECK(edits[0].kind == K::Move);
+    CHECK(edits[0].at.x == Approx(4));
+    CHECK(edits[0].to.y == Approx(2));
+    CHECK(edits[0].diameter == 0.6);
+    auto pts = applyEdits(planned, edits, t);
+    REQUIRE(pts.size() == 1);
+    CHECK(pts[0].pos.y == Approx(2));
+    CHECK_FALSE(recordPin(edits, pts[0], t));  // yours are pinned already
+    REQUIRE(recordDelete(edits, pts[0], t));
+    REQUIRE(edits.size() == 1);
+    CHECK(edits[0].kind == K::Delete);
+    CHECK(edits[0].at.x == Approx(4));
+    CHECK(applyEdits(planned, edits, t).empty());
+    // An added tip: moving it moves the addition; deleting it undoes it.
+    std::vector<TipEdit> adds{TipEdit{K::Add, {2, 1, 0}, {}, {0, 0, -1}, 0.3, 0}};
+    REQUIRE(recordMove(adds, applyEdits({}, adds, t)[0], {12, 3, 5}, {0, 0, -1}, t));
+    REQUIRE(adds.size() == 1);
+    CHECK(adds[0].kind == K::Add);
+    CHECK(adds[0].at.y == Approx(3));
+    REQUIRE(recordDelete(adds, applyEdits({}, adds, t)[0], t));
+    CHECK(adds.empty());
+    // A changed edit goes to the end of the list.
+    std::vector<TipEdit> two{TipEdit{K::Add, {2, 1, 0}, {}, {0, 0, -1}, 0.3, 0},
+                             TipEdit{K::Zone, {9, 9, 0}, {}, {}, 0.4, kZoneRadius}};
+    REQUIRE(recordResize(two, applyEdits({}, two, t)[0], 0.6, t));
+    CHECK(two[0].kind == K::Zone);
+    CHECK(two[1].diameter == 0.6);
+}
+
+TEST_CASE("Tip edits: when the tips are planned again, the planner works around them", "[gui][supports][slow]") {
+    const auto doc = bracket();
+    fruit::Placement p = doc->placement();
+    p.rotation_deg = {0, 0, 90};
+    doc->edit(p);
+    const auto none = fruit::JobControl::none();
+    const SupportResult plain = generate(*doc, SupportChoices{}, {}, none);
+    std::vector<fruit::SupportPoint> overhang;
+    for (const auto& q : plain.points)
+        if (q.category == fruit::PointCategory::Overhang) overhang.push_back(q);
+    REQUIRE(overhang.size() > 6);
+    const fruit::Transform t = doc->transform();
+    // Delete one of the planner's tips, resize another, and add a tip of your own
+    // where the planner has a third: edits in model coordinates.
+    const fruit::SupportPoint gone = overhang[0], bigger = overhang[overhang.size() / 2], yours = overhang.back();
+    std::vector<TipEdit> edits;
+    REQUIRE(recordDelete(edits, gone, t));
+    REQUIRE(recordResize(edits, bigger, 0.6, t));
+    TipEdit add;
+    add.kind = TipEdit::Kind::Add;
+    add.at = t.inverse().apply(yours.pos);
+    add.normal = t.inverse().applyLinear(yours.normal);
+    add.diameter = 0.3;
+    edits.push_back(add);
+    const SupportResult r = generate(*doc, SupportChoices{}, {}, none, edits);
+    // The planner itself kept out of the deleted tip's zone and off your tips
+    // (on its own it puts a tip at each of these places).
+    CHECK(tipsNear(plain.planned, gone.pos, kDeletedZone, true) == 1);
+    CHECK(tipsNear(r.planned, gone.pos, kDeletedZone, true) == 0);
+    CHECK(tipsNear(r.planned, bigger.pos, 0.45, true) == 0);
+    CHECK(tipsNear(r.planned, yours.pos, 0.45, true) == 0);
+    // Where the planner had a tip, the deleted one's zone now has none of its tips.
+    CHECK(tipsNear(r.points, gone.pos, kDeletedZone, true) == 0);
+    // Your tips are there once, with no tip of the planner's on top of them.
+    CHECK(tipsNear(r.points, bigger.pos, 0.45, false) == 1);
+    CHECK(tipsNear(r.points, bigger.pos, 0.45, true) == 0);
+    CHECK(tipsNear(r.points, yours.pos, 0.45, false) == 1);
+    CHECK(tipsNear(r.points, yours.pos, 0.45, true) == 0);
+    // Applied again on top of these tips (as a saved job comes back), nothing changes.
+    CHECK(r.plan_edits == edits);
+    CHECK(planStillFits(r.plan_edits, edits));
+    const SupportResult again =
+        finishWithEdits(*doc, SupportChoices{}, SupportPlan{r.planned, r.plan_warnings, r.plan_edits}, edits, none);
+    REQUIRE(again.points.size() == r.points.size());
+    for (std::size_t i = 0; i < r.points.size(); ++i) CHECK(dist(again.points[i].pos, r.points[i].pos) < 1e-9);
+    // A new edit goes on top; taking one back means planning again.
+    std::vector<TipEdit> more = edits;
+    more.push_back(TipEdit{TipEdit::Kind::Zone, add.at, {}, {}, 0.4, kZoneRadius});
+    CHECK(planStillFits(r.plan_edits, more));
+    CHECK_FALSE(planStillFits(r.plan_edits, std::vector<TipEdit>(edits.begin() + 1, edits.end())));
+    // Turned back, the same edits are kept to where those places now are.
+    p.rotation_deg = {0, 0, 0};
+    doc->edit(p);
+    const fruit::Transform t0 = doc->transform();
+    const SupportResult back = generate(*doc, SupportChoices{}, {}, none, edits);
+    CHECK(tipsNear(back.planned, t0.apply(edits[0].at), kDeletedZone, true) == 0);
+    CHECK(tipsNear(back.points, t0.apply(edits[0].at), kDeletedZone, true) == 0);
+    CHECK(tipsNear(back.points, t0.apply(edits[1].at), 0.45, false) == 1);
+    CHECK(tipsNear(back.points, t0.apply(edits[2].at), 0.45, false) == 1);
+}
