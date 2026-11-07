@@ -22,6 +22,7 @@ set(app_sources
   Document.cpp
   Icons.cpp
   Jobs.cpp
+  Layers.cpp
   Log.cpp
   Orient.cpp
   Script.cpp
@@ -31,6 +32,7 @@ set(app_sources
   screens/AboutScreen.cpp
   screens/HomeScreen.cpp
   screens/JobScreen.cpp
+  screens/LayersStep.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
   view3d/Camera.cpp

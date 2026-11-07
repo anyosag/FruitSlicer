@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "Layers.h"
 #include "Orient.h"
 #include "Supports.h"
 #include "core/JobControl.h"
@@ -51,6 +52,18 @@ struct SupportState {
     }
 };
 
+// The Layers step: the sliced print and where the viewer is.
+struct LayerState {
+    std::shared_ptr<const LayerResult> result;
+    std::shared_ptr<const SupportResult> for_supports;  // the supports it was cut with
+    int current = -1;         // layer shown (0-based); -1 = the biggest
+    bool show_below = false;  // the layer below, dimmed, under this one
+
+    bool fresh(const std::shared_ptr<const SupportResult>& supports) const {
+        return result && supports && for_supports == supports;
+    }
+};
+
 class Document {
 public:
     std::string path;  // file it came from
@@ -62,6 +75,7 @@ public:
     int geometry_id = 0;         // unique per load: the renderer re-uploads when it changes
     OrientState orient;
     SupportState supports;
+    LayerState layers;
 
     const fruit::Placement& placement() const { return placement_; }
     const fruit::Transform& transform() const { return transform_; }  // model -> printer

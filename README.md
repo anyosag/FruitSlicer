@@ -58,8 +58,12 @@ first), shows the run's stages with Cancel, and then the tree in 3D with
 three views (Supports, Tips only, Why), why any tip you click is there, the
 checks (nothing starts in mid-air, the raft comes off in one piece, no
 support stands on the model) and a drawer of things to review. Changing
-the model afterwards marks the supports out of date. Layers and saving
-`.goo` files come next. It is one universal app for Apple silicon and Intel Macs, macOS 14 or
+the model afterwards marks the supports out of date. The Layers step cuts
+the model and its supports into the printer's layers and shows any of them
+at the printer's own pixel shape (14 × 19 µm), with the layer below, the
+area of every layer by height, and checks on the whole print (nothing in
+mid-air, suction cups and resin traps); ↑ ↓, Page Up/Down and Home/End move
+through the layers. Saving the `.goo` file comes next. It is one universal app for Apple silicon and Intel Macs, macOS 14 or
 later.
 
 **Download.** Every CI run builds it. On GitHub, open the run (a pull

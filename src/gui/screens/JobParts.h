@@ -34,6 +34,9 @@ void supportsLeft(App& app, Document& doc, float h);
 void supportsRight(App& app, Document& doc, float h);
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 
+// Layers: the whole body of the step.
+void layersView(App& app, Document& doc, ImVec2 size);
+
 // Orient.
 void orientLeft(App& app, Document& doc, float h);
 void orientRight(App& app, Document& doc, float h);
