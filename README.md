@@ -24,6 +24,7 @@ behind it, and the milestone plan are in
 | Physical validation: overlap coupon, calibration plates, A/B plate | **needs your printer** |
 | Native `.goo` writer/reader (`goo`, `goo-info`, `goo-compare`, orientation coupon) | done; header verified against SatelLite 1.0.2.43's 16K file; image orientation pending the F comparison |
 | macOS (Apple Silicon) build in CI | done |
+| Desktop app for macOS: window, 3D view, open STL/OBJ (first of several stages) | early build, downloadable from CI; job screens next |
 | Grey-level tips (weaker contacts, smaller marks) | next |
 
 ## Build
@@ -38,6 +39,55 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build
 ```
+
+## Desktop app (early build)
+
+A Mac app is being built in stages on top of the same engine. This first
+build opens STL and OBJ files and shows them on the Saturn 4 Ultra 16K's
+plate; orienting, supports, layers and saving `.goo` files come next. It is
+one universal app for Apple silicon and Intel Macs, macOS 14 or later.
+
+**Download.** Every CI run builds it. On GitHub, open the run (a pull
+request's *Checks* tab, or *Actions* → **CI**), scroll to *Artifacts*, and
+download **FruitSlicer-macOS.zip**. Unzip it and move `FruitSlicer.app` to
+Applications.
+
+**First launch.** The app is signed ad hoc, not with an Apple Developer ID,
+so macOS blocks it the first time:
+
+1. Double-click FruitSlicer. macOS says it could not verify the app; click
+   **Done**.
+2. Within about an hour, open **System Settings → Privacy & Security**,
+   scroll to **Security**, and click **Open Anyway** next to the FruitSlicer
+   message.
+3. Confirm with your login password. From then on it opens normally.
+
+Since macOS 15, Control-click → Open no longer skips these steps. Each newly
+downloaded build is checked again, so expect to repeat them after updating.
+(For builds from this repository's CI only, `xattr -dr com.apple.quarantine
+/Applications/FruitSlicer.app` in Terminal skips the check instead.)
+
+**Building it yourself** (Xcode command-line tools, CMake and Ninja):
+
+```sh
+cmake -S . -B build-app -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON
+cmake --build build-app --target fruitslicer_app
+open build-app/src/gui/FruitSlicer.app
+```
+
+On Linux the same commands build `build-app/src/gui/fruitslicer_app` (X11),
+which CI uses for screenshot tests.
+
+**If something looks wrong:** *About* lists the graphics driver and display
+scale, and the log is `~/Library/Application Support/FruitSlicer/fruitslicer.log`.
+`/Applications/FruitSlicer.app/Contents/MacOS/FruitSlicer --self-test-gl`, run
+in Terminal, checks the engine, the fonts and OpenGL without the interface.
+
+**Screenshot tests.** The scripts in `tests/gui/*.json` drive the app
+(`--script s.json --shots dir`) and CI compares the pictures with
+`tests/gui/golden` using `tools/compare_screens.py`. After an intended visual
+change, check the new pictures (CI uploads them as *app-screens-linux*) and
+copy them over the goldens.
 
 ## Usage
 
