@@ -43,9 +43,23 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
         printer_setup_ = loadPrinterSetup(settingsFile());
         recent_ = loadRecentJobs((std::filesystem::path(platform::dataDir()) / "recent.json").string());
         prefs_ = loadPreferences(preferencesFile());
-        // The first launch starts with setup (Settings can run it again).
-        if (!printer_setup_.setup_done) startSetup();
+        try {
+            resins_ = firstResins(resinsDir(), settingsFile());
+        } catch (const std::exception& e) {
+            log::error("resins: " + std::string(e.what()));
+        }
     }
+    if (resins_.empty()) {  // scripted runs, or a folder that can't be written
+        Resin r;
+        r.id = "my-resin";
+        r.name = "My resin";
+        resins_.push_back(r);
+    }
+    // New jobs stay with this resin until another is chosen (adding one doesn't change it).
+    if (!resinById(printer_setup_.resin)) printer_setup_.resin = resins_.front().id;
+    resin_selected_ = newJobResin().id;
+    // The first launch starts with setup (Settings can run it again).
+    if (!opts_.deterministic && !printer_setup_.setup_done) startSetup();
     fruit::setDefaultThreads(prefs_.cores);
 }
 
@@ -361,7 +375,7 @@ void App::placeChecked() {
     doc_ = std::move(checking_);
     checking_.reset();
     doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
-    doc_->print.settings = printDefaults(printer_setup_);  // from setup, or Settings
+    applyResin(*doc_, newJobResin());  // its print settings and measured values
     applyPrinterSetup();
     doc_->saved = doc_->stamp();  // nothing to save until something changes
     health_.open = false;
@@ -655,8 +669,11 @@ void App::setAdvanced(const std::string& key, double value) {
             if (key == kUsualTipKey) {
                 c.usual_tip = static_cast<int>(std::lround(v));
             } else {
-                // FruitSlicer's own value is not stored, so the row reads "Default" again.
-                const SupportChoices none;
+                // The job's own value (FruitSlicer's, with its resin's measured
+                // ones) is not stored, so the row reads as it did before.
+                SupportChoices none;
+                none.resin = c.resin;
+                none.profile = c.profile;
                 const double own = f.get(supportConfig(doc_->placement(), none), treeConfig(none));
                 if (std::abs(v - own) < 1e-9) c.advanced.erase(key);
                 else c.advanced[key] = v;
@@ -673,7 +690,7 @@ void App::resetAdvanced() {
     if (!doc_) return;
     SupportChoices c = doc_->supports.choices;
     c.advanced.clear();
-    c.usual_tip = SupportChoices{}.usual_tip;
+    c.usual_tip = usualTipFor(c.profile);  // the resin's measured one, if it has one
     setSupportChoices(c);
 }
 
@@ -792,9 +809,8 @@ void App::addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
     e.kind = TipEdit::Kind::Add;
     e.at = m.apply(pos);
     e.normal = m.applyLinear(normal);
-    e.diameter = supportConfig(doc_->placement(), doc_->supports.choices)
-                     .tip_classes[static_cast<std::size_t>(std::clamp(new_tip_class_, 0, 3))]
-                     .diameter;
+    // FruitSlicer's own sizes (a resin profile may have measured fewer).
+    e.diameter = fruit::SupportConfig{}.tip_classes[static_cast<std::size_t>(std::clamp(new_tip_class_, 0, 3))].diameter;
     std::vector<TipEdit> edits = doc_->supports.edits;
     edits.push_back(e);
     setTipEdits(std::move(edits), pos);  // the new tip is selected, for [ and ]
@@ -1259,11 +1275,10 @@ void App::openSourcePage() {
 void App::startSetup() {
     setup_step_ = 0;
     // The print settings step shows what new jobs start with now.
-    setup_typed_ = printer_setup_.sample_path.empty() && printer_setup_.exposure > 0;
-    typed_defaults_ = {printer_setup_.exposure, printer_setup_.bottom_exposure,
-                       printer_setup_.bottom_layers >= 0 ? printer_setup_.bottom_layers : printer_.bottom_layers,
-                       printer_setup_.transition_layers >= 0 ? printer_setup_.transition_layers
-                                                             : printer_.transition_layers};
+    const Resin& r = newJobResin();
+    setup_typed_ = r.sample_path.empty() && r.exposure > 0;
+    typed_defaults_ = {r.exposure, r.bottom_exposure, r.bottom_layers >= 0 ? r.bottom_layers : printer_.bottom_layers,
+                       r.transition_layers >= 0 ? r.transition_layers : printer_.transition_layers};
     screen_ = Screen::Setup;
 }
 
@@ -1281,44 +1296,185 @@ void App::chooseDefaultSample() {
 }
 
 void App::useDefaultSample(const std::string& goo) {
+    replaceResinSampleFile(newJobResin().id, goo);
+    if (!newJobResin().sample_path.empty()) setup_typed_ = false;
+}
+
+void App::useTypedDefaults() {
+    Resin r = newJobResin();
+    r.sample_path.clear();
+    r.sample_name.clear();
+    r.exposure = std::max(0.0, typed_defaults_.exposure);
+    r.bottom_exposure = std::max(0.0, typed_defaults_.bottom_exposure);
+    r.bottom_layers = typed_defaults_.bottom_layers;
+    r.transition_layers = typed_defaults_.transition_layers;
+    storeResin(r);
+}
+
+// ---- Resins ----
+
+std::string App::resinsDir() const { return (std::filesystem::path(dataFolder()) / "resins").string(); }
+
+const Resin* App::resinById(const std::string& id) const {
+    for (const Resin& r : resins_)
+        if (r.id == id) return &r;
+    return nullptr;
+}
+
+const Resin& App::newJobResin() const {
+    const Resin* r = resinById(printer_setup_.resin);
+    return r ? *r : resins_.front();
+}
+
+void App::storeResin(const Resin& r) {
+    bool found = false;
+    for (Resin& x : resins_)
+        if (x.id == r.id) {
+            x = r;
+            found = true;
+        }
+    if (!found) resins_.push_back(r);
+    std::sort(resins_.begin(), resins_.end(), resinOrder);
+    if (!opts_.deterministic) {
+        try {
+            saveResin(resinsDir(), r);
+        } catch (const std::exception& e) {
+            showError("Couldn't save the resin", e.what());
+        }
+    }
+}
+
+void App::applyResin(Document& d, const Resin& r) {
+    d.print.settings = printSettingsFor(r);
+    SupportChoices c = d.supports.choices;
+    c.resin = r.name;
+    c.profile = r.profile;
+    c.usual_tip = usualTipFor(r.profile);  // the usual tip the resin measured
+    d.supports.choices = c;
+}
+
+void App::setNewJobResin(const std::string& id) {
+    if (!resinById(id)) return;
+    PrinterSetup s = printer_setup_;
+    s.resin = id;
+    setPrinterSetup(s);
+}
+
+void App::useResinForJob(const std::string& id) {
+    resin_menu_ = false;
+    const Resin* r = resinById(id);
+    if (!doc_ || !r) return;
+    applyResin(*doc_, *r);
+    // How it stands is scored with the resin's values: score again.
+    doc_->orient.now_revision = -1;
+    doc_->orient.results_revision = -1;
+    log::info("resin for this job: " + r->name);
+}
+
+std::string App::keepHeader(const std::string& goo) {
+    return keepSampleHeader(goo, (std::filesystem::path(dataFolder()) / "print settings").string());
+}
+
+void App::newResinFromGoo() {
+    platform::openFileDialog(window_, {{"Print files from SatelLite", "goo"}}, [this](const std::string& path) {
+        if (!path.empty()) newResinFromGooFile(path);
+    });
+}
+
+void App::newResinFromGooFile(const std::string& goo) {
     try {
-        PrinterSetup s = printer_setup_;
-        s.sample_path = keepSampleHeader(goo, (std::filesystem::path(dataFolder()) / "print settings").string());
-        s.sample_name = std::filesystem::path(goo).filename().string();
-        s.exposure = s.bottom_exposure = 0;
-        s.bottom_layers = s.transition_layers = -1;
-        setPrinterSetup(s);
-        setup_typed_ = false;
-        log::info("print settings for new jobs from " + goo);
+        Resin r;
+        r.sample_path = keepHeader(goo);
+        r.sample_name = std::filesystem::path(goo).filename().string();
+        r.name = freeResinName(resins_, std::filesystem::path(goo).stem().string());
+        r.id = newResinId(resins_, r.name);
+        storeResin(r);
+        resin_selected_ = r.id;
     } catch (const std::exception& e) {
         showError("Couldn't use that print file", e.what());
     }
 }
 
-void App::useTypedDefaults() {
-    PrinterSetup s = printer_setup_;
-    s.sample_path.clear();
-    s.sample_name.clear();
-    s.exposure = std::max(0.0, typed_defaults_.exposure);
-    s.bottom_exposure = std::max(0.0, typed_defaults_.bottom_exposure);
-    s.bottom_layers = typed_defaults_.bottom_layers;
-    s.transition_layers = typed_defaults_.transition_layers;
-    setPrinterSetup(s);
+void App::importResin() {
+    platform::openFileDialog(window_, {{"Resin profiles", "json"}}, [this](const std::string& path) {
+        if (!path.empty()) importResinFile(path);
+    });
 }
 
-std::shared_ptr<const fruit::GooHeader> App::defaultSample() {
-    if (printer_setup_.sample_path != default_sample_for_) {
-        default_sample_for_ = printer_setup_.sample_path;
-        default_sample_.reset();
-        if (!default_sample_for_.empty()) {
-            try {
-                default_sample_ = loadSample(default_sample_for_);
-            } catch (const std::exception& e) {
-                log::error("print settings for new jobs: " + std::string(e.what()));
-            }
-        }
+void App::importResinFile(const std::string& path) {
+    try {
+        const Resin r = resinFromProfileFile(path, resins_);
+        storeResin(r);
+        resin_selected_ = r.id;
+    } catch (const std::exception& e) {
+        showError("Couldn't import that profile", e.what());
     }
-    return default_sample_;
+}
+
+void App::duplicateResin(const std::string& id) {
+    const Resin* from = resinById(id);
+    if (!from) return;
+    Resin r = *from;
+    r.name = freeResinName(resins_, from->name);
+    r.id = newResinId(resins_, r.name);
+    storeResin(r);
+    resin_selected_ = r.id;
+}
+
+void App::renameResin(const std::string& id, const std::string& name) {
+    const Resin* from = resinById(id);
+    if (!from || name.empty() || name == from->name) return;
+    Resin r = *from;
+    r.name = freeResinName(resins_, name);
+    storeResin(r);
+}
+
+void App::deleteResin(const std::string& which) {
+    const std::string id = which;  // `which` may be resin_to_delete_ or a resin's own id
+    resin_to_delete_.clear();
+    if (resins_.size() <= 1 || !resinById(id)) return;  // one always stays
+    std::erase_if(resins_, [&](const Resin& r) { return r.id == id; });
+    if (!opts_.deterministic) removeResin(resinsDir(), id);
+    if (printer_setup_.resin == id) setNewJobResin(resins_.front().id);
+    if (resin_selected_ == id) resin_selected_ = newJobResin().id;
+}
+
+void App::replaceResinSample(const std::string& id) {
+    platform::openFileDialog(window_, {{"Print files from SatelLite", "goo"}}, [this, id](const std::string& path) {
+        if (!path.empty()) replaceResinSampleFile(id, path);
+    });
+}
+
+void App::replaceResinSampleFile(const std::string& id, const std::string& goo) {
+    const Resin* from = resinById(id);
+    if (!from) return;
+    try {
+        Resin r = *from;
+        r.sample_path = keepHeader(goo);
+        r.sample_name = std::filesystem::path(goo).filename().string();
+        r.exposure = r.bottom_exposure = 0;
+        r.bottom_layers = r.transition_layers = -1;
+        resin_samples_.erase(r.sample_path);  // the same name may hold another file now
+        storeResin(r);
+        log::info("print settings for " + r.name + " from " + goo);
+    } catch (const std::exception& e) {
+        showError("Couldn't use that print file", e.what());
+    }
+}
+
+std::shared_ptr<const fruit::GooHeader> App::resinSample(const Resin& r) {
+    if (r.sample_path.empty()) return nullptr;
+    auto it = resin_samples_.find(r.sample_path);
+    if (it == resin_samples_.end()) {
+        std::shared_ptr<const fruit::GooHeader> h;
+        try {
+            h = loadSample(r.sample_path);
+        } catch (const std::exception& e) {
+            log::error("resin " + r.name + ": " + e.what());
+        }
+        it = resin_samples_.emplace(r.sample_path, h).first;
+    }
+    return it->second;
 }
 
 void App::saveOrientationPiece() {
@@ -1579,6 +1735,10 @@ void App::rail() {
     const bool calibrating =
         screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer;
     if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
+    if (railItem("rail_resins", "Resins", icon::droplet, screen_ == Screen::Resins)) {
+        if (screen_ != Screen::Resins) resin_selected_ = newJobResin().id;
+        screen_ = Screen::Resins;
+    }
     // Settings at the bottom; About opens from it.
     ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 56 - 12);
     if (railItem("rail_settings", "Settings", icon::gear, screen_ == Screen::Settings || screen_ == Screen::About))
@@ -1740,6 +1900,7 @@ void App::frame() {
         case Screen::About: screens::about(*this); break;
         case Screen::Settings: screens::settings(*this); break;
         case Screen::Setup: screens::setup(*this); break;
+        case Screen::Resins: screens::resins(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);

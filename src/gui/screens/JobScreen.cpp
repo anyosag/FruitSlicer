@@ -180,12 +180,58 @@ void topBar(App& app) {
         else if (next == "Show in Finder") app.revealSaved();
     }
     if (why) tooltip(why);
+    // The job's resin: its print settings and support values. Click to change it.
+    const std::string label = doc ? resinLabel(doc->supports.choices.resin, doc->supports.choices.profile)
+                                  : resinLabel(app.newJobResin().name, app.newJobResin().profile);
     ImGui::PushFont(fonts().medium, size::Body);
-    const float cw = ImGui::CalcTextSize("My resin · Defaults").x + 40;
+    const float cw = ImGui::CalcTextSize(label.c_str()).x + 40;
     ImGui::PopFont();
     ImGui::SetCursorPos(ImVec2(right - bw - 16 - cw, 14));
-    chip("resin", "My resin · Defaults", col::TextMuted, col::TextSecondary, col::Panel, col::BorderStrong);
-    tooltip("Starting values borrowed from PrusaSlicer. Resin profiles arrive with calibration.");
+    const ImVec2 chip_at = ImGui::GetCursorScreenPos();
+    if (chip("resin", label.c_str(), col::TextMuted, col::TextSecondary, col::Panel, col::BorderStrong) && doc)
+        ImGui::OpenPopup("resin_menu");
+    tooltip(doc ? "The resin this job is printed in: its print settings and support values. Click to change it."
+                : "The resin new jobs start with.");
+    if (app.resinMenu() && doc) {  // opened by a script
+        ImGui::OpenPopup("resin_menu");
+        app.resinMenu() = false;
+    }
+    ImGui::SetNextWindowPos(ImVec2(chip_at.x, chip_at.y + 36));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, col::Panel);
+    ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10);
+    if (ImGui::BeginPopup("resin_menu")) {
+        text("Print this job in", fonts().semibold, size::Help, col::TextMuted);
+        ImGui::Dummy(ImVec2(0, 2));
+        for (const Resin& r : app.resins()) {
+            ImGui::PushID(r.id.c_str());
+            const bool now = doc && doc->supports.choices.resin == r.name && doc->supports.choices.profile == r.profile;
+            const auto sample = app.resinSample(r);
+            const std::string sub = resinSummary(r, sample.get());
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("pick", ImVec2(300, 44))) app.useResinForJob(r.id);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            if (ImGui::IsItemHovered() || now) dl->AddRectFilled(p, ImVec2(p.x + 300, p.y + 44), col::Card, 8);
+            if (now) icon::check(dl, ImVec2(p.x + 8, p.y + 14), 14, col::Accent);
+            ImGui::PushFont(fonts().semibold, size::Body);
+            dl->AddText(ImVec2(p.x + 30, p.y + 6), col::Text, r.name.c_str());
+            ImGui::PopFont();
+            ImGui::PushFont(fonts().regular, size::Help);
+            dl->AddText(ImVec2(p.x + 30, p.y + 24), col::TextMuted, sub.c_str());
+            ImGui::PopFont();
+            ImGui::PopID();
+        }
+        ImGui::Dummy(ImVec2(0, 2));
+        if (linkButton("Manage resins…")) {
+            ImGui::CloseCurrentPopup();
+            app.resinSelected() = app.newJobResin().id;
+            app.setScreen(Screen::Resins);
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
     endPanel();
 }
 

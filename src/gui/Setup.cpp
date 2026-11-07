@@ -89,29 +89,4 @@ std::string keepSampleHeader(const std::string& goo, const std::string& dir) {
     return out.string();
 }
 
-PrintSettings printDefaults(const PrinterSetup& s) {
-    PrintSettings p;
-    if (!s.sample_path.empty()) {
-        try {
-            p.sample = loadSample(s.sample_path);
-            p.sample_path = s.sample_path;
-        } catch (const std::exception&) {
-            // Gone or unreadable: the job starts without it.
-        }
-    }
-    p.exposure = s.exposure;
-    p.bottom_exposure = s.bottom_exposure;
-    p.bottom_layers = s.bottom_layers;
-    p.transition_layers = s.transition_layers;
-    return p;
-}
-
-std::string printDefaultsSummary(const PrinterSetup& s) {
-    if (!s.sample_path.empty()) return "From " + (s.sample_name.empty() ? fs::path(s.sample_path).filename().string()
-                                                                        : s.sample_name);
-    if (s.exposure > 0 && s.bottom_exposure > 0)
-        return "Typed in: " + seconds(s.exposure) + ", bottom " + seconds(s.bottom_exposure);
-    return "None yet: each job asks";
-}
-
 }  // namespace gui

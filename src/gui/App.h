@@ -17,6 +17,7 @@
 #include "JobFile.h"
 #include "Jobs.h"
 #include "Preferences.h"
+#include "Resins.h"
 #include "Send.h"
 #include "platform/Platform.h"
 #include "mesh/AabbTree.h"
@@ -28,7 +29,7 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup };
+enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -238,7 +239,26 @@ public:
     void chooseDefaultSample();                 // a SatelLite .goo, through a dialog
     void useDefaultSample(const std::string& goo);
     void useTypedDefaults();                    // the values typed in
-    std::shared_ptr<const fruit::GooHeader> defaultSample();  // the kept header, if any
+    // Resins (canvas board "Resins"): each resin's print settings and the
+    // support values measured for it. A job keeps a copy of its resin's.
+    const std::vector<Resin>& resins() const { return resins_; }
+    const Resin* resinById(const std::string& id) const;
+    const Resin& newJobResin() const;                   // the resin new jobs start with
+    std::string& resinSelected() { return resin_selected_; }  // the one the Resins page shows
+    void setNewJobResin(const std::string& id);
+    void useResinForJob(const std::string& id);         // the open job: its print settings and values
+    bool& resinMenu() { return resin_menu_; }           // the job's resin list is open
+    void newResinFromGoo();                             // a SatelLite .goo, through a dialog
+    void newResinFromGooFile(const std::string& goo);
+    void importResin();                                 // a profile (.json), through a dialog
+    void importResinFile(const std::string& path);
+    void duplicateResin(const std::string& id);
+    void renameResin(const std::string& id, const std::string& name);
+    std::string& resinToDelete() { return resin_to_delete_; }  // "Delete …?" open for this id
+    void deleteResin(const std::string& id);
+    void replaceResinSample(const std::string& id);     // another .goo, through a dialog
+    void replaceResinSampleFile(const std::string& id, const std::string& goo);
+    std::shared_ptr<const fruit::GooHeader> resinSample(const Resin& r);  // its kept header (read once)
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -345,8 +365,14 @@ private:
     int setup_step_ = 0;
     bool setup_typed_ = false;
     TypedDefaults typed_defaults_;
-    std::shared_ptr<const fruit::GooHeader> default_sample_;
-    std::string default_sample_for_;  // the path default_sample_ was read from
+    std::vector<Resin> resins_;
+    std::string resin_selected_, resin_to_delete_;
+    bool resin_menu_ = false;
+    std::map<std::string, std::shared_ptr<const fruit::GooHeader>> resin_samples_;  // by kept path
+    std::string resinsDir() const;
+    void storeResin(const Resin& r);  // into the library and its file (outside scripted runs)
+    void applyResin(Document& d, const Resin& r);
+    std::string keepHeader(const std::string& goo);  // a SatelLite file's header in FruitSlicer's folder
     std::string dataFolder() const;   // FruitSlicer's own folder (a scratch one in scripted runs)
     std::string orient_piece_;
     std::shared_ptr<const OrientationCheck> orient_check_;

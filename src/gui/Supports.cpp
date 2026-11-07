@@ -32,8 +32,9 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     ch.on_plate = p.on_plate;
     ch.density = c.density;
     ch.hinge = c.hinge;
-    fruit::resolveSettings(nullptr, ch, cfg, &tc);
-    cfg.default_tip = std::clamp(c.usual_tip, 0, static_cast<int>(cfg.tip_classes.size()) - 1);
+    // Built-in values, then the resin's measured ones, then the job's choices.
+    fruit::resolveSettings(c.profile.is_object() ? &c.profile : nullptr, ch, cfg, &tc);
+    cfg.default_tip = nearestTipClass(cfg, c.usual_tip);
     tc.merge_pillars = c.merge;
     applyAdvanced(c.advanced, cfg, tc);
 }
@@ -63,10 +64,29 @@ std::vector<AdvancedSetting> makeAdvanced() {
                              [](C& c, T&, double x) { c.edge_tip = int(std::lround(x)); }}},
                  .help = [](const X&) { return std::string("Smaller marks where they would show."); }});
     v.push_back({.group = "Tips", .label = "How much a tip holds", .kind = K::Number, .source = S::Borrowed,
+                 // The value in use for a 0.4 mm tip. With a resin's measured table,
+                 // setting it scales the whole table (its shape across sizes stays).
                  .fields = {{"capacity", "", "mm²", 2, 40, 1,
-                             [](const C& c, const T&) { return c.capacity.reference_capacity; },
-                             [](C& c, T&, double x) { c.capacity.reference_capacity = x; }}},
+                             [](const C& c, const T&) {
+                                 return c.capacity.capacity(c.capacity.reference_diameter) *
+                                        std::max(c.capacity.safety, 1e-6);
+                             },
+                             [](C& c, T&, double x) {
+                                 if (c.capacity.table.empty()) {
+                                     c.capacity.reference_capacity = x;
+                                     return;
+                                 }
+                                 const double now = c.capacity.capacity(c.capacity.reference_diameter) *
+                                                    std::max(c.capacity.safety, 1e-6);
+                                 if (now <= 0) return;
+                                 for (auto& [d, cap] : c.capacity.table) cap *= x / now;
+                             }}},
                  .help = [](const X& x) {
+                     if (!x.cfg.capacity.table.empty())
+                         return strf("Layer area one %.1f mm tip can hold as it peels, from your resin's tips plate: "
+                                     "%.1f, %.1f and %.1f mm² for 0.2, 0.3 and 0.6 mm. A value here scales them all.",
+                                     x.cfg.capacity.reference_diameter, x.cfg.capacity.capacity(0.2),
+                                     x.cfg.capacity.capacity(0.3), x.cfg.capacity.capacity(0.6));
                      return strf("Layer area one %.1f mm tip can hold as it peels. Scales with tip area: %.1f, %.1f "
                                  "and %.1f mm² for 0.2, 0.3 and 0.6 mm.",
                                  x.cfg.capacity.reference_diameter, x.cfg.capacity.capacity(0.2),
@@ -74,10 +94,17 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  }});
     v.push_back({.group = "Tips", .label = "Contact depth", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X& x) {
+                     if (!x.tc.penetration_table.empty())
+                         return std::string("How far the tip reaches into the model, as your resin's tips plate "
+                                            "held best for each size.");
                      return strf("How far the tip reaches into the model, kept between %.2f and %.2f mm.",
                                  fruit::tipPenetration(0.0, x.tc), fruit::tipPenetration(10.0, x.tc));
                  },
-                 .text = [](const X&) { return std::string("½ the tip size"); }});
+                 .text = [](const X& x) {
+                     if (x.tc.penetration_table.empty()) return std::string("½ the tip size");
+                     const double lo = fruit::tipPenetration(0.0, x.tc), hi = fruit::tipPenetration(10.0, x.tc);
+                     return std::abs(hi - lo) < 1e-9 ? strf("%.2f mm", lo) : strf("%.2f–%.2f mm", lo, hi);
+                 }});
     // ---- Where tips go ----
     v.push_back({.group = "Where tips go", .label = "Faces that need tips", .kind = K::Number, .source = S::Borrowed,
                  .fields = {{"critical_angle", "lean >", "°", 20, 70, 0,
@@ -351,15 +378,101 @@ void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportCo
     for (const AdvancedSetting& s : advancedSettings())
         for (const AdvancedField& f : s.fields) {
             const auto it = values.find(f.key);
-            if (it != values.end() && f.set && std::string(f.key) != kUsualTipKey)
-                f.set(cfg, tc, std::clamp(it->second, f.lo, f.hi));
+            if (it == values.end() || !f.set || std::string(f.key) == kUsualTipKey) continue;
+            double v = std::clamp(it->second, f.lo, f.hi);
+            // A tip size by FruitSlicer's own classes: the nearest the resin has.
+            if (s.kind == AdvancedSetting::Kind::TipClass)
+                v = nearestTipClass(cfg, static_cast<int>(std::lround(v)));
+            f.set(cfg, tc, v);
         }
+}
+
+
+namespace {
+const std::vector<fruit::TipClass>& standardTips() {
+    static const std::vector<fruit::TipClass> t = fruit::SupportConfig{}.tip_classes;
+    return t;
+}
+}  // namespace
+
+int nearestTipClass(const fruit::SupportConfig& cfg, int standard_class) {
+    const auto& std_tips = standardTips();
+    const double d = std_tips[static_cast<std::size_t>(std::clamp(standard_class, 0, int(std_tips.size()) - 1))].diameter;
+    int best = 0;
+    double best_err = 1e9;
+    for (std::size_t i = 0; i < cfg.tip_classes.size(); ++i) {
+        const double e = std::abs(cfg.tip_classes[i].diameter - d);
+        if (e < best_err - 1e-12) {
+            best_err = e;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+int standardTipClass(const fruit::SupportConfig& cfg, int cls) {
+    if (cfg.tip_classes.empty()) return 0;
+    const double d = cfg.tip_classes[static_cast<std::size_t>(std::clamp(cls, 0, int(cfg.tip_classes.size()) - 1))]
+                         .diameter;
+    const auto& std_tips = standardTips();
+    int best = 0;
+    double best_err = 1e9;
+    for (std::size_t i = 0; i < std_tips.size(); ++i) {
+        const double e = std::abs(std_tips[i].diameter - d);
+        if (e < best_err - 1e-12) {
+            best_err = e;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+int usualTipFor(const nlohmann::json& profile) {
+    if (!profile.is_object() || !profile.contains("default_tip_diameter") || !profile["default_tip_diameter"].is_number())
+        return SupportChoices{}.usual_tip;
+    const double want = profile["default_tip_diameter"].get<double>();
+    const auto& own = standardTips();
+    int best = 1;  // the sizes the Supports step offers: 0.3, 0.4 and 0.6 mm
+    for (int i = 2; i <= 3; ++i)
+        if (std::abs(own[static_cast<std::size_t>(i)].diameter - want) <
+            std::abs(own[static_cast<std::size_t>(best)].diameter - want) - 1e-12)
+            best = i;
+    return best;
+}
+
+const char* measuredKey(const AdvancedSetting& s) {
+    static const std::pair<const char*, const char*> keys[] = {
+        {"Usual tip size", "default_tip_diameter"}, {"Tips at low points", "minima_tip_diameter"},
+        // With a measured table, edges get the smallest size the tips plate measured.
+        {"Tips near edges and visible faces", "capacity_table"},
+        {"How much a tip holds", "capacity_table"},  {"Contact depth", "penetration_table"},
+        {"Faces that need tips", "critical_angle_deg"}, {"Tip reach", "coverage_curve"},
+        {"Spots in mid-air", "island_one_tip_length"}};
+    for (const auto& [label, key] : keys)
+        if (std::string(s.label) == label) return key;
+    return "";
+}
+
+bool measuredByResin(const AdvancedSetting& s, const SupportChoices& c) {
+    const std::string key = measuredKey(s);
+    if (key.empty() || !c.profile.is_object() || !c.profile.contains(key) || c.profile[key].is_null()) return false;
+    if (key == "default_tip_diameter") {
+        // The job's usual tip is set from the resin; it is the measured one while it matches.
+        const double d = c.profile[key].get<double>();
+        const auto& own = standardTips();
+        int nearest = 0;
+        for (std::size_t i = 1; i < own.size(); ++i)
+            if (std::abs(own[i].diameter - d) < std::abs(own[static_cast<std::size_t>(nearest)].diameter - d) - 1e-12)
+                nearest = static_cast<int>(i);
+        return c.usual_tip == nearest;
+    }
+    return !advancedChanged(s, c);
 }
 
 bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c) {
     for (const AdvancedField& f : s.fields) {
         if (std::string(f.key) == kUsualTipKey) {
-            if (c.usual_tip != SupportChoices{}.usual_tip) return true;
+            if (c.usual_tip != usualTipFor(c.profile)) return true;
         } else if (c.advanced.count(f.key)) {
             return true;
         }

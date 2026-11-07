@@ -149,7 +149,16 @@ void calibrate(App& app) {
     beginPage("calibrate");
     const PrinterSetup& ps = app.printerSetup();
     text("Calibrate", fonts().bold, size::PageTitle, col::Text);
-    text("My resin · Defaults", fonts().regular, size::Body, col::TextMuted);
+    {
+        // The resin the plates calibrate: the one new jobs use.
+        const Resin& r = app.newJobResin();
+        text(("For " + resinLabel(r.name, r.profile) + " ·").c_str(), fonts().regular, size::Body, col::TextMuted);
+        ImGui::SameLine(0, 6);
+        if (linkButton("Resins")) {
+            app.resinSelected() = r.id;
+            app.setScreen(Screen::Resins);
+        }
+    }
     ImGui::Dummy(ImVec2(0, 8));
     const float w = pageWidth();
     {

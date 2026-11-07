@@ -196,11 +196,13 @@ void settings(App& app) {
     }
     {
         const float bw = textWidth("Change", fonts().semibold, size::Body) + 28;
-        settingRow("Print settings for new jobs", printDefaultsSummary(app.printerSetup()) + ".", bw,
+        const Resin& r = app.newJobResin();
+        const std::string values = resinState(r) == "Defaults" ? "FruitSlicer's support values" : resinState(r);
+        settingRow("Resin for new jobs", r.name + " · " + printSummary(r) + " · " + values, bw,
                    [&] {
                        if (secondaryButton("Change", ImVec2(bw, 32))) {
-                           app.startSetup();
-                           app.setupStep() = 1;
+                           app.resinSelected() = r.id;
+                           app.setScreen(Screen::Resins);
                        }
                    },
                    false);
@@ -428,8 +430,8 @@ void printSettings(App& app) {
     stepHeading(2, "Bring in your print settings",
                 "FruitSlicer reads the exposure and motion settings from a file SatelLite already made for this "
                 "printer, so your prints behave the way they do today. Each new job starts with them.");
-    const PrinterSetup& ps = app.printerSetup();
-    const auto sample = app.defaultSample();
+    const Resin& resin = app.newJobResin();  // setup sets the print settings of the resin new jobs use
+    const auto sample = app.resinSample(resin);
     bool& typed = app.setupTyped();
     if (optionCard("from_file", "From a SatelLite .goo file (recommended)",
                    "Any small file you sliced in SatelLite for this printer with your usual resin settings.", !typed,
@@ -444,7 +446,7 @@ void printSettings(App& app) {
                        const ImVec2 p = ImGui::GetCursorScreenPos();
                        icon::check(ImGui::GetWindowDrawList(), ImVec2(p.x, p.y + 1), 16, col::Ok);
                        ImGui::SetCursorScreenPos(ImVec2(p.x + 24, p.y));
-                       text(ps.sample_name.c_str(), fonts().semibold, size::Body, col::Text);
+                       text(resin.sample_name.c_str(), fonts().semibold, size::Body, col::Text);
                        ImGui::SameLine(0, 10);
                        const std::string about = sample->software_name + " " + sample->software_version + " · " +
                                                  sample->printer_name + " · " +
@@ -593,7 +595,8 @@ void setup(App& app) {
     int& step = app.setupStep();
     step = std::clamp(step, 0, 3);
     const PrinterSetup& ps = app.printerSetup();
-    const bool done[4] = {step > 0, !ps.sample_path.empty() || (ps.exposure > 0 && ps.bottom_exposure > 0),
+    const Resin& resin = app.newJobResin();
+    const bool done[4] = {step > 0, !resin.sample_path.empty() || (resin.exposure > 0 && resin.bottom_exposure > 0),
                           ps.orientation_confirmed, false};
     aside(step, done);
     ImGui::SameLine(0, 0);

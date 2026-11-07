@@ -108,14 +108,21 @@ tilting vat hinges on; once the orientation is confirmed, supports get up to
 +25 % hold on the side away from the hinge. Both are kept between launches in
 `settings.json` in the app's data folder.
 
-The first launch runs **setup**: the printer, the print settings each new job
-starts with (from a SatelLite `.goo`, whose header FruitSlicer keeps a copy of,
-or exposures typed in), the image orientation check, and calibration now or
-later. A `.goo` made for another printer is refused, with the reason, here and
-on the Print step. **Settings** (at the bottom of the rail) has the 3D view's
+The first launch runs **setup**: the printer, the print settings of the resin
+new jobs start with (from a SatelLite `.goo`, whose header FruitSlicer keeps a
+copy of, or exposures typed in), the image orientation check, and calibration
+now or later. A `.goo` made for another printer is refused, with the reason,
+here and on the Print step. **Resins** keeps a library: each resin's print
+settings and the support values measured for it, imported from a profile that
+`fruitslicer fit` wrote, each shown as measured, borrowed or FruitSlicer's own.
+A job is printed in one resin (the chip at the top of the job switches it) and
+keeps its own copy of that resin's values, so changing the resin later never
+changes a saved job; switching makes the supports out of date. Tip sizes are
+matched by diameter, so a profile that measured other sizes still means what
+you chose. **Settings** (at the bottom of the rail) has the 3D view's
 smoothing, how many processor cores slicing and saving may use, whether `.goo`
-files go to a plugged-in USB drive, the print settings for new jobs, the log
-file, and **Run setup again**; FruitSlicer sends no usage data. **About** says
+files go to a plugged-in USB drive, the resin for new jobs, the log file, and
+**Run setup again**; FruitSlicer sends no usage data. **About** says
 what has been checked and what not yet, and has the full licence text of
 FruitSlicer and of every library and the typeface built into the app. It is
 one universal app for Apple silicon and Intel Macs, macOS 14 or later.
