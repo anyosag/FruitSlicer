@@ -1,0 +1,13 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "home"}, {"shot": "home_empty"},
+    {"screen": "job"}, {"shot": "job_empty"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "job_model_angled"},
+    {"view": "front"}, {"shot": "job_model_front"},
+    {"view": "below"}, {"shot": "job_model_below"},
+    {"screen": "home"}, {"shot": "home_with_job"},
+    {"screen": "about"}, {"shot": "about"}
+  ]
+}

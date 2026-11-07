@@ -1,0 +1,8 @@
+{
+  "size": [1440, 900],
+  "scale": 2,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"screen": "job"}, {"view": "angled"}, {"shot": "job_model_angled_2x"},
+    {"screen": "home"}, {"shot": "home_with_job_2x"}
+  ]
+}

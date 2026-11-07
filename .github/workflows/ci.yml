@@ -52,3 +52,107 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
         run: ctest --test-dir build --output-on-failure -j 2
+
+  # The desktop app on Linux, driven by a script: its screenshots must match
+  # the goldens in tests/gui/golden. A plain Ubuntu 24.04 container keeps the
+  # software renderer (Mesa llvmpipe) the same as where the goldens were made.
+  app-linux:
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - name: Install build tools, X11, Mesa and Pillow
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: >
+          apt-get update && apt-get install -y --no-install-recommends
+          build-essential cmake ninja-build git ca-certificates pkgconf
+          libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev
+          libxfixes-dev libxtst-dev libxkbcommon-dev libgl-dev libegl-dev
+          libgl1-mesa-dri libglx-mesa0 xvfb xauth python3-pil
+      - uses: actions/checkout@v5
+      - name: Renderer version
+        run: dpkg-query -W libgl1-mesa-dri mesa-libgallium
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON -DFRUIT_BUILD_TESTS=OFF
+      - name: Build
+        run: cmake --build build -j --target fruitslicer_app
+      - name: Self-test
+        run: ./build/src/gui/fruitslicer_app --self-test
+      - name: Self-test with OpenGL
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" ./build/src/gui/fruitslicer_app --self-test-gl
+      - name: Screenshots
+        run: |
+          for s in b0 b0_2x; do
+            xvfb-run -a -s "-screen 0 1920x1080x24" ./build/src/gui/fruitslicer_app --script tests/gui/$s.json --shots shots
+          done
+      - name: Compare with goldens
+        run: python3 tools/compare_screens.py tests/gui/golden shots diffs
+      - name: Upload screenshots and differences
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-screens-linux
+          path: |
+            shots
+            diffs
+          if-no-files-found: ignore
+
+  # The desktop app for macOS: one universal FruitSlicer.app (Apple silicon
+  # and Intel, macOS 14 or later), signed ad hoc by the build, zipped with
+  # ditto so permissions and the signature survive the download.
+  app-macos:
+    runs-on: macos-15
+    env:
+      APP: build/src/gui/FruitSlicer.app
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Ninja
+        run: brew install ninja
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DFRUIT_BUILD_APP=ON -DFRUIT_BUILD_TESTS=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - name: Build
+        run: cmake --build build -j --target fruitslicer_app
+      - name: Check the bundle
+        run: |
+          lipo "$APP/Contents/MacOS/FruitSlicer" -verify_arch arm64 x86_64
+          vtool -show-build "$APP/Contents/MacOS/FruitSlicer"
+          plutil -lint "$APP/Contents/Info.plist"
+          test -f "$APP/Contents/Resources/FruitSlicer.icns"
+          ls "$APP/Contents/Resources/Licenses"
+          codesign --verify --strict --verbose=2 "$APP"
+      - name: Self-test (Apple silicon)
+        run: '"$APP/Contents/MacOS/FruitSlicer" --self-test'
+      - name: Self-test (Intel, under Rosetta)
+        run: |
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "$APP/Contents/MacOS/FruitSlicer" --self-test
+          else
+            echo "::notice::Rosetta is not installed on this runner, so the Intel half was not run"
+          fi
+      # Hosted macOS runners are virtual machines; whether their OpenGL works
+      # is not ours to control, so these two report without failing the job.
+      - name: Self-test with OpenGL
+        continue-on-error: true
+        run: '"$APP/Contents/MacOS/FruitSlicer" --self-test-gl'
+      - name: Screenshots with Apple's OpenGL (for review, not compared)
+        continue-on-error: true
+        run: |
+          for s in b0 b0_2x; do
+            "$APP/Contents/MacOS/FruitSlicer" --script tests/gui/$s.json --shots shots-macos
+          done
+      - name: Upload macOS screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-screens-macos
+          path: shots-macos
+          if-no-files-found: ignore
+      - name: Zip the app
+        run: ditto -c -k --keepParent "$APP" FruitSlicer-macOS.zip
+      - name: Upload the app
+        uses: actions/upload-artifact@v7
+        with:
+          path: FruitSlicer-macOS.zip
+          archive: false
