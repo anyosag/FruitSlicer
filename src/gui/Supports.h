@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -13,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Hollows.h"
 #include "core/JobControl.h"
 #include "geometry/Transform.h"
 #include "mesh/Placement.h"
@@ -149,6 +151,9 @@ struct SupportProblem {
 
 struct SupportResult {
     SupportChoices choices;
+    // The hollowed or drilled model the tips were planned on (null: the
+    // model as it is). The layers and the print file use the same.
+    std::shared_ptr<const HollowPlan> hollow;
     fruit::SupportConfig cfg;
     fruit::TreeConfig tree_cfg;
     std::vector<fruit::SupportPoint> points;
@@ -187,6 +192,7 @@ struct SupportPlan {
     std::vector<fruit::SupportPoint> points;
     std::vector<fruit::Warning> warnings;
     std::vector<TipEdit> edits;  // the hand edits it planned around
+    std::shared_ptr<const HollowPlan> hollow;  // the hollowed or drilled model, when the Hollow screen changed it
 };
 SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});

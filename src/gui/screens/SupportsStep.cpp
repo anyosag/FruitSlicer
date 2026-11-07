@@ -193,7 +193,7 @@ void supportsLeft(App& app, Document& doc, float h) {
     // Bottom: editing by hand (later) and every other setting.
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 8, h - 22 - 80));
     if (have) {
-        const bool fresh = doc.supports.fresh(doc.revision(), doc.orient.settings);
+        const bool fresh = doc.supports.fresh(doc.revision(), doc.supportSettings());
         if (secondaryButton("Edit tips by hand", ImVec2(-1, 40), fresh && !running(app))) app.editTips(true);
         if (!fresh) tooltip("Regenerate the supports first.");
     }
@@ -331,7 +331,7 @@ void supportsRight(App& app, Document& doc, float h) {
         return;
     }
     const SupportResult& r = *s.result;
-    if (!s.fresh(doc.revision(), doc.orient.settings)) {
+    if (!s.fresh(doc.revision(), doc.supportSettings())) {
         text("These are the supports from before the change. Regenerate to plan them again.", fonts().regular,
              size::Body, col::TextMuted, true);
         ImGui::Dummy(ImVec2(0, 6));
@@ -481,7 +481,7 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     }
     ImGui::NewLine();
     legend(app, origin, size, r);
-    const bool fresh = s.fresh(doc.revision(), doc.orient.settings);
+    const bool fresh = s.fresh(doc.revision(), doc.supportSettings());
     if (!fresh) staleBanner(app, doc, origin, size);
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
     auto project = [&](const fruit::Vec3& w, ImVec2* out) {

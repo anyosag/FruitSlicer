@@ -91,7 +91,7 @@ void topBar(App& app) {
         std::string badge;
         ImU32 badge_col = col::Warn;
         if (s == Step::Supports && doc && doc->supports.result) {
-            if (!doc->supports.fresh(doc->revision(), doc->orient.settings)) {
+            if (!doc->supports.fresh(doc->revision(), doc->supportSettings())) {
                 badge = "out of date";
                 badge_col = col::TextMuted;
             } else if (const std::size_t n = doc->supports.result->count(SupportProblem::Level::Review) +
@@ -132,7 +132,7 @@ void topBar(App& app) {
             enabled = false;
         } else if (!sp.result) {
             next = "Generate supports";
-        } else if (!sp.fresh(doc->revision(), doc->orient.settings)) {
+        } else if (!sp.fresh(doc->revision(), doc->supportSettings())) {
             next = "Regenerate supports";
         } else {
             next = "Next: Layers";
@@ -635,7 +635,7 @@ void statusBar(App& app) {
             }
         }
     } else if (doc && app.step() == Step::Supports && doc->supports.result &&
-               doc->supports.fresh(doc->revision(), doc->orient.settings)) {
+               doc->supports.fresh(doc->revision(), doc->supportSettings())) {
         const SupportResult& r = *doc->supports.result;
         const ImVec2 wp = ImGui::GetWindowPos();
         const bool ok = r.count(SupportProblem::Level::Blocks) == 0;

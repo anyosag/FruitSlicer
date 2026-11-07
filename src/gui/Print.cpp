@@ -10,6 +10,7 @@
 #include <system_error>
 
 #include "Document.h"
+#include "Hollows.h"
 #include "Layers.h"
 #include "raster/Rasterizer.h"
 #include "support/SupportSettings.h"
@@ -82,7 +83,17 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
     all.append(supports);
     fruit::GooExportOptions o;
     o.sync_to_device = removable;
-    if (plan.reslice) {
+    if (plan.reslice && layers.hollow) {
+        // The same again at the sample's layer height: the model hollowed
+        // or filled as before, with the same holes, and the supports.
+        const double h = fruit::gooLayerHeight(plan.setup.header);
+        HollowChoices c = layers.hollow->choices;
+        c.auto_holes = false;
+        const HollowPlan again = planHollow(doc, c, layers.hollow->holes, h, ctl.sub(0.0, 0.3));
+        const fruit::LayerStack print =
+            fruit::unionLayers(*again.layers, fruit::sliceModel(supports, h, nullptr, 0, ctl.sub(0.3, 0.4)));
+        r.written = fruit::exportGooLayers(print, &all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.4, 0.85));
+    } else if (plan.reslice) {
         // The sample's exposures are for its layer height: cut the layers again.
         r.written = fruit::exportGoo(all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.0, 0.85));
     } else {

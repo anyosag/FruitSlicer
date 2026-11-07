@@ -163,7 +163,7 @@ void saveJob(const std::string& path, const Document& doc) {
     if (c.profile.is_object()) sup["choices"]["profile"] = c.profile;
     // Tips only for supports made for the job as it is now.
     sup["edits"] = editsJson(doc.supports.edits);
-    if (doc.supports.fresh(doc.revision(), doc.orient.settings)) {
+    if (doc.supports.fresh(doc.revision(), doc.supportSettings())) {
         const SupportResult& r = *doc.supports.result;
         sup["tips"] = fruit::pointsToJson(r.planned);  // the planner's; the edits apply on top
         sup["planned_around"] = editsJson(r.plan_edits);  // the edits the planner worked around
@@ -300,7 +300,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
             finishWithEdits(*doc, c, std::move(plan), doc->supports.edits, ctl.sub(0.3, 1.0)));
         doc->supports.result = std::move(r);
         doc->supports.result_revision = doc->revision();
-        doc->supports.result_settings = doc->orient.settings;
+        doc->supports.result_settings = doc->supportSettings();
     }
     ctl.report("check", 1.0);
     doc->saved = doc->stamp();

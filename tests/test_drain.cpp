@@ -198,6 +198,7 @@ TEST_CASE("a model's own closed hollow gets holes, or is filled", "[drain]") {
     const LayerStack ls = sliceModel(m, 0.1);
     const HollowResult closed = closedHollows(ls);
     REQUIRE(closed.cavities.size() == 1);
+    CHECK_FALSE(closed.cavities[0].opens_up);  // sealed: a resin trap
     CHECK(closed.volume == Approx(12 * 12 * 6).margin(1));
     CHECK(ls.layerBottom(closed.cavities[0].first_layer) == Approx(3.0));
     CHECK(cavitiesDrain(ls, closed) == std::vector<char>{0});
@@ -233,5 +234,6 @@ TEST_CASE("only hollows that hold resin count as closed", "[drain]") {
     // Mouth up: a cup that pulls on every peel.
     const HollowResult cup = closedHollows(sliceModel(box(true), 0.1));
     REQUIRE(cup.cavities.size() == 1);
+    CHECK(cup.cavities[0].opens_up);
     CHECK(cup.volume == Approx(16 * 16 * 8).margin(2));
 }
