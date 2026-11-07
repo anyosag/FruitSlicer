@@ -68,8 +68,12 @@ Paths unionNonZero(const Paths& subjects);
 Paths unionOf(const Paths& a, const Paths& b);
 Paths intersection(const Paths& a, const Paths& b);
 Paths difference(const Paths& a, const Paths& b);
-// Offset by delta mm (negative shrinks). Round joins with 0.5 µm arc tolerance.
-Paths offset(const Paths& p, double delta_mm);
+// Offset by delta mm (negative shrinks). Round joins with 0.5 µm arc tolerance,
+// or `arc_tolerance_mm`: arcs are drawn with chords that far inside them.
+Paths offset(const Paths& p, double delta_mm, double arc_tolerance_mm = 0.0005);
+// Fewer vertices, every one kept within `tolerance_mm` of the outline
+// (Ramer–Douglas–Peucker). The shape may move by up to that much either way.
+Paths simplify(const Paths& p, double tolerance_mm);
 
 // Group (already unioned, NonZero) paths into polygons-with-holes. Islands
 // inside holes become their own ExPolygons.

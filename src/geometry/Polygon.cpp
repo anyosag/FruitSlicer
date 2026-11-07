@@ -75,12 +75,21 @@ Paths difference(const Paths& a, const Paths& b) {
     return C::Difference(a, b, C::FillRule::NonZero);
 }
 
-Paths offset(const Paths& p, double delta_mm) {
+Paths offset(const Paths& p, double delta_mm, double arc_tolerance_mm) {
     if (p.empty()) return {};
     if (delta_mm == 0) return unionNonZero(p);
-    const double arc_tol = 0.0005 * kScale;  // 0.5 µm
     return C::InflatePaths(p, delta_mm * kScale, C::JoinType::Round, C::EndType::Polygon, 2.0,
-                           arc_tol);
+                           arc_tolerance_mm * kScale);
+}
+
+Paths simplify(const Paths& p, double tolerance_mm) {
+    Paths out;
+    out.reserve(p.size());
+    for (const Path& path : p) {
+        Path q = C::SimplifyPath(path, tolerance_mm * kScale, true);
+        if (q.size() >= 3) out.push_back(std::move(q));
+    }
+    return out;
 }
 
 static void collect(const C::PolyPath64& node, ExPolygons& out) {
