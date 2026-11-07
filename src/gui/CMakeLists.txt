@@ -57,6 +57,7 @@ set(app_sources
   Dialogs.cpp
   Document.cpp
   Fit.cpp
+  GooTools.cpp
   Icons.cpp
   JobFile.cpp
   Jobs.cpp
@@ -88,6 +89,7 @@ set(app_sources
   screens/SupportsAdvanced.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
+  screens/ToolsScreens.cpp
   screens/TipEdit.cpp
   view3d/Camera.cpp
   view3d/Renderer.cpp

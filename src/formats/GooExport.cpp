@@ -76,7 +76,7 @@ GooExportResult exportGooLayers(const LayerStack& layers, const TriangleMesh* pr
         h.grey_level = 1;
         h.grayscale_8bit = true;
     }
-    h.file_time = utcNow();
+    h.file_time = o.file_time.empty() ? utcNow() : o.file_time;
     // Thumbnails seen from the front, slightly above.
     RenderView view;
     view.azimuth_deg = 20;
