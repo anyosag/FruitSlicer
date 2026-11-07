@@ -279,6 +279,20 @@ FruitSlicer's files print the right way round; otherwise it tells you which
 `--aa N` writes anti-aliased grey pixels, but grey on the 16K is untested,
 so the default is off, as in SatelLite.
 
+### Sending over Wi-Fi
+
+`fruitslicer-printer` finds the printer on the local network, shows its
+status, uploads a `.goo` and, only when asked, starts it (SDCP V3; notes and
+sources in [`docs/wifi-sdcp.md`](docs/wifi-sdcp.md)). Not yet tried on a real
+printer.
+
+```sh
+./build/src/net/fruitslicer-printer discover
+./build/src/net/fruitslicer-printer status 192.168.1.50
+./build/src/net/fruitslicer-printer send 192.168.1.50 model.goo            # upload only
+./build/src/net/fruitslicer-printer send 192.168.1.50 model.goo --start    # asks before printing
+```
+
 ### Overlap coupon (please run this first)### Overlap coupon (please run this first)
 
 FruitSlicer exports the model and its supports as one STL made of overlapping
