@@ -66,10 +66,13 @@ checks (nothing starts in mid-air, the raft comes off in one piece, no
 support stands on the model) and a drawer of things to review. Changing
 the model afterwards marks the supports out of date. **Edit tips by hand**
 adds tips where you click the model, moves (drag), deletes, resizes and pins
-them, and draws no-tip zones; a deleted tip leaves a small no-tip zone. Every
-edit is listed and can be undone on its own, is kept in the model's own
-coordinates (so it follows the model when it turns), stays when you
-regenerate, and is saved with the job. **Advanced settings**
+them, and draws no-tip zones. Every edit is listed and can be undone on its
+own (changing a tip of your own changes the edit that made it), is kept in
+the model's own coordinates and is saved with the job. An edit applies on top
+of the planner's tips straight away; when the tips are planned again
+(regenerating, or after turning the model) the planner works around your
+tips and keeps its own out of the zones, including the 1.8 mm one a deleted
+tip leaves. **Advanced settings**
 lists every value the tip planner and the tree builder use (29 rows, from
 tip sizes and how much a tip holds to braces and the raft) with where each
 comes from: built in, borrowed from PrusaSlicer until you calibrate, or an

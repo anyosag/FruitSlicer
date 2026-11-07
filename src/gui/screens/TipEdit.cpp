@@ -117,8 +117,7 @@ void tipEditLeft(App& app, Document& doc, float h) {
         ImGui::EndChild();
     }
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 6, h - 22 - 48));
-    text("Edits stay when you regenerate. A deleted tip leaves a small no-tip zone, so a new tip doesn't take its "
-         "place.",
+    text("Edits stay when you regenerate: the planner works around your tips and keeps its own out of the zones.",
          fonts().regular, size::Help, col::TextMuted, true);
     endPanel();
 }
@@ -189,7 +188,7 @@ void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
             if (e.kind != TipEdit::Kind::Delete && e.kind != TipEdit::Kind::Zone && e.kind != TipEdit::Kind::Move)
                 continue;
             const fruit::Vec3 c = t.apply(e.at);
-            const double rad = e.kind == TipEdit::Kind::Move ? kDeletedZone : e.radius;
+            const double rad = e.radius;
             ImVec2 a, b;
             if (!project(c, &a) || !project({c.x + rad, c.y, c.z}, &b)) continue;
             const float px = std::max(4.0f, std::hypot(b.x - a.x, b.y - a.y));

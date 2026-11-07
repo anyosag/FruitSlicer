@@ -88,8 +88,11 @@ void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportCo
 bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c);
 
 // A change made by hand to the tips, in model coordinates so it survives
-// turning or resizing the model. Edits apply on top of the planner's tips,
-// in order; regenerating plans afresh and applies them again.
+// turning or resizing the model. Between plans an edit applies on top of the
+// planner's tips; when the tips are planned again (regenerating, a turned
+// model) the planner works around them: your tips are pinned and its own are
+// kept out of the no-tip zones. Each tip has at most one edit: changing a tip
+// of your own changes the edit that made it (see recordMove and the others).
 struct TipEdit {
     enum class Kind { Add, Move, Delete, Resize, Pin, Zone };
     Kind kind = Kind::Add;
@@ -97,10 +100,13 @@ struct TipEdit {
     fruit::Vec3 to;         // Move: where to
     fruit::Vec3 normal;     // the surface's outward normal where the tip ends up
     double diameter = 0.4;  // the tip's size after the edit
-    double radius = 0;      // Delete, Zone: tips within this are taken away
+    double radius = 0;      // Delete, Move, Zone: the planner's tips are kept this far from `at`
     bool operator==(const TipEdit&) const = default;
 };
-inline constexpr double kDeletedZone = 0.5;  // mm, radius: a deleted tip's no-tip zone
+// mm, radius, where a deleted or moved tip was: just under the planner's 1 mm
+// sample spacing, so a neighbouring tip stays and a new plan's tip is at least
+// one sample away.
+inline constexpr double kDeletedZone = 0.9;
 inline constexpr double kZoneRadius = 1.5;   // mm, radius: a no-tip zone drawn by hand
 
 // One line of the result's checks.
@@ -138,7 +144,8 @@ struct SupportResult {
     std::vector<SupportCheck> checks;
     std::vector<SupportProblem> problems;
     std::vector<fruit::Warning> plan_warnings;  // the tip planner's, kept so a saved job can rebuild its problems
-    std::vector<fruit::SupportPoint> planned;   // the planner's tips, before hand edits
+    std::vector<fruit::SupportPoint> planned;   // the planner's own tips, before hand edits
+    std::vector<TipEdit> plan_edits;            // the hand edits the planner worked around
     std::vector<TipEdit> edits;                 // the hand edits `points` has
     double seconds = 0;
 
@@ -154,13 +161,16 @@ fruit::TreeConfig treeConfig(const SupportChoices& c);
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
                        const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
 
-// The tip planner's part: the tips and what it warned about.
+// The tip planner's part: its own tips and what it warned about. Given hand
+// edits, it plans around them: your tips are pinned (and left out of
+// `points`, which applyEdits puts back) and its own are kept out of the zones.
 struct SupportPlan {
     std::vector<fruit::SupportPoint> points;
     std::vector<fruit::Warning> warnings;
+    std::vector<TipEdit> edits;  // the hand edits it planned around
 };
 SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
-                     const fruit::JobControl& ctl);
+                     const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
 // Everything after the tips: the tree, its checks and the problems. Used
 // when a saved job comes back with its tips.
 SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,
@@ -169,17 +179,37 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
 SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
 
-// `planned` (printer coordinates) with `edits` applied in order; the model
-// is placed by `model_to_printer`.
+// `planned` (printer coordinates) with `edits` applied; the model is placed
+// by `model_to_printer`. Each of your tips is added; a deleted, moved,
+// resized or pinned tip of the planner's is taken away, and so is any of its
+// tips inside a zone. Your own tips are never taken away by another edit.
 std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> planned, const std::vector<TipEdit>& edits,
                                             const fruit::Transform& model_to_printer);
+// Whether tips planned around `plan_edits` still suit `edits`: every edit the
+// planner worked around is still there. If one was undone or changed, the
+// planner's tips have a hole or a zone that is no longer wanted, so the tips
+// are planned again; otherwise the edits apply on top.
+bool planStillFits(const std::vector<TipEdit>& plan_edits, const std::vector<TipEdit>& edits);
+// Recording a change to `tip` (printer coordinates, as shown). A tip of the
+// planner's gets an edit of its own; for a tip of yours the edit that made it
+// changes (moving an added tip moves the addition, deleting it undoes it), so
+// each edit can still be undone alone. The changed edit goes to the end of the
+// list. False when nothing changed.
+bool recordMove(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Vec3& to,
+                const fruit::Vec3& normal, const fruit::Transform& model_to_printer);
+bool recordDelete(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& model_to_printer);
+bool recordResize(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, double diameter,
+                  const fruit::Transform& model_to_printer);
+bool recordPin(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& model_to_printer);
 // The edit as a line of "Your edits": a title and a detail.
 std::pair<std::string, std::string> describeEdit(const TipEdit& e, const fruit::Transform& model_to_printer);
-// How many tips the edits added, moved and deleted.
+// How many of each kind of edit there are, and as words ("1 added, 2 no-tip
+// zones"; only the kinds there are).
 struct EditCounts {
-    std::size_t added = 0, moved = 0, deleted = 0, changed = 0;  // changed: resized or pinned
+    std::size_t added = 0, moved = 0, deleted = 0, resized = 0, pinned = 0, zones = 0;
 };
 EditCounts countEdits(const std::vector<TipEdit>& edits);
+std::string describeCounts(const EditCounts& n);
 
 // The stages the running card lists, and which one a progress report is in.
 const std::vector<std::string>& supportStages();

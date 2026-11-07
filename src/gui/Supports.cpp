@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <optional>
 
 #include "Document.h"
 #include "Format.h"
@@ -396,39 +397,6 @@ int supportStage(const std::string& stage, double f) {
     return 0;
 }
 
-SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
-                     const fruit::JobControl& ctl) {
-    fruit::SupportConfig cfg;
-    fruit::TreeConfig tc;
-    const fruit::Placement& p = doc.placement();
-    resolve(p, c, cfg, tc);
-    fruit::CosmeticSpec cos;
-    cos.visible_from = visibleInPrinter(visible_model, p);
-    fruit::PointGenOptions po;
-    po.cosmetic = &cos;
-    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, ctl);
-    return SupportPlan{std::move(pg.points), std::move(pg.warnings)};
-}
-
-SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
-                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
-    const auto t0 = std::chrono::steady_clock::now();
-    SupportResult r =
-        finishWithEdits(doc, c, planTips(doc, c, visible_model, ctl.sub(0.0, 0.55)), edits, ctl.sub(0.55, 1.0));
-    r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    return r;
-}
-
-SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
-                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
-    std::vector<fruit::SupportPoint> planned = plan.points;
-    plan.points = applyEdits(std::move(plan.points), edits, doc.transform());
-    SupportResult r = finishSupports(doc, c, std::move(plan), ctl);
-    r.planned = std::move(planned);
-    r.edits = edits;
-    return r;
-}
-
 namespace {
 
 fruit::Vec3 unit(const fruit::Vec3& v) {
@@ -457,33 +425,208 @@ fruit::SupportPoint manualTip(const fruit::Vec3& pos, const fruit::Vec3& normal,
 
 constexpr double kMatch = 0.05;  // mm: an edit's tip is the one this close to where it was
 
+bool keepsOut(TipEdit::Kind k) {
+    return k == TipEdit::Kind::Delete || k == TipEdit::Kind::Move || k == TipEdit::Kind::Zone;
+}
+
+// Where an edit's own tip is, if it makes one (model coordinates).
+std::optional<fruit::Vec3> yourTip(const TipEdit& e) {
+    switch (e.kind) {
+        case TipEdit::Kind::Add:
+        case TipEdit::Kind::Resize:
+        case TipEdit::Kind::Pin: return e.at;
+        case TipEdit::Kind::Move: return e.to;
+        case TipEdit::Kind::Delete:
+        case TipEdit::Kind::Zone: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 }  // namespace
+
+SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+                     const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    const fruit::Placement& p = doc.placement();
+    resolve(p, c, cfg, tc);
+    fruit::CosmeticSpec cos;
+    cos.visible_from = visibleInPrinter(visible_model, p);
+    fruit::PointGenOptions po;
+    po.cosmetic = &cos;
+    // Hand edits: your tips are pinned, and the planner's own stay out of the zones.
+    const fruit::Transform& t = doc.transform();
+    for (const TipEdit& e : edits) {
+        if (keepsOut(e.kind)) cos.exclusions.push_back({t.apply(e.at), e.radius});
+        if (const auto at = yourTip(e))
+            po.manual.push_back(manualTip(t.apply(*at), unit(t.applyLinear(e.normal)), e.diameter));
+    }
+    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, ctl);
+    // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
+    std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });
+    return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits};
+}
+
+SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+    const auto t0 = std::chrono::steady_clock::now();
+    SupportResult r =
+        finishWithEdits(doc, c, planTips(doc, c, visible_model, ctl.sub(0.0, 0.55), edits), edits, ctl.sub(0.55, 1.0));
+    r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    return r;
+}
+
+SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
+    std::vector<fruit::SupportPoint> planned = plan.points;
+    std::vector<TipEdit> plan_edits = plan.edits;
+    plan.points = applyEdits(std::move(plan.points), edits, doc.transform());
+    SupportResult r = finishSupports(doc, c, std::move(plan), ctl);
+    r.planned = std::move(planned);
+    r.plan_edits = std::move(plan_edits);
+    r.edits = edits;
+    return r;
+}
 
 std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pts, const std::vector<TipEdit>& edits,
                                             const fruit::Transform& t) {
     using K = TipEdit::Kind;
-    auto drop = [&](const fruit::Vec3& at, double r) {
-        std::erase_if(pts, [&](const fruit::SupportPoint& p) { return dist(p.pos, at) <= r; });
+    const auto planners = [](const fruit::SupportPoint& p) { return p.category != fruit::PointCategory::Manual; };
+    // The planner's tip the edit was made on: the nearest one where it was.
+    auto takeTip = [&](const fruit::Vec3& at) {
+        auto best = pts.end();
+        double best_d = kMatch;
+        for (auto it = pts.begin(); it != pts.end(); ++it)
+            if (planners(*it) && dist(it->pos, at) <= best_d) {
+                best_d = dist(it->pos, at);
+                best = it;
+            }
+        if (best != pts.end()) pts.erase(best);
     };
+    // The planner's tips inside a zone (the planner's own test: within the radius).
+    auto keepOut = [&](const fruit::Vec3& at, double r) {
+        std::erase_if(pts, [&](const fruit::SupportPoint& p) { return planners(p) && dist(p.pos, at) <= r; });
+    };
+    std::vector<fruit::SupportPoint> yours;
     for (const TipEdit& e : edits) {
         const fruit::Vec3 at = t.apply(e.at);
         const fruit::Vec3 n = unit(t.applyLinear(e.normal));
-        switch (e.kind) {
-            case K::Add: pts.push_back(manualTip(at, n, e.diameter)); break;
-            case K::Delete:
-            case K::Zone: drop(at, std::max(e.radius, kMatch)); break;
-            case K::Move:
-                drop(at, kMatch);
-                pts.push_back(manualTip(t.apply(e.to), n, e.diameter));
-                break;
-            case K::Resize:
-            case K::Pin:
-                drop(at, kMatch);
-                pts.push_back(manualTip(at, n, e.diameter));
-                break;
-        }
+        if (e.kind == K::Move || e.kind == K::Delete || e.kind == K::Resize || e.kind == K::Pin) takeTip(at);
+        if (keepsOut(e.kind)) keepOut(at, e.radius);
+        if (const auto mine = yourTip(e)) yours.push_back(manualTip(t.apply(*mine), n, e.diameter));
     }
+    pts.insert(pts.end(), yours.begin(), yours.end());
     return pts;
+}
+
+bool planStillFits(const std::vector<TipEdit>& plan_edits, const std::vector<TipEdit>& edits) {
+    std::vector<bool> used(edits.size(), false);
+    for (const TipEdit& p : plan_edits) {
+        bool found = false;
+        for (std::size_t i = 0; i < edits.size() && !found; ++i)
+            if (!used[i] && edits[i] == p) used[i] = found = true;
+        if (!found) return false;
+    }
+    return true;
+}
+
+namespace {
+
+// The edit that made a tip of yours (printer coordinates), or -1.
+int editOf(const std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& t) {
+    if (tip.category != fruit::PointCategory::Manual) return -1;
+    for (int i = static_cast<int>(edits.size()) - 1; i >= 0; --i)
+        if (const auto at = yourTip(edits[static_cast<std::size_t>(i)]); at && dist(t.apply(*at), tip.pos) <= kMatch)
+            return i;
+    return -1;
+}
+
+// Takes the edit out of the list, for changing and putting back at the end.
+TipEdit takeEdit(std::vector<TipEdit>& edits, int i) {
+    const TipEdit e = edits[static_cast<std::size_t>(i)];
+    edits.erase(edits.begin() + i);
+    return e;
+}
+
+}  // namespace
+
+bool recordMove(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Vec3& to,
+                const fruit::Vec3& normal, const fruit::Transform& t) {
+    using K = TipEdit::Kind;
+    if (dist(tip.pos, to) <= kMatch) return false;
+    const fruit::Transform m = t.inverse();
+    TipEdit e;
+    if (const int i = editOf(edits, tip, t); i >= 0) {
+        e = takeEdit(edits, i);
+        if (e.kind == K::Add) {
+            e.at = m.apply(to);
+        } else {  // moved again, or a resized or pinned tip moved: from where the planner had it
+            e.kind = K::Move;
+            e.to = m.apply(to);
+            e.radius = kDeletedZone;
+        }
+    } else {
+        e.kind = K::Move;
+        e.at = m.apply(tip.pos);
+        e.to = m.apply(to);
+        e.diameter = tip.tip_diameter;
+        e.radius = kDeletedZone;
+    }
+    e.normal = m.applyLinear(normal);
+    edits.push_back(e);
+    return true;
+}
+
+bool recordDelete(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& t) {
+    using K = TipEdit::Kind;
+    const fruit::Transform m = t.inverse();
+    TipEdit e;
+    if (const int i = editOf(edits, tip, t); i >= 0) {
+        e = takeEdit(edits, i);
+        if (e.kind == K::Add) return true;  // your tip: gone with the edit that added it
+        // A moved, resized or pinned tip of the planner's: deleted where the planner had it.
+        e.kind = K::Delete;
+        e.to = {};
+        e.normal = {};
+    } else {
+        e.kind = K::Delete;
+        e.at = m.apply(tip.pos);
+        e.diameter = tip.tip_diameter;
+    }
+    e.radius = kDeletedZone;
+    edits.push_back(e);
+    return true;
+}
+
+bool recordResize(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, double diameter,
+                  const fruit::Transform& t) {
+    using K = TipEdit::Kind;
+    if (std::abs(tip.tip_diameter - diameter) < 1e-9) return false;
+    const fruit::Transform m = t.inverse();
+    TipEdit e;
+    if (const int i = editOf(edits, tip, t); i >= 0) {
+        e = takeEdit(edits, i);
+        if (e.kind == K::Pin) e.kind = K::Resize;
+    } else {
+        e.kind = K::Resize;
+        e.at = m.apply(tip.pos);
+        e.normal = m.applyLinear(tip.normal);
+    }
+    e.diameter = diameter;
+    edits.push_back(e);
+    return true;
+}
+
+bool recordPin(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& t) {
+    if (tip.category == fruit::PointCategory::Manual) return false;  // yours are pinned already
+    const fruit::Transform m = t.inverse();
+    TipEdit e;
+    e.kind = TipEdit::Kind::Pin;
+    e.at = m.apply(tip.pos);
+    e.normal = m.applyLinear(tip.normal);
+    e.diameter = tip.tip_diameter;
+    edits.push_back(e);
+    return true;
 }
 
 std::pair<std::string, std::string> describeEdit(const TipEdit& e, const fruit::Transform& t) {
@@ -507,9 +650,27 @@ EditCounts countEdits(const std::vector<TipEdit>& edits) {
             case TipEdit::Kind::Add: ++c.added; break;
             case TipEdit::Kind::Move: ++c.moved; break;
             case TipEdit::Kind::Delete: ++c.deleted; break;
-            default: ++c.changed; break;
+            case TipEdit::Kind::Resize: ++c.resized; break;
+            case TipEdit::Kind::Pin: ++c.pinned; break;
+            case TipEdit::Kind::Zone: ++c.zones; break;
         }
     return c;
+}
+
+std::string describeCounts(const EditCounts& n) {
+    std::string out;
+    auto add = [&](std::size_t k, const char* what) {
+        if (k == 0) return;
+        if (!out.empty()) out += ", ";
+        out += std::to_string(k) + " " + what;
+    };
+    add(n.added, "added");
+    add(n.moved, "moved");
+    add(n.deleted, "deleted");
+    add(n.resized, "resized");
+    add(n.pinned, "pinned");
+    add(n.zones, n.zones == 1 ? "no-tip zone" : "no-tip zones");
+    return out;
 }
 
 SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,

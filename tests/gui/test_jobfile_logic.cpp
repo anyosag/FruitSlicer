@@ -165,9 +165,10 @@ TEST_CASE("Jobs: tip edits come back, applied to the planner's tips", "[gui][job
     add.normal = {0, 0, -1};
     add.diameter = 0.3;
     doc->supports.edits = {del, add};
-    r = std::make_shared<SupportResult>(finishWithEdits(*doc, doc->supports.choices,
-                                                        SupportPlan{r->planned, r->plan_warnings},
-                                                        doc->supports.edits, fruit::JobControl::none()));
+    // Planned again around the edits, as regenerating does: the job keeps both.
+    r = std::make_shared<SupportResult>(
+        generate(*doc, doc->supports.choices, {}, fruit::JobControl::none(), doc->supports.edits));
+    REQUIRE(r->plan_edits == doc->supports.edits);
     doc->supports.result = r;
     doc->supports.result_revision = doc->revision();
     doc->supports.result_settings = doc->orient.settings;
@@ -180,6 +181,7 @@ TEST_CASE("Jobs: tip edits come back, applied to the planner's tips", "[gui][job
     CHECK(s.fresh(o.doc->revision(), o.doc->orient.settings));
     CHECK(s.result->points.size() == r->points.size());
     CHECK(s.result->planned.size() == r->planned.size());
+    CHECK(s.result->plan_edits == r->plan_edits);
     std::size_t yours = 0;
     for (const auto& p : s.result->points) yours += p.category == fruit::PointCategory::Manual;
     CHECK(yours == 1);

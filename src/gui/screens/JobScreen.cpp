@@ -601,8 +601,7 @@ void statusBar(App& app) {
         problems = static_cast<int>(r.count(SupportProblem::Level::Review) + r.count(SupportProblem::Level::Blocks));
         totals = strf("%zu tips · %.1f ml of supports at most", r.tips, r.support_ml);
         if (!doc->supports.edits.empty()) {
-            const EditCounts n = countEdits(doc->supports.edits);
-            totals = strf("%zu tips · %zu added, %zu moved, %zu deleted by you", r.tips, n.added, n.moved, n.deleted);
+            totals = strf("%zu tips · %s by you", r.tips, describeCounts(countEdits(doc->supports.edits)).c_str());
         }
     } else if (doc) {
         const bool fits = doc->fit().fits;

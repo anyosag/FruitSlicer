@@ -11,6 +11,8 @@
     {"tip_resize": [0, 0.3]}, {"wait": "jobs"},
     {"tip_zone_near": [10, 1, 1]}, {"wait": "jobs"}, {"shot": "c5_edits"},
     {"tip_undo": 1}, {"wait": "jobs"}, {"shot": "c5_undone_one"},
-    {"edit_tips": false}, {"view": "angled"}, {"shot": "c5_done"}
+    {"edit_tips": false}, {"view": "angled"}, {"shot": "c5_done"},
+    {"supports": "generate"}, {"wait": "jobs"},
+    {"edit_tips": true}, {"view": "below"}, {"tip_undo": 0}, {"wait": "jobs"}, {"shot": "c5_replanned"}
   ]
 }

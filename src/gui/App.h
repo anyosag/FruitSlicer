@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -152,7 +153,9 @@ public:
     bool problemsOpen() const { return problems_open_; }
     void focusOn(const fruit::Vec3& where);  // turn the camera to look at a point
     // Editing tips by hand (canvas board "TipEdit"). Every edit is kept in
-    // model coordinates and can be undone on its own; the tree is rebuilt.
+    // model coordinates and can be undone on its own. An edit applies on top
+    // of the planner's tips (only the tree is rebuilt) unless it takes back
+    // one the planner worked around: then the tips are planned again.
     enum class TipTool { Select, Add, Zone };
     void editTips(bool on);
     bool editingTips() const { return tip_editing_; }
@@ -166,8 +169,11 @@ public:
     void deleteTip(int index);
     void resizeTip(int index, double diameter);
     void pinTip(int index);
-    void undoTipEdit(int index);  // -1: the last one
+    void undoTipEdit(int index);  // the Undo of one line in "Your edits"
     void undoAllTipEdits();
+    // ⌘Z and ⇧⌘Z while editing: the edits as they were before the last change.
+    bool undoTipChange();
+    bool redoTipChange();
     // The placed model under a ray (printer coordinates); false when it misses.
     bool pickModel(const fruit::Vec3& origin, const fruit::Vec3& dir, fruit::Vec3* pos, fruit::Vec3* normal);
     // Puts this step's extras (supports, tips, overhang tint) in the 3D view.
@@ -280,8 +286,11 @@ private:
     std::shared_ptr<fruit::AabbTree> pick_tree_;
     const void* pick_doc_ = nullptr;
     int pick_revision_ = -1;
-    void addTipEdit(TipEdit e);
-    void rebuildTips();
+    std::vector<std::vector<TipEdit>> tip_undo_, tip_redo_;  // edit lists, while editing
+    // Puts in a new edit list (undoable) and rebuilds the tips; `select`
+    // (printer coordinates) is the tip to select once they are rebuilt.
+    void setTipEdits(std::vector<TipEdit> edits, std::optional<fruit::Vec3> select = std::nullopt);
+    void rebuildTips(std::optional<fruit::Vec3> select);
     fruit::Transform modelFromPrinter() const;
     std::map<std::string, double> advanced_;  // carried over to the next model opened
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from

@@ -681,45 +681,72 @@ void App::editTips(bool on) {
         advanced_open_ = false;
     }
     dragging_tip_ = -1;
+    tip_undo_.clear();
+    tip_redo_.clear();
 }
 
-void App::addTipEdit(TipEdit e) {
-    if (!doc_ || !doc_->supports.result) return;
-    doc_->supports.edits.push_back(e);
-    rebuildTips();
+void App::setTipEdits(std::vector<TipEdit> edits, std::optional<fruit::Vec3> select) {
+    if (!doc_ || !doc_->supports.result || edits == doc_->supports.edits) return;
+    tip_undo_.push_back(doc_->supports.edits);
+    tip_redo_.clear();
+    doc_->supports.edits = std::move(edits);
+    rebuildTips(select);
 }
 
 void App::undoTipEdit(int index) {
     if (!doc_) return;
-    auto& edits = doc_->supports.edits;
-    if (edits.empty()) return;
-    if (index < 0 || index >= static_cast<int>(edits.size())) index = static_cast<int>(edits.size()) - 1;
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    if (index < 0 || index >= static_cast<int>(edits.size())) return;
     edits.erase(edits.begin() + index);
-    rebuildTips();
+    setTipEdits(std::move(edits));
 }
 
 void App::undoAllTipEdits() {
-    if (!doc_ || doc_->supports.edits.empty()) return;
-    doc_->supports.edits.clear();
-    rebuildTips();
+    if (doc_) setTipEdits({});
 }
 
-void App::rebuildTips() {
-    // The planner's tips with the edits on top: only the tree is built again.
+bool App::undoTipChange() {
+    if (!doc_ || !doc_->supports.result || tip_undo_.empty()) return false;
+    tip_redo_.push_back(std::move(doc_->supports.edits));
+    doc_->supports.edits = std::move(tip_undo_.back());
+    tip_undo_.pop_back();
+    rebuildTips(std::nullopt);
+    return true;
+}
+
+bool App::redoTipChange() {
+    if (!doc_ || !doc_->supports.result || tip_redo_.empty()) return false;
+    tip_undo_.push_back(std::move(doc_->supports.edits));
+    doc_->supports.edits = std::move(tip_redo_.back());
+    tip_redo_.pop_back();
+    rebuildTips(std::nullopt);
+    return true;
+}
+
+void App::rebuildTips(std::optional<fruit::Vec3> select) {
     if (!doc_ || !doc_->supports.result) return;
     const auto prev = doc_->supports.result;
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
     const SupportChoices choices = prev->choices;
     const std::vector<TipEdit> edits = doc_->supports.edits;
+    // Edits made since the tips were planned go on top: only the tree is built
+    // again. Taking back one the planner worked around would leave its hole or
+    // zone behind, so then the tips are planned again, around the rest.
+    const bool replan = !planStillFits(prev->plan_edits, edits);
     const int rev = doc_->supports.result_revision, settings = doc_->supports.result_settings;
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
-        "Updating the tips",
-        [snap, prev, out, choices, edits](const fruit::JobControl& ctl) {
-            *out = finishWithEdits(*snap, choices, SupportPlan{prev->planned, prev->plan_warnings}, edits, ctl);
+        replan ? "Planning the tips again" : "Updating the tips",
+        [snap, prev, out, choices, edits, replan](const fruit::JobControl& ctl) {
+            if (replan) {
+                *out = generate(*snap, choices, snap->orient.visible, ctl, edits);
+            } else {
+                SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits};
+                *out = finishWithEdits(*snap, choices, std::move(plan), edits, ctl);
+            }
         },
-        [this, target, out, rev, settings](std::exception_ptr err) {
+        [this, target, out, rev, settings, select](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
             if (err) {
@@ -735,7 +762,16 @@ void App::rebuildTips() {
             s.result = std::make_shared<const SupportResult>(std::move(*out));
             s.result_revision = rev;
             s.result_settings = settings;
-            if (s.selected_tip >= static_cast<int>(s.result->points.size())) s.selected_tip = -1;
+            // The tips are a new list: find the one to select by where it is.
+            s.selected_tip = -1;
+            if (select)
+                for (std::size_t i = 0; i < s.result->points.size(); ++i) {
+                    const fruit::Vec3 q = s.result->points[i].pos;
+                    if (std::abs(q.x - select->x) + std::abs(q.y - select->y) + std::abs(q.z - select->z) < 1e-3) {
+                        s.selected_tip = static_cast<int>(i);
+                        break;
+                    }
+                }
         });
 }
 
@@ -751,7 +787,9 @@ void App::addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
     e.diameter = supportConfig(doc_->placement(), doc_->supports.choices)
                      .tip_classes[static_cast<std::size_t>(std::clamp(new_tip_class_, 0, 3))]
                      .diameter;
-    addTipEdit(e);
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    edits.push_back(e);
+    setTipEdits(std::move(edits), pos);  // the new tip is selected, for [ and ]
 }
 
 void App::addZoneAt(const fruit::Vec3& pos) {
@@ -760,7 +798,9 @@ void App::addZoneAt(const fruit::Vec3& pos) {
     e.kind = TipEdit::Kind::Zone;
     e.at = modelFromPrinter().apply(pos);
     e.radius = kZoneRadius;
-    addTipEdit(e);
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    edits.push_back(e);
+    setTipEdits(std::move(edits));
 }
 
 namespace {
@@ -774,50 +814,29 @@ const fruit::SupportPoint* tipAt(const std::shared_ptr<Document>& d, int index) 
 void App::moveTip(int index, const fruit::Vec3& to, const fruit::Vec3& normal) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
     if (!p) return;
-    const fruit::Transform m = modelFromPrinter();
-    TipEdit e;
-    e.kind = TipEdit::Kind::Move;
-    e.at = m.apply(p->pos);
-    e.to = m.apply(to);
-    e.normal = m.applyLinear(normal);
-    e.diameter = p->tip_diameter;
-    doc_->supports.selected_tip = -1;
-    addTipEdit(e);
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    if (recordMove(edits, *p, to, normal, doc_->transform())) setTipEdits(std::move(edits), to);
 }
 
 void App::deleteTip(int index) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
     if (!p) return;
-    TipEdit e;
-    e.kind = TipEdit::Kind::Delete;
-    e.at = modelFromPrinter().apply(p->pos);
-    e.normal = modelFromPrinter().applyLinear(p->normal);
-    e.diameter = p->tip_diameter;
-    e.radius = kDeletedZone;
-    doc_->supports.selected_tip = -1;
-    addTipEdit(e);
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    if (recordDelete(edits, *p, doc_->transform())) setTipEdits(std::move(edits));
 }
 
 void App::resizeTip(int index, double diameter) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
-    if (!p || std::abs(p->tip_diameter - diameter) < 1e-9) return;
-    TipEdit e;
-    e.kind = TipEdit::Kind::Resize;
-    e.at = modelFromPrinter().apply(p->pos);
-    e.normal = modelFromPrinter().applyLinear(p->normal);
-    e.diameter = diameter;
-    addTipEdit(e);
+    if (!p) return;
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    if (recordResize(edits, *p, diameter, doc_->transform())) setTipEdits(std::move(edits), p->pos);
 }
 
 void App::pinTip(int index) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
-    if (!p || p->category == fruit::PointCategory::Manual) return;
-    TipEdit e;
-    e.kind = TipEdit::Kind::Pin;
-    e.at = modelFromPrinter().apply(p->pos);
-    e.normal = modelFromPrinter().applyLinear(p->normal);
-    e.diameter = p->tip_diameter;
-    addTipEdit(e);
+    if (!p) return;
+    std::vector<TipEdit> edits = doc_->supports.edits;
+    if (recordPin(edits, *p, doc_->transform())) setTipEdits(std::move(edits), p->pos);
 }
 
 bool App::pickModel(const fruit::Vec3& origin, const fruit::Vec3& dir, fruit::Vec3* pos, fruit::Vec3* normal) {
@@ -1504,12 +1523,15 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, global)) saveJob();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, global)) saveJobAs();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, global)) requestQuit();
+    // While editing tips, undo and redo work on the tip edits only.
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, global)) {
-        // While editing tips, undo takes back the last tip edit.
-        if (tip_editing_ && doc_ && !doc_->supports.edits.empty()) undoTipEdit(-1);
+        if (tip_editing_) undoTipChange();
         else undo();
     }
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, global)) redo();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, global)) {
+        if (tip_editing_) redoTipChange();
+        else redo();
+    }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper) return;

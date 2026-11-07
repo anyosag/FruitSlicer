@@ -163,6 +163,7 @@ void saveJob(const std::string& path, const Document& doc) {
     if (doc.supports.fresh(doc.revision(), doc.orient.settings)) {
         const SupportResult& r = *doc.supports.result;
         sup["tips"] = fruit::pointsToJson(r.planned);  // the planner's; the edits apply on top
+        sup["planned_around"] = editsJson(r.plan_edits);  // the edits the planner worked around
         json ws = json::array();
         for (const auto& w : r.plan_warnings)
             ws.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}});
@@ -281,6 +282,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     if (sj.contains("tips")) {
         SupportPlan plan;
         plan.points = fruit::pointsFromJson(sj["tips"]);
+        plan.edits = editsFrom(sj.value("planned_around", json::array()));
         for (const auto& w : sj.value("warnings", json::array())) {
             fruit::Warning wn;
             wn.code = w.value("code", "");
