@@ -465,7 +465,8 @@ void App::goToStep(Step s) {
     }
     step_ = s;
     screen_ = Screen::Job;
-    if (s == Step::Orient && !(doc_ && doc_->orient.resultsFresh(doc_->revision()))) orient_view_ = OrientView::Settings;
+    if (s == Step::Orient && (orient_view_ == OrientView::Hollow || !(doc_ && doc_->orient.resultsFresh(doc_->revision()))))
+        orient_view_ = OrientView::Settings;
 }
 
 namespace {
@@ -549,6 +550,10 @@ void App::maintain() {
         return;
     }
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Orient || jobs_.busy()) return;
+    if (orient_view_ == OrientView::Hollow) {
+        planHollowPreview();
+        if (jobs_.busy()) return;
+    }
     OrientState& o = doc_->orient;
     const int rev = doc_->revision(), settings = o.settings;
     if (o.nowFresh(rev) || (scored_revision_ == rev && scored_settings_ == settings)) return;
@@ -632,6 +637,91 @@ void App::useOrientation(int option) {
     }
     o.decided = true;
     orient_view_ = OrientView::Settings;
+}
+
+void App::showHollow() {
+    if (!doc_ || !canGoTo(Step::Orient)) return;
+    goToStep(Step::Orient);
+    orient_view_ = OrientView::Hollow;
+    planHollowPreview();
+}
+
+bool App::planningHollow() const { return jobs_.busy() && jobs_.progress().name == "Finding hollows"; }
+
+void App::planHollowPreview() {
+    if (!doc_ || !doc_->fit().fits) return;
+    const HollowState& hs = doc_->hollow;
+    const int rev = doc_->revision();
+    if (hs.planFresh(rev)) return;
+    if (hollow_tried_revision_ == rev && hollow_tried_choices_ == hs.choices && hollow_tried_manual_ == hs.manual)
+        return;  // being made, or it failed
+    if (jobs_.busy() && !planningHollow()) return;
+    hollow_tried_revision_ = rev;
+    hollow_tried_choices_ = hs.choices;
+    hollow_tried_manual_ = hs.manual;
+    const int generation = ++hollow_generation_;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<HollowPlan>();
+    const HollowChoices c = hs.choices;
+    const std::vector<fruit::DrainHole> manual = hs.manual;
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Finding hollows",
+        [snap, out, c, manual](const fruit::JobControl& ctl) { *out = planHollow(*snap, c, manual, kLayerHeight, ctl); },
+        [this, target, out, rev, generation](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                    if (generation == hollow_generation_) hollow_tried_revision_ = -1;  // made again when wanted
+                } catch (const std::exception& e) {
+                    showError("Couldn't look for hollows", e.what());
+                }
+                return;
+            }
+            d->hollow.plan = std::make_shared<const HollowPlan>(std::move(*out));
+            d->hollow.plan_revision = rev;
+            log::info("hollow: " + std::to_string(d->hollow.plan->cavities().cavities.size()) + " hollows, " +
+                      std::to_string(d->hollow.plan->holes.size()) + " holes in " +
+                      std::to_string(d->hollow.plan->seconds) + " s");
+        });
+}
+
+void App::setHollowChoices(const HollowChoices& c) {
+    if (!doc_ || doc_->hollow.choices == c) return;
+    // One diameter for every hole, those placed by hand too.
+    if (c.hole_diameter != doc_->hollow.choices.hole_diameter)
+        for (fruit::DrainHole& h : doc_->hollow.manual) h.diameter = c.hole_diameter;
+    doc_->hollow.choices = c;
+    if (doc_->hollow.applied) ++doc_->hollow.settings;
+    planHollowPreview();
+}
+
+void App::applyHollow() {
+    if (!doc_) return;
+    doc_->hollow.applied = true;
+    ++doc_->hollow.settings;
+}
+
+void App::addHoleAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
+    if (!doc_) return;
+    const fruit::Transform to_model = doc_->transform().inverse();
+    fruit::DrainHole h;
+    h.at = to_model.apply(pos);
+    h.axis = fruit::normalized(to_model.applyLinear(-normal));  // into the model
+    h.diameter = doc_->hollow.choices.hole_diameter;
+    doc_->hollow.manual.push_back(h);
+    if (doc_->hollow.applied) ++doc_->hollow.settings;
+    planHollowPreview();
+}
+
+void App::removeHole(int index) {
+    if (!doc_ || index < 0 || index >= static_cast<int>(doc_->hollow.manual.size())) return;
+    doc_->hollow.manual.erase(doc_->hollow.manual.begin() + index);
+    if (doc_->hollow.applied) ++doc_->hollow.settings;
+    planHollowPreview();
 }
 
 void App::generateSupports() {

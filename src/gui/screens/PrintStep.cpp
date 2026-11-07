@@ -244,6 +244,18 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
     ImGui::SameLine(0, 8);
     if (secondaryButton("Export STL instead", ImVec2(0, 40), !app.jobs().busy())) app.exportStl(false);
     tooltip("The model and its supports as one mesh, for another slicer.");
+    if (doc.supports.result && doc.supports.result->hollow) {
+        // A mesh can't carry what was cut from the layers.
+        ImGui::Dummy(ImVec2(0, 2));
+        const HollowPlan& hp = *doc.supports.result->hollow;
+        text(hp.hollowing()  ? "An STL has the model as it is: it is hollowed and drilled only in FruitSlicer's own "
+                               "layers, so another slicer would print it solid."
+             : hp.filling() ? "An STL has the model as it is: its hollows are filled only in FruitSlicer's own "
+                              "layers, so another slicer would leave them sealed, full of resin."
+                            : "An STL has the model as it is: its holes are only in FruitSlicer's own layers, so "
+                              "another slicer would leave its hollows sealed.",
+             fonts().regular, size::Help, col::Warn, true);
+    }
     endCard();
 }
 

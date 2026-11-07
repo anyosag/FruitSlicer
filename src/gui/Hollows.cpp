@@ -54,9 +54,10 @@ HollowPlan planHollow(const Document& doc, const HollowChoices& c, const std::ve
     }
     ctl.step("holes", 0.85);
     const fruit::HollowResult& cav = p.cavities();
-    if (p.drilling() && !cav.cavities.empty()) {
+    if (p.drilling() && !cav.cavities.empty())
         p.holes = c.auto_holes ? fruit::suggestDrainHoles(doc.placed(), doc.transform(), *base, cav, c.hole_diameter)
                                : manual;
+    if (!p.holes.empty()) {
         p.placed = fruit::placeHoles(p.holes, doc.transform(), *base, cav);
         p.layers = std::make_shared<const fruit::LayerStack>(fruit::drilledLayers(*base, cav, p.placed));
     } else if (c.hollow) {
@@ -68,7 +69,13 @@ HollowPlan planHollow(const Document& doc, const HollowChoices& c, const std::ve
     }
     ctl.check();
     p.drains = fruit::cavitiesDrain(*p.layers, cav);
-    p.resin_saved = volumeOf(*solid) - volumeOf(*p.layers);
+    // Resin used: what prints, and what stays inside a hollow that doesn't
+    // drain. Against the model printed solid, as its own hollows' resin
+    // is used either way, cured or trapped.
+    double held = 0;
+    for (std::size_t i = 0; i < cav.cavities.size(); ++i)
+        if (i >= p.drains.size() || !p.drains[i]) held += cav.cavities[i].volume;
+    p.resin_saved = volumeOf(*solid) + p.closed.volume - volumeOf(*p.layers) - held;
     p.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     ctl.report("holes", 1.0);
     return p;
@@ -98,9 +105,65 @@ std::string cavityMeaning(const fruit::Cavity& c, bool hollowed) {
 std::string applyLabel(const HollowPlan& p) {
     if (p.hollowing()) return "Hollow it";
     if (p.filling()) return "Print it solid";
-    if (!p.drilling()) return "Leave it";
     const std::size_t n = p.holes.size();
+    if (!p.drilling() || n == 0) return "Leave it";
     return n == 1 ? "Add a drain hole" : strf("Add %zu drain holes", n);
+}
+
+HollowOutcome cavityLabel(const HollowPlan& p, std::size_t i, bool applied) {
+    const fruit::Cavity& c = p.cavities().cavities.at(i);
+    const std::string v = volumeText(c.volume);
+    const bool drains = applied && i < p.drains.size() && p.drains[i];
+    if (p.hollowing())
+        return {!applied || drains,
+                v + (applied ? " taken out" : " to take out") + (applied && !drains ? " · holds resin" : ""), ""};
+    if (applied && p.filling()) return {true, v + " · printed solid", ""};
+    if (drains) return {true, v + " · drains", ""};
+    return {false, c.opens_up ? v + " suction cup" : v + " of trapped resin", ""};
+}
+
+fruit::Vec3 cavityLabelAt(const fruit::HollowResult& h, std::size_t i, double layer_height) {
+    const fruit::Cavity& c = h.cavities.at(i);
+    const std::size_t mid = static_cast<std::size_t>((c.first_layer + c.last_layer) / 2);
+    fruit::Paths own;
+    if (mid < h.pieces.size())
+        for (const fruit::InteriorPiece& k : h.pieces[mid])
+            if (k.cavity == static_cast<int>(i)) {
+                const fruit::Paths piece = h.piece(mid, k);
+                own.insert(own.end(), piece.begin(), piece.end());
+            }
+    const fruit::BBox2 b = fruit::bbox(own);
+    const double z = (c.first_layer + c.last_layer + 1) * layer_height / 2;
+    return own.empty() ? fruit::Vec3{0, 0, z} : fruit::Vec3{(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, z};
+}
+
+std::size_t hollowsToFix(const Document& doc) {
+    const HollowState& hs = doc.hollow;
+    if (hs.planFresh(doc.revision())) return hs.applied ? hs.plan->undrained() : hs.plan->closed.cavities.size();
+    // Until it is planned again: what was chosen is taken to work.
+    if (hs.applied && (hs.choices.hollow || hs.choices.fix != HollowChoices::Fix::Leave)) return 0;
+    if (hs.plan && hs.plan_revision == doc.revision()) return hs.plan->closed.cavities.size();
+    return static_cast<std::size_t>(std::max(0, doc.check.cavities));
+}
+
+HollowOutcome hollowSummary(const Document& doc) {
+    const HollowState& hs = doc.hollow;
+    const HollowChoices& c = hs.choices;
+    const std::size_t left = hollowsToFix(doc);
+    const std::size_t m = hs.manual.size();
+    const std::string by_hand = m == 1 ? std::string("1 drain hole placed by hand")
+                                       : strf("%zu drain holes placed by hand", m);
+    const std::string holes = c.auto_holes ? std::string("Drain holes placed automatically") : by_hand;
+    const std::string holding = left == 1 ? std::string("1 hollow still holds resin")
+                                          : strf("%zu hollows still hold resin", left);
+    if (hs.applied && c.hollow) return {left == 0, strf("Hollowed · %.1f mm wall", c.wall), left ? holding : holes};
+    if (hs.applied && c.fix == HollowChoices::Fix::Holes)
+        return {left == 0, left ? holding : "Drain holes added", left ? holes : (c.auto_holes ? "Placed automatically" : by_hand)};
+    if (hs.applied && c.fix == HollowChoices::Fix::Fill) return {true, "Printed solid", "Nothing holds resin."};
+    if (left == 0) return {true, "No hollows found", "Hollow and drain options"};
+    const std::string n = left == 1 ? std::string("1 hollow holds resin") : strf("%zu hollows hold resin", left);
+    if (hs.applied) return {false, n, "Left as it is: shown as a problem before saving."};
+    return {false, n, left == 1 ? "Drain it, fill it or leave it." : "Drain them, fill them or leave them."};
 }
 
 std::vector<HollowOutcome> hollowOutcomes(const HollowPlan& p) {
@@ -130,7 +193,7 @@ std::vector<HollowOutcome> hollowOutcomes(const HollowPlan& p) {
     if (p.resin_saved > 0.5)
         out.push_back({true, "Saves " + volumeText(p.resin_saved) + " of resin",
                        p.hollowing() ? strf("Walls stay at least %.1f mm thick everywhere.", p.choices.wall)
-                                     : std::string("What the holes take out.")});
+                                     : std::string("What was inside drains out instead of staying in the part.")});
     return out;
 }
 

@@ -18,7 +18,8 @@ namespace gui::screens::parts {
 inline constexpr float kTopH = 60, kStatusH = 42, kLeftW = 316, kRightW = 297;
 
 // A structural panel: square, one background; item spacing set inside only.
-void beginPanel(const char* id, ImVec2 size, ImU32 bg, ImVec2 padding);
+// `scroll`: it scrolls, with a bar, when what is in it is taller.
+void beginPanel(const char* id, ImVec2 size, ImU32 bg, ImVec2 padding, bool scroll = false);
 void endPanel();
 void edge(bool right, bool bottom);  // a border on the current window's right or bottom
 void tooltip(const char* s);         // for the item just drawn, also when disabled
@@ -58,5 +59,10 @@ void staleSupports(App& app, ImVec2 size);
 void orientLeft(App& app, Document& doc, float h);
 void orientRight(App& app, Document& doc, float h);
 void orientResults(App& app, Document& doc, ImVec2 size);
+// Orient · Hollows: the panels and the view's overlay (hole marks, and
+// placing holes by hand).
+void hollowLeft(App& app, Document& doc, float h);
+void hollowRight(App& app, Document& doc, float h);
+void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 
 }  // namespace gui::screens::parts

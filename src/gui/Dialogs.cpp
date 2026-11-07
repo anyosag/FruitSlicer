@@ -154,8 +154,8 @@ void health(App& app) {
                        (std::to_string(c.cavities) + (c.cavities == 1 ? " closed hollow" : " closed hollows") +
                         " inside")
                            .c_str(),
-                       "A closed hollow traps resin and can burst. Drain holes come in a later update; until then "
-                       "add them in your modelling app or print it solid.");
+                       "A closed hollow traps resin and can burst. Give it drain holes, or print it solid, in "
+                       "the Orient step.");
         verdictRow("low", Verdict::Ok, "Low points found",
                    strf("As it sits now, %zu %s in mid-air. The Orient step looks for a way to have fewer.",
                         doc->low_points, doc->low_points == 1 ? "spot starts" : "spots start")

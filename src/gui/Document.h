@@ -99,6 +99,9 @@ struct JobStamp {
     const void* supports = nullptr;  // the supports result, by identity
     SupportChoices choices;
     std::vector<TipEdit> edits;
+    bool hollow_applied = false;  // the Hollow screen
+    HollowChoices hollow;
+    std::vector<fruit::DrainHole> holes;
     std::string sample_path;
     double exposure = 0, bottom_exposure = 0;
     int bottom_layers = -1, transition_layers = -1;

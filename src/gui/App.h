@@ -44,8 +44,9 @@ struct AppOptions {
     int msaa_samples = 4;
 };
 
-// The Orient step shows its settings, or the search's results.
-enum class OrientView { Settings, Results };
+// The Orient step shows its settings, the search's results, or the Hollow
+// screen (the model's own hollows, hollowing it, drain holes).
+enum class OrientView { Settings, Results, Hollow };
 
 // How the Supports step draws the result.
 enum class SupportsView { Supports, TipsOnly, Why };
@@ -142,6 +143,19 @@ public:
     void useOrientation(int option);  // -1 keeps how it sits
     void showOrientSettings() { orient_view_ = OrientView::Settings; }
     OrientView orientView() const { return orient_view_; }
+    // The Hollow screen (canvas board "Hollow"). Its plan is made in the
+    // background for the current choices; nothing changes what prints until
+    // they are applied, and after that every change counts at once.
+    void showHollow();
+    void setHollowChoices(const HollowChoices& c);
+    void applyHollow();
+    void addHoleAt(const fruit::Vec3& pos, const fruit::Vec3& normal);  // printer coordinates, by hand
+    void removeHole(int index);                                          // one placed by hand
+    // Starts the screen's plan unless it is up to date or being made. It
+    // only ever replaces a plan being made for earlier choices, never other
+    // work: then maintain() starts it once that is done.
+    void planHollowPreview();
+    bool planningHollow() const;
     // The results' pictures from below, as textures (-1: how it sits now).
     unsigned orientPicture(int option);
     // Supports.
@@ -387,6 +401,12 @@ private:
     bool shortcuts_open_ = false;
     OrientView orient_view_ = OrientView::Settings;
     int scored_revision_ = -1, scored_settings_ = -1;  // last scoring started (it may have been cancelled)
+    // The Hollow screen's last plan started: for this revision, choices and
+    // hand-placed holes (cleared when it is cancelled, so it is made again).
+    int hollow_tried_revision_ = -1;
+    HollowChoices hollow_tried_choices_;
+    std::vector<fruit::DrainHole> hollow_tried_manual_;
+    int hollow_generation_ = 0;
     std::shared_ptr<const OrientSearch> pictures_for_;
     std::vector<unsigned> pictures_;  // options, then how it sits now
     SupportsView supports_view_ = SupportsView::Supports;

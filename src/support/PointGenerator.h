@@ -81,6 +81,11 @@ struct PointGenOptions {
     // slices the mesh itself.
     std::shared_ptr<const LayerStack> layers;
     unsigned slice_threads = 0;  // 0 = all cores
+    // Hollows that drain (drilled, or hollowed out): per layer, the regions
+    // inside them. As in a sealed hollow, their ceilings get no tips, since
+    // a support in there could never be removed: they have to hold
+    // themselves up, and are reported ("cavity_ceiling") when they don't.
+    const std::vector<Paths>* hollows = nullptr;
 };
 
 // `mesh` must already be placed in printer coordinates (lowest point at the

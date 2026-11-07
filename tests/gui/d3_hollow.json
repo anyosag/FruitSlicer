@@ -1,0 +1,27 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo-hollow"}, {"wait": "jobs"}, {"shot": "d3_health"}, {"health": "place"},
+    {"step": "orient"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "d3_orient"},
+    {"hollow": "open"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2}, {"shot": "d3_hollow"},
+    {"hollow": "apply"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "d3_hollow_applied"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"frames": 2},
+    {"problems": true}, {"frames": 2}, {"shot": "d3_supports_drained"}, {"problems": false},
+    {"hollow": "open"}, {"hollow_fix": "fill"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2},
+    {"shot": "d3_hollow_fill"},
+    {"hollow_fix": "holes", "hole_place": "hand"}, {"frames": 2}, {"wait": "jobs"},
+    {"hole_ray": [0, 0, -40, 0, 0, 1]}, {"hole_ray": [40, 0, 0, -1, 0, 0]}, {"frames": 2}, {"wait": "jobs"},
+    {"frames": 2}, {"shot": "d3_hollow_hand"},
+    {"hollow_it": true, "wall": 2, "hole_place": "auto"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2},
+    {"shot": "d3_hollow_it"},
+    {"orient": "settings"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "d3_orient_applied"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"frames": 2}, {"shot": "d3_supports"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2}, {"shot": "d3_layers"},
+    {"step": "print"}, {"exposures": [2.5, 30]}, {"frames": 2}, {"shot": "d3_print"},
+    {"open": "@demo"}, {"unsaved": "discard"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "orient"}, {"frames": 2}, {"wait": "jobs"},
+    {"hollow": "open"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2}, {"shot": "d3_solid"},
+    {"hollow_it": true}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2}, {"shot": "d3_solid_hollowed"}
+  ]
+}

@@ -75,8 +75,18 @@ void writeDemo3mf(const std::string& path, const fruit::TriangleMesh& m) {
 }
 
 // "@demo": the bracket; "@demo-big": six times larger (too deep for the
-// plate); "@demo-3mf": the bracket as a 3MF file.
+// plate); "@demo-3mf": the bracket as a 3MF file; "@demo-hollow": a 30 mm
+// ball with a sealed hollow inside, under a 2 mm wall.
 std::string demoPath(const std::string& which) {
+    if (which == "@demo-hollow") {
+        fruit::TriangleMesh m = fruit::makeSphere({0, 0, 15}, 15, 96);
+        fruit::TriangleMesh v = fruit::makeSphere({0, 0, 15}, 13, 96);
+        for (auto& f : v.faces) std::swap(f[1], f[2]);  // facing in: a void
+        m.append(v);
+        const auto p = (demoDir() / "sphere.stl").string();
+        fruit::writeStl(p, m);
+        return p;
+    }
     fruit::TriangleMesh m = demoModel();
     if (which == "@demo-big") {
         fruit::Transform t;
@@ -303,6 +313,44 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (what == "find") app.findOrientation();
             else if (what == "settings") app.showOrientSettings();
             else throw std::runtime_error("unknown orient step " + what);
+        } else if (step.contains("hollow")) {
+            const std::string what = step["hollow"].get<std::string>();
+            if (what == "open") app.showHollow();
+            else if (what == "apply") app.applyHollow();
+            else throw std::runtime_error("unknown hollow step " + what);
+        } else if (step.contains("hollow_fix") || step.contains("hollow_it") || step.contains("hole_place") ||
+                   step.contains("hole_diameter")) {
+            const auto& doc = app.document();
+            if (!doc) throw std::runtime_error("hollow choices: no model open");
+            HollowChoices c = doc->hollow.choices;
+            if (step.contains("hollow_fix")) {
+                const std::string f = step["hollow_fix"].get<std::string>();
+                c.hollow = false;
+                c.fix = f == "fill" ? HollowChoices::Fix::Fill
+                        : f == "leave" ? HollowChoices::Fix::Leave
+                                       : HollowChoices::Fix::Holes;
+            }
+            if (step.contains("hollow_it")) c.hollow = step["hollow_it"].get<bool>();
+            c.wall = step.value("wall", c.wall);
+            c.ceiling_lean = step.value("lean", c.ceiling_lean);
+            if (step.contains("hole_place")) c.auto_holes = step["hole_place"].get<std::string>() != "hand";
+            c.hole_diameter = step.value("hole_diameter", c.hole_diameter);
+            app.setHollowChoices(c);
+        } else if (step.contains("hole_ray")) {
+            // [x, y, z, dx, dy, dz]: from (x, y, z) mm off the middle of the placed model, along (dx, dy, dz);
+            // a hole goes in where that first meets the model, as a click there would put it.
+            const auto& a = step["hole_ray"];
+            const auto& doc = app.document();
+            if (!doc) throw std::runtime_error("hole_ray: no model open");
+            const fruit::BBox3 b = doc->placed().bbox();
+            const fruit::Vec3 mid = (b.min + b.max) * 0.5;
+            fruit::Vec3 pos, n;
+            if (!app.pickModel({mid.x + a[0].get<double>(), mid.y + a[1].get<double>(), mid.z + a[2].get<double>()},
+                               fruit::normalized({a[3].get<double>(), a[4].get<double>(), a[5].get<double>()}), &pos, &n))
+                throw std::runtime_error("hole_ray: misses the model");
+            app.addHoleAt(pos, n);
+        } else if (step.contains("hole_remove")) {
+            app.removeHole(step["hole_remove"].get<int>() - 1);  // 1 = the first
         } else if (step.contains("use")) {
             app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
         } else if (step.contains("supports")) {

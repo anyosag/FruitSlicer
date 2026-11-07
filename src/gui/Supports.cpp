@@ -328,11 +328,14 @@ const Known kKnown[] = {
      "Each speck is so small and joins the model so soon that the layer above usually carries it. A tip there "
      "would leave a mark bigger than the speck."},
     {"suction_cup", SupportProblem::Level::Review, "Suction cups",
-     "A hollow faces the film, so every layer pulls on a vacuum. Turn the model, or add a drain hole later."},
+     "A hollow faces the film, so every layer pulls on a vacuum. Turn the model, or give the hollow a hole on "
+     "the Hollow screen."},
     {"resin_trap", SupportProblem::Level::Review, "Resin traps",
-     "A cup facing up holds liquid resin, which can spill or cure where it shouldn't."},
-    {"cavity_ceiling", SupportProblem::Level::Review, "Closed hollows",
-     "A closed hollow has no supports inside, so its ceiling may sag. Drain holes come in a later update."},
+     "A sealed hollow keeps liquid resin inside, and pressure builds as it closes. Drain it or fill it on the "
+     "Hollow screen."},
+    {"cavity_ceiling", SupportProblem::Level::Review, "Ceilings inside hollows",
+     "No supports go inside a hollow, as they could never be removed, so its ceiling has to hold itself up and a "
+     "flat one may sag. Hollowing the model shapes ceilings that hold; filling it prints it solid."},
     {"peak_area", SupportProblem::Level::Note, "A big layer",
      "One layer is large, so it pulls hard on the film as it peels. Tilting the model makes layers smaller."},
     {"flat_face", SupportProblem::Level::Note, "Large flat faces facing down",
@@ -575,7 +578,7 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
             po.manual.push_back(manualTip(t.apply(*at), unit(t.applyLinear(e.normal)), e.diameter));
     }
     // Hollowed, drilled or filled on the Hollow screen: the tips are planned
-    // on those layers, and none goes in a hole's mouth.
+    // on those layers, none goes in a hole's mouth, and none inside a hollow.
     std::shared_ptr<const HollowPlan> hollow;
     fruit::JobControl rest = ctl;
     if (doc.hollow.applied) {
@@ -590,6 +593,7 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
     }
     if (hollow) {
         po.layers = hollow->layers;
+        if (!hollow->filling()) po.hollows = &hollow->cavities().interior;  // their ceilings get no tips
         for (std::size_t i = 0; i < hollow->holes.size(); ++i)
             if (hollow->placed[i].cavity >= 0)
                 cos.exclusions.push_back({t.apply(hollow->holes[i].at), hollow->placed[i].radius + kHoleMouthMargin});

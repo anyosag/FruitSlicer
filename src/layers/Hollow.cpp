@@ -196,7 +196,11 @@ void collectCavities(std::vector<Paths>& in, double layer_height, double min_vol
     parallelFor(n, threads, [&](size_t j) {
         if (in[j].empty()) return;
         ctl.check();
-        for (const ExPolygon& e : toExPolygons(in[j])) {
+        for (ExPolygon& e : toExPolygons(in[j])) {
+            // Specks of solid inside it smaller than a pixel are left over
+            // from the polygon operations: they'd print as nothing, but
+            // would count as islands to give tips.
+            std::erase_if(e.holes, [](const Path& h) { return std::abs(area(h)) < kTinyArea; });
             const double a = e.area();
             if (a >= kTinyArea) pieces[j].push_back({e.toPaths(), e.bbox(), a});
         }

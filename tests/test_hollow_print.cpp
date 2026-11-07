@@ -103,3 +103,88 @@ TEST_CASE("a hollowed, drilled part prints: no tips in its hole, nothing floatin
     CHECK(written.volume_mm3 == Approx(volume(print)).epsilon(0.02));
     std::filesystem::remove(path);
 }
+
+TEST_CASE("a drained hollow's ceiling gets no tips, as a sealed one's", "[hollow]") {
+    // A block with a sealed void under a flat 3 mm roof, placed 5 mm up.
+    TriangleMesh model = makeBox({0, 0, 0}, {20, 20, 12});
+    TriangleMesh v = makeBox({4, 4, 3}, {16, 16, 9});
+    for (auto& f : v.faces) std::swap(f[1], f[2]);
+    model.append(v);
+    Placement place;
+    place.elevation = 5;
+    const Transform to_printer = placementTransform(model, place);
+    const TriangleMesh placed = placeModel(model, place);
+    SupportConfig cfg;
+    cfg.layer_height = 0.1;
+    const LayerStack solid = sliceModel(placed, cfg.layer_height);
+    const HollowResult own = closedHollows(solid);
+    REQUIRE(own.cavities.size() == 1);
+    auto inside = [&](const PointGenResult& r) {
+        size_t n = 0;
+        for (const SupportPoint& p : r.points) n += own.cavityAt(solid.layerAt(p.pos.z - 0.05), p.pos.xy()) >= 0;
+        return n;
+    };
+    auto warned = [](const PointGenResult& r, const char* code) {
+        for (const Warning& w : r.warnings)
+            if (w.code == code) return true;
+        return false;
+    };
+    // Sealed: a trap, its ceiling left alone.
+    const PointGenResult sealed = generateSupportPoints(placed, cfg);
+    CHECK(inside(sealed) == 0);
+    CHECK(warned(sealed, "resin_trap"));
+    CHECK(warned(sealed, "cavity_ceiling"));
+
+    // Drilled, it drains; told where the hollow is, the planner still puts
+    // no tip under its ceiling, and says the ceiling has to hold itself.
+    const std::vector<PlacedHole> cut =
+        placeHoles(suggestDrainHoles(placed, to_printer, solid, own, 3.0), to_printer, solid, own);
+    PointGenOptions opts;
+    opts.layers = std::make_shared<const LayerStack>(drilledLayers(solid, own, cut));
+    REQUIRE(cavitiesDrain(*opts.layers, own) == std::vector<char>{1});
+    const PointGenResult unknown = generateSupportPoints(placed, cfg, opts);
+    CHECK(inside(unknown) > 0);  // not told: a 12 × 12 mm ceiling gets tips
+    CHECK_FALSE(warned(unknown, "resin_trap"));
+    opts.hollows = &own.interior;
+    const PointGenResult drained = generateSupportPoints(placed, cfg, opts);
+    CHECK(inside(drained) == 0);
+    CHECK_FALSE(warned(drained, "resin_trap"));
+    CHECK(warned(drained, "cavity_ceiling"));
+    CHECK(drained.points.size() < unknown.points.size());
+}
+
+TEST_CASE("a hollowed ball leaves no specks of solid in its cavity to hold up", "[hollow]") {
+    // A ball with a sealed hollow, filled and hollowed again as the Hollow
+    // screen does. The polygon operations once left zero-area holes in the
+    // interior: specks of solid that print as nothing, but that the planner
+    // took for islands and gave tips, inside the ball.
+    TriangleMesh model = makeSphere({0, 0, 15}, 15, 96);
+    TriangleMesh v = makeSphere({0, 0, 15}, 13, 96);
+    for (auto& f : v.faces) std::swap(f[1], f[2]);
+    model.append(v);
+    Placement place;
+    place.elevation = 5;
+    const Transform to_printer = placementTransform(model, place);
+    const TriangleMesh placed = placeModel(model, place);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    const LayerStack solid = sliceModel(placed, cfg.layer_height);
+    const LayerStack base = filledLayers(solid, closedHollows(solid));
+    const HollowResult h = hollowInterior(base, HollowOptions{});
+    REQUIRE(h.cavities.size() == 1);
+    size_t specks = 0;
+    for (const Paths& in : h.interior)
+        for (const Path& p : in) specks += std::abs(area(p)) < 1e-4;
+    CHECK(specks == 0);
+    // Drilled, so it isn't a sealed trap: the planner, not told where the
+    // hollow is, still finds nothing in it to hold up, its roof holding itself.
+    const std::vector<PlacedHole> cut = placeHoles(suggestDrainHoles(placed, to_printer, base, h, 3.0), to_printer, base, h);
+    PointGenOptions opts;
+    opts.layers = std::make_shared<const LayerStack>(drilledLayers(base, h, cut));
+    REQUIRE(cavitiesDrain(*opts.layers, h) == std::vector<char>{1});
+    const PointGenResult pts = generateSupportPoints(placed, cfg, opts);
+    for (const SupportPoint& p : pts.points)
+        CHECK(h.cavityAt(opts.layers->layerAt(p.pos.z - 0.025), p.pos.xy()) == -1);
+    opts.hollows = &h.interior;
+    CHECK(generateSupportPoints(placed, cfg, opts).stats.cavity_samples_skipped == 0);
+}

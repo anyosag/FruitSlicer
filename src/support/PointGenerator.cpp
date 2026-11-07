@@ -162,7 +162,7 @@ private:
     std::vector<int> tips_on_part_;
     std::vector<int> skipped_islands_;
     HollowReport hollows_;
-    std::vector<ExPolygons> traps_;  // per layer: enclosed cavities (resin traps)
+    std::vector<ExPolygons> traps_;  // per layer: inside hollows, sealed (resin traps) or drained
     size_t cavity_skipped_ = 0;
     bool inTrap(int layer, const Vec2& xy) const {
         if (layer < 0 || layer >= static_cast<int>(traps_.size())) return false;
@@ -236,7 +236,7 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     Sample s;
     project(xy, layers().layerBottom(layer), s.pos, s.normal);
     if (s.normal.z > (needs_cover ? 0.2 : -0.05)) return -1;  // not a downward-facing surface
-    // Ceiling of an enclosed cavity: no support could ever be removed from it.
+    // Ceiling of a hollow: no support could ever be removed from it.
     if (inTrap(layer - 1, xy)) {
         if (needs_cover) ++cavity_skipped_;
         return -1;
@@ -753,8 +753,12 @@ void Generator::setup() {
     hollows_ = analyzeHollows(layers());
     ctl_.check();
     traps_.assign(layers().size(), {});
-    for (size_t L = 0; L < layers().size(); ++L)
-        if (!hollows_.trap_regions[L].empty()) traps_[L] = toExPolygons(hollows_.trap_regions[L]);
+    for (size_t L = 0; L < layers().size(); ++L) {
+        Paths in = hollows_.trap_regions[L];
+        if (opts_.hollows && L < opts_.hollows->size() && !(*opts_.hollows)[L].empty())
+            in = in.empty() ? (*opts_.hollows)[L] : unionOf(in, (*opts_.hollows)[L]);
+        if (!in.empty()) traps_[L] = toExPolygons(in);
+    }
     s_off_ = cfg_.layer_height * std::tan(deg2rad(cfg_.critical_angle_deg));
     anchor_layers_ = std::max(1, static_cast<int>(std::lround(cfg_.anchor_window / cfg_.layer_height)));
     const size_t np = graph_.parts().size();
@@ -976,7 +980,7 @@ void Generator::finalize() {
     }
     if (cavity_skipped_ > 0) {
         std::ostringstream m;
-        m << cavity_skipped_ << " surface samples / islands inside closed cavities were left unsupported "
+        m << cavity_skipped_ << " surface samples / islands inside hollows were left unsupported "
           << "(supports there could never be removed); the cavity ceiling must hold itself";
         warn("cavity_ceiling", m.str(), -1, {});
     }

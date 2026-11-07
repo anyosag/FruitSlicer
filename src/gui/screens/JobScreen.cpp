@@ -25,11 +25,11 @@ namespace gui::screens::parts {
 // A structural panel: square, one background, border on one side.
 // Item spacing is set inside the child only: the parent lays panels out
 // edge to edge.
-void beginPanel(const char* id, ImVec2 size, ImU32 bg, ImVec2 padding) {
+void beginPanel(const char* id, ImVec2 size, ImU32 bg, ImVec2 padding, bool scroll) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
     ImGui::BeginChild(id, size, ImGuiChildFlags_AlwaysUseWindowPadding,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                      scroll ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 8));
 }
 
@@ -90,6 +90,9 @@ void topBar(App& app) {
         const bool can = app.canGoTo(s);
         std::string badge;
         ImU32 badge_col = col::Warn;
+        if (s == Step::Orient && doc) {
+            if (const std::size_t n = hollowsToFix(*doc)) badge = strf("%zu to fix", n);
+        }
         if (s == Step::Supports && doc && doc->supports.result) {
             if (!doc->supports.fresh(doc->revision(), doc->supportSettings())) {
                 badge = "out of date";
@@ -116,6 +119,7 @@ void topBar(App& app) {
     // the next thing to do.
     std::string next = "Open model...";
     bool enabled = true;
+    bool apply_hollow = false;  // the Hollow screen's choices, made to count
     const char* why = nullptr;
     std::string why_s;
     if (doc && app.step() == Step::Model) {
@@ -151,7 +155,15 @@ void topBar(App& app) {
         if (!enabled) why = why_s.c_str();
     } else if (doc && app.step() == Step::Orient) {
         const OrientState& o = doc->orient;
-        if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
+        const HollowState& hs = doc->hollow;
+        const bool hollow_view = app.orientView() == OrientView::Hollow;
+        if (hollow_view && !hs.applied && app.planningHollow()) {
+            next = "Finding hollows...";
+            enabled = false;
+        } else if (hollow_view && !hs.applied && hs.planFresh(doc->revision()) && hs.plan->changes()) {
+            next = applyLabel(*hs.plan);
+            apply_hollow = true;
+        } else if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
             next = "Use option 1";
         } else if (o.decided) {
             next = "Next: Supports";
@@ -167,6 +179,7 @@ void topBar(App& app) {
     ImGui::SetCursorPos(ImVec2(right - bw, 10));
     if (primaryButton(next.c_str(), ImVec2(bw, 38), enabled)) {
         if (!doc) app.openDialog();
+        else if (apply_hollow) app.applyHollow();
         else if (app.step() == Step::Model) app.goToStep(Step::Orient);
         else if (next == "Use option 1") app.useOrientation(0);
         else if (next == "Find best orientation") app.findOrientation();
@@ -651,7 +664,7 @@ void statusBar(App& app) {
         }
     } else if (doc) {
         const bool fits = doc->fit().fits;
-        problems = (fits ? 0 : 1) + (doc->check.closed() ? 0 : 1) + (doc->check.cavities ? 1 : 0);
+        problems = (fits ? 0 : 1) + (doc->check.closed() ? 0 : 1) + (hollowsToFix(*doc) ? 1 : 0);
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, fits ? col::Ok : col::Error);
         x += 14;
@@ -727,6 +740,15 @@ void job(App& app) {
     } else if (doc && app.step() == Step::Orient) {
         if (app.orientView() == OrientView::Results && doc->orient.results) {
             orientResults(app, *doc, ImVec2(0, body_h));
+        } else if (app.orientView() == OrientView::Hollow) {
+            hollowLeft(app, *doc, body_h);
+            ImGui::SameLine(0, 0);
+            Document& d = *doc;
+            viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
+                     d.hollow.choices.auto_holes ? nullptr : "Click on the model to put a hole there.",
+                     [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { hollowOverlay(app, d, o, s, vp); });
+            ImGui::SameLine(0, 0);
+            hollowRight(app, *doc, body_h);
         } else {
             orientLeft(app, *doc, body_h);
             ImGui::SameLine(0, 0);
