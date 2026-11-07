@@ -97,6 +97,12 @@ public:
     void focusOn(const fruit::Vec3& where);  // turn the camera to look at a point
     // Puts this step's extras (supports, tips, overhang tint) in the 3D view.
     void syncScene();
+    // Layers.
+    void setLayer(int index);  // 0-based; clamped
+    void setShowBelow(bool show);
+    // The current layer drawn for an area of `max_w` × `max_h` pixels, as a
+    // texture (0 while there is none); `image` describes it.
+    unsigned layerPicture(int max_w, int max_h, const LayerImage** image);
 
     // ---- State ----
     JobRunner& jobs() { return jobs_; }
@@ -151,6 +157,12 @@ private:
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from
     std::vector<fruit::TriangleMesh> tip_meshes_;      // one per tip kind
     int scene_key_ = 0;
+    std::shared_ptr<const SupportResult> sliced_for_;  // last slicing started (it may have been cancelled)
+    unsigned layer_tex_ = 0;
+    LayerImage layer_image_;
+    std::shared_ptr<const LayerResult> layer_tex_result_;
+    int layer_tex_index_ = -1, layer_tex_w_ = 0, layer_tex_h_ = 0;
+    bool layer_tex_below_ = false;
 };
 
 }  // namespace gui

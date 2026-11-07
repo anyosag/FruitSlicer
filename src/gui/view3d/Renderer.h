@@ -46,6 +46,9 @@ public:
     // coverage, for the UI to show; free it with freeTexture.
     unsigned uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb);
     static void freeTexture(unsigned tex);
+    // A `w` × `h` RGBA picture (top row first), nearest-neighbour filtered so
+    // printer pixels stay sharp when zoomed in.
+    unsigned uploadRgba(int w, int h, const std::vector<unsigned char>& rgba);
 
     // Draws into a `w` × `h` pixel target and returns its colour texture.
     unsigned render(int w, int h, const Camera& cam, int msaa_samples);

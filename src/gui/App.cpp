@@ -23,7 +23,10 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
     camera_.preset(ViewPreset::Angled);
 }
 
-App::~App() { freePictures(); }
+App::~App() {
+    freePictures();
+    Renderer::freeTexture(layer_tex_);
+}
 
 bool App::initGraphics(std::string* error) {
     gl_info_ = Renderer::glInfo();
@@ -176,6 +179,8 @@ bool App::canGoTo(Step s) const {
         case Step::Model: return true;
         case Step::Orient:
         case Step::Supports: return doc_ && doc_->fit().fits;
+        case Step::Layers:
+            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->orient.settings);
         default: return false;  // the next updates
     }
 }
@@ -231,6 +236,40 @@ void App::clearSides() {
 }
 
 void App::maintain() {
+    if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !jobs_.busy()) {
+        // Cut the layers for the current supports, once per supports result.
+        const auto& sup = doc_->supports.result;
+        if (sup && !doc_->layers.fresh(sup) && sliced_for_ != sup &&
+            doc_->supports.fresh(doc_->revision(), doc_->orient.settings)) {
+            sliced_for_ = sup;
+            auto snap = std::make_shared<const Document>(*doc_);
+            auto out = std::make_shared<LayerResult>();
+            const double raft = doc_->placement().on_plate ? 0.0 : sup->tree.raft_top;
+            std::weak_ptr<Document> target = doc_;
+            jobs_.start(
+                "Cutting layers",
+                [snap, sup, raft, out](const fruit::JobControl& ctl) { *out = sliceLayers(*snap, sup->mesh, raft, ctl); },
+                [this, target, sup, out](std::exception_ptr err) {
+                    const auto d = target.lock();
+                    if (!d) return;
+                    if (err) {
+                        try {
+                            std::rethrow_exception(err);
+                        } catch (const fruit::Cancelled&) {
+                        } catch (const std::exception& e) {
+                            showError("Couldn't cut the layers", e.what());
+                        }
+                        return;
+                    }
+                    d->layers.result = std::make_shared<const LayerResult>(std::move(*out));
+                    d->layers.for_supports = sup;
+                    d->layers.current = -1;
+                    log::info("layers: " + std::to_string(d->layers.result->layers->size()) + " in " +
+                              std::to_string(d->layers.result->seconds) + " s");
+                });
+        }
+        return;
+    }
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Orient || jobs_.busy()) return;
     OrientState& o = doc_->orient;
     const int rev = doc_->revision(), settings = o.settings;
@@ -408,6 +447,54 @@ void App::syncScene() {
     for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : 0xF2F4F7, fresh);
 }
 
+void App::setLayer(int index) {
+    if (!doc_ || !doc_->layers.result) return;
+    const int n = static_cast<int>(doc_->layers.result->layers->size());
+    doc_->layers.current = std::clamp(index, 0, std::max(0, n - 1));
+}
+
+void App::setShowBelow(bool show) {
+    if (doc_) doc_->layers.show_below = show;
+}
+
+unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
+    if (image) *image = nullptr;
+    if (!doc_ || !doc_->layers.result) return 0;
+    const auto& res = doc_->layers.result;
+    const int index = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(res->biggest);
+    const bool below = doc_->layers.show_below;
+    if (layer_tex_ && layer_tex_result_ == res && layer_tex_index_ == index && layer_tex_below_ == below &&
+        layer_tex_w_ == max_w && layer_tex_h_ == max_h) {
+        if (image) *image = &layer_image_;
+        return layer_tex_;
+    }
+    // A few millimetres around the print, drawn at the printer's pixel shape.
+    fruit::BBox3 crop = res->bounds;
+    crop.min = crop.min - fruit::Vec3{3, 3, 0};
+    crop.max = crop.max + fruit::Vec3{3, 3, 0};
+    layer_image_ = drawLayer(*res->layers, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
+    std::vector<unsigned char> rgba(layer_image_.lit.size() * 4, 0);
+    for (std::size_t i = 0; i < layer_image_.lit.size(); ++i) {
+        const unsigned lit = layer_image_.lit[i];
+        const unsigned under = layer_image_.below.empty() ? 0 : layer_image_.below[i];
+        // Lit pixels white; the layer below, where this one is dark, in dim blue-grey.
+        const unsigned g = lit + (255 - lit) * under * 0x48 / (255 * 255);
+        rgba[i * 4 + 0] = static_cast<unsigned char>(std::min(255u, g));
+        rgba[i * 4 + 1] = static_cast<unsigned char>(std::min(255u, lit + (255 - lit) * under * 0x52 / (255 * 255)));
+        rgba[i * 4 + 2] = static_cast<unsigned char>(std::min(255u, lit + (255 - lit) * under * 0x66 / (255 * 255)));
+        rgba[i * 4 + 3] = 255;
+    }
+    Renderer::freeTexture(layer_tex_);
+    layer_tex_ = renderer_.uploadRgba(layer_image_.w, layer_image_.h, rgba);
+    layer_tex_result_ = res;
+    layer_tex_index_ = index;
+    layer_tex_below_ = below;
+    layer_tex_w_ = max_w;
+    layer_tex_h_ = max_h;
+    if (image) *image = &layer_image_;
+    return layer_tex_;
+}
+
 void App::freePictures() {
     for (unsigned t : pictures_) Renderer::freeTexture(t);
     pictures_.clear();
@@ -508,6 +595,16 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper) return;
+    if (screen_ == Screen::Job && step_ == Step::Layers && doc_ && doc_->layers.result) {
+        const int now = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(doc_->layers.result->biggest);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setLayer(now + 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setLayer(now - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) setLayer(now + 10);
+        if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) setLayer(now - 10);
+        if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) setLayer(0);
+        if (ImGui::IsKeyPressed(ImGuiKey_End, false)) setLayer(1 << 30);
+        return;
+    }
     if (screen_ == Screen::Job) {
         if (ImGui::IsKeyPressed(ImGuiKey_1, false)) setView(ViewPreset::Front);
         if (ImGui::IsKeyPressed(ImGuiKey_2, false)) setView(ViewPreset::Side);

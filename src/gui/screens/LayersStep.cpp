@@ -1,0 +1,309 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 FruitSlicer contributors
+// Job · Layers: every layer as the printer will light it, the area of each
+// by height, and checks on the whole print (canvas boards "Slicing" and
+// "Layers").
+#include <imgui.h>
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+
+#include "App.h"
+#include "Format.h"
+#include "Icons.h"
+#include "Theme.h"
+#include "Widgets.h"
+#include "screens/JobParts.h"
+
+namespace gui::screens::parts {
+
+namespace {
+
+constexpr float kColumnW = 128, kChartH = 150;
+
+int shownLayer(const Document& doc) {
+    const LayerResult& r = *doc.layers.result;
+    return doc.layers.current >= 0 ? doc.layers.current : static_cast<int>(r.biggest);
+}
+
+void layerColumn(App& app, Document& doc, float h) {
+    beginPanel("layer_column", ImVec2(kColumnW, h), col::Panel, ImVec2(16, 18));
+    edge(true, false);
+    const LayerResult& r = *doc.layers.result;
+    const int n = static_cast<int>(r.layers->size());
+    const int at = shownLayer(doc);
+    groupLabel("Layer");
+    double v = at + 1;
+    if (numberField("layer", &v, kColumnW - 32, "%g", 1, n)) app.setLayer(static_cast<int>(v) - 1);
+    text(("of " + thousands(static_cast<std::size_t>(n))).c_str(), fonts().regular, size::Body, col::TextSecondary);
+    ImGui::Dummy(ImVec2(0, 4));
+    // Tall slider, layer 1 at the bottom, with marks for layers worth a look.
+    const float sh = std::max(80.0f, ImGui::GetContentRegionAvail().y - 46);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float x = p.x + (kColumnW - 32) / 2 - 12;
+    ImGui::SetCursorScreenPos(ImVec2(x, p.y));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col::Active);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col::Active);
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, col::Text);
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, col::Accent);
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 14);
+    int s = at;
+    if (ImGui::VSliderInt("##layers", ImVec2(24, sh), &s, 0, std::max(0, n - 1), "")) app.setLayer(s);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(5);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (std::size_t m : r.marks) {
+        const float y = p.y + sh - 7 - (sh - 14) * static_cast<float>(m) / static_cast<float>(std::max(1, n - 1));
+        const bool big = m == r.biggest;
+        dl->AddLine(ImVec2(x + 28, y), ImVec2(x + 40, y), big ? col::Accent : IM_COL32(0xF0, 0x6B, 0x9A, 255), 2);
+    }
+    // Legend: what each kind of mark is.
+    float ly = p.y + sh + 8;
+    auto legendLine = [&](ImU32 c, const char* label) {
+        dl->AddLine(ImVec2(p.x, ly + 8), ImVec2(p.x + 10, ly + 8), c, 2);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + 14, ly + 1));
+        text(label, fonts().regular, size::Label, col::TextMuted);
+        ly += 16;
+    };
+    legendLine(col::Accent, "biggest layer");
+    if (!r.hollows.components.empty()) legendLine(IM_COL32(0xF0, 0x6B, 0x9A, 255), "cup or trap starts");
+    endPanel();
+}
+
+void chart(App& app, const LayerResult& r, int at, ImVec2 size) {
+    beginPanel("area_chart", size, col::Panel, ImVec2(16, 12));
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 wp = ImGui::GetWindowPos();
+        dl->AddLine(wp, ImVec2(wp.x + size.x, wp.y), col::Border);
+    }
+    text("Layer area by height", fonts().semibold, size::Body, col::Text);
+    ImGui::SameLine(0, 10);
+    text("Bigger layers pull harder on the film as they peel.", fonts().regular, size::Body, col::TextMuted);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x, h = ImGui::GetContentRegionAvail().y - 4;
+    const float left = 44, bottom = 16;
+    const ImVec2 a(p.x + left, p.y), b(p.x + w, p.y + h - bottom);  // plot area
+    ImGui::InvisibleButton("plot", ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const std::size_t n = r.area.size();
+    double peak = 1;
+    for (double v : r.area) peak = std::max(peak, v);
+    const double nice = std::pow(10.0, std::floor(std::log10(peak)));
+    const double ymax = std::ceil(peak / nice) * nice;
+    ImGui::PushFont(fonts().regular, size::Label);
+    for (int k = 0; k <= 4; ++k) {  // horizontal grid with labels
+        const float y = b.y - (b.y - a.y) * k / 4.0f;
+        dl->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), col::Border);
+        const std::string l = strf("%.0f", ymax * k / 4);
+        dl->AddText(ImVec2(p.x + left - 8 - ImGui::CalcTextSize(l.c_str()).x, y - 6), col::TextMuted, l.c_str());
+    }
+    const double top = r.top;
+    const double step_mm = top > 100 ? 20 : (top > 40 ? 10 : (top > 15 ? 5 : 1));
+    for (double z = 0; z <= top + 1e-9; z += step_mm) {
+        const float x = a.x + (b.x - a.x) * static_cast<float>(z / std::max(top, 1e-9));
+        const std::string l = strf("%.0f", z);
+        dl->AddText(ImVec2(x - ImGui::CalcTextSize(l.c_str()).x / 2, b.y + 2), col::TextMuted, l.c_str());
+    }
+    ImGui::PopFont();
+    auto px = [&](std::size_t i) {
+        return ImVec2(a.x + (b.x - a.x) * static_cast<float>(i) / static_cast<float>(std::max<std::size_t>(1, n - 1)),
+                      b.y - (b.y - a.y) * static_cast<float>(r.area[i] / ymax));
+    };
+    // The curve, thinned to about one point per pixel column.
+    const std::size_t stride = std::max<std::size_t>(1, n / static_cast<std::size_t>(std::max(1.0f, b.x - a.x)));
+    for (std::size_t i = stride; i < n; i += stride) dl->AddLine(px(i - stride), px(i), IM_COL32(0x5B, 0x9B, 0xD5, 255), 1.5f);
+    if (n) {
+        const ImVec2 q = px(static_cast<std::size_t>(at));
+        dl->AddLine(ImVec2(q.x, a.y), ImVec2(q.x, b.y), col::TextMuted, 1);
+        dl->AddCircleFilled(q, 4, IM_COL32(0x5B, 0x9B, 0xD5, 255));
+    }
+    if (hovered && n) {
+        const float mx = ImGui::GetIO().MousePos.x;
+        const auto i = static_cast<std::size_t>(
+            std::clamp((mx - a.x) / std::max(1.0f, b.x - a.x), 0.0f, 1.0f) * static_cast<float>(n - 1) + 0.5f);
+        const ImVec2 q = px(i);
+        dl->AddCircle(q, 5, col::Text, 16, 1.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, col::Card);
+        ImGui::BeginTooltip();
+        text(strf("%.0f mm²", r.area[i]).c_str(), fonts().semibold, size::Body, col::Text);
+        text(strf("at %.2f mm · layer %zu", r.layers->layerTop(i), i + 1).c_str(), fonts().regular, size::Help,
+             col::TextSecondary);
+        ImGui::EndTooltip();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) app.setLayer(static_cast<int>(i));
+    }
+    endPanel();
+}
+
+void layerPicture(App& app, Document& doc, ImVec2 size) {
+    const LayerResult& r = *doc.layers.result;
+    const int at = shownLayer(doc);
+    beginPanel("layer_picture", size, col::Viewport, ImVec2(16, 10));
+    const float y = ImGui::GetCursorPosY();
+    text(strf("Layer %d · %.2f mm", at + 1, r.layers->layerTop(static_cast<std::size_t>(at))).c_str(), fonts().semibold,
+         size::Body, col::Text);
+    ImGui::SameLine(0, 10);
+    text(strf("%.0f mm² lit", r.area[static_cast<std::size_t>(at)]).c_str(), fonts().regular, size::Body,
+         col::TextSecondary);
+    // "Show the layer below", right-aligned.
+    ImGui::PushFont(fonts().regular, size::Body);
+    const float cw = ImGui::CalcTextSize("Show the layer below").x + 30;
+    ImGui::PopFont();
+    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - cw, y - 3));
+    bool below = doc.layers.show_below;
+    ImGui::PushFont(fonts().regular, size::Body);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3, 3));
+    if (ImGui::Checkbox("Show the layer below", &below)) app.setShowBelow(below);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    // The picture, with plate millimetres kept square on screen.
+    ImGui::SetCursorPosY(y + 28);
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+    const ImVec2 avail(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y - 4);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(o, ImVec2(o.x + avail.x, o.y + avail.y), IM_COL32(0, 0, 0, 255), 6);
+    const float fb = ImGui::GetIO().DisplayFramebufferScale.x;
+    const LayerImage* im = nullptr;
+    const unsigned tex = app.layerPicture(static_cast<int>(avail.x * fb), static_cast<int>(avail.y * fb), &im);
+    if (tex && im) {
+        const double mm_w = im->w * im->px, mm_h = im->h * im->py;
+        const float k = static_cast<float>(std::min(avail.x / mm_w, avail.y / mm_h));
+        const ImVec2 sz(static_cast<float>(mm_w) * k, static_cast<float>(mm_h) * k);
+        ImGui::SetCursorScreenPos(ImVec2(o.x + (avail.x - sz.x) / 2, o.y + (avail.y - sz.y) / 2));
+        ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex)), sz);
+    }
+    endPanel();
+}
+
+void slicingCard(App& app, ImVec2 size) {
+    beginPanel("slicing", size, col::App, ImVec2(0, 0));
+    const JobProgress p = app.jobs().progress();
+    const ImVec2 cs(440, 220);
+    ImGui::SetCursorPos(ImVec2((size.x - cs.x) / 2, (size.y - cs.y) / 2 - 30));
+    beginCard("slicing_card", cs, 18, col::Panel, col::BorderStrong);
+    text("Cutting the layers", fonts().semibold, size::Section + 2, col::Text);
+    text("Each layer is drawn at the printer's own pixel size (14 × 19 µm) and checked as it goes.", fonts().regular,
+         size::Body, col::TextSecondary, true);
+    ImGui::Dummy(ImVec2(0, 4));
+    const ImVec2 bp = ImGui::GetCursorScreenPos();
+    const float bw = ImGui::GetContentRegionAvail().x;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 5), col::Input, 3);
+    dl->AddRectFilled(bp, ImVec2(bp.x + bw * static_cast<float>(p.fraction), bp.y + 5), col::Accent, 3);
+    ImGui::Dummy(ImVec2(bw, 10));
+    const char* stages[] = {"Cut the model and supports into layers", "Look for suction cups and resin traps"};
+    const int now = p.stage == "hollows" ? 1 : 0;
+    for (int i = 0; i < 2; ++i) {
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        const ImVec2 c(q.x + 8, q.y + 9);
+        if (i < now) {
+            dl->AddCircleFilled(c, 8, col::OkBg, 20);
+            icon::check(dl, ImVec2(c.x - 5, c.y - 5), 10, col::Ok);
+        } else if (i == now) {
+            dl->AddCircleFilled(c, 8, col::Accent, 20);
+        } else {
+            dl->AddCircle(c, 7.5f, col::BorderStrong, 20);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(q.x + 24, q.y));
+        text(stages[i], fonts().regular, size::Body, i <= now ? col::Text : col::TextMuted);
+        ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + 24));
+    }
+    ImGui::SetCursorPosY(cs.y - 18 - 34);
+    if (secondaryButton("Cancel", ImVec2(0, 34))) app.jobs().cancel();
+    endCard();
+    endPanel();
+}
+
+void checkLine(const char* id, bool ok, const std::string& title, const std::string& detail) {
+    beginCard(id, ImVec2(0, 0), 12, ok ? col::Panel : col::WarnBg, ok ? col::Border : col::WarnBorder);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    dl->AddCircleFilled(ImVec2(p.x + 9, p.y + 9), 9, ok ? col::OkBg : IM_COL32(0x4A, 0x3A, 0x12, 255), 20);
+    if (ok) icon::check(dl, ImVec2(p.x + 3, p.y + 3), 12, col::Ok);
+    else text("!", fonts().bold, size::Help, col::Warn);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 28, p.y));
+    ImGui::BeginGroup();
+    text(title.c_str(), fonts().semibold, size::Body, col::Text);
+    if (!detail.empty()) text(detail.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    ImGui::EndGroup();
+    endCard();
+}
+
+void layersRight(App& app, Document& doc, float h) {
+    beginPanel("layers_right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetWindowPos();
+        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
+    }
+    const LayerResult& r = *doc.layers.result;
+    const auto at = static_cast<std::size_t>(shownLayer(doc));
+    groupLabel("This layer");
+    beginCard("this_layer", ImVec2(0, 0), 13, col::Panel, col::Border);
+    if (at < r.raft_layers) {
+        text("Raft", fonts().semibold, size::Body, col::Text);
+        text(strf("The first %zu layers make the raft that holds the print to the plate.", r.raft_layers).c_str(),
+             fonts().regular, size::Body, col::TextSecondary, true);
+    } else if (at == r.biggest) {
+        text("The biggest layer above the raft", fonts().semibold, size::Body, col::Text);
+        text(strf("%.0f mm² at %.2f mm, model and supports together.", r.area[at], r.layers->layerTop(at)).c_str(),
+             fonts().regular, size::Body, col::TextSecondary, true);
+    } else {
+        text(strf("%.0f mm² lit", r.area[at]).c_str(), fonts().semibold, size::Body, col::Text);
+        text(strf("The biggest above the raft is %.0f mm², at layer %zu.", r.area[r.biggest], r.biggest + 1).c_str(),
+             fonts().regular, size::Body, col::TextSecondary, true);
+        if (linkButton("Go to the biggest layer")) app.setLayer(static_cast<int>(r.biggest));
+    }
+    endCard();
+    ImGui::Dummy(ImVec2(0, 8));
+    groupLabel("Whole print");
+    const SupportResult& sup = *doc.supports.result;
+    const bool floating = !sup.validation.floating.empty();
+    checkLine("floating", !floating, floating ? "Parts start in mid-air" : "No part starts in mid-air",
+              floating ? strf("%zu islands have nothing under them", sup.validation.floating.size()) : "");
+    const std::size_t cups = r.cups(), traps = r.traps();
+    checkLine("hollows", cups + traps == 0,
+              cups + traps == 0 ? "No suction cups or resin traps"
+                                : strf("%zu suction %s, %zu resin %s", cups, cups == 1 ? "cup" : "cups", traps,
+                                       traps == 1 ? "trap" : "traps"),
+              cups + traps == 0 ? "" : "Marked on the layer slider. Turning the model usually helps.");
+    ImGui::Dummy(ImVec2(0, 8));
+    keyValue("Layers", thousands(r.layers->size()));
+    keyValue("Height", strf("%.2f mm", r.top));
+    keyValue("Resin", strf("%.1f ml", r.resin_ml));
+    endPanel();
+}
+
+}  // namespace
+
+void layersView(App& app, Document& doc, ImVec2 size) {
+    const bool cutting = app.jobs().busy() && app.jobs().progress().name == "Cutting layers";
+    if (cutting || !doc.layers.fresh(doc.supports.result)) {
+        if (cutting) slicingCard(app, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
+        else {
+            beginPanel("layers_wait", ImVec2(0, size.y), col::App, ImVec2(24, 24));
+            text("Cutting the layers starts in a moment.", fonts().regular, size::Body, col::TextSecondary);
+            endPanel();
+        }
+        return;
+    }
+    layerColumn(app, doc, size.y);
+    ImGui::SameLine(0, 0);
+    ImGui::BeginGroup();
+    const float w = ImGui::GetContentRegionAvail().x - kRightW;
+    layerPicture(app, doc, ImVec2(w, size.y - kChartH));
+    chart(app, *doc.layers.result, shownLayer(doc), ImVec2(w, kChartH));
+    ImGui::EndGroup();
+    ImGui::SameLine(0, 0);
+    layersRight(app, doc, size.y);
+}
+
+}  // namespace gui::screens::parts

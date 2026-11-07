@@ -1,0 +1,11 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b3_layers_biggest"},
+    {"layer": 60}, {"shot": "b3_layers_raft"},
+    {"layer": 420}, {"show_below": true}, {"shot": "b3_layers_below"}
+  ]
+}

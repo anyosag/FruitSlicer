@@ -99,7 +99,8 @@ void topBar(App& app) {
         }
         if (stepPill(i + 1, kSteps[i], state, can, badge.empty() ? nullptr : badge.c_str(), badge_col))
             app.goToStep(s);
-        if (i >= 3) tooltip("This step arrives in the next update.");
+        if (i >= 4) tooltip("This step arrives in the next update.");
+        else if (s == Step::Layers && !can && doc) tooltip("Generate supports first.");
         else if (!can && doc) tooltip("Make it fit the plate first.");
         ImGui::SameLine(0, 8);
     }
@@ -125,9 +126,11 @@ void topBar(App& app) {
             next = "Regenerate supports";
         } else {
             next = "Next: Layers";
-            enabled = false;
-            why = "Layers arrive in the next update.";
         }
+    } else if (doc && app.step() == Step::Layers) {
+        next = "Next: Print";
+        enabled = false;
+        why = "Saving the print file arrives in the next update.";
     } else if (doc && app.step() == Step::Orient) {
         const OrientState& o = doc->orient;
         if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
@@ -151,6 +154,7 @@ void topBar(App& app) {
         else if (next == "Find best orientation") app.findOrientation();
         else if (next == "Next: Supports") app.goToStep(Step::Supports);
         else if (next == "Generate supports" || next == "Regenerate supports") app.generateSupports();
+        else if (next == "Next: Layers") app.goToStep(Step::Layers);
     }
     if (why) tooltip(why);
     ImGui::PushFont(fonts().medium, size::Body);
@@ -542,6 +546,16 @@ void statusBar(App& app) {
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(all ? "Every option fits the plate" : "An option does not fit the plate however it is turned", fonts().regular,
              size::Body, col::TextSecondary);
+    } else if (doc && app.step() == Step::Layers && doc->layers.fresh(doc->supports.result)) {
+        const LayerResult& lr = *doc->layers.result;
+        const ImVec2 wp = ImGui::GetWindowPos();
+        dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, col::Ok);
+        x += 14;
+        ImGui::SetCursorPos(ImVec2(x, cy - 8));
+        text(("Fits the plate · " + dims(lr.bounds.size()) + " with supports").c_str(), fonts().regular, size::Body,
+             col::TextSecondary);
+        problems = static_cast<int>(lr.cups() + lr.traps());
+        totals = strf("%s layers · %.1f ml of resin", thousands(lr.layers->size()).c_str(), lr.resin_ml);
     } else if (doc && app.step() == Step::Supports && doc->supports.result &&
                doc->supports.fresh(doc->revision(), doc->orient.settings)) {
         const SupportResult& r = *doc->supports.result;
@@ -597,7 +611,9 @@ void job(App& app) {
     topBar(app);
     const float body_h = ImGui::GetContentRegionAvail().y - kStatusH;
     const auto& doc = app.document();
-    if (doc && app.step() == Step::Supports) {
+    if (doc && app.step() == Step::Layers) {
+        layersView(app, *doc, ImVec2(0, body_h));
+    } else if (doc && app.step() == Step::Supports) {
         supportsLeft(app, *doc, body_h);
         ImGui::SameLine(0, 0);
         const bool have = doc->supports.result != nullptr;
