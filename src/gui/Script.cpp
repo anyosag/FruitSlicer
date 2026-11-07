@@ -406,6 +406,31 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("ab")) {
             if (step["ab"].get<std::string>() != "open") throw std::runtime_error("unknown ab step");
             app.openABSetup();
+        } else if (step.contains("ab_results")) {
+            app.openABResults();
+        } else if (step.contains("ab_select")) {
+            app.abSelected() = step["ab_select"].get<int>();
+        } else if (step.contains("ab_reveal")) {
+            app.abRevealed() = step["ab_reveal"].get<bool>();
+        } else if (step.contains("ab_score_demo")) {
+            // The first n copies scored as by someone whose A copies (FruitSlicer's)
+            // marked less and cleaned up faster; the last B copy only partly printed.
+            const int n = step["ab_score_demo"].get<int>();
+            const nlohmann::json m = app.abManifest();
+            if (m.is_null()) throw std::runtime_error("ab_score_demo: no A/B test open");
+            int i = 0, b_left = 0;
+            for (const auto& c : m["copies"]) b_left += c["arm"] == "B" ? 1 : 0;
+            for (const auto& c : m["copies"]) {
+                if (i++ >= n) break;
+                const int id = c["id"].get<int>();
+                if (c["arm"] == "A") {
+                    app.setABScore(id, App::Outcome::Held, 1 + id % 2, 40 + 3 * id, "");
+                } else if (--b_left == 0) {
+                    app.setABScore(id, App::Outcome::Partly, 4, 120, "one arm came off");
+                } else {
+                    app.setABScore(id, App::Outcome::Held, 3, 85 + 2 * id, "");
+                }
+            }
         } else if (step.contains("ab_copies")) {
             app.setABCopies(step["ab_copies"].get<int>());
         } else if (step.contains("ab_save_to")) {

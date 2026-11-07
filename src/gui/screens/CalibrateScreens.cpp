@@ -285,11 +285,17 @@ void calibrate(App& app) {
     }
     {
         const ABRecord& ab = app.abRecord();
+        const std::string state = ab.copies == 0      ? std::string("Not set up")
+                                  : ab.scored == 0    ? strf("Saved: %s, %d copies", ab.model.c_str(), ab.copies)
+                                  : ab.scored < ab.copies ? strf("%s: %d of %d scored", ab.model.c_str(), ab.scored, ab.copies)
+                                                          : strf("%s: all %d scored", ab.model.c_str(), ab.copies);
         if (rowCard("ab", "A/B test",
                     "Print the same model with FruitSlicer's supports and SatelLite's, side by side, and compare.",
-                    ab.copies > 0 ? strf("Saved: %s, %d copies", ab.model.c_str(), ab.copies) : "Not set up",
-                    col::TextMuted, "Set up", true))
-            app.openABSetup();
+                    state, ab.copies > 0 && ab.scored == ab.copies ? col::Ok : col::TextMuted,
+                    ab.copies > 0 ? "Open" : "Set up", true)) {
+            if (ab.copies > 0) app.openABResults();
+            else app.openABSetup();
+        }
     }
     endPage();
 }

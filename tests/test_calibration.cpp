@@ -223,3 +223,80 @@ TEST_CASE("A/B score sheets: blind, and every score reads back", "[calibration][
     std::ofstream(sheet) << "id,row,col,result,scar,removal_s,notes\n1,0,1,ok,2,soon,\n";
     CHECK_THROWS_WITH(loadABResults(manifest, sheet), ContainsSubstring("removal_s must be seconds"));
 }
+
+TEST_CASE("A/B tests: exact p-values", "[calibration][ab]") {
+    // Fisher: all of one side held and none of the other, at 4, 3 and 2 a side.
+    CHECK(fisherExact(4, 0, 0, 4) == Approx(2.0 / 70));
+    CHECK(fisherExact(3, 0, 0, 3) == Approx(2.0 / 20));
+    CHECK(fisherExact(2, 0, 0, 2) == Approx(2.0 / 6));
+    CHECK(fisherExact(4, 0, 4, 0) == 1);  // nothing to tell apart
+    // 3 of 4 against 1 of 4: (1 + 16 + 16 + 1) / 70.
+    CHECK(fisherExact(3, 1, 1, 3) == Approx(34.0 / 70));
+    CHECK(fisherExact(0, 0, 3, 1) == 1);  // one side unscored
+    // Permutation: a clean sweep of 4 against 4 is 2 of the 70 splits.
+    CHECK(permutationTest({1, 1, 2, 2}, {3, 3, 4, 4}) == Approx(2.0 / 70));
+    CHECK(permutationTest({1, 2}, {3, 4}) == Approx(2.0 / 6));
+    CHECK(permutationTest({1, 1, 1, 1}, {3, 3, 3}) == Approx(1.0 / 35));  // unequal sides: no mirror
+    CHECK(permutationTest({1, 2, 3}, {1, 2, 3}) == Approx(1.0));
+    CHECK(permutationTest({}, {1, 2}) == 1);
+    // Overlapping sides: most splits differ at least this much.
+    CHECK(permutationTest({1, 3, 2, 4}, {2, 4, 3, 5}) > 0.3);
+    // Past 200,000 splits it estimates from random ones, with a fixed seed.
+    std::vector<double> a, b;
+    for (int i = 0; i < 15; ++i) {
+        a.push_back(i % 3 + 1);
+        b.push_back(i % 3 + 3);
+    }
+    const double p = permutationTest(a, b);
+    CHECK(p > 0);
+    CHECK(p < 0.001);
+    CHECK(permutationTest(a, b) == p);  // the same every time
+}
+
+TEST_CASE("A/B summary: each side's results, and what they can show", "[calibration][ab]") {
+    ABPlateOptions o;
+    o.copies = 8;
+    const ABPlate plate = makeABPlate(makeBox({-5, -5, 5}, {5, 5, 8}), makeBox({-6, -6, 0}, {6, 6, 5}),
+                                      PrinterProfile::saturn4Ultra16k(), o);
+    std::vector<ABCopyResult> scores;
+    for (const auto& c : plate.manifest["copies"]) {
+        ABCopyResult r;
+        r.id = c["id"].get<int>();
+        r.recorded = r.ok = true;
+        const bool a = c["arm"] == "A";
+        r.scar = a ? 1 : 3;
+        r.removal_s = a ? 40 : 90;
+        scores.push_back(r);
+    }
+    scores.back().ok = false;  // one copy failed: no mark, no time
+    scores.back().scar = 0;
+    scores.back().removal_s = -1;
+    const bool last_a = plate.manifest["copies"].back()["arm"] == "A";
+    const ABSummary s = summarizeAB(plate.manifest, scores);
+    CHECK(s.a.copies == 4);
+    CHECK(s.b.copies == 4);
+    CHECK(s.a.scored == 4);
+    CHECK((last_a ? s.a : s.b).failed == 1);
+    CHECK((last_a ? s.a : s.b).marked == 3);
+    CHECK(s.a.mean_scar == Approx(1));
+    CHECK(s.b.mean_scar == Approx(3));
+    CHECK(s.a.mean_removal_s == Approx(40));
+    CHECK(s.b.mean_removal_s == Approx(90));
+    // 4 marks against 3, cleanly apart: 1 of the 35 splits. (With unequal
+    // sides the mirror split is less extreme, so it doesn't count.)
+    CHECK(s.p_scar == Approx(1.0 / 35));
+    CHECK(s.best_p_scar == Approx(1.0 / 35));
+    CHECK(s.best_p_removal == Approx(1.0 / 35));
+    CHECK(s.p_ok == Approx(1.0));  // 4 of 4 against 3 of 4 is no evidence
+    CHECK(s.best_p_ok == Approx(2.0 / 70));
+
+    // Nothing scored on one side: nothing to compare.
+    std::vector<ABCopyResult> only_a;
+    for (const auto& r : scores)
+        for (const auto& c : plate.manifest["copies"])
+            if (c["id"] == r.id && c["arm"] == "A") only_a.push_back(r);
+    const ABSummary half = summarizeAB(plate.manifest, only_a);
+    CHECK(half.b.scored == 0);
+    CHECK(half.p_ok == 1);
+    CHECK(half.p_scar == 1);
+}

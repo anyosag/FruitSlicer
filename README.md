@@ -150,8 +150,14 @@ SatelLite's auto-supports (B), their places shuffled so the plate position
 favours neither. It offers as many copies as fit, shows where each goes,
 and saves two STL files (`<name>_A.stl` with the supports and the L marker,
 `<name>_B.stl` bare) to load in SatelLite, which supports the B copies only.
-FruitSlicer keeps which copy is where. Scoring the copies and comparing the
-two sides arrives in a later update.
+FruitSlicer keeps which copy is where. After printing, **A/B results** scores
+each copy (did it print whole, seconds to clean off its supports, the mark
+left) with its side hidden, then **Reveal and compare** puts the two sides
+next to each other. The verdict names a winner only where chance is an
+unlikely explanation (exact tests: Fisher's for staying on, permutation
+tests for marks and clean-up time, p < 0.05), and says how much the number
+of copies can show: with 3 or fewer a side even a clean sweep could be
+chance.
 
 **Settings** (at the bottom of the rail) has the 3D view's
 smoothing, how many processor cores slicing and saving may use, whether `.goo`

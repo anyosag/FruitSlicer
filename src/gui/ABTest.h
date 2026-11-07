@@ -38,4 +38,20 @@ void keepABTest(const nlohmann::json& manifest, const std::string& manifest_path
 // most 8 and at most `capacity`; 0 when fewer than 2 fit.
 int defaultABCopies(int capacity);
 
+// What the results say, in words. A side "did better" only where chance is
+// an unlikely explanation (p < 0.05), and never against the other side
+// doing better at something else.
+struct ABVerdict {
+    enum class Winner { NotYet, None, A, B, Mixed };
+    Winner winner = Winner::NotYet;
+    std::string headline, detail, caveat;
+};
+ABVerdict abVerdict(const fruit::ABSummary& s);
+
+// The two sides side by side: stayed on, average mark, clean-up, tips.
+struct ABTile {
+    std::string label, a, b;
+};
+std::vector<ABTile> abTiles(const fruit::ABSummary& s, int tips_per_copy);
+
 }  // namespace gui
