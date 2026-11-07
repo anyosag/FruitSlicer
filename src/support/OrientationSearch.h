@@ -63,6 +63,7 @@ struct OrientationResult {
     bool evaluated = false;
     size_t points = 0, cosmetic_points = 0, islands = 0;
     size_t uncovered = 0, capacity_deficits = 0;
+    double peak_layer_area = 0;  // mm², from the full slicing (peak_area is the coarse proxy)
     double score = 0;
     // The finalist's points (placed at OrientOptions::elevation), when
     // keep_points is set, so choosing it needs no second generator run.

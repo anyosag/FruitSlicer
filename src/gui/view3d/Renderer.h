@@ -6,6 +6,7 @@
 // as an image. Only the UI thread may call it.
 
 #include <string>
+#include <vector>
 
 #include "geometry/Transform.h"
 #include "mesh/TriangleMesh.h"
@@ -30,6 +31,11 @@ public:
     void setModel(const fruit::TriangleMesh& mesh, int geometry);
     void setModelTransform(const fruit::Transform& model_to_printer);
     void clearModel();
+
+    // A `w` × `h` picture in colour `rgb` (0xRRGGBB) with `alpha` as its
+    // coverage, for the UI to show; free it with freeTexture.
+    unsigned uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb);
+    static void freeTexture(unsigned tex);
 
     // Draws into a `w` × `h` pixel target and returns its colour texture.
     unsigned render(int w, int h, const Camera& cam, int msaa_samples);

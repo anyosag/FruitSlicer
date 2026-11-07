@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "Document.h"
 #include "Jobs.h"
@@ -28,6 +29,9 @@ struct AppOptions {
     int msaa_samples = 4;
 };
 
+// The Orient step shows its settings, or the search's results.
+enum class OrientView { Settings, Results };
+
 // The size choice in the health dialog.
 enum class SizeChoice { Full, Largest, Custom, Inches };
 
@@ -40,6 +44,9 @@ struct HealthDialog {
 class App {
 public:
     App(SDL_Window* window, AppOptions opts, std::function<void()> wake);
+    ~App();
+    App(const App&) = delete;
+    App& operator=(const App&) = delete;
 
     bool initGraphics(std::string* error);
     // Builds this frame's UI (between ImGui::NewFrame and ImGui::Render).
@@ -63,6 +70,19 @@ public:
     void undo();
     void redo();
     void showShortcuts(bool show) { shortcuts_open_ = show; }
+    // Steps.
+    bool canGoTo(Step s) const;
+    void goToStep(Step s);
+    // Orient: sides people will see, the search, and the choice.
+    void toggleSide(Side s);
+    void clearSides();
+    bool sidePicked(Side s) const;
+    void findOrientation();
+    void useOrientation(int option);  // -1 keeps how it sits
+    void showOrientSettings() { orient_view_ = OrientView::Settings; }
+    OrientView orientView() const { return orient_view_; }
+    // The results' pictures from below, as textures (-1: how it sits now).
+    unsigned orientPicture(int option);
 
     // ---- State ----
     JobRunner& jobs() { return jobs_; }
@@ -89,6 +109,8 @@ private:
     void rail();
     void errorDialog();
     void keys();
+    void maintain();  // starts background scoring when what is shown is stale
+    void freePictures();
 
     SDL_Window* window_;
     AppOptions opts_;
@@ -106,6 +128,10 @@ private:
     std::string error_title_, error_message_;
     bool error_open_ = false;
     bool shortcuts_open_ = false;
+    OrientView orient_view_ = OrientView::Settings;
+    int scored_revision_ = -1, scored_settings_ = -1;  // last scoring started (it may have been cancelled)
+    std::shared_ptr<const OrientSearch> pictures_for_;
+    std::vector<unsigned> pictures_;  // options, then how it sits now
 };
 
 }  // namespace gui

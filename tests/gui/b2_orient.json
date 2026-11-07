@@ -1,0 +1,12 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "orient"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient"},
+    {"side": "front"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient_front"},
+    {"orient": "find"}, {"wait": "jobs"}, {"shot": "b2_orient_results"},
+    {"use": 1}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient_used"},
+    {"undo": 1}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient_undone"}
+  ]
+}

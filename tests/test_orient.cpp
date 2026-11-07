@@ -39,4 +39,13 @@ TEST_CASE("orientation search prefers standing a T-bar on its long flat face", "
     REQUIRE(input->evaluated);
     CHECK(res.front().points <= input->points);
     CHECK(res.front().score <= input->score);
+    // Finalists carry the exact biggest layer from the full slicing. As it
+    // came in, the 16 x 8 mm flange is a whole layer (128 mm²); no
+    // orientation has a layer bigger than that.
+    CHECK(input->peak_layer_area == Approx(128.0).margin(1.0));
+    for (const auto& r : res)
+        if (r.evaluated) {
+            CHECK(r.peak_layer_area > 0.0);
+            CHECK(r.peak_layer_area <= 129.0);
+        }
 }
