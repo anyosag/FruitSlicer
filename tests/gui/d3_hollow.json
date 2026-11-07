@@ -5,6 +5,7 @@
     {"open": "@demo-hollow"}, {"wait": "jobs"}, {"shot": "d3_health"}, {"health": "place"},
     {"step": "orient"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "d3_orient"},
     {"hollow": "open"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2}, {"shot": "d3_hollow"},
+    {"cut": false}, {"frames": 2}, {"shot": "d3_hollow_whole"}, {"cut": true},
     {"hollow": "apply"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "d3_hollow_applied"},
     {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"frames": 2},
     {"problems": true}, {"frames": 2}, {"shot": "d3_supports_drained"}, {"problems": false},

@@ -93,6 +93,23 @@ HollowOutcome cavityLabel(const HollowPlan& p, std::size_t i, bool applied);
 // Where that label goes: inside the cavity, half-way up (printer coordinates).
 fruit::Vec3 cavityLabelAt(const fruit::HollowResult& h, std::size_t i, double layer_height);
 
+// The 3D view's cut through the plan: a vertical plane through `at` along
+// `along` (unit length; printer coordinates), and where it crosses each
+// layer. `outline` is the whole model with its own hollows filled;
+// `hollow` the cavities (of cavities(); none when they are filled);
+// `prints` what prints. What lies in the outline but in neither of the
+// others is a hole.
+struct SectionBand {
+    std::size_t layer = 0;
+    double t0 = 0, t1 = 0;  // along the plane, from `at`
+};
+struct HollowSection {
+    fruit::Vec2 at, along;
+    double layer_height = 0;
+    std::vector<SectionBand> outline, hollow, prints;
+};
+HollowSection hollowSection(const HollowPlan& p, fruit::Vec2 at, fruit::Vec2 along);
+
 // The model's own hollows that still hold resin as things stand (the step
 // bar's "1 to fix"): the plan's, once it is up to date; else the health
 // check's, unless a fix was applied.

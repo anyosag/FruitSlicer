@@ -2,6 +2,8 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "geometry/Polygon.h"
 
+#include <algorithm>
+
 namespace fruit {
 
 namespace C = Clipper2Lib;
@@ -88,6 +90,33 @@ Paths simplify(const Paths& p, double tolerance_mm) {
     for (const Path& path : p) {
         Path q = C::SimplifyPath(path, tolerance_mm * kScale, true);
         if (q.size() >= 3) out.push_back(std::move(q));
+    }
+    return out;
+}
+
+std::vector<std::pair<double, double>> lineSpans(const Paths& p, const Vec2& at, const Vec2& dir) {
+    // Each edge that crosses the line, where along it and which way; then
+    // the winding number swept along the line.
+    std::vector<std::pair<double, int>> hits;
+    for (const Path& path : p) {
+        const size_t n = path.size();
+        for (size_t i = 0; i < n; ++i) {
+            const Vec2 a = toVec(path[i]), b = toVec(path[(i + 1) % n]);
+            const double sa = cross(dir, a - at), sb = cross(dir, b - at);
+            if ((sa > 0) == (sb > 0)) continue;
+            const Vec2 q = a + (b - a) * (sa / (sa - sb));
+            hits.emplace_back(dot(q - at, dir), sb > 0 ? 1 : -1);
+        }
+    }
+    std::sort(hits.begin(), hits.end());
+    std::vector<std::pair<double, double>> out;
+    int winding = 0;
+    double start = 0;
+    for (const auto& [t, w] : hits) {
+        const int before = winding;
+        winding += w;
+        if (before == 0 && winding != 0) start = t;
+        else if (before != 0 && winding == 0 && t > start) out.emplace_back(start, t);
     }
     return out;
 }

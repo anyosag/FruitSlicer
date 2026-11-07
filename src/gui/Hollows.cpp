@@ -8,6 +8,7 @@
 #include "Document.h"
 #include "Format.h"
 #include "GooTools.h"
+#include "core/Parallel.h"
 
 namespace gui {
 
@@ -135,6 +136,38 @@ fruit::Vec3 cavityLabelAt(const fruit::HollowResult& h, std::size_t i, double la
     const fruit::BBox2 b = fruit::bbox(own);
     const double z = (c.first_layer + c.last_layer + 1) * layer_height / 2;
     return own.empty() ? fruit::Vec3{0, 0, z} : fruit::Vec3{(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, z};
+}
+
+HollowSection hollowSection(const HollowPlan& p, fruit::Vec2 at, fruit::Vec2 along) {
+    HollowSection s;
+    s.at = at;
+    s.along = along;
+    s.layer_height = p.layer_height;
+    if (!p.solid || !p.layers) return s;
+    // Layer by layer, in parallel: a big model has millions of outline points.
+    const std::size_t n = p.solid->size();
+    struct Layer {
+        std::vector<SectionBand> outline, hollow, prints;
+    };
+    std::vector<Layer> per(n);
+    const fruit::HollowResult& cav = p.cavities();
+    fruit::parallelFor(n, 0, [&](std::size_t k) {
+        auto add = [&](std::vector<SectionBand>& to, const fruit::Paths& paths) {
+            for (const auto& [t0, t1] : fruit::lineSpans(paths, at, along)) to.push_back({k, t0, t1});
+        };
+        // The model as it is, with its own hollows: one piece.
+        fruit::Paths whole = p.solid->slices[k];
+        if (k < p.closed.interior.size()) whole.insert(whole.end(), p.closed.interior[k].begin(), p.closed.interior[k].end());
+        add(per[k].outline, whole);
+        if (!p.filling() && k < cav.interior.size()) add(per[k].hollow, cav.interior[k]);
+        if (k < p.layers->size()) add(per[k].prints, p.layers->slices[k]);
+    });
+    for (Layer& l : per) {
+        s.outline.insert(s.outline.end(), l.outline.begin(), l.outline.end());
+        s.hollow.insert(s.hollow.end(), l.hollow.begin(), l.hollow.end());
+        s.prints.insert(s.prints.end(), l.prints.begin(), l.prints.end());
+    }
+    return s;
 }
 
 std::size_t hollowsToFix(const Document& doc) {

@@ -1014,8 +1014,67 @@ void addMarker(fruit::TriangleMesh& m, const fruit::Vec3& c, double r) {
 
 }  // namespace
 
+void App::syncCut() {
+    std::shared_ptr<const HollowPlan> plan;
+    // Not while holes are placed by hand: a click must land on what is seen.
+    if (doc_ && screen_ == Screen::Job && step_ == Step::Orient && orient_view_ == OrientView::Hollow && cut_away_ &&
+        doc_->hollow.choices.auto_holes && doc_->hollow.plan && doc_->hollow.plan_revision == doc_->revision())
+        plan = doc_->hollow.plan;
+    if (!plan) {
+        renderer_.clearCut();
+        cut_for_.reset();
+        return;
+    }
+    if (plan != cut_for_) {
+        const fruit::BBox3 b = doc_->placed().bbox();
+        cut_mid_ = (b.min + b.max) * 0.5;
+    }
+    const V3 eye = camera_.eye();
+    fruit::Vec2 toward{eye.x - cut_mid_.x, eye.y - cut_mid_.y};
+    toward = fruit::norm(toward) > 1e-9 ? fruit::normalized(toward) : fruit::Vec2{0, -1};
+    // While the view is being turned the cut stays put (a big model's
+    // section takes a moment); it follows once the mouse is let go.
+    const bool turning = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+                         ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+    const bool turned = fruit::dot(toward, cut_toward_) < std::cos(1.0 * 3.14159265358979 / 180.0);
+    if (plan != cut_for_ || (turned && !turning)) {
+        cut_for_ = plan;
+        cut_toward_ = toward;
+        const fruit::Vec2 along{-toward.y, toward.x};
+        const fruit::Vec2 at{cut_mid_.x, cut_mid_.y};
+        const HollowSection s = hollowSection(*plan, at, along);
+        const fruit::BBox3 b = doc_->placed().bbox();
+        const double rim = std::clamp(0.004 * fruit::norm(b.max - b.min), 0.1, 0.6);
+        auto quads = [&](const std::vector<SectionBand>& bands, double grow, unsigned rgb) {
+            Renderer::CapGroup g;
+            g.rgb = rgb;
+            g.triangles.reserve(bands.size() * 18);
+            for (const SectionBand& band : bands) {
+                const fruit::Vec2 a = at + along * (band.t0 - grow), c = at + along * (band.t1 + grow);
+                const float z0 = static_cast<float>(band.layer * s.layer_height - grow);
+                const float z1 = static_cast<float>((band.layer + 1) * s.layer_height + grow);
+                const float ax = static_cast<float>(a.x), ay = static_cast<float>(a.y);
+                const float cx = static_cast<float>(c.x), cy = static_cast<float>(c.y);
+                g.triangles.insert(g.triangles.end(),
+                                   {ax, ay, z0, cx, cy, z0, cx, cy, z1, ax, ay, z0, cx, cy, z1, ax, ay, z1});
+            }
+            return g;
+        };
+        // Holes show through the dark of the whole; what prints over it;
+        // then the hollows, with a rim.
+        cut_cap_ = {quads(s.outline, 0, 0x0E1014), quads(s.prints, 0, 0xAEB6C4), quads(s.hollow, rim, 0xF2B84B),
+                    quads(s.hollow, 0, 0x2A2412)};
+        ++cut_key_;
+    }
+    // Kept: the far side, where dot(toward, p - mid) <= 0.
+    const float plane[4] = {static_cast<float>(-cut_toward_.x), static_cast<float>(-cut_toward_.y), 0.0f,
+                            static_cast<float>(cut_toward_.x * cut_mid_.x + cut_toward_.y * cut_mid_.y)};
+    renderer_.setCut(plane, cut_cap_, cut_key_);
+}
+
 void App::syncScene() {
     renderer_.setOverhangTint(0);
+    syncCut();
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
         renderer_.clearExtras();
         return;

@@ -538,7 +538,8 @@ void dropCard(App& app, ImVec2 origin, ImVec2 avail) {
     if (primaryButton("Open model...", ImVec2(bw, 40))) app.openDialog();
 }
 
-void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = {}, bool presets = true) {
+void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = {}, bool presets = true,
+              const std::function<void()>& toolbar = {}) {
     app.syncScene();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col::Viewport);
     ImGui::BeginChild("viewport", size, ImGuiChildFlags_None,
@@ -587,6 +588,10 @@ void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = 
         text(hint, fonts().regular, size::Body, col::TextSecondary);
     } else if (presets) {
         ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 10));
+        if (toolbar) {  // a step's own buttons first
+            toolbar();
+            ImGui::SameLine(0, 18);
+        }
         for (auto [label, v] : {std::pair{"Front", ViewPreset::Front}, std::pair{"Side", ViewPreset::Side},
                                 std::pair{"Angled", ViewPreset::Angled}, std::pair{"From below", ViewPreset::Below}}) {
             if (segmentButton(label, app.viewIs(v))) app.setView(v);
@@ -744,9 +749,14 @@ void job(App& app) {
             hollowLeft(app, *doc, body_h);
             ImGui::SameLine(0, 0);
             Document& d = *doc;
-            viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
-                     d.hollow.choices.auto_holes ? nullptr : "Click on the model to put a hole there.",
-                     [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { hollowOverlay(app, d, o, s, vp); });
+            viewport(
+                app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
+                d.hollow.choices.auto_holes ? nullptr : "Click on the model to put a hole there.",
+                [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { hollowOverlay(app, d, o, s, vp); }, true, [&app] {
+                    if (segmentButton("Cut in half", app.cutAway())) app.setCutAway(true);
+                    ImGui::SameLine(0, 6);
+                    if (segmentButton("Whole model", !app.cutAway())) app.setCutAway(false);
+                });
             ImGui::SameLine(0, 0);
             hollowRight(app, *doc, body_h);
         } else {
