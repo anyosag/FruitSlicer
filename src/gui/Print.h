@@ -30,6 +30,9 @@ struct PrintSettings {
     std::shared_ptr<const fruit::GooHeader> sample;
     double exposure = 0, bottom_exposure = 0;  // typed, s; > 0 overrides the sample
     int bottom_layers = -1, transition_layers = -1;
+    // The image orientation fix the check confirmed (the app fills these in
+    // from the printer's settings; they are not the job's).
+    bool flip_x = false, flip_y = false;
 };
 
 // Reads a sample's header; throws std::runtime_error with a readable message.

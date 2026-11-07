@@ -17,6 +17,7 @@ endforeach()
 set(app_sources
   main.cpp
   App.cpp
+  Calibration.cpp
   Capture.cpp
   Dialogs.cpp
   Document.cpp
@@ -32,6 +33,7 @@ set(app_sources
   Theme.cpp
   Widgets.cpp
   screens/AboutScreen.cpp
+  screens/CalibrateScreens.cpp
   screens/HomeScreen.cpp
   screens/JobScreen.cpp
   screens/LayersStep.cpp

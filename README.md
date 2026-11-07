@@ -80,9 +80,20 @@ height so the exposures fit. Then it reads the whole file back: every
 layer's checksum, no grey pixels, and the decoded volume against what was
 written. The drive can be ejected from the app, and **Export STL** writes
 the model with its supports for another slicer. Until the image-orientation
-check exists, the app asks once per launch before saving, because a wrong
-guess prints mirrored. It is one universal app for Apple silicon and Intel
-Macs, macOS 14 or later.
+check has confirmed it, the app asks once per launch before saving, because
+a wrong guess prints mirrored.
+
+**Calibrate** holds the printer checks. The **image orientation check** takes
+five minutes and no resin: save the F test piece (`f.stl`), slice it in
+SatelLite as it is, and choose SatelLite's `.goo`. FruitSlicer slices the same
+F with that file's settings, lines up the two images, shows them side by side
+with how well each flip overlaps, and **Use this for my printer** applies the
+fix to every print file from then on (the warnings then go away). The
+**Printer** page shows the printer, the orientation in use and the side the
+tilting vat hinges on; once the orientation is confirmed, supports get up to
++25 % hold on the side away from the hinge. Both are kept between launches in
+`settings.json` in the app's data folder. It is one universal app for Apple
+silicon and Intel Macs, macOS 14 or later.
 
 **Download.** Every CI run builds it. On GitHub, open the run (a pull
 request's *Checks* tab, or *Actions* → **CI**), scroll to *Artifacts*, and
@@ -360,7 +371,8 @@ yourself. Bottom and transition layers then default to the printer's 4 + 4;
   - SatelLite's transition exposure ramp.
 - **Print time.** The estimate matches SatelLite's.
 
-**Still to confirm: image orientation.**
+**Still to confirm: image orientation.** In the app: Calibrate → Image
+orientation (it runs the steps below). From the command line:
 
 1. Run `fruitslicer coupon orientation -o f.stl`.
 2. Slice `f.stl` in SatelLite.

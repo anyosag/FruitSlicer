@@ -30,6 +30,7 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     ch.layer_height = kLayerHeight;
     ch.on_plate = p.on_plate;
     ch.density = c.density;
+    ch.hinge = c.hinge;
     fruit::resolveSettings(nullptr, ch, cfg, &tc);
     cfg.default_tip = std::clamp(c.usual_tip, 0, static_cast<int>(cfg.tip_classes.size()) - 1);
     tc.merge_pillars = c.merge;
@@ -258,15 +259,16 @@ std::vector<AdvancedSetting> makeAdvanced() {
     // ---- Peel side ----
     v.push_back({.group = "Peel side", .label = "Vat hinge", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X&) {
-                     return std::string("Which side the tilting vat hinges on. You set it with the image-orientation "
-                                        "check, which arrives with calibration.");
+                     return std::string("Which side the tilting vat hinges on, seen from the front. Set it on the "
+                                        "Printer page, under Calibrate.");
                  },
-                 .text = [](const X&) { return std::string("not set"); }});
+                 .text = [](const X& x) { return x.hinge; }});
     v.push_back({.group = "Peel side", .label = "Extra hold away from the hinge", .kind = K::Fixed,
                  .source = S::Assumption,
                  .help = [](const X&) {
                      return std::string("Peel pulls hardest on the far side: up to +25 % more hold there once the "
-                                        "hinge side is set. The right amount hasn't been measured.");
+                                        "hinge side is set and the image orientation confirmed. The right amount "
+                                        "hasn't been measured.");
                  },
                  .text = [](const X& x) {
                      return x.cfg.peel_bias > 0 ? strf("up to +%.0f %%", x.cfg.peel_bias * 100) : std::string("off");

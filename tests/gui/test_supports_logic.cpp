@@ -177,3 +177,15 @@ TEST_CASE("Advanced settings: every value at its lower limit, then its upper, st
         CHECK(r.tree_cfg.head_length == Approx(high ? 3.0 : 0.4));
     }
 }
+
+TEST_CASE("Supports: a hinge side adds hold away from the hinge", "[gui][supports]") {
+    const fruit::Placement p;
+    const SupportChoices none;
+    CHECK(supportConfig(p, none).peel_bias == 0);
+    SupportChoices left;
+    left.hinge = fruit::HingeSide::MinusX;  // hinged on the left: peel pulls hardest on the right
+    const fruit::SupportConfig cfg = supportConfig(p, left);
+    CHECK(cfg.peel_bias == Approx(0.25));
+    CHECK(cfg.peel_axis.x > 0.99);
+    CHECK_FALSE(left == none);  // so supports made without it read out of date
+}

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Document.h"
+#include "Calibration.h"
 #include "Jobs.h"
 #include "Send.h"
 #include "platform/Platform.h"
@@ -23,7 +24,7 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, About };
+enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -147,6 +148,18 @@ public:
     void sendToPrinter();                      // upload to the chosen printer (and start it, if asked)
     void closeSend();
     void useMockPrinter(bool silent = false);  // scripts: a printer on loopback (or nothing that answers)
+    // Calibrate: the printer's settings and the image orientation check.
+    const PrinterSetup& printerSetup() const { return printer_setup_; }
+    void saveOrientationPiece();                     // f.stl, through a save dialog
+    void saveOrientationPieceTo(const std::string& path);
+    void chooseOrientationSample();                  // SatelLite's .goo of the F, then compare
+    void checkOrientationWith(const std::string& satellite_goo);
+    const std::string& orientationPiece() const { return orient_piece_; }  // where f.stl was saved
+    const std::shared_ptr<const OrientationCheck>& orientationResult() const { return orient_check_; }
+    void useOrientationFix();                        // the check's result for every print from now on
+    void setHinge(std::optional<HingeChoice> side);
+    // The check's two layer pictures as textures (0 while there is no result).
+    unsigned orientationPicture(bool ours);
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -225,6 +238,13 @@ private:
     std::vector<std::string> printer_hosts_;  // added by hand
     bool printer_hosts_loaded_ = false;
     std::shared_ptr<void> mock_printer_;      // scripts only
+    PrinterSetup printer_setup_;
+    std::string orient_piece_;
+    std::shared_ptr<const OrientationCheck> orient_check_;
+    void setPrinterSetup(const PrinterSetup& s);  // keeps it (outside scripted runs) and applies it
+    void applyPrinterSetup();                      // to the open job's supports
+    std::shared_ptr<const OrientationCheck> orient_tex_for_;
+    unsigned orient_tex_[2] = {0, 0};
     std::shared_ptr<const PrintPlan> plan_;
     std::shared_ptr<const LayerResult> plan_layers_;
     PrintSettings plan_settings_;

@@ -34,9 +34,10 @@ void about(App& app) {
     beginCard("preview", ImVec2(w, 0), 18);
     sectionTitle("This is an early build");
     ImGui::Dummy(ImVec2(0, 2));
-    text("It opens STL, OBJ and 3MF files, checks them, and places them on the Saturn 4 Ultra 16K's plate at the "
-         "size, rotation and height you choose. Orienting, supports, layers and saving .goo files arrive in the "
-         "next updates.",
+    text("It takes a model from file to print on the Saturn 4 Ultra 16K: it opens STL, OBJ and 3MF files, checks "
+         "them, finds a good way to stand them, generates supports, cuts the layers, and saves a .goo it reads back "
+         "to check, to a USB drive or over Wi-Fi. Under Calibrate, the image orientation check and the printer's "
+         "hinge side. Resin calibration, saved jobs, editing tips by hand and hollowing arrive in later updates.",
          fonts().regular, size::Body, col::TextSecondary, true);
     endCard();
     ImGui::Dummy(ImVec2(0, 14));
@@ -62,6 +63,7 @@ void about(App& app) {
     const std::pair<const char*, const char*> libs[] = {
         {"Clipper2 · polygon clipping", "Boost Software License 1.0"},
         {"nlohmann/json · JSON files", "MIT"},
+        {"cpp-httplib · sending over Wi-Fi", "MIT"},
         {"SDL 3 · window and input", "zlib"},
         {"Dear ImGui · interface", "MIT"},
         {"glad · OpenGL loader", "CC0-1.0 / WTFPL, Apache-2.0"},

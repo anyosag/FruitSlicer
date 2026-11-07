@@ -37,6 +37,8 @@ PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_
     r.bottom_exposure = s.bottom_exposure;
     r.bottom_layers = s.bottom_layers;
     r.transition_layers = s.transition_layers;
+    r.flip_x = s.flip_x;
+    r.flip_y = s.flip_y;
     try {
         p.setup = fruit::buildGooSetup(doc.printer, r);
     } catch (const std::exception&) {

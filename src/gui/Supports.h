@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "mesh/Placement.h"
 #include "mesh/TriangleMesh.h"
 #include "support/SupportConfig.h"
+#include "support/SupportSettings.h"
 #include "support/SupportTree.h"
 #include "support/SupportValidator.h"
 
@@ -29,6 +31,9 @@ struct SupportChoices {
     // Values set on the advanced page, by field key (see advancedSettings());
     // every other value is FruitSlicer's own.
     std::map<std::string, double> advanced;
+    // The vat's hinge side, in plate coordinates: extra hold on the far side.
+    // Set by the app from the printer's settings once the orientation is confirmed.
+    std::optional<fruit::HingeSide> hinge;
     bool operator==(const SupportChoices&) const = default;
 };
 
@@ -53,6 +58,7 @@ struct AdvancedContext {
     const fruit::Placement& placement;
     int raft_layers = 8;            // bottom + transition layers of the print file
     double raft_layer_height = 0.05;
+    std::string hinge = "not set";  // the hinge side as the Printer page has it
 };
 
 struct AdvancedSetting {

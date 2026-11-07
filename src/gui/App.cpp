@@ -24,14 +24,22 @@
 
 namespace gui {
 
+namespace {
+std::string settingsFile() { return (std::filesystem::path(platform::dataDir()) / "settings.json").string(); }
+}  // namespace
+
 App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
     : window_(window), opts_(opts), jobs_(std::move(wake)) {
     camera_.preset(ViewPreset::Angled);
+    // Scripted captures start from FruitSlicer's own settings, never this machine's.
+    if (!opts_.deterministic) printer_setup_ = loadPrinterSetup(settingsFile());
 }
 
 App::~App() {
     freePictures();
     Renderer::freeTexture(layer_tex_);
+    Renderer::freeTexture(orient_tex_[0]);
+    Renderer::freeTexture(orient_tex_[1]);
 }
 
 bool App::initGraphics(std::string* error) {
@@ -130,6 +138,7 @@ void App::placeChecked() {
     doc_ = std::move(checking_);
     checking_.reset();
     doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
+    applyPrinterSetup();
     health_.open = false;
     advanced_open_ = false;
     step_ = Step::Model;
@@ -525,11 +534,14 @@ std::shared_ptr<const PrintPlan> App::printPlan() {
     const auto& lr = doc_->layers.result;
     const double raft =
         doc_->placement().on_plate || !doc_->supports.result ? 0.0 : doc_->supports.result->tree.raft_top;
-    const PrintSettings& s = doc_->print.settings;
+    PrintSettings s = doc_->print.settings;
+    s.flip_x = printer_setup_.orientation_confirmed && printer_setup_.flip_x;
+    s.flip_y = printer_setup_.orientation_confirmed && printer_setup_.flip_y;
     const bool same = plan_ && plan_layers_ == lr && plan_raft_ == raft && plan_settings_.sample == s.sample &&
                       plan_settings_.exposure == s.exposure && plan_settings_.bottom_exposure == s.bottom_exposure &&
                       plan_settings_.bottom_layers == s.bottom_layers &&
-                      plan_settings_.transition_layers == s.transition_layers;
+                      plan_settings_.transition_layers == s.transition_layers && plan_settings_.flip_x == s.flip_x &&
+                      plan_settings_.flip_y == s.flip_y;
     if (!same) {
         plan_ = std::make_shared<const PrintPlan>(planPrint(*doc_, *lr, raft, s));
         plan_layers_ = lr;
@@ -552,8 +564,8 @@ std::string App::printBlocker() {
 
 void App::savePrint() {
     if (!printBlocker().empty()) return;
-    // Asked once per session until the orientation check exists (calibration).
-    if (!orientation_asked_) {
+    // Asked once per launch until the orientation check has confirmed it.
+    if (!orientation_asked_ && !printer_setup_.orientation_confirmed) {
         orientation_ask_ = true;
         return;
     }
@@ -767,6 +779,114 @@ void App::useMockPrinter(bool silent) {
     mock_printer_ = mock;
 }
 
+void App::setPrinterSetup(const PrinterSetup& s) {
+    printer_setup_ = s;
+    if (!opts_.deterministic) {
+        try {
+            savePrinterSetup(settingsFile(), s);
+        } catch (const std::exception& e) {
+            showError("Couldn't save your printer settings", e.what());
+        }
+    }
+    applyPrinterSetup();
+}
+
+void App::applyPrinterSetup() {
+    if (!doc_) return;
+    // Extra hold away from the hinge only once the orientation is confirmed:
+    // a mirrored image would put it on the wrong side.
+    SupportChoices c = doc_->supports.choices;
+    c.hinge = printer_setup_.orientation_confirmed ? printer_setup_.hinge : std::nullopt;
+    if (!(c == doc_->supports.choices)) setSupportChoices(c);
+}
+
+void App::saveOrientationPiece() {
+    const char* docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    const std::string start = (std::filesystem::path(docs ? docs : ".") / "f.stl").string();
+    platform::saveFileDialog(window_, {{"STL", "stl"}}, start, [this](const std::string& path) {
+        if (!path.empty()) saveOrientationPieceTo(path);
+    });
+}
+
+void App::saveOrientationPieceTo(const std::string& path) {
+    try {
+        gui::saveOrientationPiece(path);
+        orient_piece_ = path;
+        log::info("saved the F test piece to " + path);
+    } catch (const std::exception& e) {
+        showError("Couldn't save f.stl", e.what());
+    }
+}
+
+void App::chooseOrientationSample() {
+    platform::openFileDialog(window_, {{"Print files from SatelLite", "goo"}}, [this](const std::string& path) {
+        if (!path.empty()) checkOrientationWith(path);
+    });
+}
+
+void App::checkOrientationWith(const std::string& satellite_goo) {
+    auto out = std::make_shared<OrientationCheck>();
+    const fruit::PrinterProfile printer = printer_;
+    orient_check_.reset();
+    jobs_.start(
+        "Comparing the F",
+        [out, satellite_goo, printer](const fruit::JobControl& ctl) {
+            *out = checkOrientation(satellite_goo, printer, ctl);
+        },
+        [this, out](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't compare the two F's", e.what());
+                }
+                return;
+            }
+            orient_check_ = std::make_shared<const OrientationCheck>(std::move(*out));
+            log::info("orientation check: " + std::string(fruit::verdictText(orient_check_->verdict)));
+        });
+}
+
+void App::useOrientationFix() {
+    if (!orient_check_ || orient_check_->verdict == fruit::OrientationVerdict::Undetermined) return;
+    PrinterSetup s = printer_setup_;
+    s.orientation_confirmed = true;
+    s.flip_x = orient_check_->flip_x;
+    s.flip_y = orient_check_->flip_y;
+    s.checked_with = std::filesystem::path(orient_check_->satellite_path).filename().string();
+    setPrinterSetup(s);
+    log::info(std::string("orientation confirmed; flips x ") + (s.flip_x ? "yes" : "no") + ", y " +
+              (s.flip_y ? "yes" : "no"));
+}
+
+void App::setHinge(std::optional<HingeChoice> side) {
+    PrinterSetup s = printer_setup_;
+    s.hinge = side ? std::optional<fruit::HingeSide>(plateSide(*side)) : std::nullopt;
+    setPrinterSetup(s);
+}
+
+unsigned App::orientationPicture(bool ours) {
+    if (!orient_check_) return 0;
+    if (orient_tex_for_ != orient_check_) {
+        for (int i = 0; i < 2; ++i) {
+            Renderer::freeTexture(orient_tex_[i]);
+            const LayerPicture& p = i == 0 ? orient_check_->ours : orient_check_->theirs;
+            std::vector<unsigned char> rgba(p.lit.size() * 4, 255);
+            for (std::size_t k = 0; k < p.lit.size(); ++k) {
+                // Lit white on the viewport's near-black, as the layer view shows it.
+                const unsigned v = p.lit[k];
+                rgba[k * 4 + 0] = static_cast<unsigned char>(0x0E + (255 - 0x0E) * v / 255);
+                rgba[k * 4 + 1] = static_cast<unsigned char>(0x10 + (255 - 0x10) * v / 255);
+                rgba[k * 4 + 2] = static_cast<unsigned char>(0x14 + (255 - 0x14) * v / 255);
+            }
+            orient_tex_[i] = p.w > 0 ? renderer_.uploadRgba(p.w, p.h, rgba) : 0;
+        }
+        orient_tex_for_ = orient_check_;
+    }
+    return orient_tex_[ours ? 0 : 1];
+}
+
 void App::ejectDrive() {
     if (!doc_ || doc_->print.drive.empty()) return;
     std::string path;
@@ -935,6 +1055,9 @@ void App::rail() {
     ImGui::Dummy(ImVec2(0, 4));
     if (railItem("rail_home", "Home", icon::home, screen_ == Screen::Home)) screen_ = Screen::Home;
     if (railItem("rail_job", "Job", icon::cube, screen_ == Screen::Job)) screen_ = Screen::Job;
+    const bool calibrating =
+        screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer;
+    if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
     // About sits at the bottom, where Settings will be.
     ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 56 - 12);
     if (railItem("rail_about", "About", icon::gear, screen_ == Screen::About)) screen_ = Screen::About;
@@ -1041,6 +1164,9 @@ void App::frame() {
     switch (screen_) {
         case Screen::Home: screens::home(*this); break;
         case Screen::Job: screens::job(*this); break;
+        case Screen::Calibrate: screens::calibrate(*this); break;
+        case Screen::OrientationCheck: screens::orientationCheck(*this); break;
+        case Screen::Printer: screens::printer(*this); break;
         case Screen::About: screens::about(*this); break;
     }
     ImGui::EndChild();
