@@ -104,6 +104,10 @@ struct SupportTree {
     TriangleMesh mesh(const TreeConfig& cfg) const;
 };
 
+// How deep a tip of diameter `tip_d` sinks into the part: the nearest
+// measured value from the profile, or half the diameter within 0.08–0.2 mm.
+double tipPenetration(double tip_d, const TreeConfig& cfg);
+
 // Reports stage "tree".
 SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<SupportPoint>& points,
                              const TreeConfig& cfg, double min_raft_thickness,

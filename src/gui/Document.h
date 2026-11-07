@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Orient.h"
+#include "Supports.h"
 #include "core/JobControl.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
@@ -36,6 +37,20 @@ struct OrientState {
     }
 };
 
+// The Supports step's choices and result for this job.
+struct SupportState {
+    SupportChoices choices;                     // for the next run
+    std::shared_ptr<const SupportResult> result;
+    int result_revision = -1, result_settings = -1;  // what it was made for
+    int selected_tip = -1;                      // index into result->points
+
+    // Made for this placement, these picks and these choices.
+    bool fresh(int revision, int orient_settings) const {
+        return result && result_revision == revision && result_settings == orient_settings &&
+               result->choices == choices;
+    }
+};
+
 class Document {
 public:
     std::string path;  // file it came from
@@ -46,6 +61,7 @@ public:
     fruit::PrinterProfile printer;
     int geometry_id = 0;         // unique per load: the renderer re-uploads when it changes
     OrientState orient;
+    SupportState supports;
 
     const fruit::Placement& placement() const { return placement_; }
     const fruit::Transform& transform() const { return transform_; }  // model -> printer

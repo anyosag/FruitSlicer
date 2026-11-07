@@ -6,6 +6,8 @@
 
 #include <imgui.h>
 
+#include <functional>
+
 namespace gui {
 class App;
 class Document;
@@ -21,8 +23,16 @@ void endPanel();
 void edge(bool right, bool bottom);  // a border on the current window's right or bottom
 void tooltip(const char* s);         // for the item just drawn, also when disabled
 
-// The 3D view. `hint`, when given, replaces the view buttons with a line of help.
-void viewport3d(App& app, ImVec2 size, const char* hint = nullptr);
+// The 3D view. `hint`, when given, replaces the view buttons with a line of
+// help; `overlay` draws a step's own controls on top (gets the view's
+// column-major view-projection matrix), and `presets` shows the view buttons.
+using Overlay = std::function<void(ImVec2 origin, ImVec2 size, const float* view_proj)>;
+void viewport3d(App& app, ImVec2 size, const char* hint = nullptr, const Overlay& overlay = {}, bool presets = true);
+
+// Supports.
+void supportsLeft(App& app, Document& doc, float h);
+void supportsRight(App& app, Document& doc, float h);
+void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 
 // Orient.
 void orientLeft(App& app, Document& doc, float h);

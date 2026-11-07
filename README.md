@@ -51,8 +51,15 @@ stands raised on supports or flat on the plate. Edits undo with ⌘Z, and ⌘/
 lists the shortcuts. The Orient step scores how the model sits (tips, island
 tips, biggest layer, height, layers short of hold), lets you pick the sides
 people will see, and searches 65 directions for better ways to stand it,
-compared side by side with how it sits now; using one is undoable.
-Supports, layers and saving `.goo` files come next. It is one universal app for Apple silicon and Intel Macs, macOS 14 or
+compared side by side with how it sits now; using one is undoable. The
+Supports step generates tips and the support tree with the usual tip size,
+spacing and trunk merging you choose (faces that need tips are tinted
+first), shows the run's stages with Cancel, and then the tree in 3D with
+three views (Supports, Tips only, Why), why any tip you click is there, the
+checks (nothing starts in mid-air, the raft comes off in one piece, no
+support stands on the model) and a drawer of things to review. Changing
+the model afterwards marks the supports out of date. Layers and saving
+`.goo` files come next. It is one universal app for Apple silicon and Intel Macs, macOS 14 or
 later.
 
 **Download.** Every CI run builds it. On GitHub, open the run (a pull

@@ -5,6 +5,7 @@
 // drawn into an offscreen (optionally multisampled) target that the UI shows
 // as an image. Only the UI thread may call it.
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,15 @@ public:
     void setModelTransform(const fruit::Transform& model_to_printer);
     void clearModel();
 
+    // Extra meshes in printer coordinates, each with its own colour
+    // (0xRRGGBB): the support tree and the tips. Uploaded when `key`
+    // changes; colours and visibility can change every frame.
+    void setExtras(const std::vector<const fruit::TriangleMesh*>& meshes, int key);
+    void clearExtras();
+    void setExtraStyle(std::size_t i, unsigned rgb, bool visible);
+    // Tints faces leaning further than `critical_deg` from vertical (0 = off).
+    void setOverhangTint(double critical_deg) { overhang_deg_ = critical_deg; }
+
     // A `w` × `h` picture in colour `rgb` (0xRRGGBB) with `alpha` as its
     // coverage, for the UI to show; free it with freeTexture.
     unsigned uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb);
@@ -54,6 +64,14 @@ private:
     unsigned mesh_prog_ = 0, line_prog_ = 0;
     Mesh plate_fill_, plate_lines_, model_;
     int model_revision_ = -1;
+    struct Extra {
+        Mesh mesh;
+        unsigned rgb = 0xC8CDD6;
+        bool visible = true;
+    };
+    std::vector<Extra> extras_;
+    int extras_key_ = -1;
+    double overhang_deg_ = 0;
     float model_matrix_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     unsigned fbo_ms_ = 0, rb_color_ = 0, rb_depth_ = 0;  // multisampled target
     unsigned fbo_ = 0, tex_ = 0, rb_depth_plain_ = 0;    // resolved target

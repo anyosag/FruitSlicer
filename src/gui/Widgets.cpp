@@ -232,10 +232,13 @@ bool chip(const char* id, const char* label, ImU32 dot, ImU32 fg, ImU32 bg, ImU3
     return clicked;
 }
 
-bool stepPill(int number, const char* label, StepState state, bool enabled) {
+bool stepPill(int number, const char* label, StepState state, bool enabled, const char* badge, ImU32 badge_color) {
+    ImGui::PushFont(fonts().medium, size::Help);
+    const float bw = badge ? ImGui::CalcTextSize(badge).x + 8 : 0.0f;
+    ImGui::PopFont();
     ImGui::PushFont(state == StepState::Current ? fonts().semibold : fonts().medium, size::Body);
     const ImVec2 ts = ImGui::CalcTextSize(label);
-    const ImVec2 sz(ts.x + 54, 38);
+    const ImVec2 sz(ts.x + 54 + bw, 38);
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::PushID(number);
     const bool clicked = ImGui::InvisibleButton("step", sz) && enabled;
@@ -266,6 +269,12 @@ bool stepPill(int number, const char* label, StepState state, bool enabled) {
     }
     dl->AddText(ImVec2(p.x + 40, p.y + (sz.y - ts.y) / 2), fg, label);
     ImGui::PopFont();
+    if (badge) {
+        ImGui::PushFont(fonts().medium, size::Help);
+        const ImVec2 bs = ImGui::CalcTextSize(badge);
+        dl->AddText(ImVec2(p.x + 48 + ts.x, p.y + (sz.y - bs.y) / 2), badge_color ? badge_color : col::Warn, badge);
+        ImGui::PopFont();
+    }
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     return clicked;
 }

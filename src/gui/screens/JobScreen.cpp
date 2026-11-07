@@ -86,8 +86,20 @@ void topBar(App& app) {
         const bool done = i < at || (s == Step::Orient && doc && doc->orient.decided && at != i);
         const StepState state = i == at ? StepState::Current : (done ? StepState::Done : StepState::Upcoming);
         const bool can = app.canGoTo(s);
-        if (stepPill(i + 1, kSteps[i], state, can)) app.goToStep(s);
-        if (i >= 2) tooltip("This step arrives in the next update.");
+        std::string badge;
+        ImU32 badge_col = col::Warn;
+        if (s == Step::Supports && doc && doc->supports.result) {
+            if (!doc->supports.fresh(doc->revision(), doc->orient.settings)) {
+                badge = "out of date";
+                badge_col = col::TextMuted;
+            } else if (const std::size_t n = doc->supports.result->count(SupportProblem::Level::Review) +
+                                             doc->supports.result->count(SupportProblem::Level::Blocks)) {
+                badge = strf("%zu to review", n);
+            }
+        }
+        if (stepPill(i + 1, kSteps[i], state, can, badge.empty() ? nullptr : badge.c_str(), badge_col))
+            app.goToStep(s);
+        if (i >= 3) tooltip("This step arrives in the next update.");
         else if (!can && doc) tooltip("Make it fit the plate first.");
         ImGui::SameLine(0, 8);
     }
@@ -101,14 +113,27 @@ void topBar(App& app) {
         next = "Next: Orient";
         enabled = app.canGoTo(Step::Orient);
         if (!enabled) why = "Make it fit the plate first.";
+    } else if (doc && app.step() == Step::Supports) {
+        const SupportState& sp = doc->supports;
+        const bool running = app.jobs().busy() && app.jobs().progress().name == "Generating supports";
+        if (running) {
+            next = "Generating...";
+            enabled = false;
+        } else if (!sp.result) {
+            next = "Generate supports";
+        } else if (!sp.fresh(doc->revision(), doc->orient.settings)) {
+            next = "Regenerate supports";
+        } else {
+            next = "Next: Layers";
+            enabled = false;
+            why = "Layers arrive in the next update.";
+        }
     } else if (doc && app.step() == Step::Orient) {
         const OrientState& o = doc->orient;
         if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
             next = "Use option 1";
         } else if (o.decided) {
             next = "Next: Supports";
-            enabled = false;
-            why = "Supports arrive in the next update.";
         } else {
             next = "Find best orientation";
             enabled = !(app.jobs().busy() && app.jobs().progress().name == "Finding the best orientation");
@@ -124,6 +149,8 @@ void topBar(App& app) {
         else if (app.step() == Step::Model) app.goToStep(Step::Orient);
         else if (next == "Use option 1") app.useOrientation(0);
         else if (next == "Find best orientation") app.findOrientation();
+        else if (next == "Next: Supports") app.goToStep(Step::Supports);
+        else if (next == "Generate supports" || next == "Regenerate supports") app.generateSupports();
     }
     if (why) tooltip(why);
     ImGui::PushFont(fonts().medium, size::Body);
@@ -425,7 +452,8 @@ void dropCard(App& app, ImVec2 origin, ImVec2 avail) {
     if (primaryButton("Open model...", ImVec2(bw, 40))) app.openDialog();
 }
 
-void viewport(App& app, ImVec2 size, const char* hint) {
+void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = {}, bool presets = true) {
+    app.syncScene();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col::Viewport);
     ImGui::BeginChild("viewport", size, ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -471,7 +499,7 @@ void viewport(App& app, ImVec2 size, const char* hint) {
         dl->AddLine(ImVec2(origin.x, origin.y + 40), ImVec2(origin.x + avail.x, origin.y + 40), col::Border);
         ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 12));
         text(hint, fonts().regular, size::Body, col::TextSecondary);
-    } else {
+    } else if (presets) {
         ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 10));
         for (auto [label, v] : {std::pair{"Front", ViewPreset::Front}, std::pair{"Side", ViewPreset::Side},
                                 std::pair{"Angled", ViewPreset::Angled}, std::pair{"From below", ViewPreset::Below}}) {
@@ -480,6 +508,7 @@ void viewport(App& app, ImVec2 size, const char* hint) {
         }
         ImGui::NewLine();
     }
+    if (overlay) overlay(origin, avail, vp.m);
     if (!doc && !app.jobs().busy() && !app.checking()) dropCard(app, origin, avail);
     taskTray(app, ImVec2(origin.x + avail.x, origin.y + avail.y));
     ImGui::PopStyleVar();
@@ -501,6 +530,7 @@ void statusBar(App& app) {
     float x = 16;
     const float cy = kStatusH / 2;
     int problems = 0;
+    std::string totals;
     const bool results = doc && app.step() == Step::Orient && app.orientView() == OrientView::Results &&
                          doc->orient.results;
     if (results) {
@@ -512,6 +542,18 @@ void statusBar(App& app) {
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(all ? "Every option fits the plate" : "An option does not fit the plate however it is turned", fonts().regular,
              size::Body, col::TextSecondary);
+    } else if (doc && app.step() == Step::Supports && doc->supports.result &&
+               doc->supports.fresh(doc->revision(), doc->orient.settings)) {
+        const SupportResult& r = *doc->supports.result;
+        const ImVec2 wp = ImGui::GetWindowPos();
+        const bool ok = r.count(SupportProblem::Level::Blocks) == 0;
+        dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, ok ? col::Ok : col::Error);
+        x += 14;
+        ImGui::SetCursorPos(ImVec2(x, cy - 8));
+        text(("Fits the plate · " + dims(r.size_with_supports) + " with supports").c_str(), fonts().regular, size::Body,
+             col::TextSecondary);
+        problems = static_cast<int>(r.count(SupportProblem::Level::Review) + r.count(SupportProblem::Level::Blocks));
+        totals = strf("%zu tips · %.1f ml of supports at most", r.tips, r.support_ml);
     } else if (doc) {
         const bool fits = doc->fit().fits;
         problems = (fits ? 0 : 1) + (doc->check.closed() ? 0 : 1) + (doc->check.cavities ? 1 : 0);
@@ -533,12 +575,21 @@ void statusBar(App& app) {
     chip("orientation", "Image orientation unconfirmed", col::Warn, col::Warn, col::WarnBg, col::WarnBorder);
     tooltip("Until a printed test confirms which way the 16K shows images, text and left/right-handed parts could "
             "print mirrored. The check arrives with calibration.");
+    if (!totals.empty()) {  // right end of the bar
+        ImGui::PushFont(fonts().regular, size::Body);
+        const float tw = ImGui::CalcTextSize(totals.c_str()).x;
+        ImGui::PopFont();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - tw, cy - 8));
+        text(totals.c_str(), fonts().regular, size::Body, col::TextSecondary);
+    }
     endPanel();
 }
 
 }  // namespace
 
-void parts::viewport3d(App& app, ImVec2 size, const char* hint) { viewport(app, size, hint); }
+void parts::viewport3d(App& app, ImVec2 size, const char* hint, const Overlay& overlay, bool presets) {
+    viewport(app, size, hint, overlay, presets);
+}
 
 void job(App& app) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);  // structural panels are square
@@ -546,7 +597,17 @@ void job(App& app) {
     topBar(app);
     const float body_h = ImGui::GetContentRegionAvail().y - kStatusH;
     const auto& doc = app.document();
-    if (doc && app.step() == Step::Orient) {
+    if (doc && app.step() == Step::Supports) {
+        supportsLeft(app, *doc, body_h);
+        ImGui::SameLine(0, 0);
+        const bool have = doc->supports.result != nullptr;
+        Document& d = *doc;
+        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
+                 have ? nullptr : "Faces that need tips are tinted: they lean more than 45° from upright.",
+                 [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { supportsOverlay(app, d, o, s, vp); }, !have);
+        ImGui::SameLine(0, 0);
+        supportsRight(app, *doc, body_h);
+    } else if (doc && app.step() == Step::Orient) {
         if (app.orientView() == OrientView::Results && doc->orient.results) {
             orientResults(app, *doc, ImVec2(0, body_h));
         } else {

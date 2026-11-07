@@ -170,6 +170,26 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else throw std::runtime_error("unknown orient step " + what);
         } else if (step.contains("use")) {
             app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
+        } else if (step.contains("supports")) {
+            const std::string what = step["supports"].get<std::string>();
+            if (what != "generate") throw std::runtime_error("unknown supports step " + what);
+            app.generateSupports();
+        } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
+            SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
+            if (step.contains("tip_size")) {
+                const double d = step["tip_size"].get<double>();
+                c.usual_tip = d < 0.35 ? 1 : (d < 0.5 ? 2 : 3);
+            }
+            if (step.contains("spacing")) c.density = step["spacing"].get<double>();
+            if (step.contains("merge")) c.merge = step["merge"].get<bool>();
+            app.setSupportChoices(c);
+        } else if (step.contains("supports_view")) {
+            const std::string v = step["supports_view"].get<std::string>();
+            app.setSupportsView(v == "why" ? SupportsView::Why : v == "tips" ? SupportsView::TipsOnly : SupportsView::Supports);
+        } else if (step.contains("select_tip")) {
+            app.selectTip(step["select_tip"].get<int>());
+        } else if (step.contains("problems")) {
+            app.showProblems(step["problems"].get<bool>());
         } else if (step.contains("shortcuts")) {
             app.showShortcuts(step["shortcuts"].get<bool>());
         } else if (step.contains("wait")) {

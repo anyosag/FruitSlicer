@@ -22,8 +22,9 @@ catch_discover_tests(fruit_tests)
 
 # The desktop app's logic that needs no window (FRUIT_BUILD_APP=ON only).
 if(FRUIT_BUILD_APP)
-  add_executable(fruit_gui_tests gui/test_document.cpp gui/test_orient_logic.cpp
-    ${PROJECT_SOURCE_DIR}/src/gui/Document.cpp ${PROJECT_SOURCE_DIR}/src/gui/Orient.cpp)
+  add_executable(fruit_gui_tests gui/test_document.cpp gui/test_orient_logic.cpp gui/test_supports_logic.cpp
+    ${PROJECT_SOURCE_DIR}/src/gui/Document.cpp ${PROJECT_SOURCE_DIR}/src/gui/Orient.cpp
+    ${PROJECT_SOURCE_DIR}/src/gui/Supports.cpp)
   target_include_directories(fruit_gui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/gui)
   target_link_libraries(fruit_gui_tests PRIVATE fruit_core Catch2::Catch2WithMain)
   catch_discover_tests(fruit_gui_tests)

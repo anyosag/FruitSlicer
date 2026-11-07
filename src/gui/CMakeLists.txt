@@ -25,12 +25,14 @@ set(app_sources
   Log.cpp
   Orient.cpp
   Script.cpp
+  Supports.cpp
   Theme.cpp
   Widgets.cpp
   screens/AboutScreen.cpp
   screens/HomeScreen.cpp
   screens/JobScreen.cpp
   screens/OrientStep.cpp
+  screens/SupportsStep.cpp
   view3d/Camera.cpp
   view3d/Renderer.cpp
   platform/Platform.cpp
