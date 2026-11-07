@@ -29,6 +29,8 @@ void JobControl::cancel() const noexcept {
 
 bool JobControl::cancelled() const noexcept { return s_ && s_->cancelled.load(std::memory_order_relaxed); }
 
+const std::atomic<bool>* JobControl::cancelFlag() const noexcept { return s_ ? &s_->cancelled : nullptr; }
+
 void JobControl::check() const {
     if (cancelled()) throw Cancelled();
 }

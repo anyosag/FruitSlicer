@@ -388,6 +388,19 @@ printer.
 ./build/src/net/fruitslicer-printer send 192.168.1.50 model.goo --start    # asks before printing
 ```
 
+In the app, choose **Save to: Printer over Wi-Fi** on the Print step. The
+app writes the file, reads it back to check it, then lists the printers that
+answer on the network; you can also add one by its address, which is kept
+for next time. Sending shows its progress and can be cancelled, and the
+printer is told to drop the partial file. **Start printing when it arrives**
+is off by default; turning it on says what to check at the printer first.
+
+The first search makes macOS ask whether FruitSlicer may find devices on
+your local network (macOS 15 and later). If that was declined, allow it in
+System Settings → Privacy & Security → Local Network and search again.
+Because the app is signed ad hoc rather than with an Apple Developer ID,
+macOS may ask again after an update ([TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)).
+
 ### Overlap coupon (please run this first)
 
 FruitSlicer exports the model and its supports as one STL made of overlapping

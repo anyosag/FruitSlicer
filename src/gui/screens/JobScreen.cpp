@@ -141,7 +141,7 @@ void topBar(App& app) {
         next = doc->print.drive.empty() ? "Show in Finder" : "Eject the drive";
         enabled = !app.jobs().busy();
     } else if (doc && app.step() == Step::Print) {
-        next = "Save .goo";
+        next = app.sendOverWifi() ? "Send to printer" : "Save .goo";
         why_s = app.printBlocker();
         enabled = why_s.empty();
         if (!enabled) why = why_s.c_str();
@@ -170,7 +170,7 @@ void topBar(App& app) {
         else if (next == "Generate supports" || next == "Regenerate supports") app.generateSupports();
         else if (next == "Next: Layers") app.goToStep(Step::Layers);
         else if (next == "Next: Print") app.goToStep(Step::Print);
-        else if (next == "Save .goo") app.savePrint();
+        else if (next == "Save .goo" || next == "Send to printer") app.savePrint();
         else if (next == "Eject the drive") app.ejectDrive();
         else if (next == "Show in Finder") app.revealSaved();
     }

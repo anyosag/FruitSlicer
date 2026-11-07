@@ -191,9 +191,11 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
     text("Save to", fonts().semibold, size::Body, col::Text);
     auto& drives = app.drives();
     int& choice = app.driveChoice();
-    const bool on_drive = choice >= 0 && choice < static_cast<int>(drives.size());
-    const std::string current =
-        on_drive ? driveLabel(drives[static_cast<std::size_t>(choice)], false) : std::string("A folder you choose");
+    bool& wifi = app.sendOverWifi();
+    const bool on_drive = !wifi && choice >= 0 && choice < static_cast<int>(drives.size());
+    const std::string current = wifi       ? std::string("Printer over Wi-Fi")
+                                : on_drive ? driveLabel(drives[static_cast<std::size_t>(choice)], false)
+                                           : std::string("A folder you choose");
     ImGui::SetNextItemWidth(-1);
     ImGui::PushFont(fonts().regular, size::Body);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
@@ -203,15 +205,24 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
     ImGui::PushStyleColor(ImGuiCol_PopupBg, col::Card);
     if (ImGui::BeginCombo("##save_to", current.c_str())) {
         for (int i = 0; i < static_cast<int>(drives.size()); ++i)
-            if (ImGui::Selectable(driveLabel(drives[static_cast<std::size_t>(i)], true).c_str(), choice == i))
+            if (ImGui::Selectable(driveLabel(drives[static_cast<std::size_t>(i)], true).c_str(), on_drive && choice == i)) {
                 choice = i;
-        if (ImGui::Selectable("A folder you choose", !on_drive)) choice = -1;
+                wifi = false;
+            }
+        if (ImGui::Selectable("A folder you choose", !on_drive && !wifi)) {
+            choice = -1;
+            wifi = false;
+        }
+        if (ImGui::Selectable("Printer over Wi-Fi", wifi)) wifi = true;
         ImGui::EndCombo();
     }
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar(2);
     ImGui::PopFont();
-    if (on_drive) {
+    if (wifi) {
+        text("FruitSlicer writes the file, reads it back to check it, then finds your printer on the network.",
+             fonts().regular, size::Help, col::TextMuted, true);
+    } else if (on_drive) {
         text(strf("Saved as %s.goo at the top level of the drive.", doc.name.c_str()).c_str(),
              fonts().regular, size::Help, col::TextMuted, true);
     } else if (drives.empty()) {
@@ -220,7 +231,8 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
     }
     ImGui::Dummy(ImVec2(0, 4));
     const std::string blocker = app.printBlocker();
-    if (primaryButton("Save .goo", ImVec2(110, 40), blocker.empty())) app.savePrint();
+    if (primaryButton(wifi ? "Send to printer" : "Save .goo", ImVec2(wifi ? 140 : 110, 40), blocker.empty()))
+        app.savePrint();
     if (!blocker.empty()) tooltip(blocker.c_str());
     ImGui::SameLine(0, 8);
     if (secondaryButton("Export STL instead", ImVec2(0, 40), !app.jobs().busy())) app.exportStl(false);

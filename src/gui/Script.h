@@ -23,6 +23,10 @@
 //   {"drive": name} adds a stand-in USB drive (a folder) and picks it
 //   {"save": true} as the Save .goo button (asks about orientation once; with no drive, a dialog)
 //   {"save_to": path | "@demo"} saves straight to a path, no questions; {"saved": "back"}
+//   {"answer": "save_anyway" | "cancel"} the orientation question
+//   {"mock_printer": true | "silent"} a printer on loopback (or none answering); {"search": true}
+//   {"save_target": "wifi" | "folder"}
+//   {"printer": n (1-based)} {"start_print": bool} {"send": "go" | "close"}
 //   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)
 //   {"screen": "home" | "job" | "about"} {"view": "front" | "side" | "angled" | "below"}
 // Shots are written as <dir>/<name>.png once two consecutive frames are
