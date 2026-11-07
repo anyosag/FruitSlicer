@@ -4,6 +4,7 @@ add_executable(fruit_tests
   test_slicer.cpp
   test_islands.cpp
   test_hollow.cpp
+  test_drain.cpp
   test_calibration.cpp
   test_points.cpp
   test_tree.cpp

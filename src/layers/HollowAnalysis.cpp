@@ -21,6 +21,7 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
     const size_t n = layers.size();
     HollowReport report;
     report.trap_regions.assign(n, {});
+    report.cup_regions.assign(n, {});
     std::vector<Hollow> hollows;
     std::vector<std::vector<int>> by_layer(n);
     std::vector<Paths> filled(n);  // material + enclosed holes (outer contours only)
@@ -97,11 +98,11 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
         for (int m : a.members) total += hollows[m].area;
         c.center = a.moment / std::max(total, 1e-12);
         report.components.push_back(c);
-        if (c.kind == HollowKind::ResinTrap)
-            for (int m : a.members) {
-                Paths& dst = report.trap_regions[hollows[m].layer];
-                dst.insert(dst.end(), hollows[m].shape.begin(), hollows[m].shape.end());
-            }
+        auto& regions = c.kind == HollowKind::ResinTrap ? report.trap_regions : report.cup_regions;
+        for (int m : a.members) {
+            Paths& dst = regions[hollows[m].layer];
+            dst.insert(dst.end(), hollows[m].shape.begin(), hollows[m].shape.end());
+        }
     }
     return report;
 }
