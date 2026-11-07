@@ -1,0 +1,11 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"tools": "inspect"}, {"shot": "c6_inspect_empty"},
+    {"goo_inspect": "@demo-sample"}, {"shot": "c6_inspect"},
+    {"goo_check": true}, {"wait": "jobs"}, {"shot": "c6_inspect_checked"},
+    {"tools": "compare"}, {"shot": "c6_compare_empty"},
+    {"goo_compare": ["@demo-sample", "@demo-sample-2"]}, {"wait": "jobs"}, {"shot": "c6_compare"}
+  ]
+}

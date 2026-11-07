@@ -23,6 +23,7 @@ struct GooExportOptions {
     // reproduces the print time SatelLite 1.0.2.43 wrote for its 16K file.
     double motion_seconds_per_layer = 2.4;
     bool sync_to_device = false;    // force the data onto the drive (USB sticks)
+    std::string file_time;          // "yyyy-MM-dd HH:mm:ss" to stamp; empty: now (fixed for reproducible files)
 };
 
 struct GooExportResult {

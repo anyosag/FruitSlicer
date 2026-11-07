@@ -19,6 +19,7 @@
 #include "Preferences.h"
 #include "ABTest.h"
 #include "Fit.h"
+#include "GooTools.h"
 #include "Resins.h"
 #include "Send.h"
 #include "platform/Platform.h"
@@ -32,7 +33,8 @@ struct SDL_Window;
 namespace gui {
 
 enum class Screen {
-    Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit, ABSetup, ABResults
+    Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit, ABSetup, ABResults,
+    Tools
 };
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
@@ -310,6 +312,24 @@ public:
     bool& abRevealed() { return ab_revealed_; }
     void setABScore(int id, Outcome o, int scar, double removal_s, const std::string& notes);
     const fruit::ABSummary& abSummary() const { return ab_summary_; }
+    // Tools (canvas boards "GooInspect" and "GooCompare"): a print file in
+    // plain words, and two files compared.
+    int& toolsTab() { return tools_tab_; }  // 0: inspect, 1: compare
+    struct GooInspected {
+        std::string path;
+        fruit::GooHeader header;
+        GooSummary summary;
+        unsigned small_tex = 0, big_tex = 0;  // the stored pictures (0: none)
+        std::shared_ptr<const fruit::GooVerifyResult> check;
+    };
+    const GooInspected* gooInspected() const { return goo_inspected_.get(); }
+    void inspectGoo();                                // through a dialog
+    void inspectGooFile(const std::string& path);
+    void checkGoo();                                  // reads every layer back, as a task
+    void chooseGooToCompare(int side);                // through a dialog; 0: A, 1: B
+    void setGooToCompare(int side, const std::string& path);
+    const std::string& gooToCompare(int side) const { return goo_compare_[side & 1]; }
+    std::shared_ptr<const fruit::GooCompareResult> gooComparison() const { return goo_comparison_; }
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -447,6 +467,12 @@ private:
     fruit::ABSummary ab_summary_;
     int ab_selected_ = 0, ab_scores_rev_ = 0;
     bool ab_revealed_ = false;
+    int tools_tab_ = 0;
+    std::shared_ptr<GooInspected> goo_inspected_;
+    std::string goo_compare_[2];
+    std::shared_ptr<const fruit::GooCompareResult> goo_comparison_;
+    void freeGooPictures();
+    void compareGoos();  // once both files are chosen
     // Where a resin's plate of this kind is kept: the file it was saved as
     // (if it was), and its manifest and score sheet in FruitSlicer's folder.
     PlateFiles keptPlate(const Resin& r, const std::string& kind) const;

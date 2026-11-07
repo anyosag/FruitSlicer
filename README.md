@@ -159,6 +159,16 @@ tests for marks and clean-up time, p < 0.05), and says how much the number
 of copies can show: with 3 or fewer a side even a clean sweep could be
 chance.
 
+**Tools** (on the rail) has two. **Inspect a .goo** opens any print file and
+shows its header in plain words (printer, image, exposures, waits, movement,
+layers), the pictures the printer shows, and, on request, a read-back of
+every layer: checksums, pixel values, the volume they add up to against the
+header's, and the end of the file. **Compare two files** lists the header
+settings that differ, says which of them change how the print cures, and
+overlays a layer from each to see whether one is the other flipped; a shape
+that looks the same flipped is said to be unable to show the orientation,
+rather than called a match.
+
 **Settings** (at the bottom of the rail) has the 3D view's
 smoothing, how many processor cores slicing and saving may use, whether `.goo`
 files go to a plugged-in USB drive, the resin for new jobs, the log file, and

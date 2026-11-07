@@ -176,7 +176,26 @@ std::string demoSample() {
     r.bottom_layers = 6;
     r.transition_layers = 6;
     const fruit::GooPrintSetup setup = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), r);
-    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 0.3}), setup.header, setup.grid, fruit::GooExportOptions{}, p);
+    fruit::GooExportOptions o;
+    o.file_time = "2026-11-05 15:43:00";  // the same every run
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 0.3}), setup.header, setup.grid, o, p);
+    return p;
+}
+
+// "@demo-sample-2": the same box as "@demo-sample", with other exposures
+// (2 s, bottom 30 s), for comparing two files.
+std::string demoSample2() {
+    const auto p = (demoDir() / "sample 2 s.goo").string();
+    fruit::GooPrintRequest r;
+    r.layer_height = 0.03;
+    r.exposure = 2.0;
+    r.bottom_exposure = 30;
+    r.bottom_layers = 6;
+    r.transition_layers = 6;
+    const fruit::GooPrintSetup setup = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), r);
+    fruit::GooExportOptions o;
+    o.file_time = "2026-11-05 15:43:00";  // the same every run
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 0.3}), setup.header, setup.grid, o, p);
     return p;
 }
 
@@ -406,6 +425,25 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("ab")) {
             if (step["ab"].get<std::string>() != "open") throw std::runtime_error("unknown ab step");
             app.openABSetup();
+        } else if (step.contains("tools")) {
+            const std::string t = step["tools"].get<std::string>();
+            app.setScreen(Screen::Tools);
+            app.toolsTab() = t == "compare" ? 1 : 0;
+        } else if (step.contains("goo_inspect")) {
+            std::string p = step["goo_inspect"].get<std::string>();
+            if (p == "@demo-sample") p = demoSample();
+            else if (p == "@demo-sample-2") p = demoSample2();
+            app.inspectGooFile(p);
+        } else if (step.contains("goo_check")) {
+            app.checkGoo();
+        } else if (step.contains("goo_compare")) {
+            // [A, B]: "@demo-sample", "@demo-sample-2" (other exposures), or paths.
+            for (int side = 0; side < 2; ++side) {
+                std::string p = step["goo_compare"].at(static_cast<std::size_t>(side)).get<std::string>();
+                if (p == "@demo-sample") p = demoSample();
+                else if (p == "@demo-sample-2") p = demoSample2();
+                app.setGooToCompare(side, p);
+            }
         } else if (step.contains("ab_results")) {
             app.openABResults();
         } else if (step.contains("ab_select")) {

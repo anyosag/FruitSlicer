@@ -77,6 +77,7 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
 
 App::~App() {
     freePictures();
+    freeGooPictures();
     Renderer::freeTexture(layer_tex_);
     Renderer::freeTexture(orient_tex_[0]);
     Renderer::freeTexture(orient_tex_[1]);
@@ -1931,6 +1932,107 @@ void App::setABScore(int id, Outcome o, int scar, double removal_s, const std::s
     }
 }
 
+// ---- Tools: inspect and compare print files ----
+
+void App::freeGooPictures() {
+    if (!goo_inspected_) return;
+    if (goo_inspected_->small_tex) Renderer::freeTexture(goo_inspected_->small_tex);
+    if (goo_inspected_->big_tex) Renderer::freeTexture(goo_inspected_->big_tex);
+    goo_inspected_->small_tex = goo_inspected_->big_tex = 0;
+}
+
+void App::inspectGoo() {
+    platform::openFileDialog(window_, {{"Print files", "goo"}}, [this](const std::string& path) {
+        if (!path.empty()) inspectGooFile(path);
+    });
+}
+
+void App::inspectGooFile(const std::string& path) {
+    screen_ = Screen::Tools;
+    tools_tab_ = 0;
+    auto g = std::make_shared<GooInspected>();
+    try {
+        g->path = path;
+        g->header = fruit::readGooHeader(path);
+        std::error_code ec;
+        const auto bytes = std::filesystem::file_size(path, ec);
+        g->summary = summarizeGoo(g->header, ec ? 0 : static_cast<uint64_t>(bytes));
+    } catch (const std::exception& e) {
+        showError("Couldn't read that print file", e.what());
+        return;
+    }
+    freeGooPictures();
+    if (const auto px = previewRgba(g->header.small_preview, 116, 116); !px.empty())
+        g->small_tex = renderer_.uploadRgba(116, 116, px);
+    if (const auto px = previewRgba(g->header.big_preview, 290, 290); !px.empty())
+        g->big_tex = renderer_.uploadRgba(290, 290, px);
+    goo_inspected_ = g;
+    log::info("inspecting " + path);
+}
+
+void App::checkGoo() {
+    if (!goo_inspected_) return;
+    const std::string path = goo_inspected_->path;
+    auto out = std::make_shared<fruit::GooVerifyResult>();
+    jobs_.start(
+        "Reading every layer back",
+        [path, out](const fruit::JobControl& ctl) { *out = fruit::verifyGoo(path, ctl); },
+        [this, path, out](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't read the file back", e.what());
+                }
+                return;
+            }
+            if (goo_inspected_ && goo_inspected_->path == path) goo_inspected_->check = out;
+        });
+}
+
+void App::chooseGooToCompare(int side) {
+    platform::openFileDialog(window_, {{"Print files", "goo"}}, [this, side](const std::string& path) {
+        if (!path.empty()) setGooToCompare(side, path);
+    });
+}
+
+void App::setGooToCompare(int side, const std::string& path) {
+    screen_ = Screen::Tools;
+    tools_tab_ = 1;
+    goo_compare_[side & 1] = path;
+    goo_comparison_.reset();
+    compareGoos();
+}
+
+void App::compareGoos() {
+    if (goo_compare_[0].empty() || goo_compare_[1].empty()) return;
+    const std::string a = goo_compare_[0], b = goo_compare_[1];
+    auto out = std::make_shared<fruit::GooCompareResult>();
+    jobs_.start(
+        "Comparing the two files",
+        [a, b, out](const fruit::JobControl& ctl) {
+            ctl.step("read", 0.0);
+            const fruit::GooFileInfo fa = fruit::readGoo(a);
+            ctl.step("read", 0.5);
+            const fruit::GooFileInfo fb = fruit::readGoo(b);
+            ctl.step("compare", 0.0);
+            *out = fruit::compareGoo(fa, fb);
+        },
+        [this, a, b, out](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't compare the two files", e.what());
+                }
+                return;
+            }
+            if (goo_compare_[0] == a && goo_compare_[1] == b) goo_comparison_ = out;
+        });
+}
+
 std::shared_ptr<const fruit::GooHeader> App::resinSample(const Resin& r) {
     if (r.sample_path.empty()) return nullptr;
     auto it = resin_samples_.find(r.sample_path);
@@ -2210,6 +2312,7 @@ void App::rail() {
         if (screen_ != Screen::Resins) resin_selected_ = newJobResin().id;
         screen_ = Screen::Resins;
     }
+    if (railItem("rail_tools", "Tools", icon::wrench, screen_ == Screen::Tools)) screen_ = Screen::Tools;
     // Settings at the bottom; About opens from it.
     ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 56 - 12);
     if (railItem("rail_settings", "Settings", icon::gear, screen_ == Screen::Settings || screen_ == Screen::About))
@@ -2377,6 +2480,7 @@ void App::frame() {
         case Screen::Fit: screens::fit(*this); break;
         case Screen::ABSetup: screens::abSetup(*this); break;
         case Screen::ABResults: screens::abResults(*this); break;
+        case Screen::Tools: screens::tools(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);
