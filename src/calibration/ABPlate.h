@@ -74,4 +74,33 @@ std::string blindABCsv(const nlohmann::json& manifest, const std::vector<ABCopyR
 // manifest, in its order. Throws std::runtime_error naming the problem.
 std::vector<ABCopyResult> loadABResults(const std::string& manifest_path, const std::string& csv_path);
 
+// One side of an A/B test, from its scores.
+struct ABArmStats {
+    int copies = 0;                          // on the plate
+    int scored = 0;                          // with a result
+    int ok = 0, partial = 0, failed = 0;
+    int marked = 0;                          // with a mark, 1..5
+    double mean_scar = 0;
+    int timed = 0;                           // with a clean-up time
+    double mean_removal_s = 0;
+};
+
+// The two sides compared. Each p is two-sided and exact (or, past about
+// 200,000 ways to split the copies, estimated from 200,000 random splits): the
+// chance of a difference at least this big if the supports made none. 1 when
+// a side has nothing to compare. Each best_p is the smallest p any results
+// from these numbers of copies could give: above 0.05, no difference can
+// show however the copies turn out.
+struct ABSummary {
+    ABArmStats a, b;
+    double p_ok = 1, p_scar = 1, p_removal = 1;
+    double best_p_ok = 1, best_p_scar = 1, best_p_removal = 1;
+};
+ABSummary summarizeAB(const nlohmann::json& manifest, const std::vector<ABCopyResult>& scores);
+
+// The tests themselves. Fisher's exact test on a 2×2 table (two-sided);
+// a permutation test on the difference in means (two-sided).
+double fisherExact(int ok_a, int not_a, int ok_b, int not_b);
+double permutationTest(const std::vector<double>& a, const std::vector<double>& b);
+
 }  // namespace fruit

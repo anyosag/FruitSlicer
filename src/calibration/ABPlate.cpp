@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <random>
 #include <sstream>
@@ -237,6 +238,119 @@ std::vector<ABCopyResult> loadABResults(const std::string& manifest_path, const 
         }
         r.notes = at(c_notes);
     }
+    return out;
+}
+
+namespace {
+
+// log of n choose k.
+double logChoose(int n, int k) {
+    if (k < 0 || k > n) return -std::numeric_limits<double>::infinity();
+    return std::lgamma(n + 1.0) - std::lgamma(k + 1.0) - std::lgamma(n - k + 1.0);
+}
+
+double mean(const std::vector<double>& v) {
+    double s = 0;
+    for (double x : v) s += x;
+    return v.empty() ? 0 : s / static_cast<double>(v.size());
+}
+
+}  // namespace
+
+double fisherExact(int ok_a, int not_a, int ok_b, int not_b) {
+    const int ra = ok_a + not_a, rb = ok_b + not_b, oks = ok_a + ok_b, n = ra + rb;
+    if (ra == 0 || rb == 0 || oks == 0 || oks == n) return 1;
+    auto prob = [&](int x) { return std::exp(logChoose(ra, x) + logChoose(rb, oks - x) - logChoose(n, oks)); };
+    const double seen = prob(ok_a);
+    double p = 0;
+    for (int x = std::max(0, oks - rb); x <= std::min(ra, oks); ++x) {
+        const double q = prob(x);
+        if (q <= seen * (1 + 1e-7)) p += q;
+    }
+    return std::min(1.0, p);
+}
+
+double permutationTest(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.empty() || b.empty()) return 1;
+    std::vector<double> all = a;
+    all.insert(all.end(), b.begin(), b.end());
+    const int n = static_cast<int>(all.size()), k = static_cast<int>(a.size());
+    double total = 0;
+    for (double x : all) total += x;
+    const double seen = std::abs(mean(a) - mean(b)), eps = 1e-9 * (1 + seen);
+    auto diff = [&](double sum_a) { return std::abs(sum_a / k - (total - sum_a) / (n - k)); };
+    const double ways = std::exp(logChoose(n, k));
+    if (ways <= 200000.5 && n <= 62) {
+        // Every way of choosing which k copies are "A" (Gosper's hack).
+        long long count = 0, tried = 0;
+        for (unsigned long long m = (1ULL << k) - 1; m < (1ULL << n);) {
+            double s = 0;
+            for (int i = 0; i < n; ++i)
+                if (m >> i & 1ULL) s += all[static_cast<std::size_t>(i)];
+            count += diff(s) >= seen - eps ? 1 : 0;
+            ++tried;
+            const unsigned long long c = m & (~m + 1), r = m + c;
+            m = (((r ^ m) >> 2) / c) | r;
+        }
+        return static_cast<double>(count) / static_cast<double>(tried);
+    }
+    // Too many to list: random splits, with a fixed seed so it never wavers.
+    std::mt19937 rng(1);
+    std::vector<int> idx(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) idx[static_cast<std::size_t>(i)] = i;
+    const int draws = 200000;
+    long long count = 0;
+    for (int d = 0; d < draws; ++d) {
+        double s = 0;
+        for (int i = 0; i < k; ++i) {  // a partial Fisher–Yates shuffle picks k at random
+            const int j = i + static_cast<int>(rng() % static_cast<unsigned>(n - i));
+            std::swap(idx[static_cast<std::size_t>(i)], idx[static_cast<std::size_t>(j)]);
+            s += all[static_cast<std::size_t>(idx[static_cast<std::size_t>(i)])];
+        }
+        count += diff(s) >= seen - eps ? 1 : 0;
+    }
+    return (static_cast<double>(count) + 1) / (draws + 1);
+}
+
+ABSummary summarizeAB(const nlohmann::json& manifest, const std::vector<ABCopyResult>& scores) {
+    std::map<int, const ABCopyResult*> by_id;
+    for (const auto& s : scores) by_id[s.id] = &s;
+    ABSummary out;
+    std::vector<double> scar_a, scar_b, time_a, time_b;
+    for (const auto& c : manifest.at("copies")) {
+        const bool is_a = c.at("arm") == "A";
+        ABArmStats& arm = is_a ? out.a : out.b;
+        ++arm.copies;
+        const auto it = by_id.find(c.at("id").get<int>());
+        if (it == by_id.end() || !it->second->recorded) continue;
+        const ABCopyResult& r = *it->second;
+        ++arm.scored;
+        if (r.ok) ++arm.ok;
+        else if (r.partial) ++arm.partial;
+        else ++arm.failed;
+        if (r.scar >= 1) (is_a ? scar_a : scar_b).push_back(r.scar);
+        if (r.removal_s >= 0) (is_a ? time_a : time_b).push_back(r.removal_s);
+    }
+    out.a.marked = static_cast<int>(scar_a.size());
+    out.b.marked = static_cast<int>(scar_b.size());
+    out.a.mean_scar = mean(scar_a);
+    out.b.mean_scar = mean(scar_b);
+    out.a.timed = static_cast<int>(time_a.size());
+    out.b.timed = static_cast<int>(time_b.size());
+    out.a.mean_removal_s = mean(time_a);
+    out.b.mean_removal_s = mean(time_b);
+    out.p_ok = fisherExact(out.a.ok, out.a.scored - out.a.ok, out.b.ok, out.b.scored - out.b.ok);
+    out.p_scar = permutationTest(scar_a, scar_b);
+    out.p_removal = permutationTest(time_a, time_b);
+    // The smallest p any results could give: one split of all C(n, k) is the
+    // clean sweep, and with sides of equal size so is its mirror.
+    auto best = [](int na, int nb) {
+        if (na == 0 || nb == 0) return 1.0;
+        return std::min(1.0, (na == nb ? 2.0 : 1.0) / std::exp(logChoose(na + nb, na)));
+    };
+    out.best_p_ok = fisherExact(out.a.scored, 0, 0, out.b.scored);
+    out.best_p_scar = best(out.a.marked, out.b.marked);
+    out.best_p_removal = best(out.a.timed, out.b.timed);
     return out;
 }
 

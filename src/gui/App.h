@@ -31,7 +31,9 @@ struct SDL_Window;
 
 namespace gui {
 
-enum class Screen { Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit, ABSetup };
+enum class Screen {
+    Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit, ABSetup, ABResults
+};
 // The job's steps, in order. Only Model works yet; the rest follow.
 enum class Step { Model, Orient, Supports, Layers, Print };
 
@@ -298,6 +300,16 @@ public:
     void saveABFiles();                           // through a dialog
     void saveABTo(const std::string& path_a);     // <name>_A.stl, <name>_B.stl, and the kept files
     const ABRecord& abRecord() const { return ab_record_; }
+    // Its results (canvas board "ABResults"): each copy scored with its side
+    // hidden until revealed, then the two sides compared.
+    void openABResults();
+    const nlohmann::json& abManifest() const { return ab_manifest_; }  // null: none kept
+    const std::vector<fruit::ABCopyResult>& abScores() const { return ab_scores_; }
+    int abScoresRevision() const { return ab_scores_rev_; }
+    int& abSelected() { return ab_selected_; }  // a copy's id
+    bool& abRevealed() { return ab_revealed_; }
+    void setABScore(int id, Outcome o, int scar, double removal_s, const std::string& notes);
+    const fruit::ABSummary& abSummary() const { return ab_summary_; }
     // Layers.
     void setLayer(int index);  // 0-based; clamped
     void setShowBelow(bool show);
@@ -430,6 +442,11 @@ private:
     int ab_plate_copies_ = 0;
     ABRecord ab_record_;
     std::string abDir() const;  // where the test's manifest, sheet and record are kept
+    nlohmann::json ab_manifest_;
+    std::vector<fruit::ABCopyResult> ab_scores_;
+    fruit::ABSummary ab_summary_;
+    int ab_selected_ = 0, ab_scores_rev_ = 0;
+    bool ab_revealed_ = false;
     // Where a resin's plate of this kind is kept: the file it was saved as
     // (if it was), and its manifest and score sheet in FruitSlicer's folder.
     PlateFiles keptPlate(const Resin& r, const std::string& kind) const;

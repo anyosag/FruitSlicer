@@ -18,6 +18,7 @@ void plate(App& app);     // canvas board "PlatePreview"
 void score(App& app);     // canvas board "Results"
 void fit(App& app);       // canvas board "Fit"
 void abSetup(App& app);   // canvas board "ABSetup"
+void abResults(App& app); // canvas board "ABResults"
 // Calibrate: the hub, the image orientation check, the Printer page.
 void calibrate(App& app);
 void orientationCheck(App& app);

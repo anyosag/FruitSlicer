@@ -1869,6 +1869,68 @@ void App::saveABTo(const std::string& path_a) {
     }
 }
 
+void App::openABResults() {
+    screen_ = Screen::ABResults;
+    ab_manifest_ = nullptr;
+    ab_scores_.clear();
+    ab_summary_ = fruit::ABSummary{};
+    ++ab_scores_rev_;
+    if (ab_record_.copies == 0) return;  // the page offers to set one up
+    const std::filesystem::path dir = abDir();
+    try {
+        std::ifstream in(dir / "ab.json");
+        if (!in) throw std::runtime_error("Its manifest (ab.json) isn't in FruitSlicer's folder any more.");
+        ab_manifest_ = nlohmann::json::parse(in);
+        ab_scores_ = fruit::loadABResults((dir / "ab.json").string(), (dir / "ab.results.csv").string());
+        ab_summary_ = fruit::summarizeAB(ab_manifest_, ab_scores_);
+        ab_selected_ = ab_scores_.empty() ? 0 : ab_scores_.front().id;
+        for (const auto& c : ab_scores_)  // the first not scored yet
+            if (!c.recorded) {
+                ab_selected_ = c.id;
+                break;
+            }
+    } catch (const std::exception& e) {
+        ab_manifest_ = nullptr;
+        ab_scores_.clear();
+        showError("Couldn't read the A/B test's scores", e.what());
+    }
+}
+
+void App::setABScore(int id, Outcome o, int scar, double removal_s, const std::string& notes) {
+    if (ab_manifest_.is_null()) return;
+    std::vector<fruit::ABCopyResult> next = ab_scores_;
+    bool found = false;
+    for (auto& c : next) {
+        if (c.id != id) continue;
+        found = true;
+        const bool printed = o == Outcome::Held || o == Outcome::Partly;
+        c.recorded = o != Outcome::None;
+        c.ok = o == Outcome::Held;
+        c.partial = o == Outcome::Partly;
+        c.scar = printed ? std::clamp(scar, 0, 5) : 0;  // a failed copy leaves nothing to mark or clean
+        c.removal_s = printed && removal_s >= 0 ? removal_s : -1;
+        c.notes = notes;
+    }
+    if (!found) return;
+    const std::filesystem::path dir = abDir();
+    try {
+        writeWhole((dir / "ab.results.csv").string(), fruit::blindABCsv(ab_manifest_, next));
+    } catch (const std::exception& e) {
+        showError("Couldn't save the score", e.what());
+        return;
+    }
+    ab_scores_ = std::move(next);
+    ab_summary_ = fruit::summarizeAB(ab_manifest_, ab_scores_);
+    ++ab_scores_rev_;
+    ab_record_.scored = 0;
+    for (const auto& c : ab_scores_) ab_record_.scored += c.recorded ? 1 : 0;
+    try {
+        saveABRecord((dir / "test.json").string(), ab_record_);
+    } catch (const std::exception& e) {
+        log::error("A/B record: " + std::string(e.what()));
+    }
+}
+
 std::shared_ptr<const fruit::GooHeader> App::resinSample(const Resin& r) {
     if (r.sample_path.empty()) return nullptr;
     auto it = resin_samples_.find(r.sample_path);
@@ -2141,7 +2203,8 @@ void App::rail() {
     if (railItem("rail_job", "Job", icon::cube, screen_ == Screen::Job)) screen_ = Screen::Job;
     const bool calibrating =
         screen_ == Screen::Calibrate || screen_ == Screen::OrientationCheck || screen_ == Screen::Printer ||
-        screen_ == Screen::Plate || screen_ == Screen::Score || screen_ == Screen::Fit || screen_ == Screen::ABSetup;
+        screen_ == Screen::Plate || screen_ == Screen::Score || screen_ == Screen::Fit || screen_ == Screen::ABSetup ||
+        screen_ == Screen::ABResults;
     if (railItem("rail_calibrate", "Calibrate", icon::target, calibrating)) screen_ = Screen::Calibrate;
     if (railItem("rail_resins", "Resins", icon::droplet, screen_ == Screen::Resins)) {
         if (screen_ != Screen::Resins) resin_selected_ = newJobResin().id;
@@ -2313,6 +2376,7 @@ void App::frame() {
         case Screen::Score: screens::score(*this); break;
         case Screen::Fit: screens::fit(*this); break;
         case Screen::ABSetup: screens::abSetup(*this); break;
+        case Screen::ABResults: screens::abResults(*this); break;
     }
     ImGui::EndChild();
     dialogs::health(*this);

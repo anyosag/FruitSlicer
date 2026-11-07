@@ -1,0 +1,14 @@
+{
+  "size": [1440, 1300],
+  "scale": 1,
+  "steps": [
+    {"ab_results": "open"}, {"shot": "c3c2_ab_none"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"ab": "open"}, {"ab_save_to": "@demo"},
+    {"ab_results": "open"}, {"shot": "c3c2_ab_unscored"},
+    {"ab_score_demo": 3}, {"ab_select": 4}, {"shot": "c3c2_ab_scoring"},
+    {"ab_score_demo": 8}, {"ab_reveal": true}, {"shot": "c3c2_ab_revealed"},
+    {"screen": "calibrate"}, {"shot": "c3c2_hub"}
+  ]
+}
