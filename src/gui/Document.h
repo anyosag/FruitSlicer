@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "Orient.h"
 #include "core/JobControl.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
@@ -16,6 +17,24 @@
 #include "printer/PrinterProfile.h"
 
 namespace gui {
+
+// The Orient step's choices and results for this job.
+struct OrientState {
+    std::vector<fruit::Vec3> visible;  // sides people will see, model coordinates
+    int settings = 0;                  // bumped whenever `visible` changes
+    // How it sits now, measured for (revision, settings).
+    OrientMetrics now;
+    int now_revision = -1, now_settings = -1;
+    // The search's options, found for (revision, settings).
+    std::shared_ptr<const OrientSearch> results;
+    int results_revision = -1, results_settings = -1;
+    bool decided = false;  // an option was used, or the current one kept
+
+    bool nowFresh(int revision) const { return now_revision == revision && now_settings == settings; }
+    bool resultsFresh(int revision) const {
+        return results && results_revision == revision && results_settings == settings;
+    }
+};
 
 class Document {
 public:
@@ -26,6 +45,7 @@ public:
     std::size_t low_points = 0;  // mid-air spots as first placed
     fruit::PrinterProfile printer;
     int geometry_id = 0;         // unique per load: the renderer re-uploads when it changes
+    OrientState orient;
 
     const fruit::Placement& placement() const { return placement_; }
     const fruit::Transform& transform() const { return transform_; }  // model -> printer

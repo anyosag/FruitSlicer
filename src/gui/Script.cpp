@@ -91,6 +91,20 @@ std::string demoPath(const std::string& which) {
     return p;
 }
 
+Step stepFrom(const std::string& s) {
+    static const char* names[] = {"model", "orient", "supports", "layers", "print"};
+    for (int i = 0; i < 5; ++i)
+        if (s == names[i]) return static_cast<Step>(i);
+    throw std::runtime_error("unknown step " + s);
+}
+
+Side sideFrom(const std::string& s) {
+    static const char* names[] = {"front", "back", "left", "right", "top", "bottom"};
+    for (int i = 0; i < 6; ++i)
+        if (s == names[i]) return static_cast<Side>(i);
+    throw std::runtime_error("unknown side " + s);
+}
+
 SizeChoice sizeFrom(const std::string& s) {
     if (s == "full") return SizeChoice::Full;
     if (s == "largest") return SizeChoice::Largest;
@@ -145,6 +159,17 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             for (int i = 0, n = step["undo"].get<int>(); i < n; ++i) app.undo();
         } else if (step.contains("redo")) {
             for (int i = 0, n = step["redo"].get<int>(); i < n; ++i) app.redo();
+        } else if (step.contains("step")) {
+            app.goToStep(stepFrom(step["step"].get<std::string>()));
+        } else if (step.contains("side")) {
+            app.toggleSide(sideFrom(step["side"].get<std::string>()));
+        } else if (step.contains("orient")) {
+            const std::string what = step["orient"].get<std::string>();
+            if (what == "find") app.findOrientation();
+            else if (what == "settings") app.showOrientSettings();
+            else throw std::runtime_error("unknown orient step " + what);
+        } else if (step.contains("use")) {
+            app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
         } else if (step.contains("shortcuts")) {
             app.showShortcuts(step["shortcuts"].get<bool>());
         } else if (step.contains("wait")) {

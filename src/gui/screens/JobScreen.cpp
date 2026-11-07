@@ -16,14 +16,11 @@
 #include "Icons.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "screens/JobParts.h"
 #include "screens/Screens.h"
 #include "view3d/Math.h"
 
-namespace gui::screens {
-
-namespace {
-
-constexpr float kTopH = 60, kStatusH = 42, kLeftW = 316, kRightW = 297;
+namespace gui::screens::parts {
 
 // A structural panel: square, one background, border on one side.
 // Item spacing is set inside the child only: the parent lays panels out
@@ -61,6 +58,14 @@ void tooltip(const char* s) {
     ImGui::PopStyleVar();
 }
 
+}  // namespace gui::screens::parts
+
+namespace gui::screens {
+
+namespace {
+
+using namespace parts;
+
 // ---- Top bar ----
 
 void topBar(App& app) {
@@ -75,26 +80,52 @@ void topBar(App& app) {
 
     static const char* kSteps[] = {"Model", "Orient", "Supports", "Layers", "Print"};
     ImGui::SetCursorPos(ImVec2(152, 11));
+    const int at = static_cast<int>(app.step());
     for (int i = 0; i < 5; ++i) {
-        const bool current = static_cast<int>(app.step()) == i;
-        stepPill(i + 1, kSteps[i], current ? StepState::Current : StepState::Upcoming, current);
-        if (!current) tooltip("This step arrives in the next update.");
+        const Step s = static_cast<Step>(i);
+        const bool done = i < at || (s == Step::Orient && doc && doc->orient.decided && at != i);
+        const StepState state = i == at ? StepState::Current : (done ? StepState::Done : StepState::Upcoming);
+        const bool can = app.canGoTo(s);
+        if (stepPill(i + 1, kSteps[i], state, can)) app.goToStep(s);
+        if (i >= 2) tooltip("This step arrives in the next update.");
+        else if (!can && doc) tooltip("Make it fit the plate first.");
         ImGui::SameLine(0, 8);
     }
 
-    // Right side: the resin in use, then the one accent button.
-    const char* next = doc ? "Next: Orient" : "Open model...";
+    // Right side: the resin in use, then the one accent button, which names
+    // the next thing to do.
+    std::string next = "Open model...";
+    bool enabled = true;
+    const char* why = nullptr;
+    if (doc && app.step() == Step::Model) {
+        next = "Next: Orient";
+        enabled = app.canGoTo(Step::Orient);
+        if (!enabled) why = "Make it fit the plate first.";
+    } else if (doc && app.step() == Step::Orient) {
+        const OrientState& o = doc->orient;
+        if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
+            next = "Use option 1";
+        } else if (o.decided) {
+            next = "Next: Supports";
+            enabled = false;
+            why = "Supports arrive in the next update.";
+        } else {
+            next = "Find best orientation";
+            enabled = !(app.jobs().busy() && app.jobs().progress().name == "Finding the best orientation");
+        }
+    }
     ImGui::PushFont(fonts().bold, size::Body);
-    const float bw = ImGui::CalcTextSize(next).x + 32;
+    const float bw = ImGui::CalcTextSize(next.c_str()).x + 32;
     ImGui::PopFont();
     const float right = ImGui::GetWindowWidth() - 16;
     ImGui::SetCursorPos(ImVec2(right - bw, 10));
-    if (doc) {
-        primaryButton(next, ImVec2(bw, 38), false);
-        tooltip("Orienting arrives in the next update.");
-    } else if (primaryButton(next, ImVec2(bw, 38))) {
-        app.openDialog();
+    if (primaryButton(next.c_str(), ImVec2(bw, 38), enabled)) {
+        if (!doc) app.openDialog();
+        else if (app.step() == Step::Model) app.goToStep(Step::Orient);
+        else if (next == "Use option 1") app.useOrientation(0);
+        else if (next == "Find best orientation") app.findOrientation();
     }
+    if (why) tooltip(why);
     ImGui::PushFont(fonts().medium, size::Body);
     const float cw = ImGui::CalcTextSize("My resin · Defaults").x + 40;
     ImGui::PopFont();
@@ -394,7 +425,7 @@ void dropCard(App& app, ImVec2 origin, ImVec2 avail) {
     if (primaryButton("Open model...", ImVec2(bw, 40))) app.openDialog();
 }
 
-void viewport(App& app, ImVec2 size) {
+void viewport(App& app, ImVec2 size, const char* hint) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col::Viewport);
     ImGui::BeginChild("viewport", size, ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -433,14 +464,22 @@ void viewport(App& app, ImVec2 size) {
         liftMarker(app, *doc, vp, origin, avail);
         axisGizmo(app, origin, avail);
     }
-    // View presets.
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 10));
-    for (auto [label, v] : {std::pair{"Front", ViewPreset::Front}, std::pair{"Side", ViewPreset::Side},
-                            std::pair{"Angled", ViewPreset::Angled}, std::pair{"From below", ViewPreset::Below}}) {
-        if (segmentButton(label, app.viewIs(v))) app.setView(v);
-        ImGui::SameLine(0, 6);
+    if (hint) {
+        // A line of help across the top of the view instead of the presets.
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + 40), col::Panel);
+        dl->AddLine(ImVec2(origin.x, origin.y + 40), ImVec2(origin.x + avail.x, origin.y + 40), col::Border);
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 12));
+        text(hint, fonts().regular, size::Body, col::TextSecondary);
+    } else {
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 10));
+        for (auto [label, v] : {std::pair{"Front", ViewPreset::Front}, std::pair{"Side", ViewPreset::Side},
+                                std::pair{"Angled", ViewPreset::Angled}, std::pair{"From below", ViewPreset::Below}}) {
+            if (segmentButton(label, app.viewIs(v))) app.setView(v);
+            ImGui::SameLine(0, 6);
+        }
+        ImGui::NewLine();
     }
-    ImGui::NewLine();
     if (!doc && !app.jobs().busy() && !app.checking()) dropCard(app, origin, avail);
     taskTray(app, ImVec2(origin.x + avail.x, origin.y + avail.y));
     ImGui::PopStyleVar();
@@ -462,7 +501,18 @@ void statusBar(App& app) {
     float x = 16;
     const float cy = kStatusH / 2;
     int problems = 0;
-    if (doc) {
+    const bool results = doc && app.step() == Step::Orient && app.orientView() == OrientView::Results &&
+                         doc->orient.results;
+    if (results) {
+        bool all = true;
+        for (const auto& op : doc->orient.results->options) all = all && op.fits;
+        const ImVec2 wp = ImGui::GetWindowPos();
+        dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, all ? col::Ok : col::Warn);
+        x += 14;
+        ImGui::SetCursorPos(ImVec2(x, cy - 8));
+        text(all ? "Every option fits the plate" : "An option does not fit the plate however it is turned", fonts().regular,
+             size::Body, col::TextSecondary);
+    } else if (doc) {
         const bool fits = doc->fit().fits;
         problems = (fits ? 0 : 1) + (doc->check.closed() ? 0 : 1) + (doc->check.cavities ? 1 : 0);
         const ImVec2 wp = ImGui::GetWindowPos();
@@ -488,18 +538,33 @@ void statusBar(App& app) {
 
 }  // namespace
 
+void parts::viewport3d(App& app, ImVec2 size, const char* hint) { viewport(app, size, hint); }
+
 void job(App& app) {
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);  // structural panels are square
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     topBar(app);
     const float body_h = ImGui::GetContentRegionAvail().y - kStatusH;
-    leftPanel(app, body_h);
-    ImGui::SameLine(0, 0);
-    const bool right = static_cast<bool>(app.document());
-    viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - (right ? kRightW : 0), body_h));
-    if (right) {
+    const auto& doc = app.document();
+    if (doc && app.step() == Step::Orient) {
+        if (app.orientView() == OrientView::Results && doc->orient.results) {
+            orientResults(app, *doc, ImVec2(0, body_h));
+        } else {
+            orientLeft(app, *doc, body_h);
+            ImGui::SameLine(0, 0);
+            viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
+                     "Turn it by typing angles in the Model step, or let the search try 65 ways.");
+            ImGui::SameLine(0, 0);
+            orientRight(app, *doc, body_h);
+        }
+    } else {
+        leftPanel(app, body_h);
         ImGui::SameLine(0, 0);
-        rightPanel(app, body_h);
+        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - (doc ? kRightW : 0), body_h), nullptr);
+        if (doc) {
+            ImGui::SameLine(0, 0);
+            rightPanel(app, body_h);
+        }
     }
     statusBar(app);
     ImGui::PopStyleVar(2);

@@ -208,6 +208,34 @@ void Renderer::setModelTransform(const fruit::Transform& t) {
     model_matrix_[15] = 1;
 }
 
+unsigned Renderer::uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb) {
+    if (w <= 0 || h <= 0 || alpha.size() != static_cast<std::size_t>(w) * h) return 0;
+    std::vector<unsigned char> px(alpha.size() * 4);
+    for (std::size_t i = 0; i < alpha.size(); ++i) {
+        px[i * 4 + 0] = static_cast<unsigned char>(rgb >> 16);
+        px[i * 4 + 1] = static_cast<unsigned char>(rgb >> 8);
+        px[i * 4 + 2] = static_cast<unsigned char>(rgb);
+        px[i * 4 + 3] = alpha[i];
+    }
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
+}
+
+void Renderer::freeTexture(unsigned tex) {
+    if (!tex) return;
+    const GLuint t = tex;
+    glDeleteTextures(1, &t);
+}
+
 void Renderer::clearModel() {
     destroyMesh(model_);
     model_revision_ = -1;

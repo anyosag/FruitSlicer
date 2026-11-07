@@ -23,6 +23,8 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
     camera_.preset(ViewPreset::Angled);
 }
 
+App::~App() { freePictures(); }
+
 bool App::initGraphics(std::string* error) {
     gl_info_ = Renderer::glInfo();
     log::info("OpenGL: " + gl_info_);
@@ -120,6 +122,7 @@ void App::placeChecked() {
     checking_.reset();
     health_.open = false;
     step_ = Step::Model;
+    orient_view_ = OrientView::Settings;
     screen_ = Screen::Job;
     log::info("placed " + doc_->name + " at " + std::to_string(doc_->placement().scale * 100) + " %");
     frameModel();
@@ -166,6 +169,171 @@ void App::scaleToFit() {
     }
     doc_->edit(p);
     frameModel();
+}
+
+bool App::canGoTo(Step s) const {
+    switch (s) {
+        case Step::Model: return true;
+        case Step::Orient: return doc_ && doc_->fit().fits;
+        default: return false;  // the next updates
+    }
+}
+
+void App::goToStep(Step s) {
+    if (!canGoTo(s)) return;
+    step_ = s;
+    screen_ = Screen::Job;
+    if (s == Step::Orient && !(doc_ && doc_->orient.resultsFresh(doc_->revision()))) orient_view_ = OrientView::Settings;
+}
+
+namespace {
+
+// A printer-frame direction in the model's own frame (rotation only).
+fruit::Vec3 toModel(const fruit::Placement& p, const fruit::Vec3& d) {
+    const fruit::Transform r = fruit::Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z);
+    return fruit::normalized({r.m[0][0] * d.x + r.m[1][0] * d.y + r.m[2][0] * d.z,
+                              r.m[0][1] * d.x + r.m[1][1] * d.y + r.m[2][1] * d.z,
+                              r.m[0][2] * d.x + r.m[1][2] * d.y + r.m[2][2] * d.z});
+}
+
+}  // namespace
+
+bool App::sidePicked(Side s) const {
+    if (!doc_) return false;
+    const fruit::Vec3 d = sideDirection(s);
+    for (const fruit::Vec3& v : visibleInPrinter(doc_->orient.visible, doc_->placement()))
+        if (fruit::dot(v, d) > 0.9) return true;
+    return false;
+}
+
+void App::toggleSide(Side s) {
+    if (!doc_) return;
+    OrientState& o = doc_->orient;
+    const fruit::Vec3 d = sideDirection(s);
+    const auto in_printer = visibleInPrinter(o.visible, doc_->placement());
+    bool removed = false;
+    for (std::size_t i = in_printer.size(); i-- > 0;)
+        if (fruit::dot(in_printer[i], d) > 0.9) {
+            o.visible.erase(o.visible.begin() + static_cast<std::ptrdiff_t>(i));
+            removed = true;
+        }
+    if (!removed) o.visible.push_back(toModel(doc_->placement(), d));  // sticks to the model when it turns
+    ++o.settings;
+    o.decided = false;
+}
+
+void App::clearSides() {
+    if (!doc_ || doc_->orient.visible.empty()) return;
+    doc_->orient.visible.clear();
+    ++doc_->orient.settings;
+    doc_->orient.decided = false;
+}
+
+void App::maintain() {
+    if (!doc_ || screen_ != Screen::Job || step_ != Step::Orient || jobs_.busy()) return;
+    OrientState& o = doc_->orient;
+    const int rev = doc_->revision(), settings = o.settings;
+    if (o.nowFresh(rev) || (scored_revision_ == rev && scored_settings_ == settings)) return;
+    scored_revision_ = rev;
+    scored_settings_ = settings;
+    // The worker gets its own copy: the job can keep changing meanwhile.
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<OrientMetrics>();
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Scoring how it sits",
+        [snap, out](const fruit::JobControl& ctl) { *out = measure(*snap, snap->orient.visible, ctl); },
+        [this, target, out, rev, settings](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't score the model", e.what());
+                }
+                return;
+            }
+            d->orient.now = *out;
+            d->orient.now_revision = rev;
+            d->orient.now_settings = settings;
+        });
+}
+
+void App::findOrientation() {
+    if (!doc_ || !doc_->fit().fits) return;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<OrientSearch>();
+    const int rev = doc_->revision(), settings = doc_->orient.settings;
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Finding the best orientation",
+        [snap, out](const fruit::JobControl& ctl) { *out = search(*snap, snap->orient.visible, ctl); },
+        [this, target, out, rev, settings](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't search for a better orientation", e.what());
+                }
+                return;
+            }
+            auto res = std::make_shared<const OrientSearch>(std::move(*out));
+            OrientState& o = d->orient;
+            o.results = res;
+            o.results_revision = rev;
+            o.results_settings = settings;
+            if (!o.nowFresh(rev)) {
+                o.now = res->now.m;
+                o.now_revision = rev;
+                o.now_settings = settings;
+            }
+            if (d == doc_ && step_ == Step::Orient) orient_view_ = OrientView::Results;
+            log::info("orientation search: " + std::to_string(res->options.size()) + " better options in " +
+                      std::to_string(res->seconds) + " s");
+        });
+}
+
+void App::useOrientation(int option) {
+    if (!doc_) return;
+    OrientState& o = doc_->orient;
+    if (option >= 0 && o.results && option < static_cast<int>(o.results->options.size())) {
+        const OrientOption& op = o.results->options[static_cast<std::size_t>(option)];
+        fruit::Placement p = doc_->placement();
+        p.rotation_deg = op.rotation_deg;
+        doc_->edit(p);
+        // Its numbers came from the same planner: no need to score it again.
+        o.now = op.m;
+        o.now_revision = doc_->revision();
+        o.now_settings = o.settings;
+        frameModel();
+    }
+    o.decided = true;
+    orient_view_ = OrientView::Settings;
+}
+
+void App::freePictures() {
+    for (unsigned t : pictures_) Renderer::freeTexture(t);
+    pictures_.clear();
+    pictures_for_.reset();
+}
+
+unsigned App::orientPicture(int option) {
+    if (!doc_ || !doc_->orient.results) return 0;
+    const auto& res = doc_->orient.results;
+    if (pictures_for_ != res) {
+        freePictures();
+        for (const OrientOption& op : res->options)
+            pictures_.push_back(renderer_.uploadMask(op.below.w, op.below.h, op.below.alpha, 0xA9B1BE));
+        pictures_.push_back(renderer_.uploadMask(res->now.below.w, res->now.below.h, res->now.below.alpha, 0xA9B1BE));
+        pictures_for_ = res;
+    }
+    if (option < 0) return pictures_.back();
+    return option < static_cast<int>(pictures_.size()) - 1 ? pictures_[static_cast<std::size_t>(option)] : 0;
 }
 
 void App::undo() {
@@ -259,6 +427,7 @@ void App::keys() {
 }
 
 void App::frame() {
+    maintain();
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
     ImGui::SetNextWindowSize(vp->Size);

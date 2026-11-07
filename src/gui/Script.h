@@ -13,6 +13,9 @@
 //   {"health": "full" | "largest" | "custom" (+ "percent") | "inches" | "place" | "cancel"}
 //   {"scale": percent} {"rotate": [x, y, z]} {"sits": "raised" | "flat"} {"fit": true}
 //   {"undo": n} {"redo": n} {"shortcuts": true | false}
+//   {"step": "model" | "orient"} {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
+//   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
+//   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)
 //   {"screen": "home" | "job" | "about"} {"view": "front" | "side" | "angled" | "below"}
 // Shots are written as <dir>/<name>.png once two consecutive frames are
 // identical.

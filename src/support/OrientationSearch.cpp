@@ -177,6 +177,7 @@ std::vector<OrientationResult> searchOrientations(const TriangleMesh& model, con
             }
             c.uncovered = res.stats.uncovered;
             c.capacity_deficits = res.stats.capacity_deficits;
+            c.peak_layer_area = res.stats.peak_layer_area;
             if (o.keep_points) c.support_points = std::move(res.points);
             ctl.report("orient.evaluate", 0.25 + 0.75 * static_cast<double>(++done) / total);
         });
