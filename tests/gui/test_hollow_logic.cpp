@@ -66,8 +66,9 @@ TEST_CASE("Hollow: a sealed hollow gets a drain and an air hole and then drains"
     CHECK(p.missed() == 0);
     CHECK(p.changes());
     CHECK(applyLabel(p) == "Add 2 drain holes");
-    // Two 3 mm channels through 3 mm of floor and roof.
-    CHECK(p.resin_saved == Approx(2 * 3.14159 * 1.5 * 1.5 * 3).margin(3));
+    // The hollow's resin drains out, and two 3 mm channels go through 3 mm
+    // of floor and roof.
+    CHECK(p.resin_saved == Approx(12 * 12 * 6 + 2 * 3.14159 * 1.5 * 1.5 * 3).margin(5));
     const auto out = hollowOutcomes(p);
     REQUIRE(out.size() >= 2);
     CHECK(out[0].ok);
@@ -82,7 +83,7 @@ TEST_CASE("Hollow: printing a sealed hollow solid, or leaving it", "[gui][hollow
     const HollowPlan filled = planHollow(*doc, c, {}, kH, fruit::JobControl::none());
     CHECK(filled.holes.empty());
     CHECK(filled.drains == std::vector<char>{1});  // nothing holds resin
-    CHECK(filled.resin_saved == Approx(-12 * 12 * 6).margin(2));  // it takes more
+    CHECK(filled.resin_saved == Approx(0).margin(2));  // its resin cured instead of trapped
     CHECK(applyLabel(filled) == "Print it solid");
     CHECK(hollowOutcomes(filled)[0].title == "The hollow is printed solid");
 
@@ -90,6 +91,7 @@ TEST_CASE("Hollow: printing a sealed hollow solid, or leaving it", "[gui][hollow
     const HollowPlan left = planHollow(*doc, c, {}, kH, fruit::JobControl::none());
     CHECK_FALSE(left.changes());
     CHECK(left.undrained() == 1);
+    CHECK(left.resin_saved == Approx(0).margin(2));
     CHECK(applyLabel(left) == "Leave it");
     CHECK_FALSE(hollowOutcomes(left)[0].ok);
 }
@@ -163,6 +165,13 @@ TEST_CASE("Hollow: applied, the supports, the layers and the print file use the 
     const fruit::Vec3 mouth = doc->transform().apply(s.hollow->holes[0].at);  // underneath, among the tips
     CHECK(mouth.z == Approx(5.0).margin(1e-6));
     for (const auto& p : s.points) CHECK(fruit::distance(p.pos, mouth) > s.hollow->placed[0].radius);
+    // None inside the hollow, though it drains now: they could never come
+    // out. Its flat ceiling has to hold itself, and is there to review.
+    for (const auto& p : s.points)
+        CHECK(s.hollow->closed.cavityAt(s.hollow->solid->layerAt(p.pos.z - 0.05), p.pos.xy()) == -1);
+    bool ceiling = false;
+    for (const SupportProblem& q : s.problems) ceiling = ceiling || q.code == "cavity_ceiling";
+    CHECK(ceiling);
 
     // The layers: the drain hole is open through the floor.
     const LayerResult lr = sliceLayers(*doc, s.mesh, 0.0, fruit::JobControl::none(), s.hollow);
@@ -205,4 +214,69 @@ TEST_CASE("Hollow: applied, the supports, the layers and the print file use the 
     for (const auto& sl : fruit::sliceModel(all, 0.03).slices) solid += fruit::area(sl) * 0.03;
     CHECK(saved.written.volume_mm3 < solid - 30);
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Hollow: holes by hand, none placed yet, change nothing", "[gui][hollow]") {
+    const auto doc = load(sealed(), "hollow_none_yet.stl");
+    HollowChoices c;
+    c.auto_holes = false;
+    const HollowPlan p = planHollow(*doc, c, {}, kH, fruit::JobControl::none());
+    CHECK(p.holes.empty());
+    CHECK_FALSE(p.changes());
+    CHECK(p.undrained() == 1);
+    CHECK(applyLabel(p) == "Leave it");
+    CHECK(p.resin_saved == Approx(0).margin(2));
+}
+
+TEST_CASE("Hollow: what the step bar, the Orient card and the 3D view say", "[gui][hollow]") {
+    const auto doc = load(sealed(), "hollow_words.stl");
+    // Before it is planned: the health check's hollow.
+    CHECK(hollowsToFix(*doc) == 1);
+    HollowOutcome s = hollowSummary(*doc);
+    CHECK_FALSE(s.ok);
+    CHECK(s.title == "1 hollow holds resin");
+    CHECK(s.detail == "Drain it, fill it or leave it.");
+
+    // Planned with holes, not yet applied: still to fix, labelled as it is.
+    doc->hollow.plan = std::make_shared<const HollowPlan>(
+        planHollow(*doc, doc->hollow.choices, doc->hollow.manual, kH, fruit::JobControl::none()));
+    doc->hollow.plan_revision = doc->revision();
+    CHECK(hollowsToFix(*doc) == 1);
+    CHECK(cavityLabel(*doc->hollow.plan, 0, false).title == "0.9 ml of trapped resin");
+    CHECK_FALSE(cavityLabel(*doc->hollow.plan, 0, false).ok);
+    // In the middle of the hollow, half-way up (printer coordinates).
+    const fruit::Vec3 at = cavityLabelAt(doc->hollow.plan->closed, 0, kH);
+    const fruit::Vec3 mid = doc->transform().apply({10, 10, 6});
+    CHECK(at.x == Approx(mid.x).margin(0.1));
+    CHECK(at.y == Approx(mid.y).margin(0.1));
+    CHECK(at.z == Approx(mid.z).margin(0.1));
+
+    // Applied: nothing left to fix.
+    doc->hollow.applied = true;
+    CHECK(hollowsToFix(*doc) == 0);
+    CHECK(cavityLabel(*doc->hollow.plan, 0, true).title == "0.9 ml · drains");
+    s = hollowSummary(*doc);
+    CHECK(s.ok);
+    CHECK(s.title == "Drain holes added");
+    CHECK(s.detail == "Placed automatically");
+
+    // Left as it is: still to fix, though applied.
+    doc->hollow.choices.fix = HollowChoices::Fix::Leave;
+    CHECK(hollowsToFix(*doc) == 1);  // the plan is for other choices: the health check's count
+    s = hollowSummary(*doc);
+    CHECK_FALSE(s.ok);
+    CHECK(s.detail == "Left as it is: shown as a problem before saving.");
+
+    // Hollowed: the summary says so.
+    doc->hollow.choices.hollow = true;
+    s = hollowSummary(*doc);
+    CHECK(s.ok);
+    CHECK(s.title == "Hollowed · 2.0 mm wall");
+
+    // A solid model: nothing to fix, an offer.
+    const auto block = load(fruit::makeBox({0, 0, 0}, {20, 20, 20}), "hollow_block_words.stl");
+    CHECK(hollowsToFix(*block) == 0);
+    s = hollowSummary(*block);
+    CHECK(s.ok);
+    CHECK(s.title == "No hollows found");
 }

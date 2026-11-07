@@ -3,6 +3,7 @@
 #include "Widgets.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -77,7 +78,7 @@ bool linkButton(const char* label) {
     const bool hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 c = hovered ? IM_COL32(0xFF, 0xD2, 0xB0, 255) : col::Link;
-    dl->AddText(p, c, label);
+    dl->AddText(p, c, label, std::strstr(label, "##"));  // not an "##id" suffix
     dl->AddLine(ImVec2(p.x, p.y + sz.y + 1), ImVec2(p.x + sz.x, p.y + sz.y + 1), c, 1.0f);
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImGui::PopFont();

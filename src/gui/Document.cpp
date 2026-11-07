@@ -55,6 +55,9 @@ JobStamp Document::stamp() const {
     s.supports = supports.result.get();
     s.choices = supports.choices;
     s.edits = supports.edits;
+    s.hollow_applied = hollow.applied;
+    s.hollow = hollow.choices;
+    s.holes = hollow.manual;
     s.sample_path = print.settings.sample_path;
     s.exposure = print.settings.exposure;
     s.bottom_exposure = print.settings.bottom_exposure;

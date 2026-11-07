@@ -93,13 +93,35 @@ void orientLeft(App& app, Document& doc, float h) {
 
     ImGui::Dummy(ImVec2(0, 10));
     text("Hollows", fonts().semibold, size::Section + 1, col::Text);
-    beginCard("hollows", ImVec2(0, 0), 14, col::Panel, col::Border);
-    const int cav = doc.check.cavities;
-    text(cav ? strf("%d closed %s", cav, cav == 1 ? "hollow" : "hollows").c_str() : "No hollows found",
-         fonts().semibold, size::Body, col::Text);
-    text(cav ? "They trap resin. Drain holes arrive in a later update." : "Hollowing and drain holes arrive in a later update.",
-         fonts().regular, size::Body, col::TextSecondary, true);
-    endCard();
+    {
+        // A link to the Hollow screen, saying how its hollows stand.
+        const HollowOutcome s = hollowSummary(doc);
+        const float w = ImGui::GetContentRegionAvail().x, pad = 12, chevron = 20;
+        ImGui::PushFont(fonts().regular, size::Body);
+        const float dh = ImGui::CalcTextSize(s.detail.c_str(), nullptr, false, w - pad * 2 - chevron).y;
+        ImGui::PopFont();
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        const ImVec2 sz(w, pad * 2 + 20 + dh);
+        const bool clicked = ImGui::InvisibleButton("hollows", sz);
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(q, ImVec2(q.x + sz.x, q.y + sz.y), s.ok ? (hovered ? col::Active : col::Card) : col::WarnBg,
+                          10);
+        dl->AddRect(q, ImVec2(q.x + sz.x, q.y + sz.y), s.ok ? (hovered ? col::BorderStrong : col::Border) : col::WarnBorder,
+                    10);
+        ImGui::PushFont(fonts().semibold, size::Body);
+        dl->AddText(ImVec2(q.x + pad, q.y + pad), s.ok ? col::Text : col::Warn, s.title.c_str());
+        ImGui::PopFont();
+        ImGui::PushFont(fonts().regular, size::Body);
+        dl->AddText(nullptr, 0, ImVec2(q.x + pad, q.y + pad + 20), col::TextSecondary, s.detail.c_str(), nullptr,
+                    w - pad * 2 - chevron);
+        ImGui::PopFont();
+        ImGui::PushFont(fonts().semibold, size::Section);
+        dl->AddText(ImVec2(q.x + sz.x - chevron, q.y + sz.y / 2 - 10), col::TextMuted, "›");
+        ImGui::PopFont();
+        if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (clicked) app.showHollow();
+    }
     endPanel();
 }
 

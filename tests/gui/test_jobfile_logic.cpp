@@ -8,6 +8,7 @@
 #include <fstream>
 
 #include "Document.h"
+#include "Hollows.h"
 #include "JobFile.h"
 #include "Print.h"
 #include "Supports.h"
@@ -206,4 +207,50 @@ TEST_CASE("Jobs: tip edits come back, applied to the planner's tips", "[gui][job
     for (const auto& p : s.result->points) yours += p.category == fruit::PointCategory::Manual;
     CHECK(yours == 1);
     CHECK_FALSE(o.doc->unsaved());
+}
+
+TEST_CASE("Jobs: the hollows come back, and the supports made for the drilled model", "[gui][jobs][hollow]") {
+    // A block with a sealed hollow, drained by two holes placed by hand.
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {20, 20, 12});
+    fruit::TriangleMesh v = fruit::makeBox({4, 4, 3}, {16, 16, 9});
+    for (auto& f : v.faces) std::swap(f[1], f[2]);
+    m.append(v);
+    const auto model = dir() / "sealed.stl";
+    fruit::writeStl(model.string(), m);
+    const auto doc = loadDocument(model.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    doc->hollow.choices.auto_holes = false;
+    doc->hollow.choices.hole_diameter = 2.5;
+    doc->hollow.manual = {{{10, 10, 0}, {0, 0, 1}, 2.5, false}, {{10, 10, 12}, {0, 0, -1}, 2.5, false}};
+    doc->hollow.applied = true;
+    auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, {}, fruit::JobControl::none()));
+    REQUIRE(r->hollow);
+    REQUIRE(r->hollow->drains == std::vector<char>{1});
+    doc->supports.result = r;
+    doc->supports.result_revision = doc->revision();
+    doc->supports.result_settings = doc->supportSettings();
+
+    const auto job = (dir() / "sealed.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    const Document& d = *o.doc;
+    CHECK(d.hollow.applied);
+    CHECK(d.hollow.choices == doc->hollow.choices);
+    CHECK(d.hollow.manual == doc->hollow.manual);
+    REQUIRE(d.supports.result);
+    CHECK(d.supports.fresh(d.revision(), d.supportSettings()));
+    CHECK(d.supports.result->tips == r->tips);
+    // Its layers and print file use the drilled model, as before saving.
+    REQUIRE(d.supports.result->hollow);
+    CHECK(d.supports.result->hollow->holes == doc->hollow.manual);
+    CHECK(d.supports.result->hollow->drains == std::vector<char>{1});
+    CHECK(d.hollow.planFresh(d.revision()));
+    CHECK(hollowsToFix(d) == 0);
+    CHECK_FALSE(d.unsaved());
+
+    // A change to them is one to save.
+    Document& e = *o.doc;
+    e.hollow.choices.fix = HollowChoices::Fix::Fill;
+    const auto changes = changesSince(*e.saved, e.stamp());
+    REQUIRE(changes.size() == 1);
+    CHECK_THAT(changes[0], ContainsSubstring("hollows"));
 }

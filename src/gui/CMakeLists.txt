@@ -78,6 +78,7 @@ set(app_sources
   screens/ABScreens.cpp
   screens/AboutScreen.cpp
   screens/CalibrateScreens.cpp
+  screens/HollowScreen.cpp
   screens/HomeScreen.cpp
   screens/JobDialogs.cpp
   screens/JobScreen.cpp

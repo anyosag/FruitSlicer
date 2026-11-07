@@ -244,6 +244,10 @@ void problemCard(App& app, const SupportProblem& p, int i) {
     if (p.has_where) {
         if (secondaryButton("Show", ImVec2(0, 0))) app.focusOn(p.where);
     }
+    if (p.code == "suction_cup" || p.code == "resin_trap" || p.code == "cavity_ceiling") {
+        if (p.has_where) ImGui::SameLine(0, 8);
+        if (secondaryButton("Open Hollows", ImVec2(0, 0))) app.showHollow();
+    }
     if (!p.engine.empty()) {
         ImGui::PushFont(fonts().regular, size::Help);
         ImGui::PushStyleColor(ImGuiCol_Text, col::TextMuted);

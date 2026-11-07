@@ -10,6 +10,7 @@
 #include <miniz.h>
 #include <nlohmann/json.hpp>
 
+#include "Orient.h"
 #include "formats/GooFile.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
@@ -173,6 +174,23 @@ void saveJob(const std::string& path, const Document& doc) {
         sup["warnings"] = ws;
     }
     j["supports"] = sup;
+    // The Hollow screen's choices, and the holes placed by hand (model
+    // coordinates). The plan itself is made again from them.
+    const HollowState& hs = doc.hollow;
+    const HollowChoices& hc = hs.choices;
+    json holes = json::array();
+    for (const fruit::DrainHole& h : hs.manual)
+        holes.push_back({{"at", vec(h.at)}, {"axis", vec(h.axis)}, {"diameter", h.diameter}});
+    j["hollow"] = {{"applied", hs.applied},
+                   {"fix", hc.fix == HollowChoices::Fix::Fill    ? "fill"
+                           : hc.fix == HollowChoices::Fix::Leave ? "leave"
+                                                                 : "holes"},
+                   {"hollow", hc.hollow},
+                   {"wall", hc.wall},
+                   {"ceiling_lean", hc.ceiling_lean},
+                   {"hole_diameter", hc.hole_diameter},
+                   {"auto_holes", hc.auto_holes},
+                   {"holes", holes}};
     const PrintSettings& s = doc.print.settings;
     j["print"] = {{"exposure", s.exposure}, {"bottom_exposure", s.bottom_exposure}, {"bottom_layers", s.bottom_layers},
                   {"transition_layers", s.transition_layers}, {"sample_path", s.sample_path}};
@@ -268,6 +286,21 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.resin = cj.value("resin", std::string());
     if (cj.contains("profile") && cj["profile"].is_object()) c.profile = cj["profile"];
     doc->supports.edits = editsFrom(sj.value("edits", json::array()));
+    if (j.contains("hollow")) {
+        const json& hj = j["hollow"];
+        HollowState& hs = doc->hollow;
+        HollowChoices& hc = hs.choices;
+        const std::string fix = hj.value("fix", "holes");
+        hc.fix = fix == "fill" ? HollowChoices::Fix::Fill : fix == "leave" ? HollowChoices::Fix::Leave : HollowChoices::Fix::Holes;
+        hc.hollow = hj.value("hollow", false);
+        hc.wall = hj.value("wall", hc.wall);
+        hc.ceiling_lean = hj.value("ceiling_lean", hc.ceiling_lean);
+        hc.hole_diameter = hj.value("hole_diameter", hc.hole_diameter);
+        hc.auto_holes = hj.value("auto_holes", true);
+        for (const auto& h : hj.value("holes", json::array()))
+            hs.manual.push_back({vecFrom(h.at("at")), vecFrom(h.at("axis")), h.value("diameter", 3.0), false});
+        hs.applied = hj.value("applied", false);
+    }
 
     if (j.contains("print")) {
         const json& prj = j["print"];
@@ -296,8 +329,19 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
             if (w.contains("where")) wn.where = vecFrom(w["where"]);
             plan.warnings.push_back(wn);
         }
+        // Planned on the hollowed or drilled model: that is made again, so
+        // the layers and the print file use it too.
+        fruit::JobControl rest = ctl.sub(0.3, 1.0);
+        if (doc->hollow.applied) {
+            auto hp = std::make_shared<const HollowPlan>(
+                planHollow(*doc, doc->hollow.choices, doc->hollow.manual, kLayerHeight, ctl.sub(0.3, 0.6)));
+            doc->hollow.plan = hp;
+            doc->hollow.plan_revision = doc->revision();
+            if (hp->changes()) plan.hollow = hp;
+            rest = ctl.sub(0.6, 1.0);
+        }
         auto r = std::make_shared<SupportResult>(
-            finishWithEdits(*doc, c, std::move(plan), doc->supports.edits, ctl.sub(0.3, 1.0)));
+            finishWithEdits(*doc, c, std::move(plan), doc->supports.edits, rest));
         doc->supports.result = std::move(r);
         doc->supports.result_revision = doc->revision();
         doc->supports.result_settings = doc->supportSettings();
@@ -327,6 +371,8 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     if (a.supports != b.supports && a.edits == b.edits)
         out.push_back(a.supports ? "generated the supports again" : "generated supports");
     else if (a.supports == b.supports && !(a.choices == other)) out.push_back("changed support settings");
+    if (a.hollow_applied != b.hollow_applied || !(a.hollow == b.hollow) || a.holes != b.holes)
+        out.push_back("changed how its hollows print");
     if (a.sample_path != b.sample_path || a.exposure != b.exposure || a.bottom_exposure != b.bottom_exposure ||
         a.bottom_layers != b.bottom_layers || a.transition_layers != b.transition_layers)
         out.push_back("changed the print settings");

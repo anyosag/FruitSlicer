@@ -48,7 +48,7 @@ struct HollowPlan {
     std::vector<fruit::PlacedHole> placed;            // the same as drilled, printer coordinates
     std::vector<char> drains;                         // for each of cavities(): it no longer holds resin
     std::shared_ptr<const fruit::LayerStack> layers;  // what prints
-    double resin_saved = 0;                           // mm³, against the model as it is
+    double resin_saved = 0;  // mm³, against the model printed solid (a hollow that holds resin saves none)
     double seconds = 0;
 
     // The cavities: the hollowed ones when hollowing, else the model's own.
@@ -78,7 +78,8 @@ std::string cavityKind(const fruit::Cavity& c, bool hollowed);
 std::string cavityFacts(const fruit::Cavity& c, double layer_height);
 // What it does to the print, as it is.
 std::string cavityMeaning(const fruit::Cavity& c, bool hollowed);
-// The header's button: "Add 2 drain holes", "Fill it", "Hollow it".
+// The header's button: "Add 2 drain holes", "Print it solid", "Hollow it";
+// "Leave it" when it changes nothing.
 std::string applyLabel(const HollowPlan& p);
 // After the change: one line per cavity on whether it still holds resin.
 struct HollowOutcome {
@@ -86,5 +87,18 @@ struct HollowOutcome {
     std::string title, detail;
 };
 std::vector<HollowOutcome> hollowOutcomes(const HollowPlan& p);
+// The 3D view's label on cavity `i` of p.cavities(), as things stand: "9.1
+// ml of trapped resin" until the holes are applied, then "9.1 ml · drains".
+HollowOutcome cavityLabel(const HollowPlan& p, std::size_t i, bool applied);
+// Where that label goes: inside the cavity, half-way up (printer coordinates).
+fruit::Vec3 cavityLabelAt(const fruit::HollowResult& h, std::size_t i, double layer_height);
+
+// The model's own hollows that still hold resin as things stand (the step
+// bar's "1 to fix"): the plan's, once it is up to date; else the health
+// check's, unless a fix was applied.
+std::size_t hollowsToFix(const Document& doc);
+// The Orient step's card on them: "1 hollow holds resin", "Drained",
+// "Hollowed · 2.0 mm wall", "No hollows found"; `ok` false while one holds resin.
+HollowOutcome hollowSummary(const Document& doc);
 
 }  // namespace gui
