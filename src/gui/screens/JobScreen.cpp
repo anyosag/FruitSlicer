@@ -642,6 +642,8 @@ void job(App& app) {
         printView(app, *doc, ImVec2(0, body_h));
     } else if (doc && app.step() == Step::Layers) {
         layersView(app, *doc, ImVec2(0, body_h));
+    } else if (doc && app.step() == Step::Supports && app.advancedOpen()) {
+        supportsAdvanced(app, *doc, ImVec2(0, body_h));
     } else if (doc && app.step() == Step::Supports) {
         supportsLeft(app, *doc, body_h);
         ImGui::SameLine(0, 0);

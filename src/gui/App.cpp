@@ -128,7 +128,9 @@ void App::placeChecked() {
     checking_->place(healthPlacement());
     doc_ = std::move(checking_);
     checking_.reset();
+    doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
     health_.open = false;
+    advanced_open_ = false;
     step_ = Step::Model;
     orient_view_ = OrientView::Settings;
     screen_ = Screen::Job;
@@ -195,6 +197,7 @@ bool App::canGoTo(Step s) const {
 
 void App::goToStep(Step s) {
     if (!canGoTo(s)) return;
+    if (s != step_) advanced_open_ = false;
     step_ = s;
     screen_ = Screen::Job;
     if (s == Step::Orient && !(doc_ && doc_->orient.resultsFresh(doc_->revision()))) orient_view_ = OrientView::Settings;
@@ -366,6 +369,7 @@ void App::useOrientation(int option) {
 
 void App::generateSupports() {
     if (!doc_ || !doc_->fit().fits) return;
+    advanced_open_ = false;  // the run shows in the 3D view
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
     const int rev = doc_->revision(), settings = doc_->orient.settings;
@@ -398,6 +402,43 @@ void App::generateSupports() {
 
 void App::setSupportChoices(const SupportChoices& c) {
     if (doc_) doc_->supports.choices = c;
+}
+
+void App::setAdvanced(const std::string& key, double value) {
+    if (!doc_) return;
+    SupportChoices c = doc_->supports.choices;
+    for (const AdvancedSetting& s : advancedSettings())
+        for (const AdvancedField& f : s.fields) {
+            if (key != f.key) continue;
+            const double v = std::clamp(value, f.lo, f.hi);
+            if (key == kUsualTipKey) {
+                c.usual_tip = static_cast<int>(std::lround(v));
+            } else {
+                // FruitSlicer's own value is not stored, so the row reads "Default" again.
+                const SupportChoices none;
+                const double own = f.get(supportConfig(doc_->placement(), none), treeConfig(none));
+                if (std::abs(v - own) < 1e-9) c.advanced.erase(key);
+                else c.advanced[key] = v;
+            }
+            advanced_ = c.advanced;
+            setSupportChoices(c);
+            return;
+        }
+    log::error("unknown support setting " + key);
+}
+
+void App::resetAdvanced() {
+    advanced_.clear();
+    if (!doc_) return;
+    SupportChoices c = doc_->supports.choices;
+    c.advanced.clear();
+    c.usual_tip = SupportChoices{}.usual_tip;
+    setSupportChoices(c);
+}
+
+void App::applyAdvanced() {
+    advanced_open_ = false;
+    if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->orient.settings)) generateSupports();
 }
 
 void App::selectTip(int index) {
@@ -795,6 +836,10 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper) return;
+    if (screen_ == Screen::Job && step_ == Step::Supports && advanced_open_) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) advanced_open_ = false;
+        return;
+    }
     if (screen_ == Screen::Job && step_ == Step::Layers && doc_ && doc_->layers.result) {
         const int now = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(doc_->layers.result->biggest);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setLayer(now + 1);

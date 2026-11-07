@@ -212,6 +212,16 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setShowBelow(step["show_below"].get<bool>());
         } else if (step.contains("problems")) {
             app.showProblems(step["problems"].get<bool>());
+        } else if (step.contains("advanced")) {
+            const std::string what = step["advanced"].get<std::string>();
+            if (what == "open") app.showAdvanced(true);
+            else if (what == "close") app.showAdvanced(false);
+            else if (what == "reset") app.resetAdvanced();
+            else if (what == "apply") app.applyAdvanced();
+            else throw std::runtime_error("unknown advanced step " + what);
+        } else if (step.contains("setting")) {
+            const auto& kv = step["setting"];
+            app.setAdvanced(kv[0].get<std::string>(), kv[1].get<double>());
         } else if (step.contains("exposures")) {
             const auto& e = step["exposures"];
             app.setExposures(e[0].get<double>(), e[1].get<double>());

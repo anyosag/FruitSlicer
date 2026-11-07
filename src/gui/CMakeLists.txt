@@ -35,6 +35,7 @@ set(app_sources
   screens/JobScreen.cpp
   screens/LayersStep.cpp
   screens/PrintStep.cpp
+  screens/SupportsAdvanced.cpp
   screens/OrientStep.cpp
   screens/SupportsStep.cpp
   view3d/Camera.cpp

@@ -58,7 +58,13 @@ first), shows the run's stages with Cancel, and then the tree in 3D with
 three views (Supports, Tips only, Why), why any tip you click is there, the
 checks (nothing starts in mid-air, the raft comes off in one piece, no
 support stands on the model) and a drawer of things to review. Changing
-the model afterwards marks the supports out of date. The Layers step cuts
+the model afterwards marks the supports out of date. **Advanced settings**
+lists every value the tip planner and the tree builder use (29 rows, from
+tip sizes and how much a tip holds to braces and the raft) with where each
+comes from: built in, borrowed from PrusaSlicer until you calibrate, or an
+assumption not measured yet. You can change them; your values are marked,
+stay with you for the next model, and **Reset all** brings back
+FruitSlicer's own. The Layers step cuts
 the model and its supports into the printer's layers and shows any of them
 at the printer's own pixel shape (14 × 19 µm), with the layer below, the
 area of every layer by height, and checks on the whole print (nothing in

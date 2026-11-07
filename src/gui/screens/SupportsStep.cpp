@@ -190,15 +190,20 @@ void supportsLeft(App& app, Document& doc, float h) {
     ImGui::Dummy(ImVec2(0, 4));
     if (have && !running(app)) resultPanel(app, doc);
     else choicesPanel(app, doc);
-    // Bottom: what comes in the next updates.
+    // Bottom: editing by hand (later) and every other setting.
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 8, h - 22 - 80));
     if (have) {
         secondaryButton("Edit tips by hand", ImVec2(-1, 40), false);
         tooltip("Editing tips arrives in a later update.");
     }
-    ImGui::Dummy(ImVec2(0, 2));
-    text("Advanced settings and the vat's hinge side arrive in the next update.", fonts().regular, size::Help,
-         col::TextMuted, true);
+    ImGui::Dummy(ImVec2(0, 4));
+    if (linkButton("Advanced settings")) app.showAdvanced(true);
+    std::size_t changed = 0;
+    for (const AdvancedSetting& s : advancedSettings()) changed += advancedChanged(s, doc.supports.choices);
+    if (changed) {
+        ImGui::SameLine(0, 8);
+        text(strf("%zu changed", changed).c_str(), fonts().regular, size::Help, col::Accent);
+    }
     endPanel();
 }
 
