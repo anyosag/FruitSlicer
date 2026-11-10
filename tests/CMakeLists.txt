@@ -19,6 +19,7 @@ add_executable(fruit_tests
   test_net.cpp
   test_model.cpp
   test_repair.cpp
+  test_ops.cpp
 )
 target_link_libraries(fruit_tests PRIVATE fruit_core fruit_net_cli fruit_net_mock miniz Catch2::Catch2WithMain)
 include(${catch2_SOURCE_DIR}/extras/Catch.cmake)
