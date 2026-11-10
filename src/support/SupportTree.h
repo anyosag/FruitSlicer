@@ -113,4 +113,9 @@ SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<Suppor
                              const TreeConfig& cfg, double min_raft_thickness,
                              const JobControl& ctl = JobControl::none());
 
+// `points` as passed to buildSupportTree, split into the tips that got a head
+// and those the tree dropped (for checkDroppedTips).
+void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& points, std::vector<SupportPoint>& built,
+                 std::vector<SupportPoint>& dropped);
+
 }  // namespace fruit

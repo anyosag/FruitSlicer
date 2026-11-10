@@ -11,6 +11,7 @@
 
 #include "Document.h"
 #include "Supports.h"
+#include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
 
 using Catch::Approx;
@@ -27,7 +28,39 @@ std::shared_ptr<Document> bracket() {
     return doc;
 }
 
+// A box open on one side, stood so the opening faces sideways, like a lid on
+// its edge: no support can reach the ceiling deep inside it.
+std::shared_ptr<Document> sidewaysCap() {
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 2, 30});
+    m.append(fruit::makeBox({0, 0, 0}, {30, 30, 2}));
+    m.append(fruit::makeBox({0, 0, 28}, {30, 30, 30}));
+    m.append(fruit::makeBox({0, 0, 0}, {2, 30, 30}));
+    m.append(fruit::makeBox({28, 0, 0}, {30, 30, 30}));
+    const auto path = std::filesystem::temp_directory_path() / "supports_test_sideways_cap.stl";
+    fruit::writeStl(path.string(), m);
+    auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    std::filesystem::remove(path);
+    return doc;
+}
+
 }  // namespace
+
+TEST_CASE("Supports: faces only dropped tips held block saving and show where", "[gui][supports][slow]") {
+    const auto doc = sidewaysCap();
+    const SupportResult r = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+    REQUIRE(r.tree.dropped_points > 0);
+    const SupportProblem* p = nullptr;
+    for (const auto& q : r.problems)
+        if (q.code == "unsupported") p = &q;
+    REQUIRE(p != nullptr);
+    CHECK(p->level == SupportProblem::Level::Blocks);
+    CHECK(p->count > 0);
+    CHECK(p->count <= r.tree.dropped_points);
+    CHECK(p->has_where);
+    // On the ceiling inside the cap.
+    CHECK(p->where.z == Approx(doc->placed().bbox().max.z - 2).margin(0.2));
+    CHECK(r.count(SupportProblem::Level::Blocks) >= 1);
+}
 
 TEST_CASE("Supports: the demo bracket gets a raft, tips and a clean check", "[gui][supports][slow]") {
     const auto doc = bracket();

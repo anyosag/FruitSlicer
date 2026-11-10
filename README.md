@@ -69,7 +69,9 @@ spacing and trunk merging you choose (faces that need tips are tinted
 first), shows the run's stages with Cancel, and then the tree in 3D with
 three views (Supports, Tips only, Why), why any tip you click is there, the
 checks (nothing starts in mid-air, the raft comes off in one piece, no
-support stands on the model) and a drawer of things to review. Changing
+support stands on the model) and a drawer of things to review. Faces that
+only tips the tree could not reach would have held block saving ("Spots no
+support reaches", with Show). Changing
 the model afterwards marks the supports out of date. **Edit tips by hand**
 adds tips where you click the model, moves (drag), deletes, resizes and pins
 them, and draws no-tip zones. Every edit is listed and can be undone on its
@@ -414,6 +416,17 @@ Each point gets:
 
 The report re-slices model plus supports and lists anything that would still
 start printing in mid-air (`validation.floating_islands`, which should be 0).
+
+A tip the tree cannot build (no clear way down within reach, no room for a
+head) is dropped, and `tree_warnings` counts why. The planner's own coverage
+and hold tests then run again with only the tips that were built:
+`validation.unsupported` counts the dropped tips that were the only cover of
+some face (`tips`, with where the first 20 were), the surface samples left with
+no tip in reach (`samples`), and the layers short of hold without them
+(`short_layers`). All three should be 0. They are not the same as
+`point_stats.uncovered_samples`, which is the plan before the tree. Turning the
+model, or a longer `route` / `anchor_drop` (Advanced settings in the app),
+usually brings them down.
 
 Safety checks and options:
 

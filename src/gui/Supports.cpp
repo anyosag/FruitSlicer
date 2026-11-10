@@ -828,6 +828,18 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     ctl.step("mesh", 0.55);
     r.mesh = r.tree.mesh(r.tree_cfg);
     ctl.step("check", 0.67);
+    // Tips the tree could not build: what only they held has nothing now.
+    fruit::DropCheck drops;
+    if (r.tree.dropped_points > 0) {
+        std::vector<fruit::SupportPoint> built, dropped;
+        fruit::splitByTree(r.tree, r.points, built, dropped);
+        fruit::PointGenOptions po;  // the layers the tips were planned on
+        if (r.hollow) {
+            po.layers = r.hollow->layers;
+            if (!r.hollow->filling()) po.hollows = &r.hollow->cavities().interior;
+        }
+        drops = fruit::checkDroppedTips(doc.placed(), r.cfg, built, dropped, po, ctl.silent());
+    }
     const double pixel = doc.printer.pixelX() * doc.printer.pixelY();
     if (r.hollow) {
         // The hollowed model's own layers with the supports': nothing floats.
@@ -894,6 +906,27 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
         fp.engine = fmt("first at layer %.0f (z %.2f mm)", v.floating[0].layer, v.floating[0].z);
         by_code["floating"] = fp;
     }
+    if (drops.tips > 0) {
+        SupportProblem u;
+        u.level = SupportProblem::Level::Blocks;
+        u.code = "unsupported";
+        u.title = "Spots no support reaches";
+        u.body = "Tips were planned here, but no support could get to them, so these faces would print with nothing "
+                 "holding them. Turn the model, or allow longer routes and drops onto the model under Advanced "
+                 "settings.";
+        u.count = drops.tips;
+        u.has_where = true;
+        u.where = drops.at.front();
+        u.engine = fmt("%.0f tips with no support were the only cover of %.0f surface samples",
+                       static_cast<double>(drops.tips), static_cast<double>(drops.samples));
+        by_code["unsupported"] = u;
+    }
+    if (drops.short_layers > 0)
+        addWarnings({{"capacity_deficit",
+                      fmt("%.0f layers are short of hold without the tips no support could reach",
+                          static_cast<double>(drops.short_layers)),
+                      -1, drops.at.empty() ? fruit::Vec3{} : drops.at.front()}},
+                    by_code);
     if (v.subpixel) {
         SupportProblem n;
         n.level = SupportProblem::Level::Note;

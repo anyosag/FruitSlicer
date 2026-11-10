@@ -75,15 +75,23 @@ private:
 
 class Generator {
 public:
-    Generator(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts, const JobControl& ctl)
+    // With `dropped`, the generator checks instead of planning: `opts.manual`
+    // holds the tips that were built, and nothing is added or pruned. What
+    // only the dropped tips held ends up in `dropCheck()`.
+    Generator(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts, const JobControl& ctl,
+              const std::vector<SupportPoint>* dropped = nullptr)
         : mesh_(mesh),
           cfg_(cfg),
           opts_(opts),
           ctl_(ctl),
+          check_(dropped != nullptr),
+          dropped_in_(dropped),
           tip_grid_(std::max(cfg.coverage.maxRadius(), 1.0)),
-          sample_grid_(std::max(cfg.sample_min_spacing, 0.05)) {}
+          sample_grid_(std::max(cfg.sample_min_spacing, 0.05)),
+          dropped_grid_(std::max(cfg.coverage.maxRadius(), 1.0)) {}
 
     PointGenResult run();
+    const DropCheck& dropCheck() const { return drop_check_; }
 
 private:
     // ---- setup / geometry helpers
@@ -121,8 +129,18 @@ private:
     }
     void unite(int a, int b);
 
+    // The part in `layer` a tip at `pos` touches: the one containing it, else
+    // the nearest by box centre (-1 if the layer has none).
+    int partAt(int layer, const Vec3& pos) const;
+    // The layer a given tip belongs to: the planner's own for its tips when
+    // checking (where it attached them), else the layer at its height.
+    size_t layerOfGiven(const SupportPoint& p) const;
+
     // ---- final passes
     void finalize();
+    // Check mode: what only the dropped tips held (uses the coverage and
+    // capacity replay of finalize()).
+    void checkDropped(const std::vector<int>& cover_count);
     void warn(const std::string& code, const std::string& msg, int layer, const Vec3& where) {
         result_.warnings.push_back({code, msg, layer, where});
     }
@@ -131,6 +149,8 @@ private:
     const SupportConfig& cfg_;
     const PointGenOptions& opts_;
     const JobControl& ctl_;
+    const bool check_ = false;
+    const std::vector<SupportPoint>* dropped_in_ = nullptr;
     AabbTree tree_;
     std::shared_ptr<const LayerStack> layers_ptr_;
     LayerStack empty_layers_;
@@ -146,6 +166,11 @@ private:
     std::vector<Sample> samples_;
     std::vector<Tip> tips_;
     XYGrid tip_grid_, sample_grid_;
+    // Check mode: the tips the tree dropped (never counted as cover or hold).
+    std::vector<Tip> dropped_;
+    XYGrid dropped_grid_;
+    std::vector<std::vector<int>> dropped_by_layer_;
+    DropCheck drop_check_;
 
     struct Comp {
         double capacity = 0;
@@ -452,6 +477,9 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
         return toVec(P.shape.contour.front());
     };
 
+    // Checking: the island has the tips it was given; the validator's
+    // floating-island check reports one left without.
+    if (check_ && length <= cfg_.island_two_tip_length) return;
     if (length <= cfg_.island_one_tip_length) {
         const int cls = classFor(std::max(0.6 * width, cfg_.tip_classes.front().diameter), cfg_.minima_tip);
         Vec3 pos, n;
@@ -541,6 +569,7 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
 }
 
 void Generator::coverLayer(const std::vector<int>& layer_samples) {
+    if (check_) return;  // checking: no tips of its own
     std::vector<int> U;
     for (int si : layer_samples)
         if (samples_[si].needs_cover && !coveredByExisting(samples_[si])) U.push_back(si);
@@ -767,11 +796,34 @@ void Generator::setup() {
     comp_.assign(np, Comp{});
     tips_on_part_.assign(np, 0);
     manual_by_layer_.assign(layers().size(), {});
-    for (size_t i = 0; i < opts_.manual.size(); ++i) {
-        const auto& m = opts_.manual[i];
-        const size_t L = std::min(layers().layerAt(m.pos.z), layers().size() ? layers().size() - 1 : 0);
-        manual_by_layer_[L].push_back(static_cast<int>(i));
+    for (size_t i = 0; i < opts_.manual.size(); ++i) manual_by_layer_[layerOfGiven(opts_.manual[i])].push_back(static_cast<int>(i));
+    if (check_) {
+        dropped_by_layer_.assign(layers().size(), {});
+        for (size_t i = 0; i < dropped_in_->size(); ++i)
+            dropped_by_layer_[layerOfGiven((*dropped_in_)[i])].push_back(static_cast<int>(i));
     }
+}
+
+size_t Generator::layerOfGiven(const SupportPoint& p) const {
+    const size_t last = layers().size() ? layers().size() - 1 : 0;
+    // The planner attached its own tips at `layer`; the layer at a tip's height
+    // can be the one below (a tip at an island's lowest point).
+    if (check_ && p.category != PointCategory::Manual && p.layer >= 0 && static_cast<size_t>(p.layer) <= last)
+        return static_cast<size_t>(p.layer);
+    return std::min(layers().layerAt(p.pos.z), last);
+}
+
+int Generator::partAt(int layer, const Vec3& pos) const {
+    int part = -1;
+    double best = 1e9;
+    for (int p : graph_.partsInLayer(layer)) {
+        const double d = graph_.part(p).shape.contains(pos.xy()) ? 0 : distance(graph_.part(p).box.center(), pos.xy());
+        if (d < best) {
+            best = d;
+            part = p;
+        }
+    }
+    return part;
 }
 
 PointGenResult Generator::run() {
@@ -805,12 +857,7 @@ PointGenResult Generator::run() {
             const ClosestPoint cp = tree_.closest(m.pos);
             const Vec3 pos = cp.face >= 0 ? cp.point : m.pos;
             const Vec3 n = cp.face >= 0 ? mesh_.faceNormal(cp.face) : Vec3{0, 0, -1};
-            int part = -1;
-            double best = 1e9;
-            for (int p : graph_.partsInLayer(L)) {
-                const double d = graph_.part(p).shape.contains(pos.xy()) ? 0 : distance(graph_.part(p).box.center(), pos.xy());
-                if (d < best) { best = d; part = p; }
-            }
+            const int part = partAt(layer, pos);
             if (part < 0) {
                 warn("manual_point_unattached", "manual point is not on the model", layer, m.pos);
                 continue;
@@ -821,11 +868,27 @@ PointGenResult Generator::run() {
             Comp& C = comp_[find(part)];
             C.capacity += capacityOf(tips_[id]) - cfg_.capacity.capacity(cfg_.tip_classes[0].diameter);
         }
+        // Checking: the dropped tips, kept apart (they hold nothing).
+        if (check_)
+            for (int di : dropped_by_layer_[L]) {
+                const SupportPoint& d = (*dropped_in_)[di];
+                Tip t;
+                t.pos = d.pos;
+                t.normal = d.normal;
+                t.layer = layer;
+                t.part = partAt(layer, d.pos);
+                t.diameter = d.tip_diameter;
+                t.cat = d.category;
+                t.thickness = localThickness(tree_, d.pos, d.normal, 100.0);
+                dropped_grid_.insert(static_cast<int>(dropped_.size()), d.pos.xy());
+                dropped_.push_back(t);
+            }
         for (int p : graph_.partsInLayer(L)) {
             if (graph_.part(p).parents.empty()) processIsland(p, layer_samples, large_islands);
             else processOverhang(p, layer_samples);
         }
         coverLayer(layer_samples);
+        if (check_) continue;  // no tips of its own: islands, hold and steadying are what was given
         for (const auto& [p, isl] : large_islands) enforceIslandMinimum(p, isl);
         enforceCapacity(layer);
         if (layer % stab_every == 0) stabilize(layer);
@@ -875,6 +938,7 @@ void Generator::finalize() {
         std::vector<int> uf(graph_.parts().size());
         std::iota(uf.begin(), uf.end(), 0);
         std::vector<double> cap(uf.size(), 0);
+        std::vector<double> cap_all(uf.size(), 0);  // checking: with the dropped tips' hold too
         std::vector<std::vector<int>> members(uf.size());
         std::vector<char> exempt(uf.size(), 0), plate(uf.size(), 0);
         for (int p : skipped_islands_) exempt[p] = 1;
@@ -886,6 +950,9 @@ void Generator::finalize() {
         };
         std::vector<std::vector<int>> tips_by_layer(layers().size());
         for (size_t ti = 0; ti < tips_.size(); ++ti) tips_by_layer[tips_[ti].layer].push_back(static_cast<int>(ti));
+        std::vector<std::vector<int>> drops_by_layer(layers().size());
+        for (size_t di = 0; di < dropped_.size(); ++di)
+            if (dropped_[di].part >= 0) drops_by_layer[dropped_[di].layer].push_back(static_cast<int>(di));
         for (size_t L = 0; L < layers().size(); ++L) {
             for (int p : graph_.partsInLayer(L))
                 for (int q : graph_.part(p).parents) {
@@ -893,6 +960,7 @@ void Generator::finalize() {
                     if (a == b) continue;
                     if (b < a) std::swap(a, b);
                     cap[a] += cap[b];
+                    cap_all[a] += cap_all[b];
                     exempt[a] = exempt[a] && exempt[b];
                     plate[a] = plate[a] || plate[b];
                     members[a].insert(members[a].end(), members[b].begin(), members[b].end());
@@ -902,8 +970,10 @@ void Generator::finalize() {
             for (int ti : tips_by_layer[L]) {
                 const int r = f(tips_[ti].part);
                 cap[r] += capacityOf(tips_[ti]);
+                cap_all[r] += capacityOf(tips_[ti]);
                 members[r].push_back(ti);
             }
+            for (int di : drops_by_layer[L]) cap_all[f(dropped_[di].part)] += capacityOf(dropped_[di]);
             std::vector<std::pair<int, double>> demand;
             for (int p : graph_.partsInLayer(L)) {
                 const int r = f(p);
@@ -914,11 +984,17 @@ void Generator::finalize() {
             }
             for (auto& [r, d] : demand) {
                 if (exempt[r] || plate[r]) continue;
+                if (check_ && cap[r] - d < -1e-9 && cap_all[r] - d >= -1e-9) ++drop_check_.short_layers;
                 const int pair = static_cast<int>(slack.size());
                 slack.push_back(cap[r] - d);
                 for (int ti : members[r]) tip_pairs[ti].push_back(pair);
             }
         }
+    }
+
+    if (check_) {
+        checkDropped(cover_count);
+        return;
     }
 
     // Island minimum counts (large islands).
@@ -1020,12 +1096,53 @@ void Generator::finalize() {
     });
 }
 
+void Generator::checkDropped(const std::vector<int>& cover_count) {
+    // Samples no built tip covers but a dropped one did: the dropped tips were
+    // their only cover. (Samples nothing covered at all are the planner's own
+    // report, "uncovered".)
+    std::vector<char> lost(dropped_.size(), 0);
+    for (size_t si = 0; si < samples_.size(); ++si) {
+        const Sample& s = samples_[si];
+        if (!s.needs_cover || cover_count[si] > 0) continue;
+        bool only_dropped = false;
+        dropped_grid_.query(s.pos.xy(), cfg_.coverage.maxRadius(), [&](int di) {
+            if (covers(dropped_[di], s)) {
+                lost[di] = 1;
+                only_dropped = true;
+            }
+        });
+        drop_check_.samples += only_dropped;
+    }
+    std::vector<int> order;
+    for (size_t di = 0; di < dropped_.size(); ++di)
+        if (lost[di]) order.push_back(static_cast<int>(di));
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        const Vec3 &pa = dropped_[a].pos, &pb = dropped_[b].pos;
+        if (pa.z != pb.z) return pa.z < pb.z;
+        if (pa.x != pb.x) return pa.x < pb.x;
+        return pa.y < pb.y;
+    });
+    drop_check_.tips = order.size();
+    for (int di : order) drop_check_.at.push_back(dropped_[di].pos);
+}
+
 }  // namespace
 
 PointGenResult generateSupportPoints(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts,
                                      const JobControl& ctl) {
     Generator g(mesh, cfg, opts, ctl);
     return g.run();
+}
+
+DropCheck checkDroppedTips(const TriangleMesh& mesh, const SupportConfig& cfg, const std::vector<SupportPoint>& built,
+                           const std::vector<SupportPoint>& dropped, const PointGenOptions& opts, const JobControl& ctl) {
+    if (dropped.empty()) return {};
+    PointGenOptions o = opts;
+    o.manual = built;
+    o.prune = false;
+    Generator g(mesh, cfg, o, ctl, &dropped);
+    g.run();
+    return g.dropCheck();
 }
 
 }  // namespace fruit
