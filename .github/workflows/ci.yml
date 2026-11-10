@@ -122,7 +122,8 @@ jobs:
         run: cmake --build build -j --target fruitslicer_app
       - name: Check the bundle
         run: |
-          lipo "$APP/Contents/MacOS/FruitSlicer" -verify_arch arm64 x86_64
+          # One arch per check: newer Xcode lipo takes only one after -verify_arch.
+          for arch in arm64 x86_64; do lipo "$APP/Contents/MacOS/FruitSlicer" -verify_arch "$arch"; done
           vtool -show-build "$APP/Contents/MacOS/FruitSlicer"
           plutil -lint "$APP/Contents/Info.plist"
           test -f "$APP/Contents/Resources/FruitSlicer.icns"
