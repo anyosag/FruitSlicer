@@ -73,6 +73,33 @@ private:
     std::unordered_map<uint64_t, std::vector<int>> map_;
 };
 
+// The surface's downward normal at each mesh minimum: the faces around its
+// vertices that face down, each weighted by its angle at the vertex. A minimum
+// sits where several faces meet, side walls included, so the nearest face to
+// it can be any of them; a tip there touches the underside. Zero for a
+// minimum with no face facing down.
+std::vector<Vec3> minimumNormals(const TriangleMesh& mesh, const std::vector<MinimumRegion>& minima) {
+    std::unordered_map<int32_t, std::vector<size_t>> at;  // vertex -> the minima it belongs to
+    for (size_t i = 0; i < minima.size(); ++i)
+        for (int32_t v : minima[i].vertices) at[v].push_back(i);
+    std::vector<Vec3> sum(minima.size());
+    for (size_t f = 0; f < mesh.faces.size(); ++f) {
+        const Face& F = mesh.faces[f];
+        for (int k = 0; k < 3; ++k) {
+            const auto it = at.find(F[k]);
+            if (it == at.end()) continue;
+            const Vec3 n = mesh.faceNormal(f);
+            if (n.z >= -1e-9) continue;  // side walls and upper faces: a tip can't sit on them here
+            const Vec3 p = mesh.vertices[F[k]];
+            const Vec3 a = mesh.vertices[F[(k + 1) % 3]] - p, b = mesh.vertices[F[(k + 2) % 3]] - p;
+            const double angle = std::atan2(norm(cross(a, b)), dot(a, b));
+            for (size_t i : it->second) sum[i] += n * angle;
+        }
+    }
+    for (Vec3& s : sum) s = norm(s) > 1e-12 ? normalized(s) : Vec3{};
+    return sum;
+}
+
 class Generator {
 public:
     Generator(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts, const JobControl& ctl)
@@ -140,6 +167,7 @@ private:
     SharpEdgeIndex edges_;
     CostField costf_;
     std::vector<MinimumRegion> minima_;
+    std::vector<Vec3> minima_normal_;  // per minimum: its downward normal (zero if none)
     double s_off_ = 0;
     int anchor_layers_ = 1;
 
@@ -457,8 +485,11 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
         Vec3 pos, n;
         if (minimum) {
             pos = minimum->point;
-            const ClosestPoint cp = tree_.closest(pos);
-            n = cp.face >= 0 ? mesh_.faceNormal(cp.face) : Vec3{0, 0, -1};
+            n = minima_normal_[static_cast<size_t>(minimum - minima_.data())];
+            if (norm(n) == 0) {
+                const ClosestPoint cp = tree_.closest(pos);
+                n = cp.face >= 0 ? mesh_.faceNormal(cp.face) : Vec3{0, 0, -1};
+            }
         } else {
             Vec2 ctr{};
             for (const auto& q : pts) ctr += q;
@@ -750,6 +781,7 @@ void Generator::setup() {
     costf_.edge_weight = cfg_.edge_weight;
     costf_.edge_margin = cfg_.edge_margin;
     minima_ = findMinima(mesh_);
+    minima_normal_ = minimumNormals(mesh_, minima_);
     hollows_ = analyzeHollows(layers());
     ctl_.check();
     traps_.assign(layers().size(), {});
