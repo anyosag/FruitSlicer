@@ -516,7 +516,7 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
             out.push_back(b.parts.size() > 1 ? "moved, turned or resized parts" : "moved, turned or resized the model");
         if (a.model_paths != b.model_paths) out.push_back("found the model in its new place");
     }
-    if (a.orient_settings != b.orient_settings || a.orient_decided != b.orient_decided)
+    if (a.parts == b.parts && (a.orient_settings != b.orient_settings || a.orient_decided != b.orient_decided))
         out.push_back("changed how it stands");
     if (a.edits != b.edits) {
         const std::size_t n = b.edits.size() > a.edits.size() ? b.edits.size() - a.edits.size() : 0;
