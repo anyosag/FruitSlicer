@@ -9,7 +9,7 @@
     {"tool": "repair"}, {"shot": "f1_repair"},
     {"tool": "repair"}, {"shot": "f1_panel_closed"},
     {"job_tab": "hollows"}, {"shot": "f1_hollows_tab"}, {"job_tab": "checks"},
-    {"tool": "rotate"}, {"wait": "jobs"}, {"shot": "f1_rotate"},
+    {"tool": "rotate"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "f1_rotate"},
     {"tool": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"shot": "f1_supports_made"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "f1_layers"},
     {"step": "model"}, {"tool": "move"}, {"move": [10, 0]}, {"step": "supports"}, {"shot": "f1_supports_stale"}
