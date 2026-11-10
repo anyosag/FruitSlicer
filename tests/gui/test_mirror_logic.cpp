@@ -188,7 +188,7 @@ TEST_CASE("Mirror: it is saved in the job and reopened the same", "[gui][mirror]
     const fruit::TriangleMesh before = doc->placed();
     const auto path = (dir() / "mirrored.fruitjob").string();
     saveJob(path, *doc);
-    CHECK(jobJson(path)["version"] == 2);  // older FruitSlicers refuse it rather than open it unmirrored
+    CHECK(jobJson(path)["version"] == 3);  // FruitSlicers from before mirroring refuse it rather than open it unmirrored
     CHECK(jobJson(path)["placement"]["mirror"].size() == 3);
     const OpenedJob o = openJob(path, kPrinter, fruit::JobControl::none());
     CHECK(o.doc->placement() == doc->placement());

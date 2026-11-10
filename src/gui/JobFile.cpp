@@ -30,8 +30,10 @@ namespace {
 // open; a moved one as 2, which they refuse rather than open it centred
 // with its tips where the model no longer is.
 // 3: several parts ("parts", each with its own mesh file and placement; tip
-// edits and holes say which part they are on). A job with one part is still
-// written as 1 or 2.
+// edits and holes say which part they are on), or a part mirrored
+// ("placement"/"mirror"): FruitSlicers that read 2 know neither, and would
+// open such a job with its parts missing or not mirrored. A job with one
+// part that is not mirrored is still written as 1 or 2.
 constexpr int kVersion = 3;
 constexpr char kMeshMagic[8] = {'F', 'S', 'M', 'E', 'S', 'H', '1', 0};
 
@@ -263,7 +265,8 @@ void saveJob(const std::string& path, const Document& doc) {
         // One part: as before, so older FruitSlicers open it.
         const Part& part = doc.parts().front();
         // Older FruitSlicers would open a moved or mirrored job as if it were not.
-        j["version"] = part.placement().centred() && !part.placement().mirrored() ? 1 : 2;
+        const fruit::Placement& p = part.placement();
+        j["version"] = p.mirrored() ? kVersion : p.centred() ? 1 : 2;
         j["model"] = modelJson(part, "model.bin");
         j["placement"] = placementJson(part.placement());
         j["orient"] = orientJson(doc.orientOf(part.id()));
