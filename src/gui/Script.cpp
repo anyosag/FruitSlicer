@@ -14,6 +14,7 @@
 #include "Capture.h"
 #include "Document.h"
 #include "Log.h"
+#include "ShapeTools.h"
 #include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
 #include "formats/GooExport.h"
@@ -78,7 +79,8 @@ void writeDemo3mf(const std::string& path, const fruit::TriangleMesh& m) {
 
 // "@demo": the bracket; "@demo-big": six times larger (too deep for the
 // plate); "@demo-3mf": the bracket as a 3MF file; "@demo-hollow": a 30 mm
-// ball with a sealed hollow inside, under a 2 mm wall; "@demo-bar": a
+// ball with a sealed hollow inside, under a 2 mm wall; "@demo-block": a plain 40 × 24 × 14 mm
+// block; "@demo-bar": a
 // 13.4 × 154 × 10 mm rack bar with posts, lying along Y: deeper than the
 // plate, but it fits turned a quarter.
 std::string demoPath(const std::string& which) {
@@ -96,6 +98,11 @@ std::string demoPath(const std::string& which) {
         m.append(v);
         const auto p = (demoDir() / "sphere.stl").string();
         fruit::writeStl(p, m);
+        return p;
+    }
+    if (which == "@demo-block") {  // a plain 40 × 24 × 14 mm block: one clean solid for Cut, Label and Combine
+        const auto p = (demoDir() / "block.stl").string();
+        fruit::writeStl(p, fruit::makeBox({0, 0, 0}, {40, 24, 14}));
         return p;
     }
     if (which == "@demo-bar") {
@@ -244,6 +251,9 @@ Tool toolFrom(const std::string& s) {
     if (s == "arrange") return Tool::Arrange;
     if (s == "merge") return Tool::Merge;
     if (s == "split") return Tool::Split;
+    if (s == "label") return Tool::Label;
+    if (s == "combine") return Tool::Combine;
+    if (s == "cut") return Tool::Cut;
     static const char* names[] = {"none", "on_plate", "move", "rotate", "scale", "supports", "hollow", "repair"};
     for (int i = 0; i < 8; ++i)
         if (s == names[i]) return static_cast<Tool>(i);
@@ -790,6 +800,56 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.dismissSaved();
         } else if (step.contains("shortcuts")) {
             app.showShortcuts(step["shortcuts"].get<bool>());
+        } else if (step.contains("cut_plane") || step.contains("cut_keep") || step.contains("cut_apply")) {
+            // The Cut tool: the plane ["z" | "x" | "y", mm], what to keep, and applying it (then "wait": "jobs").
+            CutSettings& c = app.shape().cut;
+            if (step.contains("cut_plane")) {
+                const auto& a = step["cut_plane"];
+                const std::string axis = a[0].get<std::string>();
+                if (axis != "z" && axis != "x" && axis != "y") throw std::runtime_error("unknown cut axis " + axis);
+                c.axis = axis == "z" ? CutAxis::Z : axis == "x" ? CutAxis::X : CutAxis::Y;
+                if (app.document()) cutFit(c, app.document()->part());
+                c.position = a[1].get<double>();
+            } else if (step.contains("cut_keep")) {
+                const std::string k = step["cut_keep"].get<std::string>();
+                if (k != "both" && k != "above" && k != "below") throw std::runtime_error("unknown cut_keep " + k);
+                c.keep = k == "both" ? CutKeep::Both : k == "above" ? CutKeep::Above : CutKeep::Below;
+            } else {
+                app.cutApply();
+            }
+        } else if (step.contains("label_set") || step.contains("label_at") || step.contains("label_apply")) {
+            // The Label tool: its fields, a click on the part along a ray (printer coordinates), and applying it.
+            LabelSettings& l = app.shape().label;
+            if (step.contains("label_set")) {
+                const auto& a = step["label_set"];
+                if (a.contains("text")) l.text = a["text"].get<std::string>();
+                if (a.contains("height")) l.height = a["height"].get<double>();
+                if (a.contains("depth")) l.depth = a["depth"].get<double>();
+                if (a.contains("engrave")) l.engrave = a["engrave"].get<bool>();
+            } else if (step.contains("label_at")) {
+                const auto& a = step["label_at"];
+                fruit::Vec3 at, n;
+                if (!app.pickModel({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()},
+                                   {a[3].get<double>(), a[4].get<double>(), a[5].get<double>()}, &at, &n))
+                    throw std::runtime_error("label_at: meets no part");
+                app.labelPick(at, n);
+            } else {
+                app.labelApply();
+            }
+        } else if (step.contains("combine_with") || step.contains("combine_mode") || step.contains("combine_apply")) {
+            // The Combine tool: the second part (1-based, in the Parts list's order), the mode, and applying it.
+            if (step.contains("combine_with")) {
+                const int i = step["combine_with"].get<int>() - 1;
+                const auto& doc = app.document();
+                if (!doc || i < 0 || i >= static_cast<int>(doc->partCount())) throw std::runtime_error("combine_with: no such part");
+                app.combinePick(doc->parts()[static_cast<std::size_t>(i)].id());
+            } else if (step.contains("combine_mode")) {
+                const std::string m = step["combine_mode"].get<std::string>();
+                if (m != "join" && m != "subtract" && m != "overlap") throw std::runtime_error("unknown combine_mode " + m);
+                app.shape().combine.mode = m == "join" ? CombineMode::Join : m == "subtract" ? CombineMode::Subtract : CombineMode::Overlap;
+            } else {
+                app.combineApply();
+            }
         } else if (step.contains("wait")) {
             app.jobs().wait();
         } else if (step.contains("view")) {

@@ -116,6 +116,15 @@ void partsToolFooter(App& app, Document& doc, Tool t);
 float partsToolFooterHeight(Tool t);
 // The Job panel's Collisions tab (CollisionsTab.cpp), and its one-line verdict for the Checks tab.
 void collisionsTab(App& app, Document* doc);
+// Cut, Label and Combine (ShapeToolPanels.cpp): each tool's panel; the button that applies it, pinned under
+// the panel (with what the last try came to, and progress and Cancel while it works); a line of help for the
+// view's top; and the marks in the view (the plane, the letters' outline, the tags A and B).
+void cutPanel(App& app, Document& doc);
+void labelPanel(App& app, Document& doc);
+void combinePanel(App& app, Document& doc);
+void shapeApplyArea(App& app, Document& doc, Tool t);
+const char* shapeHint(App& app, const Document& doc);
+void shapeOverlay(App& app, Document& doc, Tool t, ImVec2 origin, ImVec2 size, const float* view_proj);
 // Hollow: the tool's panel, what prints after it (in the Job panel), and the
 // view's marks (holes, and placing holes by hand).
 void hollowPanel(App& app, Document& doc);

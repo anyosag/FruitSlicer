@@ -32,6 +32,9 @@ void duplicate(ImDrawList* dl, ImVec2 p, float size, ImU32 c);   // a box and it
 void arrange(ImDrawList* dl, ImVec2 p, float size, ImU32 c);     // four boxes laid out
 void merge(ImDrawList* dl, ImVec2 p, float size, ImU32 c);       // two boxes, an arrow joining them
 void split(ImDrawList* dl, ImVec2 p, float size, ImU32 c);       // a box in two halves
+void label(ImDrawList* dl, ImVec2 p, float size, ImU32 c);       // a letter on a tag
+void combine(ImDrawList* dl, ImVec2 p, float size, ImU32 c);     // two overlapping squares
+void cut(ImDrawList* dl, ImVec2 p, float size, ImU32 c);         // a box with a dashed line through it
 void supports(ImDrawList* dl, ImVec2 p, float size, ImU32 c);    // a slab on legs
 void hollow(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a box with a dashed box inside
 void drainHole(ImDrawList* dl, ImVec2 p, float size, ImU32 c);   // a hole and a drop

@@ -31,9 +31,11 @@ Mark markFor(const Document& d, Step s);
 // floating panel. Rotate, Supports and Hollow open the place they belong to
 // (Orient, Supports, Orient · Hollows); the others are parts of Model.
 enum class Tool { None, OnPlate, Move, Rotate, Scale, Supports, Hollow, Repair, Mirror, Measure,
-                Duplicate, Arrange, Merge, Split };
+                Duplicate, Arrange, Merge, Split, Label, Combine, Cut };
 // Duplicate and Arrange (rail), Merge and Split (along the foot) are parts of Model too: they
 // make copies, lay the parts out, join them and split one into its shells.
+// Label, Combine and Cut (shape tools, along the view's foot) are parts of Model too: they change the selected
+// part's shape, or join two parts.
 // Mirror and Measure are parts of Model too: Mirror turns it into its mirror image
 // (each choice at once), Measure shows distances and changes nothing.
 // The tool whose panel a place shows: its own, or on Model the one picked there.

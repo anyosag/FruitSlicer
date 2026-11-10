@@ -332,4 +332,25 @@ void dots(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
     for (float y : {5.5f, 12.0f, 18.5f}) dl->AddCircleFilled(g.at(12, y), 1.7f * g.u, c);
 }
 
+// ---- Cut, Label and Combine ----
+
+void label(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{3.5f, 4.5f}, {20.5f, 4.5f}, {20.5f, 19.5f}, {3.5f, 19.5f}}, c, true);
+    poly(dl, g, {{8, 16}, {12, 7.5f}, {16, 16}}, c, false);
+    line(dl, g, 9.6f, 13, 14.4f, 13, c);
+}
+
+void combine(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{3.5f, 3.5f}, {14, 3.5f}, {14, 14}, {3.5f, 14}}, c, true);
+    poly(dl, g, {{10, 10}, {20.5f, 10}, {20.5f, 20.5f}, {10, 20.5f}}, c, true);
+}
+
+void cut(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{5, 4}, {19, 4}, {19, 20}, {5, 20}}, c, true);
+    dashed(dl, g, 2, 12, 22, 12, c);
+}
+
 }  // namespace gui::icon

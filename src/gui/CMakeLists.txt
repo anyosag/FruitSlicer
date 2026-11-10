@@ -69,6 +69,10 @@ set(app_sources
   Repairs.cpp
   screens/MirrorTool.cpp
   screens/MeasureTool.cpp
+  # Cut, Label and Combine
+  ShapeTools.cpp
+  AppShape.cpp
+  screens/ShapeToolPanels.cpp
   Icons.cpp
   JobFile.cpp
   Jobs.cpp
