@@ -236,6 +236,8 @@ Step stepFrom(const std::string& s) {
 }
 
 Tool toolFrom(const std::string& s) {
+    if (s == "mirror") return Tool::Mirror;
+    if (s == "measure") return Tool::Measure;
     static const char* names[] = {"none", "on_plate", "move", "rotate", "scale", "supports", "hollow", "repair"};
     for (int i = 0; i < 8; ++i)
         if (s == names[i]) return static_cast<Tool>(i);
@@ -379,6 +381,23 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.goToStep(stepFrom(step["step"].get<std::string>()));
         } else if (step.contains("tool")) {
             app.openTool(toolFrom(step["tool"].get<std::string>()));
+        } else if (step.contains("mirror")) {
+            const std::string a = step["mirror"].get<std::string>();
+            if (a != "x" && a != "y" && a != "z") throw std::runtime_error("unknown mirror axis " + a);
+            app.mirrorModel(a == "x" ? 0 : a == "y" ? 1 : 2);
+        } else if (step.contains("measure")) {
+            // Points on the plate; each is brought onto the model's surface, along the line to its middle.
+            if (step["measure"].is_string()) {
+                app.clearMeasure();
+            } else if (app.document()) {
+                const fruit::Vec3 mid = app.document()->placedBox().center();
+                for (const auto& q : step["measure"]) {
+                    const fruit::Vec3 from{q[0].get<double>(), q[1].get<double>(), q[2].get<double>()};
+                    fruit::Vec3 at, n;
+                    if (!app.pickModel(from, mid - from, &at, &n)) throw std::runtime_error("measure: no model there");
+                    app.measureClick(at);
+                }
+            }
         } else if (step.contains("close_tool")) {
             app.closeToolPanel();
         } else if (step.contains("job_tab")) {

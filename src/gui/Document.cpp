@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <stdexcept>
 
+#include "Placing.h"
 #include "mesh/AabbTree.h"
 #include "mesh/Primitives.h"
 
@@ -219,6 +220,10 @@ void Document::edit(const fruit::Placement& p) {
     Snapshot before = snapshot();
     place(p);
     record(std::move(before));
+}
+
+void Document::mirror(int axis) {
+    if (!parts_.empty()) edit(mirroredAlong(placement(), axis));
 }
 
 void Document::undo() {

@@ -268,7 +268,9 @@ void toolRail(App& app, Document* doc, ImVec2 origin) {
             const T tools[] = {{Tool::OnPlate, "on_plate", "On plate", icon::onPlate, "How it sits on the plate (P)"},
                                {Tool::Move, "move", "Move", icon::move, "Move it on the plate (M)"},
                                {Tool::Rotate, "rotate", "Rotate", icon::rotate, "Turn it, or find a good rotation (R)"},
-                               {Tool::Scale, "scale", "Scale", icon::scale, "Change its size (S)"}};
+                               {Tool::Scale, "scale", "Scale", icon::scale, "Change its size (S)"},
+                               {Tool::Mirror, "mirror", "Mirror", icon::mirror, "Make a mirror image of it"},
+                               {Tool::Measure, "measure", "Measure", icon::measure, "Measure between two points on it"}};
             for (const T& t : tools) {
                 if (toolButton(t.id, t.label, t.ic, open == t.t, doc != nullptr)) app.openTool(t.t);
                 tooltip(doc ? t.tip : "Open a model first.");
@@ -313,6 +315,8 @@ const char* toolTitle(Tool t) {
         case Tool::Supports: return "Supports";
         case Tool::Hollow: return "Hollow";
         case Tool::Repair: return "Repair";
+        case Tool::Mirror: return "Mirror";
+        case Tool::Measure: return "Measure";
         case Tool::None: break;
     }
     return "";
@@ -347,6 +351,8 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
         case Tool::Supports: supportsPanel(app, doc); break;
         case Tool::Hollow: hollowPanel(app, doc); break;
         case Tool::Repair: repairBody(app, doc); break;
+        case Tool::Mirror: mirrorPanel(app, doc); break;
+        case Tool::Measure: measurePanel(app, doc); break;
         case Tool::None: break;
     }
     ImGui::EndChild();
@@ -482,6 +488,8 @@ void topPill(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
         hint = "Faces that need tips are tinted: they lean more than 45° from upright.";
     } else if (hollow && !doc->hollow.choices.auto_holes) {
         hint = "Click on the model to put a hole there.";
+    } else if (app.step() == Step::Model && app.toolPanelOpen() && app.tool() == Tool::Measure) {
+        hint = "Click a point on the model, then a second one · Esc starts again";
     }
     if (!supports && !hollow && !patched && !hint) return;
     const bool panel = app.toolPanelOpen() || app.editingTips();
@@ -540,6 +548,7 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
         switch (app.step()) {
             case Step::Model:
                 if (app.handlesShown()) placeOverlay(app, d, origin, size, vp);
+                if (app.toolPanelOpen() && app.tool() == Tool::Measure) measureOverlay(app, d, origin, size, vp);
                 break;
             case Step::Orient:
                 if (app.orientView() == OrientView::Hollow) hollowOverlay(app, d, origin, size, vp);

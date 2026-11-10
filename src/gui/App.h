@@ -16,6 +16,7 @@
 #include "Calibration.h"
 #include "JobFile.h"
 #include "Jobs.h"
+#include "Measure.h"
 #include "Preferences.h"
 #include "ABTest.h"
 #include "Fit.h"
@@ -128,6 +129,14 @@ public:
     void setPosition(const fruit::Vec2& mm);  // the middle of its outline, from the plate's centre
     void centreModel();
     void nudge(double dx_mm, double dy_mm);    // the arrow keys
+    // Mirror: the model as its mirror image along the plate's axis (0 X: left to
+    // right, 1 Y: front to back, 2 Z: top to bottom); one undoable edit.
+    void mirrorModel(int axis);
+    // Measure: a point picked on the model (plate coordinates), the points so
+    // far, and starting again. The measure changes nothing in the job.
+    void measureClick(const fruit::Vec3& on_plate);
+    void clearMeasure();
+    const MeasureState& measured() const { return measure_; }
     void turnQuarter();                        // 90° about the vertical, slid back onto the plate if need be
     void slideOntoPlate();                     // over the edge: the least move that puts it back on
     void setOnPlate(bool on_plate);
@@ -476,6 +485,7 @@ private:
     int new_tip_class_ = 2;
     bool show_zones_ = true;
     int dragging_tip_ = -1;
+    MeasureState measure_;
     std::shared_ptr<fruit::AabbTree> pick_tree_;
     const void* pick_doc_ = nullptr;
     int pick_revision_ = -1;

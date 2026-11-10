@@ -38,6 +38,14 @@ fruit::Vec3 turnAbout(const fruit::Vec3& rotation_deg, int axis, double deg);
 // The angles X, Y, Z (degrees) of the rotation in `r` (R = Rz · Ry · Rx).
 fruit::Vec3 eulerXYZ(const fruit::Transform& r);
 
+// `p` as a mirror image along the plate's axis `axis` (0 X: left to right,
+// 1 Y: front to back, 2 Z: top to bottom). The model's middle stays where it
+// is and it stays down at its lift; mirroring again gives `p` back. The
+// mirror is kept as a flip of one of the model's own axes (the one `axis`
+// follows most closely) with the rotation changed to match, so Rotate
+// goes on turning it the way the view shows.
+fruit::Placement mirroredAlong(const fruit::Placement& p, int axis);
+
 // `p` turned a quarter about the vertical, then slid back onto the plate if
 // the turn put it over the edge.
 fruit::Placement turnedQuarter(const fruit::TriangleMesh& model, const fruit::Placement& p,

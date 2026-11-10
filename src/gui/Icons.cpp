@@ -196,6 +196,21 @@ void scale(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
     poly(dl, g, {{15, 3.5f}, {20.5f, 3.5f}, {20.5f, 9}}, c, false);
 }
 
+void mirror(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    dashed(dl, g, 12, 2.5f, 12, 21.5f, c);
+    poly(dl, g, {{9.5f, 6}, {9.5f, 18}, {3, 18}}, c, true);
+    poly(dl, g, {{14.5f, 6}, {14.5f, 18}, {21, 18}}, c, true);
+}
+
+void measure(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    line(dl, g, 5, 19, 19, 5, c);
+    line(dl, g, 3, 15, 9, 21, c);
+    line(dl, g, 15, 3, 21, 9, c);
+    dl->AddCircleFilled(g.at(12, 12), 1.3f * g.u, c);
+}
+
 void supports(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
     const G24 g{p, size / 24};
     poly(dl, g, {{5, 3.5f}, {19, 3.5f}, {19, 9.5f}, {5, 9.5f}}, c, true);

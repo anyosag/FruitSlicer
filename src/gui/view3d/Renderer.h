@@ -96,6 +96,7 @@ private:
         unsigned rgb = 0xAEB6C4;
         std::size_t tint_first = 0, tint_count = 0;
         unsigned tint_rgb = 0;
+        bool mirrored = false;  // its transform is a mirror: triangles turn inside out
     };
     std::vector<Model> models_;
     struct Extra {

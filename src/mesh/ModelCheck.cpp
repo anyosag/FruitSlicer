@@ -51,7 +51,7 @@ PlateFit checkFit(const TriangleMesh& model, const Placement& p, const PrinterPr
     PlateFit f;
     if (model.empty()) return f;
     // Size at 100 % as rotated now; uniform scale only multiplies it.
-    const Transform r = Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z);
+    const Transform r = placementRotation(p);
     BBox3 b;
     for (const Vec3& v : model.vertices) b.extend(r.applyLinear(v));
     const Vec3 unit = b.max - b.min;

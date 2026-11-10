@@ -180,6 +180,7 @@ fruit::LoadedModel modelFrom(const std::vector<std::uint8_t>& bytes, const json&
 
 json placementJson(const fruit::Placement& p) {
     json j = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation}, {"on_plate", p.on_plate}};
+    if (p.mirrored()) j["mirror"] = {p.mirror_x, p.mirror_y, p.mirror_z};
     if (!p.centred()) j["offset"] = {p.offset.x, p.offset.y};
     return j;
 }
@@ -190,6 +191,10 @@ fruit::Placement placementFrom(const json& pj) {
     p.rotation_deg = vecFrom(pj.at("rotation"));
     p.elevation = pj.value("elevation", 5.0);
     p.on_plate = pj.value("on_plate", false);
+    if (pj.contains("mirror") && pj["mirror"].is_array() && pj["mirror"].size() == 3) {  // older jobs: not mirrored
+        auto flag = [&](int i) { return pj["mirror"][i].is_boolean() && pj["mirror"][i].get<bool>(); };
+        p.mirror_x = flag(0), p.mirror_y = flag(1), p.mirror_z = flag(2);
+    }
     if (pj.contains("offset") && pj["offset"].is_array() && pj["offset"].size() == 2 && pj["offset"][0].is_number() &&
         pj["offset"][1].is_number()) {  // older jobs: centred
         auto mm = [](double v) { return std::isfinite(v) ? std::clamp(v, -1000.0, 1000.0) : 0.0; };
@@ -257,7 +262,8 @@ void saveJob(const std::string& path, const Document& doc) {
     if (doc.partCount() == 1) {
         // One part: as before, so older FruitSlicers open it.
         const Part& part = doc.parts().front();
-        j["version"] = part.placement().centred() ? 1 : 2;
+        // Older FruitSlicers would open a moved or mirrored job as if it were not.
+        j["version"] = part.placement().centred() && !part.placement().mirrored() ? 1 : 2;
         j["model"] = modelJson(part, "model.bin");
         j["placement"] = placementJson(part.placement());
         j["orient"] = orientJson(doc.orientOf(part.id()));

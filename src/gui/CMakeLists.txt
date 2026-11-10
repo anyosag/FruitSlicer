@@ -62,6 +62,8 @@ set(app_sources
   GooTools.cpp
   Hollows.cpp
   Repairs.cpp
+  screens/MirrorTool.cpp
+  screens/MeasureTool.cpp
   Icons.cpp
   JobFile.cpp
   Jobs.cpp
@@ -72,6 +74,7 @@ set(app_sources
   Orient.cpp
   Parts.cpp
   Placing.cpp
+  Measure.cpp
   Plates.cpp
   Preferences.cpp
   Print.cpp
