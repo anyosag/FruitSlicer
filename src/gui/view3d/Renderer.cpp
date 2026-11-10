@@ -285,6 +285,7 @@ void Renderer::setModelTransform(const fruit::Transform& t) {
     model_matrix_[13] = static_cast<float>(t.t.y);
     model_matrix_[14] = static_cast<float>(t.t.z);
     model_matrix_[15] = 1;
+    model_mirrored_ = t.determinant() < 0;
 }
 
 unsigned Renderer::uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb) {
@@ -441,6 +442,9 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), overhang_sin);
         glUniform3f(glGetUniformLocation(mesh_prog_, "uOverhangColor"), 0x4F / 255.0f, 0x8A / 255.0f, 0xC9 / 255.0f);
         glBindVertexArray(model_.vao);
+        // A mirror image turns the triangles inside out on their way to the
+        // plate: tell GL which way round the front now is.
+        if (model_mirrored_) glFrontFace(GL_CW);
         glDrawElements(GL_TRIANGLES, model_.count, GL_UNSIGNED_INT, nullptr);
         glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
         // The tinted faces once more, over themselves: the same points
@@ -451,6 +455,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(tint_count_ * 3), GL_UNSIGNED_INT,
                            reinterpret_cast<const void*>(tint_first_ * 3 * sizeof(unsigned)));
         }
+        glFrontFace(GL_CCW);
     }
     // Supports and tips, already in printer coordinates.
     if (!extras_.empty()) {

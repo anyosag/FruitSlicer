@@ -152,7 +152,8 @@ std::uint64_t meshHash(const fruit::TriangleMesh& m) {
 void saveJob(const std::string& path, const Document& doc) {
     json j;
     j["format"] = "fruitslicer-job";
-    j["version"] = doc.placement().centred() ? 1 : kVersion;
+    // Older FruitSlicers would open a moved or mirrored job as if it were not.
+    j["version"] = doc.placement().centred() && !doc.placement().mirrored() ? 1 : kVersion;
     j["name"] = doc.name;
     j["model"] = {{"path", doc.path}, {"file", "model.bin"}, {"hash", std::to_string(meshHash(doc.model.mesh))}};
     // The job's copy of the mesh is the repaired one: what was repaired, and
@@ -174,6 +175,7 @@ void saveJob(const std::string& path, const Document& doc) {
     const fruit::Placement& p = doc.placement();
     j["placement"] = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation},
                       {"on_plate", p.on_plate}};
+    if (p.mirrored()) j["placement"]["mirror"] = {p.mirror_x, p.mirror_y, p.mirror_z};
     if (!p.centred()) j["placement"]["offset"] = {p.offset.x, p.offset.y};
     json visible = json::array();
     for (const auto& v : doc.orient.visible) visible.push_back(vec(v));
@@ -307,6 +309,10 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     p.rotation_deg = vecFrom(pj.at("rotation"));
     p.elevation = pj.value("elevation", 5.0);
     p.on_plate = pj.value("on_plate", false);
+    if (pj.contains("mirror") && pj["mirror"].is_array() && pj["mirror"].size() == 3) {  // older jobs: not mirrored
+        auto flag = [&](int i) { return pj["mirror"][i].is_boolean() && pj["mirror"][i].get<bool>(); };
+        p.mirror_x = flag(0), p.mirror_y = flag(1), p.mirror_z = flag(2);
+    }
     if (pj.contains("offset") && pj["offset"].is_array() && pj["offset"].size() == 2 && pj["offset"][0].is_number() &&
         pj["offset"][1].is_number()) {  // older jobs: centred
         auto mm = [](double v) { return std::isfinite(v) ? std::clamp(v, -1000.0, 1000.0) : 0.0; };

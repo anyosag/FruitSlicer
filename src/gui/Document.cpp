@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <stdexcept>
 
+#include "Placing.h"
 #include "mesh/Primitives.h"
 
 namespace gui {
@@ -40,6 +41,8 @@ void Document::edit(const fruit::Placement& p) {
     redo_.clear();
     place(p);
 }
+
+void Document::mirror(int axis) { edit(mirroredAlong(placement_, axis)); }
 
 void Document::undo() {
     if (undo_.empty() || dragging()) return;

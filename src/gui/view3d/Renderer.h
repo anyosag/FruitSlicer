@@ -107,6 +107,7 @@ private:
     double overhang_deg_ = 0;
     std::size_t tint_first_ = 0, tint_count_ = 0;
     unsigned tint_rgb_ = 0;
+    bool model_mirrored_ = false;  // the model's transform is a mirror: triangles turn inside out
     float model_matrix_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     unsigned fbo_ms_ = 0, rb_color_ = 0, rb_depth_ = 0;  // multisampled target
     unsigned fbo_ = 0, tex_ = 0, rb_depth_plain_ = 0;    // resolved target

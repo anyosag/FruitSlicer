@@ -108,6 +108,24 @@ fruit::Vec3 turnAbout(const fruit::Vec3& rotation_deg, int axis, double deg) {
     return eulerNear(r, rotation_deg);
 }
 
+fruit::Placement mirroredAlong(const fruit::Placement& p, int axis) {
+    axis = std::clamp(axis, 0, 2);
+    // The plate's mirror M, put before the rotation R: M·R·D = R'·D' where D
+    // is the model's own mirror and D' = D·F flips one more model axis, F.
+    // So R' = M·R·F, still a rotation (two mirrors).
+    const fruit::Transform R = fruit::Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z);
+    int model_axis = 0;  // the model's axis that the plate's `axis` follows most closely
+    for (int i = 1; i < 3; ++i)
+        if (std::abs(R.m[axis][i]) > std::abs(R.m[axis][model_axis]) + 1e-9) model_axis = i;
+    fruit::Transform F, M;
+    F.m[model_axis][model_axis] = -1;
+    M.m[axis][axis] = -1;
+    fruit::Placement q = p;
+    (model_axis == 0 ? q.mirror_x : model_axis == 1 ? q.mirror_y : q.mirror_z) ^= true;
+    q.rotation_deg = eulerNear(F.then(R).then(M), p.rotation_deg);
+    return q;
+}
+
 fruit::Placement turnedQuarter(const fruit::TriangleMesh& model, const fruit::Placement& p,
                                const fruit::PrinterProfile& printer) {
     fruit::Placement q = p;

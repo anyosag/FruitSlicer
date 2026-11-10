@@ -17,12 +17,24 @@ Transform placeOnPlate(TriangleMesh& mesh, const Vec3& rotation_deg, double elev
     return applied.then(Transform::translation(d));
 }
 
+Transform mirrorTransform(const Placement& p) {
+    Transform m;
+    if (p.mirror_x) m.m[0][0] = -1;
+    if (p.mirror_y) m.m[1][1] = -1;
+    if (p.mirror_z) m.m[2][2] = -1;
+    return m;
+}
+
+Transform placementRotation(const Placement& p) {
+    return mirrorTransform(p).then(Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z));
+}
+
 namespace {
 
 Transform scaleRotation(const Placement& p) {
     Transform s;
     for (int i = 0; i < 3; ++i) s.m[i][i] = p.scale;
-    return s.then(Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z));
+    return s.then(placementRotation(p));
 }
 
 }  // namespace
@@ -38,6 +50,7 @@ Transform placementTransform(const TriangleMesh& model, const Placement& p) {
 
 TriangleMesh placeModel(const TriangleMesh& model, const Placement& p) {
     TriangleMesh m = model;
+    if (p.mirrored()) m.transform(mirrorTransform(p));
     if (p.scale != 1.0) {
         Transform s;
         for (int i = 0; i < 3; ++i) s.m[i][i] = p.scale;

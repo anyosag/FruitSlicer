@@ -46,7 +46,7 @@ fruit::SupportConfig supportConfig(const fruit::Placement& p, const nlohmann::js
 }
 
 std::vector<fruit::Vec3> visibleInPrinter(const std::vector<fruit::Vec3>& model_dirs, const fruit::Placement& p) {
-    const fruit::Transform r = fruit::Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z);
+    const fruit::Transform r = fruit::placementRotation(p);
     std::vector<fruit::Vec3> out;
     for (const fruit::Vec3& v : model_dirs) out.push_back(fruit::normalized(r.applyLinear(v)));
     return out;
@@ -117,10 +117,18 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     fruit::Transform scale;
     for (int i = 0; i < 3; ++i) scale.m[i][i] = p.scale;
     m.transform(scale);
+    // A mirrored model is searched as the mirror image it is: the sides people
+    // will see are mirrored with it.
+    const fruit::Transform mirror = fruit::mirrorTransform(p);
+    std::vector<fruit::Vec3> visible = visible_model;
+    if (p.mirrored()) {
+        m.transform(mirror);
+        for (fruit::Vec3& v : visible) v = mirror.applyLinear(v);
+    }
     fruit::OrientOptions o;
     o.cfg = supportConfig(p, doc.supports.choices.profile);
     o.elevation = p.lift();
-    o.visible_from = visible_model;
+    o.visible_from = visible;
     o.keep_points = false;
     const auto results = fruit::searchOrientations(m, o, ctl.sub(0.12, 0.95));
     s.directions = o.directions + 1;
