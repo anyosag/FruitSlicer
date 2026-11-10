@@ -60,6 +60,9 @@ void supportsPanel(App& app, Document& doc);
 void supportChecks(App& app, Document& doc);
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 void supportsViewPill(App& app, Document& doc);
+// Where Supports' banner (out of date, doesn't fit) sits over the view; false
+// when none shows.
+bool supportsBanner(App& app, const Document& doc, ImVec2 origin, ImVec2 size, ImVec2* min, ImVec2* max);
 // Editing tips by hand: the panel (with the selected tip) and the view's marks.
 void tipEditPanel(App& app, Document& doc);
 void tipEditSelected(App& app, Document& doc);

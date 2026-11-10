@@ -278,8 +278,8 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  }});
     v.push_back({.group = "Raft", .label = "Lift", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X&) {
-                     return std::string("Gap between the plate and the lowest point of the model. Set in the Model "
-                                        "step.");
+                     return std::string("Gap between the plate and the lowest point of the model. Set with the "
+                                        "On plate tool.");
                  },
                  .text = [](const X& x) {
                      return x.placement.on_plate ? std::string("on the plate") : strf("%.0f mm", x.placement.lift());

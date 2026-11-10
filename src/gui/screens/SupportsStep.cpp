@@ -368,13 +368,14 @@ void runningCard(App& app, ImVec2 origin, ImVec2 size) {
 }
 
 // Banners sit in the free space right of the tool panel, above the model tools.
+ImVec2 bannerSize(ImVec2 size) { return ImVec2(std::min(560.0f, size.x - kToolPanelRight - 32), 64); }
 ImVec2 bannerAt(ImVec2 origin, ImVec2 size, ImVec2 bs) {
     const float left = origin.x + kToolPanelRight + 16;
     return ImVec2(std::max(left, origin.x + size.x - 16 - bs.x), origin.y + size.y - kToolsBarH - 8 - bs.y);
 }
 
 void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
-    const ImVec2 bs(std::min(560.0f, size.x - kToolPanelRight - 32), 64);
+    const ImVec2 bs = bannerSize(size);
     ImGui::SetCursorScreenPos(bannerAt(origin, size, bs));
     beginCard("stale", bs, 14, col::WarnBg, col::WarnBorder);
     const float y = ImGui::GetCursorPosY();
@@ -397,7 +398,7 @@ void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 // Supports are made for the model where it stands, and only when it fits there.
 void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     const fruit::PlateFit& f = doc.fit();
-    const ImVec2 bs(std::min(560.0f, size.x - kToolPanelRight - 32), 64);
+    const ImVec2 bs = bannerSize(size);
     ImGui::SetCursorScreenPos(bannerAt(origin, size, bs));
     beginCard("fit", bs, 14, col::ErrorBg, col::Error);
     const float y = ImGui::GetCursorPosY();
@@ -421,6 +422,17 @@ void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 }
 
 }  // namespace
+
+bool supportsBanner(App& app, const Document& doc, ImVec2 origin, ImVec2 size, ImVec2* min, ImVec2* max) {
+    if (app.step() != Step::Supports || app.editingTips() || running(app)) return false;
+    const SupportState& s = doc.supports;
+    const bool fits = doc.fit().fits;
+    if (fits && !(s.result && !s.fresh(doc.revision(), doc.supportSettings()))) return false;
+    const ImVec2 bs = bannerSize(size);
+    *min = bannerAt(origin, size, bs);
+    *max = ImVec2(min->x + bs.x, min->y + bs.y);
+    return true;
+}
 
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
     const SupportState& s = doc.supports;

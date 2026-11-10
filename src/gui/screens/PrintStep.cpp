@@ -376,18 +376,18 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
         case Need::Nothing: break;
         case Need::Fit:
             title = f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate yet";
-            body = "Supports and layers are made for the model where it stands. Move it, turn it or scale it on the "
-                   "Model tab first.";
+            body = "Supports and layers are made for the model where it stands. Bring it onto the plate with Move, "
+                   "Rotate or Scale first.";
             break;
         case Need::Supports:
             title = "No supports yet";
-            body = "The layers are cut from the model with its supports. Nothing else has to come first: Orient is "
-                   "there if you want help choosing how it stands.";
+            body = "The layers are cut from the model with its supports. Nothing else has to come first: Rotate › "
+                   "Find a good rotation can help choose how it stands.";
             break;
         case Need::FreshSupports:
             title = "The supports are out of date";
             body = "The model or the support settings changed after they were made, so layers cut now wouldn't match "
-                   "it. Generate them again, or undo the change (⌘Z) to have these back.";
+                   "it. Remake them, or undo the change (⌘Z) to have these back.";
             break;
         case Need::Layers:
             title = "The layers aren't cut yet";

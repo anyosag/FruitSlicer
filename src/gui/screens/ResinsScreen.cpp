@@ -264,7 +264,7 @@ void resins(App& app) {
         std::string from = printSummary(r);
         if (sample) from += ", " + sample->software_name + " " + sample->software_version;
         if (r.sample_path.empty() && r.exposure <= 0)
-            from = "None yet. Each job asks for a SatelLite file or exposure times on its Print step.";
+            from = "None yet. Each job asks for a SatelLite file or exposure times in Layers, beside Save.";
         text(from.c_str(), fonts().regular, size::Body, col::TextMuted, true);
         ImGui::Dummy(ImVec2(0, 2));
         const auto rows = printRows(r, sample.get(), app.printer());

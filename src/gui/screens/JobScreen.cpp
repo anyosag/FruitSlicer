@@ -200,26 +200,53 @@ void axisGizmo(App& app, ImVec2 origin, ImVec2 size) {
 // How far the model sits above the plate: an arrow from the bottom corner
 // nearest the camera down to a ring on the plate under it, and a label. With
 // supports in the way it stands beside the corner, tied to the model and the
-// plate by dashed lines.
+// plate by dashed lines. When the label would run under a panel or off the
+// view, it goes to the next bottom corner along; it stays above Supports'
+// banner.
 void liftMarker(App& app, const Document& doc, const M4& vp, ImVec2 origin, ImVec2 size) {
     const double lift = doc.placement().lift();
     if (lift <= 0) return;
     const fruit::BBox3 b = doc.placedBox();
     const V3 eye = app.camera().eye();
     const float cx = static_cast<float>((b.min.x + b.max.x) / 2), cy = static_cast<float>((b.min.y + b.max.y) / 2);
-    const float x = static_cast<float>(eye.x >= cx ? b.max.x : b.min.x);
-    const float y = static_cast<float>(eye.y >= cy ? b.max.y : b.min.y);
     const float z = static_cast<float>(lift);
     if (eye.z < z) return;  // looking up from below: the plate hides the gap
-    ImVec2 a, c, mid;
-    if (!project(vp, origin, size, {x, y, z}, &a) || !project(vp, origin, size, {x, y, 0}, &c) ||
-        !project(vp, origin, size, {cx, cy, z}, &mid))
-        return;
-    if (c.y - a.y < 14) return;  // seen edge-on or from below: nothing to show
+    ImVec2 mid;
+    if (!project(vp, origin, size, {cx, cy, z}, &mid)) return;
+    const bool aside = doc.supports.result != nullptr && app.step() == Step::Supports;
+    ImGui::PushFont(fonts().semibold, size::Help);
+    const std::string label = strf("%.0f mm lift", lift);
+    const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    ImGui::PopFont();
+    const ImVec2 ps(ts.x + 22, 24);
+    // The free part of the view: right of the rail (and an open tool panel),
+    // left of the Job panel.
+    const float room_l = origin.x + (app.toolPanelOpen() || app.editingTips() ? kToolPanelRight : kToolPanelX) + 8;
+    const float room_r = origin.x + size.x - 8;
+    // The corner nearest the camera first, then the two beside it.
+    const float nx = static_cast<float>(eye.x >= cx ? b.max.x : b.min.x);
+    const float ny = static_cast<float>(eye.y >= cy ? b.max.y : b.min.y);
+    const float fx = static_cast<float>(eye.x >= cx ? b.min.x : b.max.x);
+    const float fy = static_cast<float>(eye.y >= cy ? b.min.y : b.max.y);
+    const V3 corners[3] = {{nx, ny, 0}, {fx, ny, 0}, {nx, fy, 0}};
+    const float reach = (aside ? 30 : 0) + 10 + ps.x;  // from the corner to the label's far end
+    ImVec2 a, c;
+    float out = 0;
+    bool found = false, roomy = false;
+    for (const V3& k : corners) {
+        ImVec2 ka, kc;
+        if (!project(vp, origin, size, {k.x, k.y, z}, &ka) || !project(vp, origin, size, {k.x, k.y, 0}, &kc)) continue;
+        if (kc.y - ka.y < 14) continue;  // seen edge-on: nothing to show
+        const float ko = ka.x >= mid.x ? 1.0f : -1.0f;  // away from the model on screen
+        const float far = ka.x + ko * reach;
+        const bool fits = std::min(ka.x, far) >= room_l && std::max(ka.x, far) <= room_r;
+        if (!found || fits) a = ka, c = kc, out = ko, found = true, roomy = fits;
+        if (fits) break;
+    }
+    if (!found) return;
+    if (!roomy) out = -out;  // no room outside any of them: the label goes inside, over the model
     const ImU32 lc = col::Text, dc = IM_COL32(0xC3, 0xC8, 0xD2, 200);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float out = a.x >= mid.x ? 1.0f : -1.0f;  // away from the model on screen
-    const bool aside = doc.supports.result != nullptr && app.step() == Step::Supports;
     const float lx = aside ? a.x + out * 30 : a.x;
     if (aside) {
         dashedRect(dl, ImVec2(a.x + out * 3, a.y), ImVec2(lx + out * 7, a.y), dc, 1.2f, 3, 3);
@@ -231,12 +258,12 @@ void liftMarker(App& app, const Document& doc, const M4& vp, ImVec2 origin, ImVe
     dl->AddLine(ImVec2(lx, a.y + 8), ImVec2(bx, c.y - 8), lc, 1.6f);
     dl->AddTriangleFilled(ImVec2(lx, a.y + 1), ImVec2(lx + 4, a.y + 9), ImVec2(lx - 4, a.y + 9), lc);
     dl->AddTriangleFilled(ImVec2(bx, c.y - 1), ImVec2(bx + 4, c.y - 9), ImVec2(bx - 4, c.y - 9), lc);
-    ImGui::PushFont(fonts().semibold, size::Help);
-    const std::string label = strf("%.0f mm lift", lift);
-    const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
-    const ImVec2 ps(ts.x + 22, 24);
     const float px = out > 0 ? lx + 10 : lx - 10 - ps.x;
-    const float py = std::round((a.y + c.y) / 2 - ps.y / 2);
+    float py = std::round((a.y + c.y) / 2 - ps.y / 2);
+    ImVec2 b0, b1;
+    if (supportsBanner(app, doc, origin, size, &b0, &b1) && px < b1.x && px + ps.x > b0.x && py + ps.y > b0.y - 6)
+        py = b0.y - 6 - ps.y;  // above Supports' banner, not under it
+    ImGui::PushFont(fonts().semibold, size::Help);
     dl->AddRectFilled(ImVec2(px, py), ImVec2(px + ps.x, py + ps.y), IM_COL32(0x18, 0x1B, 0x21, 240), 12);
     dl->AddRect(ImVec2(px, py), ImVec2(px + ps.x, py + ps.y), col::BorderStrong, 12);
     dl->AddText(ImVec2(px + 11, py + (ps.y - ts.y) / 2), col::Text, label.c_str());

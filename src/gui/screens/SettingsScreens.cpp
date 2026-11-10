@@ -181,8 +181,8 @@ void settings(App& app) {
     {
         const std::vector<std::string> l = {"USB drive", "Ask each time"};
         settingRow("Save .goo files to",
-                   "A USB drive when one is plugged in, or a folder you choose each time. You can still pick on the "
-                   "Print step.",
+                   "A USB drive when one is plugged in, or a folder you choose each time. You can still pick in Layers, "
+                   "beside Save.",
                    segmentsWidth(l),
                    [&] {
                        const int c = segments("goo", l, p.goo_to_drive ? 0 : 1);
