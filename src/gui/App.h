@@ -144,6 +144,10 @@ public:
     void removePart(int id);                    // undoable; never the last one
     // The part under a ray (printer coordinates): its id, or -1.
     int pickPart(const fruit::Vec3& origin, const fruit::Vec3& dir);
+    // A tool's change to the parts (Duplicate, Arrange, Split, Mirror…) as
+    // one undo step, once any drag is let go (see Document::editParts).
+    // False when nothing changed.
+    bool editParts(const std::function<void(PartsEdit&)>& fn);
     // The handles in the 3D view (Model, and Orient's settings): a drag is
     // previewed as it goes and is one undo step when it ends.
     HandleDrag& handleDrag() { return handle_drag_; }

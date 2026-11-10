@@ -40,6 +40,26 @@
 // job a new revision(): supports, hollow plans and layers made for the old
 // one are out of date, as after any other model edit, and undo brings the
 // old revision (and with it what was made for it) back.
+//
+// From a tool, go through App::editParts (it lets go of a drag first and
+// keeps the screens in step). For example:
+//   Mirror the selected part (a new mesh, same placement):
+//     app.editParts([&](PartsEdit& e) {
+//         e.find(doc.selectedId())->model = makePartModel(fruit::prepareModel(mirrored));
+//     });
+//   Duplicate it beside the others:
+//     const Part& p = doc.part();
+//     NewPart copy{partName(p.path(), names), p.path(), p.shared(), p.placement()};
+//     copy.placement.offset = freeSpot(footprint boxes, {p.fit().size.x, p.fit().size.y}, printer,
+//                                      fruit::plateMargin(p.placement()));
+//     app.editParts([&](PartsEdit& e) { e.selected = e.add(copy); });
+//   Split one part into its shells: e.remove(id), then e.add() each piece.
+// A part keeps its id while it exists; its tip edits and holes stay with
+// the id. When a tool replaces a part with new ones (Split, Merge, Combine)
+// the old id's edits and holes are left out from then on; when it changes
+// a part's shape in place (Cut, Mirror) they stay in its coordinates and
+// the tool decides whether to keep them (Document::supports.edits,
+// Document::hollow.manual).
 
 #include <cstddef>
 #include <functional>

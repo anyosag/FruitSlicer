@@ -65,9 +65,21 @@ void App::selectPart(int id) {
         orient_view_ = OrientView::Settings;
 }
 
+bool App::editParts(const std::function<void(PartsEdit&)>& fn) {
+    if (!doc_) return false;
+    if (placing()) endPlacing();
+    if (!doc_->editParts(fn)) return false;
+    // What the Rotate tool showed may be for a part that changed or went.
+    if (step_ == Step::Orient && orient_view_ == OrientView::Results &&
+        !doc_->orient().resultsFresh(doc_->part().revision()))
+        orient_view_ = OrientView::Settings;
+    return true;
+}
+
 void App::removePart(int id) {
-    if (!doc_ || placing() || doc_->partCount() <= 1) return;
-    if (doc_->removePart(id)) log::info("removed a part; " + std::to_string(doc_->partCount()) + " left");
+    if (!doc_ || doc_->partCount() <= 1) return;
+    if (editParts([id](PartsEdit& e) { e.remove(id); }))
+        log::info("removed a part; " + std::to_string(doc_->partCount()) + " left");
 }
 
 const fruit::AabbTree& App::pickTree() {

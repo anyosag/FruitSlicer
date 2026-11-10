@@ -19,6 +19,11 @@
     {"tool": "hollow"}, {"wait": "jobs"}, {"shot": "g2_hollow"},
     {"hollow": "apply"}, {"wait": "jobs"},
     {"supports": "now"}, {"wait": "jobs"}, {"shot": "g2_supports"},
+    {"edit_tips": true}, {"view": "below"}, {"tip_tool": "add"},
+    {"tip_add_near": [0, 1.5, 0]}, {"wait": "jobs"}, {"tip_zone_near": [40, 0, 1.5]}, {"wait": "jobs"},
+    {"shot": "g2_tips"}, {"edit_tips": false},
+    {"select_part": 1}, {"nudge": [0, 15]}, {"supports": "now"}, {"wait": "jobs"},
+    {"edit_tips": true}, {"shot": "g2_tips_part_moved"}, {"edit_tips": false}, {"view": "angled"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"}, {"layer": 300}, {"shot": "g2_layers"},
     {"step": "model"}, {"save_job": "@demo"}, {"wait": "jobs"},
     {"open": "@demo-job"}, {"wait": "jobs"}, {"shot": "g2_job_reopened"}

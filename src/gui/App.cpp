@@ -270,6 +270,7 @@ void App::openJobFile(const std::string& path) {
                 relink_.open = true;
                 relink_.doc = out->doc;
                 relink_.model_path = out->model_path;
+                relink_.part = out->part;
                 return;
             }
             installJob(out->doc);
