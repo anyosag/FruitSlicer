@@ -627,6 +627,7 @@ void App::clearSides() {
 void App::maintain() {
     if (placing() && !handlesShown()) endPlacing();  // its handles went (a search finished, another screen)
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
+    startCollisionCheck();  // with several parts: do they overlap?
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !jobs_.busy()) {
         // Cut the layers for the current supports, once per supports result.
         const auto& sup = doc_->supports.result;

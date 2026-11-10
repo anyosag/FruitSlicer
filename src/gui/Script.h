@@ -25,10 +25,13 @@
 //   {"undo": n} {"redo": n} {"shortcuts": true | false}
 //   {"step": "model" | "orient" | "supports" | "layers" | "print"} (any place, any time) {"layer": n (1-based)} {"show_below": bool}
 //   {"mirror": "x" | "y" | "z"} the selected part (left to right, front to back, top to bottom)
+//   {"duplicate": n} n copies of the selected part {"arrange": gap_mm} every part laid out (gap optional)
+//   {"split": true} the selected part into its shells {"merge_pick": [n, ...]} (1-based) only these are joined next
+//   {"merge_parts": "join" | "fuse"} {"collisions": "wait" | gap_mm} wait for the check, or set its least gap
 //   {"measure": [[x, y, z], [x, y, z]]} clicks, in mm on the plate, each put on the surface along the line to the
 //     middle of the part whose middle is nearest it; {"measure": "clear"} starts again
-//   {"tool": "on_plate" | "move" | "rotate" | "scale" | "mirror" | "measure" | "supports" | "hollow" | "repair" | "none"} as the tool
-//     buttons (again on the open one closes its panel) {"close_tool": true} {"job_tab": "checks" | "hollows"}
+//   {"tool": "on_plate" | "move" | "rotate" | "scale" | "mirror" | "measure" | "duplicate" | "arrange" | "merge" | "split" | "supports" | "hollow" | "repair" | "none"} as the tool
+//     buttons (again on the open one closes its panel) {"close_tool": true} {"job_tab": "checks" | "hollows" | "collisions"}
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
@@ -48,7 +51,7 @@
 //   {"orientation_piece": path | "@demo"} {"orientation_sample": path | "@stand-in-flip-y" (-flip-x, -as-is)}
 //   {"orientation_fix": "use"} {"hinge": "back" | "left" | "right" | "front" | "none"}
 //   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)
-//   {"screen": "home" | "job" | "calibrate" | "orientation_check" | "printer" | "about"} {"view": "front" | "side" | "angled" | "below"}
+//   {"screen": "home" | "job" | "calibrate" | "orientation_check" | "printer" | "about"} {"view": "front" | "side" | "angled" | "below" | "top"}
 // Shots are written as <dir>/<name>.png once two consecutive frames are
 // identical.
 

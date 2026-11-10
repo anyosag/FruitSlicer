@@ -105,6 +105,17 @@ void orientResults(App& app, Document& doc, ImVec2 size);
 void mirrorPanel(App& app, Document& doc);
 void measurePanel(App& app, Document& doc);
 void measureOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// Duplicate, Arrange, Split and Merge: each tool's panel, and the buttons
+// pinned at the foot of it (PartsToolPanels.cpp). `parts_tool_footer` is the
+// height to leave for them.
+void duplicatePanel(App& app, Document& doc);
+void arrangePanel(App& app, Document& doc);
+void splitPanel(App& app, Document& doc);
+void mergePanel(App& app, Document& doc);
+void partsToolFooter(App& app, Document& doc, Tool t);
+float partsToolFooterHeight(Tool t);
+// The Job panel's Collisions tab (CollisionsTab.cpp), and its one-line verdict for the Checks tab.
+void collisionsTab(App& app, Document* doc);
 // Hollow: the tool's panel, what prints after it (in the Job panel), and the
 // view's marks (holes, and placing holes by hand).
 void hollowPanel(App& app, Document& doc);

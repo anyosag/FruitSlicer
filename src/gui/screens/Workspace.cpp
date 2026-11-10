@@ -270,6 +270,8 @@ void toolRail(App& app, Document* doc, ImVec2 origin) {
                                {Tool::Rotate, "rotate", "Rotate", icon::rotate, "Turn it, or find a good rotation (R)"},
                                {Tool::Scale, "scale", "Scale", icon::scale, "Change its size (S)"},
                                {Tool::Mirror, "mirror", "Mirror", icon::mirror, "Make a mirror image of it"},
+                               {Tool::Duplicate, "duplicate", "Duplicate", icon::duplicate, "Make copies of it"},
+                               {Tool::Arrange, "arrange", "Arrange", icon::arrange, "Lay the parts out on the plate"},
                                {Tool::Measure, "measure", "Measure", icon::measure, "Measure between two points on it"}};
             for (const T& t : tools) {
                 if (toolButton(t.id, t.label, t.ic, open == t.t, doc != nullptr)) app.openTool(t.t);
@@ -317,6 +319,10 @@ const char* toolTitle(Tool t) {
         case Tool::Repair: return "Repair";
         case Tool::Mirror: return "Mirror";
         case Tool::Measure: return "Measure";
+        case Tool::Duplicate: return "Duplicate";
+        case Tool::Arrange: return "Arrange";
+        case Tool::Merge: return "Merge";
+        case Tool::Split: return "Split";
         case Tool::None: break;
     }
     return "";
@@ -336,12 +342,13 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     ImGui::PushID(static_cast<int>(t));
     // The title, then what the tool shows (it scrolls when taller than the
     // view allows), then a footer that stays in sight: Hollow's apply button.
-    const bool footer = t == Tool::Hollow;
+    const bool footer = t == Tool::Hollow || partsToolFooterHeight(t) > 0;
     beginFloat("panel", pos, kToolPanelW);
     const bool on_part =
-        t == Tool::Move || t == Tool::Rotate || t == Tool::Scale || t == Tool::Repair || t == Tool::Mirror;
+        t == Tool::Move || t == Tool::Rotate || t == Tool::Scale || t == Tool::Repair || t == Tool::Mirror ||
+        t == Tool::Duplicate || t == Tool::Split;
     if (floatTitle(toolTitleFor(doc, toolTitle(t), on_part).c_str())) app.closeToolPanel();
-    const float body_max = size.y - 32 - kToolsBarH - 32 - 36 - (footer ? 96 : 0);
+    const float body_max = size.y - 32 - kToolsBarH - 32 - 36 - (footer ? std::max(96.0f, partsToolFooterHeight(t)) : 0);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(4000, std::max(120.0f, body_max)));
     ImGui::BeginChild("body", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
     switch (t) {
@@ -354,12 +361,17 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
         case Tool::Repair: repairBody(app, doc); break;
         case Tool::Mirror: mirrorPanel(app, doc); break;
         case Tool::Measure: measurePanel(app, doc); break;
+        case Tool::Duplicate: duplicatePanel(app, doc); break;
+        case Tool::Arrange: arrangePanel(app, doc); break;
+        case Tool::Merge: mergePanel(app, doc); break;
+        case Tool::Split: splitPanel(app, doc); break;
         case Tool::None: break;
     }
     ImGui::EndChild();
     if (footer) {
         ImGui::Dummy(ImVec2(0, 2));
-        hollowApplyArea(app, doc);
+        if (t == Tool::Hollow) hollowApplyArea(app, doc);
+        else partsToolFooter(app, doc, t);
     }
     endFloat();
     ImGui::PopID();
@@ -370,7 +382,8 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 void modelTools(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     if (app.editingTips()) return;
     const Tool open = doc && app.toolPanelOpen() ? app.tool() : Tool::None;
-    const float w = 4 * 68 + 3 * 2 + 2 * 8 + 2;
+    const int n_tools = 6;  // Supports, Hollow, Drain holes, Repair, Merge, Split
+    const float w = static_cast<float>(n_tools) * 68 + (n_tools - 1) * 10 + 2 * 8 + 2;
     const ImVec2 pos(origin.x + std::round((size.x - w) / 2), origin.y + size.y - 16 - 72);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
     beginFloat("model_tools", pos, w, 0, ImVec2(8, 6));
@@ -386,6 +399,12 @@ void modelTools(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     ImGui::SameLine();
     if (toolButton("repair", "Repair", icon::repair, open == Tool::Repair, on)) app.openTool(Tool::Repair);
     tooltip(on ? "What the mesh check found and mended" : "Open a model first.");
+    ImGui::SameLine();
+    if (toolButton("merge", "Merge", icon::merge, open == Tool::Merge, on)) app.openTool(Tool::Merge);
+    tooltip(on ? "Join parts into one part" : "Open a model first.");
+    ImGui::SameLine();
+    if (toolButton("split", "Split", icon::split, open == Tool::Split, on)) app.openTool(Tool::Split);
+    tooltip(on ? "Split a part into its shells" : "Open a model first.");
     endFloat();
     ImGui::PopStyleVar();
 }
