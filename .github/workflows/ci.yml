@@ -11,7 +11,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-15]
-    runs-on: ${{ matrix.os }}
+    # macOS on pushes to main runs on the self-hosted Mac (label
+    # fruitslicer-mac); pull requests, which may come from forks, never do.
+    runs-on: ${{ matrix.os == 'macos-15' && github.event_name == 'push' && fromJSON('["self-hosted", "fruitslicer-mac"]') || matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - name: Install Ninja (Linux)
@@ -19,7 +21,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: command -v ninja || brew install ninja  # leaves a self-hosted Mac's Homebrew alone
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -103,14 +105,15 @@ jobs:
   # The desktop app for macOS: one universal FruitSlicer.app (Apple silicon
   # and Intel, macOS 14 or later), signed ad hoc by the build, zipped with
   # ditto so permissions and the signature survive the download.
+  # Pushes to main run it on the self-hosted Mac, as build-test does.
   app-macos:
-    runs-on: macos-15
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted", "fruitslicer-mac"]') || 'macos-15' }}
     env:
       APP: build/src/gui/FruitSlicer.app
     steps:
       - uses: actions/checkout@v5
       - name: Install Ninja
-        run: brew install ninja
+        run: command -v ninja || brew install ninja
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
