@@ -28,6 +28,9 @@ void rotate(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a turning ar
 void scale(ImDrawList* dl, ImVec2 p, float size, ImU32 c);       // a box and an arrow out of its corner
 void mirror(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // two triangles either side of a dashed line
 void measure(ImDrawList* dl, ImVec2 p, float size, ImU32 c);     // a line with a stop at each end
+void label(ImDrawList* dl, ImVec2 p, float size, ImU32 c);       // a letter on a tag
+void combine(ImDrawList* dl, ImVec2 p, float size, ImU32 c);     // two overlapping squares
+void cut(ImDrawList* dl, ImVec2 p, float size, ImU32 c);         // a box with a dashed line through it
 void supports(ImDrawList* dl, ImVec2 p, float size, ImU32 c);    // a slab on legs
 void hollow(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a box with a dashed box inside
 void drainHole(ImDrawList* dl, ImVec2 p, float size, ImU32 c);   // a hole and a drop

@@ -1,0 +1,42 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo-hollow"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "cut"}, {"shot": "g4_cut_panel"},
+    {"cut_plane": ["x", 4]}, {"shot": "g4_cut_vertical_preview"},
+    {"cut_plane": ["z", 9]}, {"cut_keep": "both"}, {"shot": "g4_cut_height_preview"},
+    {"cut_apply": true}, {"wait": "jobs"}, {"shot": "g4_cut_two_parts"},
+    {"undo": 1}, {"shot": "g4_cut_undone"},
+    {"cut_plane": ["z", 9]}, {"cut_keep": "above"}, {"shot": "g4_cut_top_only_preview"},
+    {"cut_apply": true}, {"wait": "jobs"}, {"shot": "g4_cut_top_only"},
+    {"undo": 1},
+    {"cut_plane": ["z", 100]}, {"cut_apply": true}, {"shot": "g4_cut_missed"},
+    {"open": "@demo-loose"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "none"}, {"tool": "cut"}, {"cut_apply": true}, {"wait": "jobs"}, {"shot": "g4_cut_open_mesh"},
+
+    {"open": "@demo-block"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "label"}, {"shot": "g4_label_panel"},
+    {"label_set": {"text": "FRUIT 3D", "height": 6, "depth": 0.8}}, {"shot": "g4_label_text_unplaced"},
+    {"label_at": [0, 0, 100, 0, 0, -1]}, {"shot": "g4_label_raised_preview"},
+    {"label_apply": true}, {"wait": "jobs"}, {"shot": "g4_label_raised_done"},
+    {"undo": 1},
+    {"label_set": {"text": "No. 7", "height": 6, "depth": 1, "engrave": true}},
+    {"label_at": [0, -100, 7, 0, 1, 0]}, {"shot": "g4_label_engraved_preview"},
+    {"label_apply": true}, {"wait": "jobs"}, {"shot": "g4_label_engraved_done"},
+    {"undo": 1},
+    {"label_set": {"text": "", "engrave": false}}, {"label_apply": true}, {"shot": "g4_label_no_text"},
+
+    {"tool": "combine"}, {"shot": "g4_combine_one_part"},
+    {"add_part": "@demo-hollow"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"move": [14, 0]}, {"select_part": 1}, {"shot": "g4_combine_pick"},
+    {"combine_mode": "join"}, {"combine_apply": true}, {"wait": "jobs"}, {"shot": "g4_combine_joined"},
+    {"undo": 1}, {"select_part": 1},
+    {"combine_mode": "subtract"}, {"shot": "g4_combine_subtract_choice"},
+    {"combine_apply": true}, {"wait": "jobs"}, {"shot": "g4_combine_subtracted"},
+    {"undo": 1}, {"select_part": 1},
+    {"combine_mode": "overlap"}, {"combine_apply": true}, {"wait": "jobs"}, {"shot": "g4_combine_overlap"},
+    {"undo": 1}, {"select_part": 2}, {"move": [-60, 0]}, {"select_part": 1},
+    {"combine_mode": "overlap"}, {"combine_apply": true}, {"wait": "jobs"}, {"shot": "g4_combine_no_overlap"}
+  ]
+}

@@ -9,7 +9,7 @@
 //
 // Steps drive the app through the same commands its buttons use:
 //   {"open": path | "@demo" | "@demo-big" | "@demo-bar" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
-//     ("@demo-hollow": a ball with a sealed hollow; "@demo-worn", "@demo-open", "@demo-loose": faulty
+//     ("@demo-hollow": a ball with a sealed hollow; "@demo-block": a plain 40 × 24 × 14 mm block; "@demo-worn", "@demo-open", "@demo-loose": faulty
 //     meshes for the repair) {"show_patch": true} turns the view to the biggest patch
 //   {"add_part": path | "@demo"…} another model beside the others (then "health", as for open)
 //   {"select_part": n} {"remove_part": n} (1-based, in the Parts list's order)
@@ -27,8 +27,13 @@
 //   {"mirror": "x" | "y" | "z"} the selected part (left to right, front to back, top to bottom)
 //   {"measure": [[x, y, z], [x, y, z]]} clicks, in mm on the plate, each put on the surface along the line to the
 //     middle of the part whose middle is nearest it; {"measure": "clear"} starts again
-//   {"tool": "on_plate" | "move" | "rotate" | "scale" | "mirror" | "measure" | "supports" | "hollow" | "repair" | "none"} as the tool
+//   {"tool": "on_plate" | "move" | "rotate" | "scale" | "mirror" | "measure" | "label" | "combine" | "cut" | "supports" | "hollow" | "repair" | "none"} as the tool
 //     buttons (again on the open one closes its panel) {"close_tool": true} {"job_tab": "checks" | "hollows"}
+//   {"cut_plane": ["z" | "x" | "y", mm]} {"cut_keep": "both" | "above" | "below"} {"cut_apply": true} (then "wait": "jobs"): the Cut tool
+//     (z: mm above where the part stands; x, y: mm from the plate's centre; above: top, right or back)
+//   {"label_set": {"text": s, "height": mm, "depth": mm, "engrave": bool}} {"label_at": [x, y, z, dx, dy, dz]} (a click
+//     on the part along that ray) {"label_apply": true}: the Label tool
+//   {"combine_with": n (1-based part)} {"combine_mode": "join" | "subtract" | "overlap"} {"combine_apply": true}: the Combine tool, A = the selected part
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}

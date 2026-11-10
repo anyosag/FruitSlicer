@@ -18,6 +18,7 @@
 #include "Jobs.h"
 #include "Measure.h"
 #include "Preferences.h"
+#include "ShapeTools.h"
 #include "ABTest.h"
 #include "Fit.h"
 #include "GooTools.h"
@@ -139,6 +140,16 @@ public:
     void clearMeasure();
     const MeasureState& measured() const { return measure_; }
     bool measureShown() const;
+    // Shape tools: Cut, Label and Combine (ShapeTools.h). Each works in the background and its result goes
+    // into the job as one undo step; nothing changes when it is cancelled, fails, or the job changed meanwhile.
+    ShapeState& shape();  // for the open job: they start again with another job
+    void cutApply();                                                         // the selected part, by the plane set
+    void labelPick(const fruit::Vec3& on_plate, const fruit::Vec3& normal);  // where the letters go, on the selected part
+    void labelApply();
+    void combinePick(int part);                                              // the second part (an id)
+    void combineApply();                                                     // the selected part and the second
+    bool shapeBusy() const { return shape_.running; }
+    void shapeCancel();
     void turnQuarter();                        // 90° about the vertical, slid back onto the plate if need be
     void slideOntoPlate();                     // over the edge: the least move that puts it back on
     void setOnPlate(bool on_plate);
@@ -488,6 +499,9 @@ private:
     bool show_zones_ = true;
     int dragging_tip_ = -1;
     MeasureState measure_;
+    ShapeState shape_;
+    void runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,
+                  std::function<bool(const ShapeOutcome&)> install, Tool tool);
     std::shared_ptr<fruit::AabbTree> pick_tree_;
     const void* pick_doc_ = nullptr;
     int pick_revision_ = -1;
