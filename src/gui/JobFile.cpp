@@ -149,6 +149,22 @@ void saveJob(const std::string& path, const Document& doc) {
     j["version"] = kVersion;
     j["name"] = doc.name;
     j["model"] = {{"path", doc.path}, {"file", "model.bin"}, {"hash", std::to_string(meshHash(doc.model.mesh))}};
+    // The job's copy of the mesh is the repaired one: what was repaired, and
+    // which faces are patches, travels with it.
+    if (const fruit::RepairReport& r = doc.model.repair; r.changed())
+        j["model"]["repair"] = {{"open_edges", r.open_edges_before},
+                                {"faces_turned", r.faces_flipped},
+                                {"faces_removed", r.faces_removed},
+                                {"gaps_closed", r.gaps_closed},
+                                {"widest_gap", r.widest_gap},
+                                {"holes_filled", r.holes_filled},
+                                {"largest_hole", r.largest_hole},
+                                {"patch_area", r.patch_area},
+                                {"patch_faces", r.patch_faces},
+                                {"biggest_patch_area", r.biggest_patch_area},
+                                {"biggest_patch_across", r.biggest_patch_across},
+                                {"biggest_patch_at", vec(r.biggest_patch_at)},
+                                {"biggest_patch_facing", vec(r.biggest_patch_facing)}};
     const fruit::Placement& p = doc.placement();
     j["placement"] = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation},
                       {"on_plate", p.on_plate}};
@@ -259,6 +275,22 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     doc->path = out.model_path;
     out.model_missing = out.model_path.empty() || !fs::exists(out.model_path);
     doc->model = fruit::prepareModel(meshFrom(zip.read("model.bin", true)));
+    if (fruit::RepairReport& r = doc->model.repair; model.contains("repair") && r.watertight() && !r.changed()) {
+        const json& rj = model["repair"];
+        r.open_edges_before = rj.value("open_edges", std::size_t{0});
+        r.faces_flipped = rj.value("faces_turned", std::size_t{0});
+        r.faces_removed = rj.value("faces_removed", std::size_t{0});
+        r.gaps_closed = rj.value("gaps_closed", std::size_t{0});
+        r.widest_gap = rj.value("widest_gap", 0.0);
+        r.holes_filled = rj.value("holes_filled", std::size_t{0});
+        r.largest_hole = rj.value("largest_hole", 0.0);
+        r.patch_area = rj.value("patch_area", 0.0);
+        r.patch_faces = std::min(rj.value("patch_faces", std::size_t{0}), doc->model.mesh.faceCount());
+        r.biggest_patch_area = rj.value("biggest_patch_area", 0.0);
+        r.biggest_patch_across = rj.value("biggest_patch_across", 0.0);
+        if (rj.contains("biggest_patch_at")) r.biggest_patch_at = vecFrom(rj["biggest_patch_at"]);
+        if (rj.contains("biggest_patch_facing")) r.biggest_patch_facing = vecFrom(rj["biggest_patch_facing"]);
+    }
     ctl.step("load", 0.2);
     doc->check = fruit::checkMesh(doc->model);
 

@@ -201,9 +201,15 @@ TEST_CASE("Model check: closed solids, open edges, inches", "[model]") {
 
     TriangleMesh open = makeBox({0, 0, 0}, {30, 20, 4});
     open.faces.pop_back();  // one triangle missing leaves three edges unshared
-    c = checkMesh(prepareModel(open));
+    c = checkMesh(prepareModel(open, false));  // as the file is
     CHECK(c.open_edges == 3);
     CHECK_FALSE(c.closed());
+    c = checkMesh(prepareModel(open));  // repaired, as it loads
+    CHECK(c.closed());
+    CHECK(c.repair.open_edges_before == 3);
+    CHECK(c.repair.holes_filled == 1);
+    CHECK(c.triangles == 12);
+    CHECK(c.volume_ml == Approx(2.4));
 
     CHECK(checkMesh(prepareModel(makeBox({0, 0, 0}, {4, 3, 2}))).maybeInches());
 }

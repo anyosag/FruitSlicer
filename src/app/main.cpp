@@ -61,11 +61,36 @@ Placement toPlacement(const PlacementOpts& o) {
     return p;
 }
 
+// What loading did to make the mesh watertight. The repair measures in the
+// file's own units; `scale` is the one the model is placed at, so that the
+// sizes are those of the print.
+json repairJson(const RepairReport& r, double scale = 1.0) {
+    return {{"open_edges_in_file", r.open_edges_before}, {"open_edges_left", r.open_edges_after},
+            {"faces_turned", r.faces_flipped},           {"faces_removed", r.faces_removed},
+            {"gaps_closed", r.gaps_closed},               {"widest_gap_mm", r.widest_gap * scale},
+            {"holes_filled", r.holes_filled},             {"largest_hole_mm", r.largest_hole * scale},
+            {"patch_faces", r.patch_faces},               {"patch_area_mm2", r.patch_area * scale * scale}};
+}
+
+// One line for the terminal when a file needed repair, or could not be.
+void sayRepair(const std::string& path, const RepairReport& r) {
+    if (r.open_edges_before == 0) return;
+    if (!r.watertight()) {
+        std::cerr << path << ": " << r.open_edges_after << " open edges, not repaired; layers may be wrong\n";
+        return;
+    }
+    std::cerr << path << ": repaired (" << r.open_edges_before << " open edges): " << r.holes_filled << " holes filled, "
+              << r.gaps_closed << " gaps closed, " << r.faces_flipped << " faces turned, " << r.faces_removed
+              << " faces removed\n";
+}
+
 TriangleMesh loadPlaced(const std::string& path, const PlacementOpts& o, json* report = nullptr) {
     const LoadedModel m = loadModel(path);
+    sayRepair(path, m.repair);
     if (report) {
         (*report)["shells_flipped"] = m.shells_flipped;
         (*report)["cavities"] = m.cavities;
+        if (m.repair.open_edges_before) (*report)["repair"] = repairJson(m.repair, o.scale);
     }
     return placeModel(m.mesh, toPlacement(o));
 }
@@ -79,6 +104,25 @@ json bboxJson(const BBox3& b) {
     return {{"min", {b.min.x, b.min.y, b.min.z}}, {"max", {b.max.x, b.max.y, b.max.z}}};
 }
 
+// The model as FruitSlicer loads it, written out: repaired, every shell
+// facing outward. For another slicer, or to look at what the repair did.
+int cmdRepair(const std::string& path, const std::string& out) {
+    const LoadedModel m = loadModel(path);
+    json r = repairJson(m.repair);
+    r["file"] = path;
+    r["triangles"] = m.mesh.faceCount();
+    r["shells"] = m.shells;
+    r["shells_flipped"] = m.shells_flipped;
+    r["cavities"] = m.cavities;
+    r["volume_mm3"] = m.mesh.volume();
+    if (!out.empty()) {
+        writeStl(out, m.mesh);
+        r["written"] = out;
+    }
+    std::cout << r.dump(2) << "\n";
+    return m.repair.watertight() ? 0 : 1;
+}
+
 int cmdInfo(const std::string& path) {
     const LoadedModel m = loadModel(path);
     const TriangleMesh& mesh = m.mesh;
@@ -90,6 +134,9 @@ int cmdInfo(const std::string& path) {
     r["shells"] = m.shells;
     r["shells_flipped"] = m.shells_flipped;
     r["closed_manifold"] = mesh.isClosedManifold();
+    // Whether every layer has a clear inside and outside, after repair.
+    r["watertight"] = m.repair.watertight();
+    r["repair"] = repairJson(m.repair);
     r["bbox"] = bboxJson(mesh.bbox());
     r["volume_mm3"] = mesh.volume();
     r["surface_area_mm2"] = mesh.surfaceArea();
@@ -800,6 +847,11 @@ int main(int argc, char** argv) {
     auto* info = app.add_subcommand("info", "Mesh statistics (shells, manifoldness, volume, minima)");
     info->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
 
+    std::string repair_out;
+    auto* repair = app.add_subcommand("repair", "Report what loading repairs in a mesh, and save the repaired mesh");
+    repair->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
+    repair->add_option("-o,--output", repair_out, "Write the repaired mesh here (STL)");
+
     PlacementOpts place;
     double layer_h = 0.05, png_px = 0.05;
     int every = 1;
@@ -944,6 +996,7 @@ int main(int argc, char** argv) {
     CLI11_PARSE(app, argc, argv);
     try {
         if (*info) return cmdInfo(in_path);
+        if (*repair) return cmdRepair(in_path, repair_out);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
         if ((*points || *support || *abplate) && popts.gen.on_plate) place.elevate = 0;

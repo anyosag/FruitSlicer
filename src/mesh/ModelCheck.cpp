@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <unordered_map>
 
 #include "mesh/MeshAnalysis.h"
 
@@ -27,20 +26,8 @@ MeshCheck checkMesh(const LoadedModel& m) {
     c.cavities = m.cavities;
     c.volume_ml = m.mesh.volume() / 1000.0;
     c.bbox = m.mesh.bbox();
-    // Each undirected edge must be used once in each direction.
-    std::unordered_map<std::uint64_t, std::int64_t> uses;
-    uses.reserve(m.mesh.faceCount() * 2);
-    for (const Face& f : m.mesh.faces) {
-        for (int k = 0; k < 3; ++k) {
-            const std::uint32_t a = static_cast<std::uint32_t>(f[k]), b = static_cast<std::uint32_t>(f[(k + 1) % 3]);
-            if (a == b) continue;
-            const std::uint64_t key = (std::uint64_t(std::min(a, b)) << 32) | std::max(a, b);
-            // Low 32 bits count a->b with a < b, high bits the reverse.
-            uses[key] += a < b ? 1 : (std::int64_t(1) << 32);
-        }
-    }
-    for (const auto& [key, n] : uses)
-        if (n != (std::int64_t(1) << 32) + 1) ++c.open_edges;
+    c.open_edges = countOpenEdges(m.mesh);
+    c.repair = m.repair;
     return c;
 }
 

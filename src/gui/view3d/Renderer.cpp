@@ -443,6 +443,14 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         glBindVertexArray(model_.vao);
         glDrawElements(GL_TRIANGLES, model_.count, GL_UNSIGNED_INT, nullptr);
         glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
+        // The tinted faces once more, over themselves: the same points
+        // through the same shader land at the same depth, which passes.
+        if (tint_count_ > 0 && (tint_first_ + tint_count_) * 3 <= static_cast<std::size_t>(model_.count)) {
+            rgb(tint_rgb_, c);
+            glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(tint_count_ * 3), GL_UNSIGNED_INT,
+                           reinterpret_cast<const void*>(tint_first_ * 3 * sizeof(unsigned)));
+        }
     }
     // Supports and tips, already in printer coordinates.
     if (!extras_.empty()) {

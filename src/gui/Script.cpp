@@ -78,6 +78,13 @@ void writeDemo3mf(const std::string& path, const fruit::TriangleMesh& m) {
 // plate); "@demo-3mf": the bracket as a 3MF file; "@demo-hollow": a 30 mm
 // ball with a sealed hollow inside, under a 2 mm wall.
 std::string demoPath(const std::string& which) {
+    // Brackets with faults for the repair: see demoFaultyModel.
+    for (const char* kind : {"worn", "open", "loose"})
+        if (which == std::string("@demo-") + kind) {
+            const auto p = (demoDir() / (std::string(kind) + (kind == std::string("loose") ? " cube.stl" : " bracket.stl"))).string();
+            fruit::writeStl(p, demoFaultyModel(kind));
+            return p;
+        }
     if (which == "@demo-hollow") {
         fruit::TriangleMesh m = fruit::makeSphere({0, 0, 15}, 15, 96);
         fruit::TriangleMesh v = fruit::makeSphere({0, 0, 15}, 13, 96);
@@ -653,6 +660,11 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.jobs().wait();
         } else if (step.contains("view")) {
             app.setView(viewFrom(step["view"].get<std::string>()));
+        } else if (step.contains("show_patch")) {
+            // As the Model step's "Show the patch" link.
+            const auto& doc = app.document();
+            if (!doc || doc->check.repair.patch_faces == 0) throw std::runtime_error("show_patch: nothing was patched");
+            app.showPatch();
         } else if (step.contains("frames")) {
             for (int i = 0, n = step["frames"].get<int>(); i < n; ++i) render();
         } else if (step.contains("shot")) {

@@ -228,7 +228,7 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 | M0.5 calibration plates | done | `fruitslicer calibrate tips / spacing / islands`, manifests + result CSVs. **Not printed yet.** All seeds below remain unverified until they are. |
 | M1 point generator | done | Coverage through material + capacity + island minimums, greedy + prune, cosmetic/edge cost, persistent manual edits. |
 | M2 support tree | phase 1 done | Collision-aware heads, pillars with 45° bridges, diagonal ground routes, bracing outside the flex zone, one-piece pad raft, floating-island validation. |
-| M3 orientation | done | Two-stage search; −15 % / −17 % points on the armadillo / bunny vs their input orientation. |
+| M3 orientation | done | Two-stage search; −15 % / −50 % points on the armadillo / bunny vs their input orientation (the bunny with its scan holes repaired; −17 % before mesh repair existed). |
 | M5 branching (part) | done | Pillars merge into trunks at 45° below the flex zone; armadillo: 82 → 47 trunks, 189 → 35 braces, 4.4 → 3.9 ml. Model anchors with a weight limit and the no-trap rule are still open. |
 | Calibration loop | done | `fit` turns result sheets into a resin profile (logistic capacity, coverage radius, critical angle, island sizes); `--profile` everywhere. |
 | Safety gaps | done | Hollow analysis (cups / traps, polygon version of UVtools' two passes), no tips on closed-cavity ceilings, no-trap bracing rule, `--hinge` / `--peel-bias`, `--on-plate`. |

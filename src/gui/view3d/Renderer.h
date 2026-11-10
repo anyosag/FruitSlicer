@@ -41,6 +41,14 @@ public:
     void setExtraStyle(std::size_t i, unsigned rgb, bool visible);
     // Tints faces leaning further than `critical_deg` from vertical (0 = off).
     void setOverhangTint(double critical_deg) { overhang_deg_ = critical_deg; }
+    // Draws `count` faces of the model from face `first` on in colour `rgb`
+    // (0xRRGGBB) instead of the model's own: the patches a repair added,
+    // which are its last faces. 0 faces: none.
+    void setModelTint(std::size_t first, std::size_t count, unsigned rgb) {
+        tint_first_ = first;
+        tint_count_ = count;
+        tint_rgb_ = rgb;
+    }
 
     // The cut-away: the model and the extras are drawn only where
     // a·x + b·y + c·z + d >= 0 for `plane` (a, b, c, d), and the cap is
@@ -97,6 +105,8 @@ private:
     int cap_key_ = -1;
     void destroyCap();
     double overhang_deg_ = 0;
+    std::size_t tint_first_ = 0, tint_count_ = 0;
+    unsigned tint_rgb_ = 0;
     float model_matrix_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     unsigned fbo_ms_ = 0, rb_color_ = 0, rb_depth_ = 0;  // multisampled target
     unsigned fbo_ = 0, tex_ = 0, rb_depth_plain_ = 0;    // resolved target

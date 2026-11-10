@@ -1001,6 +1001,18 @@ void App::focusOn(const fruit::Vec3& where) {
     view_set_ = false;
 }
 
+void App::showPatch() {
+    if (!doc_ || doc_->check.repair.patch_faces == 0) return;
+    const fruit::RepairReport& r = doc_->check.repair;
+    const fruit::Vec3 at = doc_->transform().apply(r.biggest_patch_at);
+    const fruit::Vec3 facing = doc_->transform().applyLinear(r.biggest_patch_facing);
+    const double across = r.biggest_patch_across * doc_->placement().scale;
+    camera_.frame({static_cast<float>(at.x), static_cast<float>(at.y), static_cast<float>(at.z)},
+                  static_cast<float>(std::max(5.0, 0.75 * across)));
+    camera_.lookFrom({static_cast<float>(facing.x), static_cast<float>(facing.y), static_cast<float>(facing.z)});
+    view_set_ = false;
+}
+
 namespace {
 
 // A small octahedron per tip: cheap, and readable at any zoom.
@@ -1074,6 +1086,9 @@ void App::syncCut() {
 
 void App::syncScene() {
     renderer_.setOverhangTint(0);
+    // The Model step shows where the repair patched the mesh.
+    const std::size_t patches = doc_ && screen_ == Screen::Job && step_ == Step::Model ? doc_->check.repair.patch_faces : 0;
+    renderer_.setModelTint(doc_ ? doc_->check.triangles - std::min(patches, doc_->check.triangles) : 0, patches, 0xF2B84B);
     syncCut();
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
         renderer_.clearExtras();

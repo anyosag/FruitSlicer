@@ -12,6 +12,7 @@
 
 #include "App.h"
 #include "Format.h"
+#include "Repairs.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -127,11 +128,11 @@ void health(App& app) {
     ImGui::SetNextWindowSizeConstraints(ImVec2(body_w, 0), ImVec2(body_w, max_h));
     ImGui::BeginChild("body", ImVec2(body_w, 0), ImGuiChildFlags_AutoResizeY);
     {
-        if (!c.closed())
-            verdictRow("closed", Verdict::Warn, "Not watertight",
-                       (thousands(c.open_edges) + " edges are open, so some layers may not have a clear inside and "
-                                                  "outside. Repairing meshes comes in a later update.")
-                           .c_str());
+        // What loading repaired, if anything; else how it is closed.
+        const RepairWords repair = repairWords(c);
+        if (repair.level != RepairWords::Level::None)
+            verdictRow("closed", repair.level == RepairWords::Level::Repaired ? Verdict::Ok : Verdict::Warn,
+                       repair.title.c_str(), repair.detail.c_str());
         else if (c.shells == 1)
             verdictRow("closed", Verdict::Ok, "One closed shell",
                        "Watertight, so every layer has a clear inside and outside");
@@ -139,7 +140,8 @@ void health(App& app) {
             verdictRow("closed", Verdict::Ok, (std::to_string(c.shells) + " closed shells").c_str(),
                        "Watertight pieces; where they overlap they print as one");
         if (c.flipped == 0)
-            verdictRow("flipped", Verdict::Ok, "No inside-out parts", "Nothing needed flipping");
+            verdictRow("flipped", Verdict::Ok, "No inside-out parts",
+                       c.repair.faces_flipped ? "No whole part faced inward" : "Nothing needed flipping");
         else
             verdictRow("flipped", Verdict::Ok,
                        (std::to_string(c.flipped) + (c.flipped == 1 ? " inside-out part" : " inside-out parts") +
@@ -147,8 +149,11 @@ void health(App& app) {
                            .c_str(),
                        "They were saved facing inward; FruitSlicer turned them the right way");
         if (c.cavities == 0)
+            // A hollow is a closed shell facing inward: among open surfaces
+            // there is no telling.
             verdictRow("hollows", Verdict::Ok, "No hollows inside",
-                       "Solid model: no suction cups or resin traps from cavities");
+                       c.closed() ? "Solid model: no suction cups or resin traps from cavities"
+                                  : "None found, though with open edges that can't be told for sure");
         else
             verdictRow("hollows", Verdict::Warn,
                        (std::to_string(c.cavities) + (c.cavities == 1 ? " closed hollow" : " closed hollows") +

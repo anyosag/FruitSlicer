@@ -1,0 +1,14 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo-worn"}, {"wait": "jobs"}, {"shot": "e1_health_repaired"},
+    {"health": "place"}, {"frames": 2}, {"shot": "e1_model_repaired"},
+    {"show_patch": true}, {"frames": 2}, {"shot": "e1_model_patch"},
+    {"view": "angled"},
+    {"open": "@demo-open"}, {"unsaved": "discard"}, {"wait": "jobs"}, {"shot": "e1_health_big_patch"},
+    {"health": "place"}, {"frames": 2}, {"shot": "e1_model_big_patch"},
+    {"open": "@demo-loose"}, {"unsaved": "discard"}, {"wait": "jobs"}, {"shot": "e1_health_open"},
+    {"health": "place"}, {"frames": 2}, {"shot": "e1_model_open"}
+  ]
+}

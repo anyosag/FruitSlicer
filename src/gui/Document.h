@@ -163,5 +163,13 @@ std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::Pri
 
 // A small bracket with a shelf: used by scripts and the self-test.
 fruit::TriangleMesh demoModel();
+// The bracket with faults, for the repair's screens and tests:
+// "worn": a slit in the post, three faces of the upright turned, one face
+//         there twice (repaired, nothing worth a look);
+// "open": the post's top and the shelf's top missing (repaired with big
+//         patches);
+// "loose": not the bracket but a 20 mm cube as six squares 0.7 mm apart, too
+//         far to be seams (can't be repaired).
+fruit::TriangleMesh demoFaultyModel(const std::string& kind);
 
 }  // namespace gui

@@ -97,4 +97,38 @@ fruit::TriangleMesh demoModel() {
     return m;
 }
 
+fruit::TriangleMesh demoFaultyModel(const std::string& kind) {
+    if (kind == "loose") {
+        const fruit::TriangleMesh box = fruit::makeBox({0, 0, 0}, {20, 20, 20});
+        fruit::TriangleMesh m;
+        for (std::size_t q = 0; q < 6; ++q) {
+            const fruit::Face& a = box.faces[2 * q];
+            const int32_t quad[4] = {a[0], a[1], a[2], box.faces[2 * q + 1][2]};
+            fruit::Vec3 c;
+            for (int32_t i : quad) c += box.vertices[static_cast<std::size_t>(i)] / 4.0;
+            const auto base = static_cast<int32_t>(m.vertices.size());
+            for (int32_t i : quad) m.vertices.push_back(c + (box.vertices[static_cast<std::size_t>(i)] - c) * 0.95);
+            m.faces.push_back({base, base + 1, base + 2});
+            m.faces.push_back({base, base + 2, base + 3});
+        }
+        return m;
+    }
+    // The bracket's faces: base 0-11, upright 12-23, shelf 24-35 (its top:
+    // 26, 27), then the post: 96 round its side, 48 underneath, 48 on top.
+    fruit::TriangleMesh m = demoModel();
+    std::vector<char> drop(m.faces.size(), 0);
+    if (kind == "open") {
+        drop[26] = drop[27] = 1;
+        for (std::size_t i = m.faces.size() - 48; i < m.faces.size(); ++i) drop[i] = 1;
+    } else {
+        drop[36 + 2 * 30] = drop[36 + 2 * 30 + 1] = 1;  // one strip of the post's side, facing the front
+        for (std::size_t i : {16u, 19u, 22u}) std::swap(m.faces[i][1], m.faces[i][2]);
+        m.faces.push_back(m.faces[2]);
+        drop.push_back(0);
+    }
+    std::size_t i = 0;
+    std::erase_if(m.faces, [&](const fruit::Face&) { return drop[i++] != 0; });
+    return m;
+}
+
 }  // namespace gui
