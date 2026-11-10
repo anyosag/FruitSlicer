@@ -63,8 +63,8 @@ void rule(float gap) {
 
 // "W × D × H mm · V ml" for the model at `scale`.
 std::string sizeLine(const Document& d, const fruit::Placement& p) {
-    const fruit::PlateFit f = fruit::checkFit(d.model.mesh, p, d.printer);
-    return dims(f.size) + " · " + strf("%.1f ml", d.check.volume_ml * p.scale * p.scale * p.scale);
+    const fruit::PlateFit f = fruit::checkFit(d.part().mesh(), p, d.printer);
+    return dims(f.size) + " · " + strf("%.1f ml", d.part().check().volume_ml * p.scale * p.scale * p.scale);
 }
 
 // Why it does not fit at full size, as the canvas words it.
@@ -83,7 +83,7 @@ std::string tooBig(const Document& d, const fruit::PrinterProfile& pr) {
         s += strf("Only %.0f mm of height is left above the %.0f mm lift", rz, p.lift());
     fruit::Placement turned;
     turned.rotation_deg.z = 90;
-    if (fruit::checkFit(d.model.mesh, turned, pr).fits) s += "; turned a quarter, it fits at full size.";
+    if (fruit::checkFit(d.part().mesh(), turned, pr).fits) s += "; turned a quarter, it fits at full size.";
     else if (f.size.z <= rz) s += strf(", and turning it doesn't help (%.1f mm).", std::max(f.size.x, f.size.y));
     else s += ".";
     (void)m;
@@ -104,9 +104,9 @@ void health(App& app) {
         endModal();
         return;
     }
-    const fruit::MeshCheck& c = doc->check;
+    const fruit::MeshCheck& c = doc->part().check();
     const fruit::PrinterProfile& pr = app.printer();
-    const std::string file = std::filesystem::path(doc->path).filename().string();
+    const std::string file = std::filesystem::path(doc->part().path()).filename().string();
 
     ImGui::SetCursorPos(ImVec2(kPad, kPad));
     ImGui::BeginGroup();
@@ -177,7 +177,7 @@ void health(App& app) {
         const fruit::PlateFit& f = doc->fit();
         fruit::Placement turned;
         turned.rotation_deg.z = 90;
-        const bool full_fits = f.fits || fruit::checkFit(doc->model.mesh, turned, pr).fits;
+        const bool full_fits = f.fits || fruit::checkFit(doc->part().mesh(), turned, pr).fits;
         if (full_fits) {
             fruit::Placement p;
             if (!f.fits) p.rotation_deg.z = 90;
@@ -190,7 +190,7 @@ void health(App& app) {
             p.scale = std::max(f.largest, f.largest_turned);
             const bool turn = f.largest_turned > f.largest;
             if (turn) p.rotation_deg.z = 90;
-            const fruit::PlateFit at = fruit::checkFit(doc->model.mesh, p, pr);
+            const fruit::PlateFit at = fruit::checkFit(doc->part().mesh(), p, pr);
             const double m = fruit::plateMargin(p);
             const double sx = pr.build_x - 2 * m - at.size.x, sy = pr.build_y - 2 * m - at.size.y,
                          sz = pr.build_z - p.lift() - at.size.z;
@@ -233,7 +233,7 @@ void health(App& app) {
                 app.chooseSize(SizeChoice::Inches);
         }
         const fruit::Placement chosen = app.healthPlacement();
-        if (!fruit::checkFit(doc->model.mesh, chosen, pr).fits) {
+        if (!fruit::checkFit(doc->part().mesh(), chosen, pr).fits) {
             ImGui::Dummy(ImVec2(0, 2));
             text(("At " + percent(chosen.scale) + " it does not fit the plate; you can still place it and change "
                                                   "the size with the Scale tool.")
@@ -246,7 +246,7 @@ void health(App& app) {
     rule(4);
 
     const fruit::Placement chosen = app.healthPlacement();
-    const std::string place = "Place at " + percent(chosen.scale);
+    const std::string place = (app.addingPart() ? "Add at " : "Place at ") + percent(chosen.scale);
     ImGui::PushFont(fonts().bold, size::Body);
     const float pw = ImGui::CalcTextSize(place.c_str()).x + 36;
     ImGui::PopFont();
@@ -287,6 +287,7 @@ void shortcuts(App&, bool& open) {
         std::string what, keys;
     };
     const std::vector<Row> anywhere = {{"Open a model or a job", cmd("O")},
+                                       {"Add a part to the plate", cmd("O", true)},
                                        {"Save the job", cmd("S")},
                                        {"Save the job as…", cmd("S", true)},
                                        {"Undo", cmd("Z")},

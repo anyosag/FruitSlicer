@@ -11,6 +11,8 @@
 //   {"open": path | "@demo" | "@demo-big" | "@demo-bar" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
 //     ("@demo-hollow": a ball with a sealed hollow; "@demo-worn", "@demo-open", "@demo-loose": faulty
 //     meshes for the repair) {"show_patch": true} turns the view to the biggest patch
+//   {"add_part": path | "@demo"…} another model beside the others (then "health", as for open)
+//   {"select_part": n} {"remove_part": n} (1-based, in the Parts list's order)
 //   {"save_job": path | "@demo"} {"unsaved": "save" | "discard" | "cancel"}
 //   {"relink": "copy" | "cancel" | path | "@demo"} {"remove": path | "@demo"} (test set-up)
 //   {"wait": "jobs"}            finish background work

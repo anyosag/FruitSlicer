@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "App.h"
 #include "Format.h"
@@ -173,62 +174,17 @@ void jobSection(App& app, Document* doc) {
     fact("Plate", strf("%.2f × %.2f mm, %.0f mm tall", pr.build_x, pr.build_y, pr.build_z));
     std::string resin = "—";
     if (doc) {
-        const fruit::Placement& p = doc->placement();
-        const double model_ml = doc->check.volume_ml * p.scale * p.scale * p.scale;
+        double model_ml = 0;
+        for (const Part& part : doc->parts()) {
+            const double k = part.placement().scale;
+            model_ml += part.check().volume_ml * k * k * k;
+        }
         if (doc->layers.fresh(doc->supports.result)) resin = strf("%.1f ml with supports", doc->layers.result->resin_ml);
         else if (doc->supports.result && doc->supports.fresh(doc->revision(), doc->supportSettings()))
             resin = strf("%.1f ml + %.1f ml of supports", model_ml, doc->supports.result->support_ml);
         else resin = strf("%.1f ml for the model", model_ml);
     }
     fact("Resin to print", resin);
-}
-
-void partsSection(App& app, Document* doc) {
-    text("Parts", fonts().semibold, size::Section, col::Text);
-    ImGui::Dummy(ImVec2(0, 2));
-    const bool on = doc && doc->fit().fits;
-    groupLabel(strf("On the plate · %d", on ? 1 : 0).c_str());
-    if (!doc) {
-        text("Nothing yet: open a model, or drop one on the plate.", fonts().regular, size::Help, col::TextMuted, true);
-    } else if (on) {
-        const float w = ImGui::GetContentRegionAvail().x;
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::Dummy(ImVec2(w, 44));
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 44), col::Active, 10);
-        icon::cube(dl, ImVec2(p.x + 10, p.y + 12), 20, col::TextSecondary);
-        const std::string file = std::filesystem::path(doc->path).filename().string();
-        ImGui::PushFont(fonts().medium, size::Body);
-        dl->AddText(ImVec2(p.x + 40, p.y + 6), col::Text, file.c_str());
-        ImGui::PopFont();
-        ImGui::PushFont(fonts().regular, size::Help);
-        dl->AddText(ImVec2(p.x + 40, p.y + 24), col::TextMuted, dims(doc->fit().size).c_str());
-        ImGui::PopFont();
-    } else {
-        text("Nothing on the plate.", fonts().regular, size::Help, col::TextMuted);
-    }
-    ImGui::Dummy(ImVec2(0, 2));
-    groupLabel(strf("Off the plate · %d", doc && !on ? 1 : 0).c_str());
-    if (doc && !on) {
-        const fruit::PlateFit& f = doc->fit();
-        beginCard("off", ImVec2(0, 0), 10, col::ErrorBg, IM_COL32(0x6B, 0x2A, 0x2A, 255));
-        text(std::filesystem::path(doc->path).filename().string().c_str(), fonts().medium, size::Body, col::Text);
-        text(dims(f.size).c_str(), fonts().regular, size::Help, col::TextSecondary);
-        text(f.overEdge()     ? "Over the plate's edge where it is."
-             : f.fits_turned ? "Too big for the plate as it lies. Turned 90° it fits at this size."
-                             : "Too big for the plate at this size, however it is turned.",
-             fonts().regular, size::Help, col::Text, true);
-        const char* fix = f.overEdge() ? "Move it back on" : f.fits_turned ? "Turn 90°" : "Scale to fit";
-        if (secondaryButton(fix, ImVec2(0, 30))) {
-            if (f.overEdge()) app.slideOntoPlate();
-            else if (f.fits_turned) app.turnQuarter();
-            else app.scaleToFit();
-        }
-        endCard();
-    } else {
-        text("Nothing here. A part too big for the plate, or over its edge, moves here.", fonts().regular, size::Help,
-             col::TextMuted, true);
-    }
 }
 
 void checksTab(App& app, Document* doc) {
@@ -238,21 +194,54 @@ void checksTab(App& app, Document* doc) {
         return;
     }
     Document& d = *doc;
+    if (d.partCount() > 1) {
+        // Each part alone: whether it fits where it is, and its mesh.
+        std::vector<std::string> off, open, check;
+        for (const Part& part : d.parts()) {
+            if (!part.fit().fits) off.push_back(part.name());
+            const RepairWords r = repairWords(part.check());
+            if (r.level == RepairWords::Level::Open) open.push_back(part.name());
+            else if (r.level == RepairWords::Level::Check) check.push_back(part.name());
+        }
+        auto names = [](const std::vector<std::string>& v) {
+            std::string s;
+            for (std::size_t i = 0; i < v.size(); ++i) s += (i ? (i + 1 == v.size() ? " and " : ", ") : "") + v[i];
+            return s;
+        };
+        const std::size_t n = d.partCount();
+        if (off.empty())
+            checkLine("fit", Tick::Ok, "Every part fits the plate",
+                      strf("%zu parts, where they are now. Whether they touch is not checked.", n));
+        else
+            checkLine("fit", Tick::Error, off.size() == 1 ? "A part doesn't fit the plate" : "Parts don't fit the plate",
+                      names(off) + ": the Parts list above has the fix.");
+        if (!open.empty())
+            checkLine("mesh", Tick::Warn, "Not watertight", names(open) + ". Select it to see what the check found.");
+        else if (!check.empty())
+            checkLine("mesh", Tick::Warn, "Mesh repaired: check the patch", names(check) + ".");
+        else
+            checkLine("mesh", Tick::Ok, "Every mesh is closed", "Checked when each model opened, repaired if it needed it.");
+        bool patched = false;
+        for (const Part& part : d.parts()) patched = patched || part.check().repair.patch_faces > 0;
+        if (patched && linkButton("Show the patch")) app.showPatch();
+    } else {
     const fruit::PlateFit& f = d.fit();
     if (f.fits) checkLine("fit", Tick::Ok, "Fits the plate", dims(f.size) + ", where it is now.");
     else checkLine("fit", Tick::Error, f.overEdge() ? "Over the plate's edge" : "Too big for the plate",
                    f.fits_turned && !f.overEdge() ? "Turned 90° it fits at this size." : dims(f.size));
     {
-        const RepairWords r = repairWords(d.check);
+        const fruit::MeshCheck& check = d.part().check();
+        const RepairWords r = repairWords(check);
         using L = RepairWords::Level;
         if (r.level == L::Open) checkLine("mesh", Tick::Warn, "Not watertight", r.brief);
         else if (r.level == L::Check) checkLine("mesh", Tick::Warn, "Mesh repaired: check the patch", r.brief);
         else if (r.level == L::Repaired) checkLine("mesh", Tick::Ok, "Mesh repaired", r.brief);
         else
             checkLine("mesh", Tick::Ok, "Mesh is clean",
-                      (d.check.shells == 1 ? std::string("One closed shell") : std::to_string(d.check.shells) + " closed shells") +
+                      (check.shells == 1 ? std::string("One closed shell") : std::to_string(check.shells) + " closed shells") +
                           ", nothing flipped.");
-        if (d.check.repair.patch_faces > 0 && linkButton("Show the patch")) app.showPatch();
+        if (check.repair.patch_faces > 0 && linkButton("Show the patch")) app.showPatch();
+    }
     }
     if (const std::size_t n = hollowsToFix(d)) {
         checkLine("hollows", Tick::Warn, n == 1 ? "A hollow traps resin" : "Hollows trap resin",
@@ -331,11 +320,14 @@ void mainArea(App& app, Document* doc) {
     const MainButton mb = mainButton(doc);
     std::string note;
     const char* fix = nullptr;
+    const Part* off = nullptr;  // the first part that doesn't fit: the fix is for it
     if (!doc) {
         note = "Nothing on the plate yet.";
-    } else if (!doc->fit().fits && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports)) {
-        const fruit::PlateFit& f = doc->fit();
-        note = "It doesn't fit the plate where it is yet.";
+    } else if (!doc->fits() && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports)) {
+        off = doc->partOff();
+        const fruit::PlateFit& f = off->fit();
+        note = doc->partCount() > 1 ? "A part doesn't fit the plate where it is yet."
+                                    : "It doesn't fit the plate where it is yet.";
         fix = f.overEdge() ? "Move it back on" : f.fits_turned ? "Turn 90°" : "Scale to fit";
     } else if (mb.action == MainAction::MakeSupports) {
         note = "No supports yet. Slice comes once they're made.";
@@ -362,7 +354,8 @@ void mainArea(App& app, Document* doc) {
             const float after = ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - fw, y - 4));
             if (secondaryButton(fix, ImVec2(fw, 30))) {
-                const fruit::PlateFit& f = doc->fit();
+                const fruit::PlateFit f = off->fit();
+                app.selectPart(off->id());  // the fixes act on the selected part
                 if (f.overEdge()) app.slideOntoPlate();
                 else if (f.fits_turned) app.turnQuarter();
                 else app.scaleToFit();
@@ -427,12 +420,14 @@ void jobPanel(App& app, float h) {
     ImGui::Dummy(ImVec2(0, 4));
     rule();
     ImGui::Dummy(ImVec2(0, 4));
-    partsSection(app, doc);
+    partsList(app, doc);
     ImGui::Dummy(ImVec2(0, 4));
     rule();
     ImGui::Dummy(ImVec2(0, 4));
     int& tab = app.jobTab();
-    const std::size_t hollows = doc ? static_cast<std::size_t>(doc->check.cavities) : 0;
+    std::size_t hollows = 0;
+    if (doc)
+        for (const Part& part : doc->parts()) hollows += static_cast<std::size_t>(std::max(0, part.check().cavities));
     tabs(tab, "Checks", strf("Hollows · %zu", hollows));
     const float list_h = std::max(80.0f, ImGui::GetContentRegionAvail().y - kMainH);
     ImGui::BeginChild("job_checks", ImVec2(0, list_h), ImGuiChildFlags_None);

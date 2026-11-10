@@ -2,102 +2,389 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "Document.h"
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <stdexcept>
 
+#include "mesh/AabbTree.h"
 #include "mesh/Primitives.h"
 
 namespace gui {
 
-void Document::set(const fruit::Placement& p) {
-    placement_ = p;
-    transform_ = fruit::placementTransform(model.mesh, p);
-    placed_box_ = fruit::BBox3{};
-    for (const fruit::Vec3& v : model.mesh.vertices) placed_box_.extend(transform_.apply(v));
-    fit_ = fruit::checkFit(model.mesh, p, printer);
-    placed_stale_ = true;
+namespace {
+
+bool sameLift(const fruit::Placement& a, const fruit::Placement& b) {
+    return a.elevation == b.elevation && a.on_plate == b.on_plate;
 }
 
-const fruit::TriangleMesh& Document::placed() const {
-    if (placed_stale_) {
-        placed_ = model.mesh;
-        placed_.transform(transform_);
-        placed_stale_ = false;
+void takeLift(fruit::Placement& p, const fruit::Placement& from) {
+    p.elevation = from.elevation;
+    p.on_plate = from.on_plate;
+}
+
+}  // namespace
+
+const Part* Document::findPart(int id) const {
+    for (const Part& p : parts_)
+        if (p.id() == id) return &p;
+    return nullptr;
+}
+
+int Document::partIndex(int id) const {
+    for (std::size_t i = 0; i < parts_.size(); ++i)
+        if (parts_[i].id() == id) return static_cast<int>(i);
+    return -1;
+}
+
+void Document::select(int id) {
+    if (const int i = partIndex(id); i >= 0 && !dragging()) selected_ = i;
+}
+
+Document::Snapshot Document::snapshot() const {
+    Snapshot s{parts_, selected_, revision_};
+    for (Part& p : s.parts) {
+        p.placed_.reset();  // an undo step keeps no meshes it can make again
+        p.footprint_.reset();
     }
-    return placed_;
+    return s;
 }
 
-void Document::place(const fruit::Placement& p) {
-    set(p);
-    revision_ = ++last_revision_;
+void Document::restore(Snapshot s) {
+    // A part as it is now keeps what it has made.
+    for (Part& p : s.parts)
+        if (const Part* now = findPart(p.id()); now && now->revision() == p.revision()) {
+            p.placed_ = now->placed_;
+            p.footprint_ = now->footprint_;
+        }
+    parts_ = std::move(s.parts);
+    selected_ = std::clamp(s.selected, 0, static_cast<int>(parts_.size()) - 1);
+    revision_ = s.revision;
+    changed();
+}
+
+void Document::record(Snapshot before) {
+    undo_.push_back(std::move(before));
+    redo_.clear();
+}
+
+void Document::changed() {
+    box_ = fruit::BBox3{};
+    for (const Part& p : parts_) box_.extend(p.box());
+    placed_.reset();
+    face_start_.clear();
+}
+
+void Document::setPlacement(std::size_t i, const fruit::Placement& p) {
+    Part& part = parts_[i];
+    const bool lift = !sameLift(p, part.placement());
+    part.s_.placement = p;
+    part.update(printer);
+    part.revision_ = ++last_revision_;
+    if (lift)  // the lift is the job's
+        for (std::size_t j = 0; j < parts_.size(); ++j) {
+            if (j == i) continue;
+            takeLift(parts_[j].s_.placement, p);
+            parts_[j].update(printer);
+            parts_[j].revision_ = ++last_revision_;
+        }
+    changed();
+}
+
+void Document::prepare() const {
+    for (const Part& p : parts_) p.placed();
     placed();
 }
 
+const fruit::TriangleMesh& Document::placed() const {
+    if (!placed_) {
+        face_start_.clear();
+        if (parts_.size() == 1) {
+            parts_[0].placed();
+            placed_ = parts_[0].placed_;  // one part: its own placed mesh, as it is
+            face_start_.push_back(0);
+        } else {
+            auto m = std::make_shared<fruit::TriangleMesh>();
+            for (const Part& p : parts_) {
+                face_start_.push_back(m->faces.size());
+                m->append(p.placed());
+            }
+            placed_ = std::move(m);
+        }
+    }
+    return *placed_;
+}
+
+int Document::partOfFace(std::size_t face) const {
+    placed();
+    if (face_start_.empty()) return -1;
+    const auto it = std::upper_bound(face_start_.begin(), face_start_.end(), face);
+    return static_cast<int>(it - face_start_.begin()) - 1;
+}
+
+int Document::partNear(const fruit::Vec3& at) const {
+    if (parts_.empty()) return -1;
+    if (parts_.size() == 1) return parts_[0].id();
+    std::vector<const Part*> near;
+    for (const Part& p : parts_) {
+        fruit::BBox3 b = p.box();
+        b.min -= fruit::Vec3{1, 1, 1};
+        b.max += fruit::Vec3{1, 1, 1};
+        if (at.x >= b.min.x && at.y >= b.min.y && at.z >= b.min.z && at.x <= b.max.x && at.y <= b.max.y &&
+            at.z <= b.max.z)
+            near.push_back(&p);
+    }
+    if (near.size() == 1) return near[0]->id();
+    if (near.empty())
+        for (const Part& p : parts_) near.push_back(&p);
+    int best = -1;
+    double best_d = 0;
+    for (const Part* p : near) {
+        const fruit::AabbTree tree(p->placed());
+        const double d = tree.closest(at).distance;
+        if (best < 0 || d < best_d) {
+            best = p->id();
+            best_d = d;
+        }
+    }
+    return best;
+}
+
+bool Document::fits() const {
+    if (parts_.empty()) return false;
+    for (const Part& p : parts_)
+        if (!p.fit().fits) return false;
+    return true;
+}
+
+bool Document::fitsCentred() const {
+    if (parts_.empty()) return false;
+    for (const Part& p : parts_)
+        if (!p.fit().fits_centred) return false;
+    return true;
+}
+
+const Part* Document::partOff() const {
+    if (parts_.empty()) return nullptr;
+    if (!part().fit().fits) return &part();
+    for (const Part& p : parts_)
+        if (!p.fit().fits) return &p;
+    return nullptr;
+}
+
+PartFrames Document::frames() const {
+    PartFrames f;
+    for (const Part& p : parts_) f.add(p.id(), p.transform());
+    return f;
+}
+
+const OrientState& Document::orientOf(int id) const {
+    static const OrientState none;
+    const auto it = orient_.find(id);
+    return it != orient_.end() ? it->second : none;
+}
+
+std::vector<fruit::Vec3> Document::visibleInPrinter() const {
+    std::vector<fruit::Vec3> out;
+    for (const Part& p : parts_)
+        for (const fruit::Vec3& v : gui::visibleInPrinter(orientOf(p.id()).visible, p.placement())) {
+            bool seen = false;
+            for (const fruit::Vec3& w : out) seen = seen || fruit::dot(v, w) > 0.9999;
+            if (!seen) out.push_back(v);
+        }
+    return out;
+}
+
+bool Document::orientDecided() const {
+    for (const Part& p : parts_)
+        if (!orientOf(p.id()).decided) return false;
+    return !parts_.empty();
+}
+
+int Document::orientSettings() const {
+    int n = 0;
+    for (const Part& p : parts_) n += orientOf(p.id()).settings;
+    return n;
+}
+
+void Document::place(const fruit::Placement& p) {
+    if (parts_.empty()) return;
+    setPlacement(static_cast<std::size_t>(selected_), p);
+    revision_ = ++last_revision_;
+    prepare();
+}
+
 void Document::edit(const fruit::Placement& p) {
-    if (p == placement_) return;
-    undo_.push_back({placement_, revision_});
-    redo_.clear();
+    if (parts_.empty() || p == placement()) return;
+    Snapshot before = snapshot();
     place(p);
+    record(std::move(before));
 }
 
 void Document::undo() {
     if (undo_.empty() || dragging()) return;
-    redo_.push_back({placement_, revision_});
-    const Placed u = undo_.back();
+    redo_.push_back(snapshot());
+    Snapshot u = std::move(undo_.back());
     undo_.pop_back();
-    set(u.placement);
-    revision_ = u.revision;
-    placed();
+    restore(std::move(u));
+    prepare();
 }
 
 void Document::redo() {
     if (redo_.empty() || dragging()) return;
-    undo_.push_back({placement_, revision_});
-    const Placed r = redo_.back();
+    undo_.push_back(snapshot());
+    Snapshot r = std::move(redo_.back());
     redo_.pop_back();
-    set(r.placement);
-    revision_ = r.revision;
-    placed();
+    restore(std::move(r));
+    prepare();
 }
 
 void Document::beginDrag() {
-    if (!dragging()) drag_from_ = Placed{placement_, revision_};
+    if (!dragging() && !parts_.empty()) drag_from_ = snapshot();
 }
 
 void Document::preview(const fruit::Placement& p) {
-    if (!dragging() || p == placement_) return;
-    set(p);
+    if (!dragging() || p == placement()) return;
+    setPlacement(static_cast<std::size_t>(selected_), p);
     revision_ = ++last_revision_;
 }
 
+namespace {
+
+// The same parts, meshes and placements.
+bool sameParts(const std::vector<Part>& a, const std::vector<Part>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].id() != b[i].id() || a[i].shared() != b[i].shared() || !(a[i].placement() == b[i].placement()))
+            return false;
+    return true;
+}
+
+}  // namespace
+
 void Document::endDrag() {
     if (!dragging()) return;
-    const Placed from = *drag_from_;
+    Snapshot from = std::move(*drag_from_);
     drag_from_.reset();
-    if (placement_ == from.placement) {
-        revision_ = from.revision;  // dragged back to where it started: nothing changed
-    } else {
-        undo_.push_back(from);
-        redo_.clear();
-    }
-    placed();
+    if (sameParts(parts_, from.parts)) restore(std::move(from));  // dragged back to where it started: nothing changed
+    else record(std::move(from));
+    prepare();
 }
 
 void Document::cancelDrag() {
     if (!dragging()) return;
-    const Placed from = *drag_from_;
+    Snapshot from = std::move(*drag_from_);
     drag_from_.reset();
-    set(from.placement);
-    revision_ = from.revision;
-    placed();
+    restore(std::move(from));
+    prepare();
 }
 
-void Document::modelChanged() {
+void Document::clearHistory() {
     undo_.clear();
     redo_.clear();
     drag_from_.reset();
-    place(placement_);
+}
+
+bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
+    if (dragging()) return false;
+    PartsEdit e;
+    for (const Part& p : parts_) e.parts_.push_back(p.state());
+    e.selected = selectedId();
+    e.next_id_ = next_id_;
+    fn(e);
+    std::vector<PartState>& now = e.parts_;
+    std::erase_if(now, [](const PartState& s) { return !s.model || s.model->model.mesh.empty(); });
+    if (now.empty()) return false;  // a job keeps a part
+    // Every part a new id of its own; ids are never used twice in a job.
+    int next = std::max(next_id_, e.next_id_);
+    for (std::size_t i = 0; i < now.size(); ++i) {
+        bool taken = now[i].id < 0;
+        for (std::size_t j = 0; j < i && !taken; ++j) taken = now[j].id == now[i].id;
+        if (taken) now[i].id = next++;
+        next = std::max(next, now[i].id + 1);
+    }
+    // The lift is the job's: a part that had one and changed it gives it to
+    // all; new parts take the job's.
+    std::optional<fruit::Placement> lift;
+    if (!parts_.empty()) lift = placement();
+    for (const PartState& s : now)
+        if (const Part* old = findPart(s.id); old && !sameLift(s.placement, old->placement())) {
+            lift = s.placement;
+            break;
+        }
+    if (!lift) lift = now.front().placement;
+    for (PartState& s : now) takeLift(s.placement, *lift);
+    // Nothing changed: nothing to undo.
+    bool same = now.size() == parts_.size(), shape = !same;
+    for (std::size_t i = 0; i < now.size() && same; ++i) {
+        const Part& p = parts_[i];
+        const PartState& s = now[i];
+        if (s.id != p.id() || s.model != p.shared() || !(s.placement == p.placement())) shape = true;
+        if (shape || s.name != p.name() || s.path != p.path()) same = false;
+    }
+    next_id_ = next;
+    if (same) {
+        select(e.selected);
+        return false;
+    }
+    Snapshot before = snapshot();
+    std::vector<Part> parts;
+    parts.reserve(now.size());
+    for (PartState& s : now) {
+        const Part* old = findPart(s.id);
+        Part p = old ? *old : Part{};
+        const bool moved = !old || s.model != old->shared() || !(s.placement == old->placement());
+        p.s_ = std::move(s);
+        if (moved) {
+            p.update(printer);
+            p.revision_ = ++last_revision_;
+        }
+        parts.push_back(std::move(p));
+    }
+    const int old_index = selected_;
+    parts_ = std::move(parts);
+    selected_ = std::clamp(old_index, 0, static_cast<int>(parts_.size()) - 1);
+    if (const int i = partIndex(e.selected); i >= 0) selected_ = i;
+    if (shape) revision_ = ++last_revision_;
+    changed();
+    record(std::move(before));
+    prepare();
+    return true;
+}
+
+int Document::addPart(NewPart p) {
+    int id = -1;
+    editParts([&](PartsEdit& e) {
+        id = e.add(std::move(p));
+        e.selected = id;
+    });
+    return partIndex(id) >= 0 ? id : -1;
+}
+
+bool Document::removePart(int id) {
+    if (parts_.size() <= 1 || partIndex(id) < 0) return false;
+    return editParts([&](PartsEdit& e) { e.remove(id); });
+}
+
+bool Document::replaceMesh(int id, std::shared_ptr<const PartModel> m) {
+    if (!m || partIndex(id) < 0) return false;
+    return editParts([&](PartsEdit& e) {
+        if (PartState* s = e.find(id)) s->model = std::move(m);
+    });
+}
+
+bool Document::replaceMesh(int id, fruit::LoadedModel m) { return replaceMesh(id, makePartModel(std::move(m))); }
+
+void Document::replaceParts(std::vector<NewPart> parts) {
+    editParts([&](PartsEdit& e) {
+        e.parts().clear();
+        int first = -1;
+        for (NewPart& p : parts) {
+            const int id = e.add(std::move(p));
+            if (first < 0) first = id;
+        }
+        e.selected = first;
+    });
 }
 
 int newGeometryId() {
@@ -107,10 +394,13 @@ int newGeometryId() {
 
 JobStamp Document::stamp() const {
     JobStamp s;
-    s.model_path = path;
+    for (const Part& p : parts_) {
+        s.parts.push_back(p.id());
+        s.model_paths.push_back(p.path());
+        s.orient_decided.push_back(orientOf(p.id()).decided);
+    }
     s.revision = revision_;
-    s.orient_settings = orient.settings;
-    s.orient_decided = orient.decided;
+    s.orient_settings = orientSettings();
     s.supports = supports.result.get();
     s.choices = supports.choices;
     s.edits = supports.edits;
@@ -129,16 +419,15 @@ std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::Pri
                                        const fruit::JobControl& ctl) {
     ctl.report("load", 0);
     auto doc = std::make_shared<Document>();
-    doc->path = path;
     doc->name = std::filesystem::path(path).stem().string();
     doc->printer = printer;
-    doc->geometry_id = newGeometryId();
-    doc->model = fruit::loadModel(path);
-    if (doc->model.mesh.empty()) throw std::runtime_error("the file holds no triangles");
+    fruit::LoadedModel m = fruit::loadModel(path);
+    if (m.mesh.empty()) throw std::runtime_error("the file holds no triangles");
     ctl.step("load", 0.5);
-    doc->check = fruit::checkMesh(doc->model);
+    std::shared_ptr<const PartModel> pm = makePartModel(std::move(m));
     ctl.step("load", 0.7);
-    doc->place(fruit::Placement{});
+    doc->replaceParts({NewPart{doc->name, path, std::move(pm), fruit::Placement{}}});
+    doc->clearHistory();
     doc->low_points = fruit::countLowPoints(doc->placed(), false);
     ctl.report("load", 1);
     return doc;

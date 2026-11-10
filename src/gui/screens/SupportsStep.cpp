@@ -397,13 +397,18 @@ void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 
 // Supports are made for the model where it stands, and only when it fits there.
 void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
-    const fruit::PlateFit& f = doc.fit();
+    const Part* off = doc.partOff();
+    if (!off) return;
+    const int id = off->id();
+    const fruit::PlateFit f = off->fit();
     const ImVec2 bs = bannerSize(size);
     ImGui::SetCursorScreenPos(bannerAt(origin, size, bs));
     beginCard("fit", bs, 14, col::ErrorBg, col::Error);
     const float y = ImGui::GetCursorPosY();
-    text(f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate", fonts().semibold, size::Body + 1,
-         col::Text);
+    const std::string title = doc.partCount() > 1
+                                  ? off->name() + (f.overEdge() ? " is over the plate's edge" : " doesn't fit the plate")
+                                  : (f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate");
+    text(title.c_str(), fonts().semibold, size::Body + 1, col::Text);
     text(f.overEdge() ? "Supports are made for it where it stands, inside the dashed line Move shows."
          : f.fits_turned ? "Too big as it lies; turned 90° it fits at this size."
                          : "Too big at this size, however it is turned.",
@@ -414,6 +419,7 @@ void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     ImGui::PopFont();
     ImGui::SetCursorPos(ImVec2(bs.x - 14 - rw, y + 1));
     if (secondaryButton(fix, ImVec2(rw, 34))) {
+        app.selectPart(id);  // the fixes act on the selected part
         if (f.overEdge()) app.slideOntoPlate();
         else if (f.fits_turned) app.turnQuarter();
         else app.openTool(Tool::Scale);
@@ -426,7 +432,7 @@ void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 bool supportsBanner(App& app, const Document& doc, ImVec2 origin, ImVec2 size, ImVec2* min, ImVec2* max) {
     if (app.step() != Step::Supports || app.editingTips() || running(app)) return false;
     const SupportState& s = doc.supports;
-    const bool fits = doc.fit().fits;
+    const bool fits = doc.fits();
     if (fits && !(s.result && !s.fresh(doc.revision(), doc.supportSettings()))) return false;
     const ImVec2 bs = bannerSize(size);
     *min = bannerAt(origin, size, bs);
@@ -440,11 +446,11 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
         runningCard(app, origin, size);
         return;
     }
-    if (!doc.fit().fits) fitBanner(app, doc, origin, size);
+    if (!doc.fits()) fitBanner(app, doc, origin, size);
     if (!s.result) return;
     const SupportResult& r = *s.result;
     const bool fresh = s.fresh(doc.revision(), doc.supportSettings());
-    if (!fresh && doc.fit().fits) staleBanner(app, doc, origin, size);
+    if (!fresh && doc.fits()) staleBanner(app, doc, origin, size);
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
     auto project = [&](const fruit::Vec3& w, ImVec2* out) {
         const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];

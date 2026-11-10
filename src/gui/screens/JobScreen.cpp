@@ -334,12 +334,6 @@ void viewport(App& app, ImVec2 size, const Overlay& overlay = {}) {
         const float next = app.options().deterministic || std::abs(want - now) < 0.002f ? want : now + (want - now) * 0.25f;
         app.camera().setShift(next);
     }
-    if (doc) {
-        app.renderer().setModel(doc->model.mesh, doc->geometry_id);
-        app.renderer().setModelTransform(doc->transform());
-    } else {
-        app.renderer().clearModel();
-    }
     const unsigned tex =
         app.renderer().render(pw, ph, app.camera(), app.viewSamples());
     if (tex) ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex)), avail, ImVec2(0, 1), ImVec2(1, 0));
@@ -392,10 +386,10 @@ void statusBar(App& app) {
     int problems = 0;
     std::string totals;
     const bool results = doc && app.step() == Step::Orient && app.orientView() == OrientView::Results &&
-                         doc->orient.results;
+                         doc->orient().results;
     if (results) {
         bool all = true;
-        for (const auto& op : doc->orient.results->options) all = all && op.fits;
+        for (const auto& op : doc->orient().results->options) all = all && op.fits;
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, all ? col::Ok : col::Warn);
         x += 14;
@@ -436,15 +430,24 @@ void statusBar(App& app) {
             totals = strf("%zu tips · %s by you", r.tips, describeCounts(countEdits(doc->supports.edits)).c_str());
         }
     } else if (doc) {
-        const bool fits = doc->fit().fits;
-        problems = (fits ? 0 : 1) + (doc->check.closed() ? 0 : 1) + (hollowsToFix(*doc) ? 1 : 0);
+        const bool fits = doc->fits();
+        std::size_t off = 0, open = 0;
+        for (const Part& part : doc->parts()) {
+            off += part.fit().fits ? 0 : 1;
+            open += part.check().closed() ? 0 : 1;
+        }
+        problems = static_cast<int>(off + open) + (hollowsToFix(*doc) ? 1 : 0);
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, fits ? col::Ok : col::Error);
         x += 14;
-        const std::string msg = (fits                     ? "Fits the plate · "
-                                 : doc->fit().overEdge() ? "Over the plate's edge · "
-                                                         : "Too big for the plate · ") +
-                                dims(doc->fit().size);
+        const std::size_t n = doc->partCount();
+        const std::string msg =
+            n > 1 ? (fits ? strf("Fits the plate · %zu parts · ", n) + dims(doc->placedBox().size())
+                          : strf("%zu of %zu parts %s fit the plate", off, n, off == 1 ? "doesn't" : "don't"))
+                  : (fits                     ? "Fits the plate · "
+                     : doc->fit().overEdge() ? "Over the plate's edge · "
+                                             : "Too big for the plate · ") +
+                        dims(doc->fit().size);
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(msg.c_str(), fonts().regular, size::Body, col::TextSecondary);
     } else {

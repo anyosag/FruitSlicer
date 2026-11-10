@@ -328,7 +328,10 @@ TEST_CASE("Placing: a whole drag is one undo step, and undo brings back what was
     d2->edit(a);
     CHECK(d2->revision() != r2);
     // Replacing the model's file: undo can't go back past it.
-    d2->modelChanged();
+    const int r3 = d2->revision();
+    CHECK(d2->replaceMesh(d2->part().id(), fruit::prepareModel(demoModel())));
+    d2->clearHistory();
+    CHECK(d2->revision() != r3);
     CHECK_FALSE(d2->canUndo());
 
     // A copy taken mid-drag (a worker's snapshot) has the placed mesh as previewed.
@@ -353,10 +356,10 @@ TEST_CASE("Places: each opens any time and says what it needs first", "[gui][pla
     CHECK(needFor(*doc, Step::Layers) == Need::Fit);
 
     // Turned: supports straight away, without Orient.
-    doc->edit(turnedQuarter(doc->model.mesh, doc->placement(), kPrinter));
+    doc->edit(turnedQuarter(doc->part().mesh(), doc->placement(), kPrinter));
     CHECK(markFor(*doc, Step::Model) == Mark::None);
     CHECK(needFor(*doc, Step::Supports) == Need::Nothing);
-    CHECK_FALSE(doc->orient.decided);
+    CHECK_FALSE(doc->orient().decided);
     CHECK(needFor(*doc, Step::Layers) == Need::Supports);
     CHECK(needFor(*doc, Step::Print) == Need::Supports);
 
@@ -378,7 +381,7 @@ TEST_CASE("Places: each opens any time and says what it needs first", "[gui][pla
     CHECK(needFor(*doc, Step::Orient) == Need::Nothing);
     CHECK(needFor(*doc, Step::Supports) == Need::Fit);
     CHECK(needFor(*doc, Step::Print) == Need::Fit);
-    doc->edit(slidOnto(doc->model.mesh, doc->placement(), kPrinter));
+    doc->edit(slidOnto(doc->part().mesh(), doc->placement(), kPrinter));
     CHECK(needFor(*doc, Step::Print) == Need::FreshSupports);
     doc->undo();
     doc->undo();  // back to where they were made

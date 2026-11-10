@@ -53,6 +53,12 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
 // The Job panel at the right in Prepare: printer and resin, the parts, the
 // checks and hollows, and the main button (Make supports, Slice…).
 void jobPanel(App& app, float h);
+// Its Parts section: each part on and off the plate (a click selects one),
+// removing one, and adding another (PartsList.cpp).
+void partsList(App& app, Document* doc);
+// The 3D view's part of it: a click on a part selects it, when there are
+// several and no tool takes the click (PartsList.cpp).
+void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size);
 
 // Supports: the tool's panel, the checks and problems (in the Job panel),
 // the view's marks, and the pill choosing what the view shows.

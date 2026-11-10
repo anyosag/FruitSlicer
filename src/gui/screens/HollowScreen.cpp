@@ -112,7 +112,9 @@ void hollowPanel(App& app, Document& doc) {
         for (std::size_t i = 0; i < plan->closed.cavities.size(); ++i)
             cavityCard(strf("own%zu", i).c_str(), plan->closed.cavities[i], plan->layer_height);
     }
-    const bool own = plan ? !plan->closed.cavities.empty() : doc.check.cavities > 0;
+    bool own = plan && !plan->closed.cavities.empty();
+    if (!plan)
+        for (const Part& part : doc.parts()) own = own || part.check().cavities > 0;
 
     // One choice: how its own hollows print, or the whole model hollowed.
     ImGui::Dummy(ImVec2(0, 8));
@@ -169,8 +171,14 @@ void hollowPanel(App& app, Document& doc) {
             if (hs.manual.empty())
                 text("No holes yet. Click on the model where one should go in: it goes in square to the surface.",
                      fonts().regular, size::Help, col::TextMuted, true);
+            // Those on a part off the job (removed, until undo) are left out,
+            // here and in the plan.
+            const PartFrames frames = doc.frames();
+            std::size_t k = 0;  // into the plan's holes
             for (std::size_t i = 0; i < hs.manual.size(); ++i) {
-                const bool missed = fresh && i < fresh->placed.size() && fresh->placed[i].cavity < 0;
+                if (!frames.find(hs.manual[i].part)) continue;
+                const bool missed = fresh && k < fresh->placed.size() && fresh->placed[k].cavity < 0;
+                ++k;
                 text(strf("Hole %zu · %.1f mm", i + 1, hs.manual[i].diameter).c_str(), fonts().regular, size::Body,
                      col::Text);
                 if (missed) {
@@ -259,10 +267,12 @@ void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const fl
         }
         ImGui::PopFont();
         // The holes, where they go in.
-        const fruit::Transform& t = doc.transform();
+        const PartFrames frames = doc.frames();
         ImGui::PushFont(fonts().regular, size::Help);
         for (std::size_t i = 0; i < p.holes.size() && i < p.placed.size(); ++i) {
-            const fruit::Vec3 at = t.apply(p.holes[i].at);
+            const fruit::Transform* t = frames.find(p.holes[i].part);
+            if (!t) continue;
+            const fruit::Vec3 at = t->apply(p.holes[i].at);
             ImVec2 a, b;
             if (!project(at, &a) || !project({at.x + p.placed[i].radius, at.y, at.z}, &b)) continue;
             const float r = std::max(5.0f, std::hypot(b.x - a.x, b.y - a.y));

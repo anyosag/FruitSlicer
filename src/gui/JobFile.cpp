@@ -29,7 +29,10 @@ namespace {
 // whose model is centred is still written as 1, which older FruitSlicers
 // open; a moved one as 2, which they refuse rather than open it centred
 // with its tips where the model no longer is.
-constexpr int kVersion = 2;
+// 3: several parts ("parts", each with its own mesh file and placement; tip
+// edits and holes say which part they are on). A job with one part is still
+// written as 1 or 2.
+constexpr int kVersion = 3;
 constexpr char kMeshMagic[8] = {'F', 'S', 'M', 'E', 'S', 'H', '1', 0};
 
 // The model exactly as the job uses it: doubles, little-endian (every
@@ -89,15 +92,31 @@ fruit::Vec3 vecFrom(const json& j) { return {j.at(0).get<double>(), j.at(1).get<
 
 const char* const kEditKinds[] = {"add", "move", "delete", "resize", "pin", "zone"};
 
-json editsJson(const std::vector<TipEdit>& edits) {
+// Tip edits and holes name their part by its place in the job's list, and
+// only when there are several ("part"); those on a part no longer in the
+// job are left out.
+int partSlot(const Document& doc, int id) { return doc.partIndex(id); }
+
+json editsJson(const Document& doc, const std::vector<TipEdit>& edits) {
     json a = json::array();
-    for (const TipEdit& e : edits)
-        a.push_back({{"kind", kEditKinds[static_cast<int>(e.kind)]}, {"at", vec(e.at)}, {"to", vec(e.to)},
-                     {"normal", vec(e.normal)}, {"diameter", e.diameter}, {"radius", e.radius}});
+    for (const TipEdit& e : edits) {
+        const int slot = partSlot(doc, e.part);
+        if (slot < 0) continue;
+        json x = {{"kind", kEditKinds[static_cast<int>(e.kind)]}, {"at", vec(e.at)}, {"to", vec(e.to)},
+                  {"normal", vec(e.normal)}, {"diameter", e.diameter}, {"radius", e.radius}};
+        if (doc.partCount() > 1) x["part"] = slot;
+        a.push_back(std::move(x));
+    }
     return a;
 }
 
-std::vector<TipEdit> editsFrom(const json& a) {
+// The part a saved edit or hole is on (an id), or -1 when the job has no such part.
+int partFrom(const Document& doc, const json& j) {
+    const int slot = j.contains("part") && j["part"].is_number_integer() ? j["part"].get<int>() : 0;
+    return slot >= 0 && slot < static_cast<int>(doc.partCount()) ? doc.parts()[static_cast<std::size_t>(slot)].id() : -1;
+}
+
+std::vector<TipEdit> editsFrom(const Document& doc, const json& a) {
     std::vector<TipEdit> out;
     for (const json& j : a) {
         TipEdit e;
@@ -112,9 +131,82 @@ std::vector<TipEdit> editsFrom(const json& a) {
         e.normal = vecFrom(j.at("normal"));
         e.diameter = j.value("diameter", 0.4);
         e.radius = j.value("radius", 0.0);
+        e.part = partFrom(doc, j);
+        if (e.part < 0) throw std::runtime_error("the job has a tip edit on a part it doesn't have");
         out.push_back(e);
     }
     return out;
+}
+
+// What was repaired, and which faces are patches: it travels with the
+// job's copy of the mesh, which is the repaired one.
+json repairJson(const fruit::RepairReport& r) {
+    return {{"open_edges", r.open_edges_before},
+            {"faces_turned", r.faces_flipped},
+            {"faces_removed", r.faces_removed},
+            {"gaps_closed", r.gaps_closed},
+            {"widest_gap", r.widest_gap},
+            {"holes_filled", r.holes_filled},
+            {"largest_hole", r.largest_hole},
+            {"patch_area", r.patch_area},
+            {"patch_faces", r.patch_faces},
+            {"biggest_patch_area", r.biggest_patch_area},
+            {"biggest_patch_across", r.biggest_patch_across},
+            {"biggest_patch_at", vec(r.biggest_patch_at)},
+            {"biggest_patch_facing", vec(r.biggest_patch_facing)}};
+}
+
+// A mesh as the job keeps it, with what loading had repaired.
+fruit::LoadedModel modelFrom(const std::vector<std::uint8_t>& bytes, const json& model) {
+    fruit::LoadedModel m = fruit::prepareModel(meshFrom(bytes));
+    if (fruit::RepairReport& r = m.repair; model.contains("repair") && r.watertight() && !r.changed()) {
+        const json& rj = model["repair"];
+        r.open_edges_before = rj.value("open_edges", std::size_t{0});
+        r.faces_flipped = rj.value("faces_turned", std::size_t{0});
+        r.faces_removed = rj.value("faces_removed", std::size_t{0});
+        r.gaps_closed = rj.value("gaps_closed", std::size_t{0});
+        r.widest_gap = rj.value("widest_gap", 0.0);
+        r.holes_filled = rj.value("holes_filled", std::size_t{0});
+        r.largest_hole = rj.value("largest_hole", 0.0);
+        r.patch_area = rj.value("patch_area", 0.0);
+        r.patch_faces = std::min(rj.value("patch_faces", std::size_t{0}), m.mesh.faceCount());
+        r.biggest_patch_area = rj.value("biggest_patch_area", 0.0);
+        r.biggest_patch_across = rj.value("biggest_patch_across", 0.0);
+        if (rj.contains("biggest_patch_at")) r.biggest_patch_at = vecFrom(rj["biggest_patch_at"]);
+        if (rj.contains("biggest_patch_facing")) r.biggest_patch_facing = vecFrom(rj["biggest_patch_facing"]);
+    }
+    return m;
+}
+
+json placementJson(const fruit::Placement& p) {
+    json j = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation}, {"on_plate", p.on_plate}};
+    if (!p.centred()) j["offset"] = {p.offset.x, p.offset.y};
+    return j;
+}
+
+fruit::Placement placementFrom(const json& pj) {
+    fruit::Placement p;
+    p.scale = pj.value("scale", 1.0);
+    p.rotation_deg = vecFrom(pj.at("rotation"));
+    p.elevation = pj.value("elevation", 5.0);
+    p.on_plate = pj.value("on_plate", false);
+    if (pj.contains("offset") && pj["offset"].is_array() && pj["offset"].size() == 2 && pj["offset"][0].is_number() &&
+        pj["offset"][1].is_number()) {  // older jobs: centred
+        auto mm = [](double v) { return std::isfinite(v) ? std::clamp(v, -1000.0, 1000.0) : 0.0; };
+        p.offset = {mm(pj["offset"][0].get<double>()), mm(pj["offset"][1].get<double>())};
+    }
+    return p;
+}
+
+json orientJson(const OrientState& o) {
+    json visible = json::array();
+    for (const auto& v : o.visible) visible.push_back(vec(v));
+    return {{"visible", visible}, {"decided", o.decided}};
+}
+
+void orientFrom(const json& j, OrientState& o) {
+    for (const auto& v : j.value("visible", json::array())) o.visible.push_back(vecFrom(v));
+    o.decided = j.value("decided", false);
 }
 
 struct Zip {
@@ -150,34 +242,39 @@ std::uint64_t meshHash(const fruit::TriangleMesh& m) {
 }
 
 void saveJob(const std::string& path, const Document& doc) {
+    if (doc.parts().empty()) throw std::runtime_error("the job has no model");
     json j;
     j["format"] = "fruitslicer-job";
-    j["version"] = doc.placement().centred() ? 1 : kVersion;
     j["name"] = doc.name;
-    j["model"] = {{"path", doc.path}, {"file", "model.bin"}, {"hash", std::to_string(meshHash(doc.model.mesh))}};
-    // The job's copy of the mesh is the repaired one: what was repaired, and
-    // which faces are patches, travels with it.
-    if (const fruit::RepairReport& r = doc.model.repair; r.changed())
-        j["model"]["repair"] = {{"open_edges", r.open_edges_before},
-                                {"faces_turned", r.faces_flipped},
-                                {"faces_removed", r.faces_removed},
-                                {"gaps_closed", r.gaps_closed},
-                                {"widest_gap", r.widest_gap},
-                                {"holes_filled", r.holes_filled},
-                                {"largest_hole", r.largest_hole},
-                                {"patch_area", r.patch_area},
-                                {"patch_faces", r.patch_faces},
-                                {"biggest_patch_area", r.biggest_patch_area},
-                                {"biggest_patch_across", r.biggest_patch_across},
-                                {"biggest_patch_at", vec(r.biggest_patch_at)},
-                                {"biggest_patch_facing", vec(r.biggest_patch_facing)}};
-    const fruit::Placement& p = doc.placement();
-    j["placement"] = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation},
-                      {"on_plate", p.on_plate}};
-    if (!p.centred()) j["placement"]["offset"] = {p.offset.x, p.offset.y};
-    json visible = json::array();
-    for (const auto& v : doc.orient.visible) visible.push_back(vec(v));
-    j["orient"] = {{"visible", visible}, {"decided", doc.orient.decided}};
+    // The meshes exactly as the job uses them, one file each.
+    std::vector<std::pair<std::string, std::vector<std::uint8_t>>> meshes;
+    auto modelJson = [&](const Part& part, const std::string& file) {
+        json m = {{"path", part.path()}, {"file", file}, {"hash", std::to_string(meshHash(part.mesh()))}};
+        if (const fruit::RepairReport& r = part.model().repair; r.changed()) m["repair"] = repairJson(r);
+        meshes.emplace_back(file, meshBytes(part.mesh()));
+        return m;
+    };
+    if (doc.partCount() == 1) {
+        // One part: as before, so older FruitSlicers open it.
+        const Part& part = doc.parts().front();
+        j["version"] = part.placement().centred() ? 1 : 2;
+        j["model"] = modelJson(part, "model.bin");
+        j["placement"] = placementJson(part.placement());
+        j["orient"] = orientJson(doc.orientOf(part.id()));
+    } else {
+        j["version"] = kVersion;
+        json parts = json::array();
+        for (std::size_t i = 0; i < doc.partCount(); ++i) {
+            const Part& part = doc.parts()[i];
+            json pj = {{"name", part.name()}};
+            pj["model"] = modelJson(part, "part-" + std::to_string(i + 1) + ".bin");
+            pj["placement"] = placementJson(part.placement());
+            pj["orient"] = orientJson(doc.orientOf(part.id()));
+            parts.push_back(std::move(pj));
+        }
+        j["parts"] = std::move(parts);
+        j["selected"] = doc.partIndex(doc.selectedId());
+    }
     const SupportChoices& c = doc.supports.choices;
     json sup = {{"choices", {{"usual_tip", c.usual_tip}, {"density", c.density}, {"merge", c.merge},
                              {"advanced", c.advanced}}}};
@@ -186,24 +283,29 @@ void saveJob(const std::string& path, const Document& doc) {
     if (!c.resin.empty()) sup["choices"]["resin"] = c.resin;
     if (c.profile.is_object()) sup["choices"]["profile"] = c.profile;
     // Tips only for supports made for the job as it is now.
-    sup["edits"] = editsJson(doc.supports.edits);
+    sup["edits"] = editsJson(doc, doc.supports.edits);
     if (doc.supports.fresh(doc.revision(), doc.supportSettings())) {
         const SupportResult& r = *doc.supports.result;
         sup["tips"] = fruit::pointsToJson(r.planned);  // the planner's; the edits apply on top
-        sup["planned_around"] = editsJson(r.plan_edits);  // the edits the planner worked around
+        sup["planned_around"] = editsJson(doc, r.plan_edits);  // the edits the planner worked around
         json ws = json::array();
         for (const auto& w : r.plan_warnings)
             ws.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}});
         sup["warnings"] = ws;
     }
     j["supports"] = sup;
-    // The Hollow screen's choices, and the holes placed by hand (model
-    // coordinates). The plan itself is made again from them.
+    // The Hollow screen's choices, and the holes placed by hand (in their
+    // part's coordinates). The plan itself is made again from them.
     const HollowState& hs = doc.hollow;
     const HollowChoices& hc = hs.choices;
     json holes = json::array();
-    for (const fruit::DrainHole& h : hs.manual)
-        holes.push_back({{"at", vec(h.at)}, {"axis", vec(h.axis)}, {"diameter", h.diameter}});
+    for (const fruit::DrainHole& h : hs.manual) {
+        const int slot = partSlot(doc, h.part);
+        if (slot < 0) continue;
+        json x = {{"at", vec(h.at)}, {"axis", vec(h.axis)}, {"diameter", h.diameter}};
+        if (doc.partCount() > 1) x["part"] = slot;
+        holes.push_back(std::move(x));
+    }
     j["hollow"] = {{"applied", hs.applied},
                    {"fix", hc.fix == HollowChoices::Fix::Fill    ? "fill"
                            : hc.fix == HollowChoices::Fix::Leave ? "leave"
@@ -231,14 +333,14 @@ void saveJob(const std::string& path, const Document& doc) {
     }
 
     const std::string text = j.dump(2);
-    const std::vector<std::uint8_t> model = meshBytes(doc.model.mesh);
     const std::string tmp = path + ".part";
     std::error_code ec;
     fs::remove(tmp, ec);
     mz_zip_archive z{};
     if (!mz_zip_writer_init_file(&z, tmp.c_str(), 0)) throw std::runtime_error("cannot write " + path);
-    bool ok = mz_zip_writer_add_mem(&z, "job.json", text.data(), text.size(), MZ_DEFAULT_COMPRESSION) &&
-              mz_zip_writer_add_mem(&z, "model.bin", model.data(), model.size(), MZ_DEFAULT_COMPRESSION);
+    bool ok = mz_zip_writer_add_mem(&z, "job.json", text.data(), text.size(), MZ_DEFAULT_COMPRESSION);
+    for (const auto& [file, bytes] : meshes)
+        ok = ok && mz_zip_writer_add_mem(&z, file.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION);
     if (ok && !sample.empty())
         ok = mz_zip_writer_add_mem(&z, "sample-header.bin", sample.data(), sample.size(), MZ_DEFAULT_COMPRESSION);
     ok = mz_zip_writer_finalize_archive(&z) && ok;
@@ -276,49 +378,52 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     doc->job_path = path;
     doc->name = j.value("name", fs::path(path).stem().string());
     doc->printer = printer;
-    doc->geometry_id = newGeometryId();
-    const json& model = j.at("model");
-    out.model_path = model.value("path", "");
-    doc->path = out.model_path;
-    out.model_missing = out.model_path.empty() || !fs::exists(out.model_path);
-    doc->model = fruit::prepareModel(meshFrom(zip.read("model.bin", true)));
-    if (fruit::RepairReport& r = doc->model.repair; model.contains("repair") && r.watertight() && !r.changed()) {
-        const json& rj = model["repair"];
-        r.open_edges_before = rj.value("open_edges", std::size_t{0});
-        r.faces_flipped = rj.value("faces_turned", std::size_t{0});
-        r.faces_removed = rj.value("faces_removed", std::size_t{0});
-        r.gaps_closed = rj.value("gaps_closed", std::size_t{0});
-        r.widest_gap = rj.value("widest_gap", 0.0);
-        r.holes_filled = rj.value("holes_filled", std::size_t{0});
-        r.largest_hole = rj.value("largest_hole", 0.0);
-        r.patch_area = rj.value("patch_area", 0.0);
-        r.patch_faces = std::min(rj.value("patch_faces", std::size_t{0}), doc->model.mesh.faceCount());
-        r.biggest_patch_area = rj.value("biggest_patch_area", 0.0);
-        r.biggest_patch_across = rj.value("biggest_patch_across", 0.0);
-        if (rj.contains("biggest_patch_at")) r.biggest_patch_at = vecFrom(rj["biggest_patch_at"]);
-        if (rj.contains("biggest_patch_facing")) r.biggest_patch_facing = vecFrom(rj["biggest_patch_facing"]);
+    // The parts: one ("model", "placement") or several ("parts").
+    struct Saved {
+        NewPart part;
+        json orient;
+    };
+    std::vector<Saved> saved;
+    auto readPart = [&](const json& model, const json& placement, std::string name) {
+        Saved s;
+        s.part.path = model.value("path", "");
+        s.part.name = name.empty() ? partName(s.part.path, {}) : std::move(name);
+        const std::string file = model.value("file", "model.bin");
+        s.part.model = makePartModel(modelFrom(zip.read(file.c_str(), true), model));
+        s.part.placement = placementFrom(placement);
+        return s;
+    };
+    if (j.contains("parts")) {
+        if (!j["parts"].is_array() || j["parts"].empty()) throw std::runtime_error("the job has no model");
+        for (const json& pj : j["parts"]) {
+            Saved s = readPart(pj.at("model"), pj.at("placement"), pj.value("name", ""));
+            s.orient = pj.value("orient", json::object());
+            saved.push_back(std::move(s));
+        }
+    } else {
+        Saved s = readPart(j.at("model"), j.at("placement"), doc->name);
+        s.orient = j.value("orient", json::object());
+        saved.push_back(std::move(s));
     }
     ctl.step("load", 0.2);
-    doc->check = fruit::checkMesh(doc->model);
+    std::vector<NewPart> parts;
+    for (const Saved& s : saved) parts.push_back(s.part);
+    doc->replaceParts(std::move(parts));
+    doc->clearHistory();
+    for (std::size_t i = 0; i < saved.size(); ++i) orientFrom(saved[i].orient, doc->orientOf(doc->parts()[i].id()));
+    if (const int sel = j.value("selected", 0); sel >= 0 && sel < static_cast<int>(doc->partCount()))
+        doc->select(doc->parts()[static_cast<std::size_t>(sel)].id());
+    doc->low_points = fruit::countLowPoints(doc->placed(), doc->placement().on_plate);
+    // The first part whose file has gone, to ask where it is now.
+    for (const Part& part : doc->parts())
+        if (part.path().empty() || !fs::exists(part.path())) {
+            out.model_missing = true;
+            out.model_path = part.path();
+            out.part = part.id();
+            break;
+        }
+    if (!out.model_missing) out.model_path = doc->parts().front().path();
 
-    const json& pj = j.at("placement");
-    fruit::Placement p;
-    p.scale = pj.value("scale", 1.0);
-    p.rotation_deg = vecFrom(pj.at("rotation"));
-    p.elevation = pj.value("elevation", 5.0);
-    p.on_plate = pj.value("on_plate", false);
-    if (pj.contains("offset") && pj["offset"].is_array() && pj["offset"].size() == 2 && pj["offset"][0].is_number() &&
-        pj["offset"][1].is_number()) {  // older jobs: centred
-        auto mm = [](double v) { return std::isfinite(v) ? std::clamp(v, -1000.0, 1000.0) : 0.0; };
-        p.offset = {mm(pj["offset"][0].get<double>()), mm(pj["offset"][1].get<double>())};
-    }
-    doc->place(p);
-    doc->low_points = fruit::countLowPoints(doc->placed(), p.on_plate);
-
-    if (j.contains("orient")) {
-        for (const auto& v : j["orient"].value("visible", json::array())) doc->orient.visible.push_back(vecFrom(v));
-        doc->orient.decided = j["orient"].value("decided", false);
-    }
     const json& sj = j.at("supports");
     const json& cj = sj.at("choices");
     SupportChoices& c = doc->supports.choices;
@@ -329,7 +434,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     if (cj.contains("hinge") && cj["hinge"].is_string()) c.hinge = fruit::parseHinge(cj["hinge"].get<std::string>());
     c.resin = cj.value("resin", std::string());
     if (cj.contains("profile") && cj["profile"].is_object()) c.profile = cj["profile"];
-    doc->supports.edits = editsFrom(sj.value("edits", json::array()));
+    doc->supports.edits = editsFrom(*doc, sj.value("edits", json::array()));
     if (j.contains("hollow")) {
         const json& hj = j["hollow"];
         HollowState& hs = doc->hollow;
@@ -341,8 +446,11 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         hc.ceiling_lean = hj.value("ceiling_lean", hc.ceiling_lean);
         hc.hole_diameter = hj.value("hole_diameter", hc.hole_diameter);
         hc.auto_holes = hj.value("auto_holes", true);
-        for (const auto& h : hj.value("holes", json::array()))
-            hs.manual.push_back({vecFrom(h.at("at")), vecFrom(h.at("axis")), h.value("diameter", 3.0), false});
+        for (const auto& h : hj.value("holes", json::array())) {
+            const int part = partFrom(*doc, h);
+            if (part < 0) throw std::runtime_error("the job has a drain hole on a part it doesn't have");
+            hs.manual.push_back({vecFrom(h.at("at")), vecFrom(h.at("axis")), h.value("diameter", 3.0), false, part});
+        }
         hs.applied = hj.value("applied", false);
     }
 
@@ -364,7 +472,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     if (sj.contains("tips")) {
         SupportPlan plan;
         plan.points = fruit::pointsFromJson(sj["tips"]);
-        plan.edits = editsFrom(sj.value("planned_around", json::array()));
+        plan.edits = editsFrom(*doc, sj.value("planned_around", json::array()));
         for (const auto& w : sj.value("warnings", json::array())) {
             fruit::Warning wn;
             wn.code = w.value("code", "");
@@ -397,8 +505,17 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
 
 std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     std::vector<std::string> out;
-    if (a.revision != b.revision) out.push_back("moved, turned or resized the model");
-    if (a.model_path != b.model_path) out.push_back("found the model in its new place");
+    if (a.parts != b.parts) {
+        std::size_t added = 0, removed = 0;
+        for (const int id : b.parts) added += std::find(a.parts.begin(), a.parts.end(), id) == a.parts.end();
+        for (const int id : a.parts) removed += std::find(b.parts.begin(), b.parts.end(), id) == b.parts.end();
+        if (added) out.push_back(added == 1 ? "added a part" : "added " + std::to_string(added) + " parts");
+        if (removed) out.push_back(removed == 1 ? "removed a part" : "removed " + std::to_string(removed) + " parts");
+    } else {
+        if (a.revision != b.revision)
+            out.push_back(b.parts.size() > 1 ? "moved, turned or resized parts" : "moved, turned or resized the model");
+        if (a.model_paths != b.model_paths) out.push_back("found the model in its new place");
+    }
     if (a.orient_settings != b.orient_settings || a.orient_decided != b.orient_decided)
         out.push_back("changed how it stands");
     if (a.edits != b.edits) {

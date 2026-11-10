@@ -51,7 +51,7 @@ std::string sidesText(const App& app) {
 }  // namespace
 
 void orientPanel(App& app, Document& doc) {
-    const OrientState& o = doc.orient;
+    const OrientState& o = doc.orient();
     groupLabel("Find a good rotation");
     text("Searching tries 64 directions plus this one, then runs the full tip planner on the best 6 and shows you "
          "the three that beat how it sits now.",
@@ -83,7 +83,7 @@ void orientPanel(App& app, Document& doc) {
     ImGui::Dummy(ImVec2(0, 8));
     groupLabel("As it sits now");
     {
-        const bool fresh = o.nowFresh(doc.revision());
+        const bool fresh = o.nowFresh(doc.part().revision());
         auto v = [&](std::size_t n) { return fresh ? thousands(n) : std::string("…"); };
         keyValue("Tips", v(o.now.tips));
         keyValue("Island tips", v(o.now.island_tips));
@@ -118,7 +118,7 @@ void orientPanel(App& app, Document& doc) {
         help = "None picked, so every side counts the same.";
     } else {
         help = "Tips stay off " + picked + " where they can.";
-        if (o.nowFresh(doc.revision()))
+        if (o.nowFresh(doc.part().revision()))
             help += strf(" As it sits now, %zu %s on %s.", o.now.cosmetic_tips,
                          o.now.cosmetic_tips == 1 ? "tip lands" : "tips land", o.visible.size() == 1 ? "it" : "them");
     }
@@ -242,7 +242,7 @@ void optionCard(App& app, const char* id, const char* title, const OrientOption&
 
 void orientResults(App& app, Document& doc, ImVec2 size) {
     beginPanel("orient_results", ImVec2(0, size.y), col::App, ImVec2(24, 26));
-    const OrientSearch& r = *doc.orient.results;
+    const OrientSearch& r = *doc.orient().results;
     const std::size_t n = r.options.size();
     static const char* counts[] = {"No better way found", "One better way to stand it", "Two better ways to stand it",
                                    "Three better ways to stand it"};

@@ -106,6 +106,7 @@ public:
         bool open = false;
         std::shared_ptr<Document> doc;  // opened, not yet shown
         std::string model_path;         // where the model was
+        int part = 0;                   // whose model it is (an id)
         bool find = false;              // "Find the file" picked
     };
     RelinkDialog& relinkDialog() { return relink_; }
@@ -133,6 +134,16 @@ public:
     void scaleToFit();
     void undo();
     void redo();
+    // The parts on the plate (see Parts.h): the tools above act on the
+    // selected one. Adding loads a model, shows the health dialog, and puts
+    // it beside the others (undoable); Open still starts a new job.
+    void addPartDialog();                       // through a dialog (⇧⌘O)
+    void addPartFrom(const std::string& path);  // a model file
+    bool addingPart() const { return adding_part_; }  // the health dialog is for a part being added
+    void selectPart(int id);
+    void removePart(int id);                    // undoable; never the last one
+    // The part under a ray (printer coordinates): its id, or -1.
+    int pickPart(const fruit::Vec3& origin, const fruit::Vec3& dir);
     // The handles in the 3D view (Model, and Orient's settings): a drag is
     // previewed as it goes and is one undo step when it ends.
     HandleDrag& handleDrag() { return handle_drag_; }
@@ -407,7 +418,8 @@ public:
     fruit::Placement healthPlacement() const;
 
 private:
-    void openModel(const std::string& path);
+    void openModel(const std::string& path, bool add = false);  // `add`: as another part of the job
+    void placeAddedPart();  // the health dialog's choice, for a part being added
     void openJobFile(const std::string& path);
     void installJob(std::shared_ptr<Document> doc);
     void remember(const Document& d);
@@ -430,6 +442,7 @@ private:
     bool print_settings_open_ = false;
     std::shared_ptr<Document> doc_, checking_;
     HealthDialog health_;
+    bool adding_part_ = false;  // checking_ is a part to add to doc_
     Renderer renderer_;
     Camera camera_;
     ViewPreset view_ = ViewPreset::Angled;
@@ -462,12 +475,13 @@ private:
     std::shared_ptr<fruit::AabbTree> pick_tree_;
     const void* pick_doc_ = nullptr;
     int pick_revision_ = -1;
+    const fruit::AabbTree& pickTree();  // over the job's placed mesh, made again when it changes
     std::vector<std::vector<TipEdit>> tip_undo_, tip_redo_;  // edit lists, while editing
     // Puts in a new edit list (undoable) and rebuilds the tips; `select`
     // (printer coordinates) is the tip to select once they are rebuilt.
     void setTipEdits(std::vector<TipEdit> edits, std::optional<fruit::Vec3> select = std::nullopt);
     void rebuildTips(std::optional<fruit::Vec3> select);
-    fruit::Transform modelFromPrinter() const;
+    int partAt(const fruit::Vec3& at);  // the part (an id) whose surface is nearest a point
     std::map<std::string, double> advanced_;  // carried over to the next model opened
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from
     void syncCut();

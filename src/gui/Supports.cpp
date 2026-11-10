@@ -560,22 +560,25 @@ std::optional<fruit::Vec3> yourTip(const TipEdit& e) {
 
 }  // namespace
 
-SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     fruit::SupportConfig cfg;
     fruit::TreeConfig tc;
     const fruit::Placement& p = doc.placement();
     resolve(p, c, cfg, tc);
     fruit::CosmeticSpec cos;
-    cos.visible_from = visibleInPrinter(visible_model, p);
+    cos.visible_from = visible;
     fruit::PointGenOptions po;
     po.cosmetic = &cos;
-    // Hand edits: your tips are pinned, and the planner's own stay out of the zones.
-    const fruit::Transform& t = doc.transform();
+    // Hand edits: your tips are pinned, and the planner's own stay out of the
+    // zones. Each is where its part is now.
+    const PartFrames frames = doc.frames();
     for (const TipEdit& e : edits) {
-        if (keepsOut(e.kind)) cos.exclusions.push_back({t.apply(e.at), e.radius});
+        const fruit::Transform* t = frames.find(e.part);
+        if (!t) continue;
+        if (keepsOut(e.kind)) cos.exclusions.push_back({t->apply(e.at), e.radius});
         if (const auto at = yourTip(e))
-            po.manual.push_back(manualTip(t.apply(*at), unit(t.applyLinear(e.normal)), e.diameter));
+            po.manual.push_back(manualTip(t->apply(*at), unit(t->applyLinear(e.normal)), e.diameter));
     }
     // Hollowed, drilled or filled on the Hollow screen: the tips are planned
     // on those layers, none goes in a hole's mouth, and none inside a hollow.
@@ -595,8 +598,8 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
         po.layers = hollow->layers;
         if (!hollow->filling()) po.hollows = &hollow->cavities().interior;  // their ceilings get no tips
         for (std::size_t i = 0; i < hollow->holes.size(); ++i)
-            if (hollow->placed[i].cavity >= 0)
-                cos.exclusions.push_back({t.apply(hollow->holes[i].at), hollow->placed[i].radius + kHoleMouthMargin});
+            if (const fruit::Transform* t = frames.find(hollow->holes[i].part); t && hollow->placed[i].cavity >= 0)
+                cos.exclusions.push_back({t->apply(hollow->holes[i].at), hollow->placed[i].radius + kHoleMouthMargin});
     }
     fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, rest);
     // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
@@ -604,11 +607,11 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
     return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits, std::move(hollow)};
 }
 
-SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible_model,
+SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                        const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     const auto t0 = std::chrono::steady_clock::now();
     SupportResult r =
-        finishWithEdits(doc, c, planTips(doc, c, visible_model, ctl.sub(0.0, 0.55), edits), edits, ctl.sub(0.55, 1.0));
+        finishWithEdits(doc, c, planTips(doc, c, visible, ctl.sub(0.0, 0.55), edits), edits, ctl.sub(0.55, 1.0));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
 }
@@ -617,7 +620,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, Supp
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
     std::vector<fruit::SupportPoint> planned = plan.points;
     std::vector<TipEdit> plan_edits = plan.edits;
-    plan.points = applyEdits(std::move(plan.points), edits, doc.transform());
+    plan.points = applyEdits(std::move(plan.points), edits, doc.frames());
     SupportResult r = finishSupports(doc, c, std::move(plan), ctl);
     r.planned = std::move(planned);
     r.plan_edits = std::move(plan_edits);
@@ -626,7 +629,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, Supp
 }
 
 std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pts, const std::vector<TipEdit>& edits,
-                                            const fruit::Transform& t) {
+                                            const PartFrames& frames) {
     using K = TipEdit::Kind;
     const auto planners = [](const fruit::SupportPoint& p) { return p.category != fruit::PointCategory::Manual; };
     // The planner's tip the edit was made on: the nearest one where it was.
@@ -646,6 +649,9 @@ std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pts
     };
     std::vector<fruit::SupportPoint> yours;
     for (const TipEdit& e : edits) {
+        const fruit::Transform* tp = frames.find(e.part);
+        if (!tp) continue;  // its part is not on the plate
+        const fruit::Transform& t = *tp;
         const fruit::Vec3 at = t.apply(e.at);
         const fruit::Vec3 n = unit(t.applyLinear(e.normal));
         if (e.kind == K::Move || e.kind == K::Delete || e.kind == K::Resize || e.kind == K::Pin) takeTip(at);
@@ -670,12 +676,20 @@ bool planStillFits(const std::vector<TipEdit>& plan_edits, const std::vector<Tip
 namespace {
 
 // The edit that made a tip of yours (printer coordinates), or -1.
-int editOf(const std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& t) {
+int editOf(const std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const PartFrames& frames) {
     if (tip.category != fruit::PointCategory::Manual) return -1;
-    for (int i = static_cast<int>(edits.size()) - 1; i >= 0; --i)
-        if (const auto at = yourTip(edits[static_cast<std::size_t>(i)]); at && dist(t.apply(*at), tip.pos) <= kMatch)
-            return i;
+    for (int i = static_cast<int>(edits.size()) - 1; i >= 0; --i) {
+        const TipEdit& e = edits[static_cast<std::size_t>(i)];
+        const fruit::Transform* t = frames.find(e.part);
+        if (const auto at = yourTip(e); t && at && dist(t->apply(*at), tip.pos) <= kMatch) return i;
+    }
     return -1;
+}
+
+// The frame an edit is recorded in: its own part's for an edit of yours,
+// else the part the tip is on.
+const fruit::Transform* frameOf(const TipEdit* e, const PartFrames& frames, int part) {
+    return frames.find(e ? e->part : part);
 }
 
 // Takes the edit out of the list, for changing and putting back at the end.
@@ -688,12 +702,16 @@ TipEdit takeEdit(std::vector<TipEdit>& edits, int i) {
 }  // namespace
 
 bool recordMove(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Vec3& to,
-                const fruit::Vec3& normal, const fruit::Transform& t) {
+                const fruit::Vec3& normal, const PartFrames& frames, int part) {
     using K = TipEdit::Kind;
     if (dist(tip.pos, to) <= kMatch) return false;
-    const fruit::Transform m = t.inverse();
+    const int i = editOf(edits, tip, frames);
+    const fruit::Transform* t = frameOf(i >= 0 ? &edits[static_cast<std::size_t>(i)] : nullptr, frames, part);
+    if (!t) return false;
+    const fruit::Transform m = t->inverse();
     TipEdit e;
-    if (const int i = editOf(edits, tip, t); i >= 0) {
+    e.part = part;
+    if (i >= 0) {
         e = takeEdit(edits, i);
         if (e.kind == K::Add) {
             e.at = m.apply(to);
@@ -714,11 +732,15 @@ bool recordMove(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, con
     return true;
 }
 
-bool recordDelete(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& t) {
+bool recordDelete(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const PartFrames& frames, int part) {
     using K = TipEdit::Kind;
-    const fruit::Transform m = t.inverse();
+    const int i = editOf(edits, tip, frames);
+    const fruit::Transform* t = frameOf(i >= 0 ? &edits[static_cast<std::size_t>(i)] : nullptr, frames, part);
+    if (!t) return false;
+    const fruit::Transform m = t->inverse();
     TipEdit e;
-    if (const int i = editOf(edits, tip, t); i >= 0) {
+    e.part = part;
+    if (i >= 0) {
         e = takeEdit(edits, i);
         if (e.kind == K::Add) return true;  // your tip: gone with the edit that added it
         // A moved, resized or pinned tip of the planner's: deleted where the planner had it.
@@ -736,12 +758,16 @@ bool recordDelete(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, c
 }
 
 bool recordResize(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, double diameter,
-                  const fruit::Transform& t) {
+                  const PartFrames& frames, int part) {
     using K = TipEdit::Kind;
     if (std::abs(tip.tip_diameter - diameter) < 1e-9) return false;
-    const fruit::Transform m = t.inverse();
+    const int i = editOf(edits, tip, frames);
+    const fruit::Transform* t = frameOf(i >= 0 ? &edits[static_cast<std::size_t>(i)] : nullptr, frames, part);
+    if (!t) return false;
+    const fruit::Transform m = t->inverse();
     TipEdit e;
-    if (const int i = editOf(edits, tip, t); i >= 0) {
+    e.part = part;
+    if (i >= 0) {
         e = takeEdit(edits, i);
         if (e.kind == K::Pin) e.kind = K::Resize;
     } else {
@@ -754,10 +780,13 @@ bool recordResize(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, d
     return true;
 }
 
-bool recordPin(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const fruit::Transform& t) {
+bool recordPin(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, const PartFrames& frames, int part) {
     if (tip.category == fruit::PointCategory::Manual) return false;  // yours are pinned already
-    const fruit::Transform m = t.inverse();
+    const fruit::Transform* t = frames.find(part);
+    if (!t) return false;
+    const fruit::Transform m = t->inverse();
     TipEdit e;
+    e.part = part;
     e.kind = TipEdit::Kind::Pin;
     e.at = m.apply(tip.pos);
     e.normal = m.applyLinear(tip.normal);
@@ -766,8 +795,10 @@ bool recordPin(std::vector<TipEdit>& edits, const fruit::SupportPoint& tip, cons
     return true;
 }
 
-std::pair<std::string, std::string> describeEdit(const TipEdit& e, const fruit::Transform& t) {
+std::pair<std::string, std::string> describeEdit(const TipEdit& e, const PartFrames& frames) {
     using K = TipEdit::Kind;
+    const fruit::Transform* tp = frames.find(e.part);
+    const fruit::Transform t = tp ? *tp : fruit::Transform{};
     const double z = t.apply(e.at).z;
     switch (e.kind) {
         case K::Add: return {"Added a tip", fmt("%.1f mm, %.1f mm up", e.diameter, z)};

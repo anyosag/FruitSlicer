@@ -71,9 +71,16 @@ void plateMap(const App& app, const Document& doc) {
     auto map = [&](double x, double y) {
         return ImVec2(p.x + w / 2 + static_cast<float>(x) * sx, p.y + h / 2 - static_cast<float>(y) * sy);
     };
-    const fruit::BBox3 b = doc.placedBox();
-    const ImVec2 a = map(b.min.x, b.max.y), c = map(b.max.x, b.min.y);
     dl->PushClipRect(p, ImVec2(p.x + w, p.y + h), true);
+    // The other parts dimmer, the selected one over them.
+    for (const Part& part : doc.parts()) {
+        if (part.id() == doc.selectedId()) continue;
+        const fruit::BBox3 b = part.box();
+        dl->AddRectFilled(map(b.min.x, b.max.y), map(b.max.x, b.min.y),
+                          part.fit().fits ? IM_COL32(0x5E, 0x65, 0x72, 255) : IM_COL32(0x8A, 0x4A, 0x4A, 255), 2);
+    }
+    const fruit::BBox3 b = doc.part().box();
+    const ImVec2 a = map(b.min.x, b.max.y), c = map(b.max.x, b.min.y);
     dl->AddRectFilled(a, c, doc.fit().fits ? IM_COL32(0xA9, 0xB1, 0xBE, 255) : IM_COL32(0xD8, 0x6A, 0x6A, 255), 2);
     dashedRect(dl, ImVec2(p.x + w / 2, p.y), ImVec2(p.x + w / 2, p.y + h), IM_COL32(0x5A, 0x62, 0x70, 255), 1, 4, 4);
     dashedRect(dl, ImVec2(p.x, p.y + h / 2), ImVec2(p.x + w, p.y + h / 2), IM_COL32(0x5A, 0x62, 0x70, 255), 1, 4, 4);
@@ -185,7 +192,7 @@ void scaleBody(App& app, Document& doc) {
 }
 
 void repairBody(App& app, const Document& doc) {
-    const fruit::MeshCheck& c = doc.check;
+    const fruit::MeshCheck& c = doc.part().check();
     const RepairWords repair = repairWords(c);
     using Level = RepairWords::Level;
     const bool repaired = repair.level == Level::Repaired || repair.level == Level::Check;
@@ -461,7 +468,9 @@ void topPill(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     if (!doc) return;
     const bool supports = app.step() == Step::Supports && !app.editingTips() && doc->supports.result != nullptr;
     const bool hollow = app.step() == Step::Orient && app.orientView() == OrientView::Hollow;
-    const bool patched = app.step() == Step::Model && doc->check.repair.patch_faces > 0;
+    bool patched = false;
+    if (app.step() == Step::Model)
+        for (const Part& part : doc->parts()) patched = patched || part.check().repair.patch_faces > 0;
     const char* hint = nullptr;
     if (app.editingTips()) {
         hint = app.tipTool() == App::TipTool::Add    ? "Click the model to add a tip · [ and ] change the selected tip's size"
@@ -542,6 +551,7 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
             case Step::Layers:
             case Step::Print: break;
         }
+        partsPick(app, d, origin, size);
     }
     viewCube(app, origin, size);
     topPill(app, doc, origin, size);
@@ -549,7 +559,7 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
     else toolRail(app, doc, origin);
     if (doc) toolPanel(app, *doc, origin, size);
     modelTools(app, doc, origin, size);
-    if (doc && app.step() == Step::Orient && app.orientView() == OrientView::Results && doc->orient.results)
+    if (doc && app.step() == Step::Orient && app.orientView() == OrientView::Results && doc->orient().results)
         resultsSheet(app, *doc, origin, size);
 }
 

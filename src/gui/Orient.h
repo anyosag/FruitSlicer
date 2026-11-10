@@ -67,11 +67,12 @@ fruit::SupportConfig supportConfig(const fruit::Placement& p);
 // the model placed per `p`.
 std::vector<fruit::Vec3> visibleInPrinter(const std::vector<fruit::Vec3>& model_dirs, const fruit::Placement& p);
 
-// Scores the model as `doc` places it.
+// Scores the selected part of `doc` as it is placed, on its own.
 OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visible_model,
                       const fruit::JobControl& ctl);
 
-// Scores how it sits, then searches for better build directions.
+// Scores how the selected part sits, then searches for better build
+// directions for it.
 OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible_model, const fruit::JobControl& ctl);
 
 // `placed` seen from below, mirrored as from underneath, `mm_per_px` per

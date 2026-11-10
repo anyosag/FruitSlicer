@@ -63,7 +63,7 @@ bool fitYaw(const Document& doc, fruit::Vec3& rotation_deg) {
     for (int k = 0; k < 12; ++k) {
         q.rotation_deg = rotation_deg;
         q.rotation_deg.z = std::fmod(rotation_deg.z + 15.0 * k, 360.0);
-        if (fruit::checkFit(doc.model.mesh, q, doc.printer).fits_centred) {  // useOrientation slides it on
+        if (fruit::checkFit(doc.part().mesh(), q, doc.printer).fits_centred) {  // useOrientation slides it on
             rotation_deg = q.rotation_deg;
             return true;
         }
@@ -88,7 +88,7 @@ OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visib
     cos.visible_from = visibleInPrinter(visible_model, p);
     fruit::PointGenOptions po;
     po.cosmetic = &cos;
-    const fruit::PointGenResult res = fruit::generateSupportPoints(doc.placed(), cfg, po, ctl);
+    const fruit::PointGenResult res = fruit::generateSupportPoints(doc.part().placed(), cfg, po, ctl);
     fruit::CostField cf;
     cf.cosmetic = &cos;
     OrientMetrics m;
@@ -99,7 +99,7 @@ OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visib
     }
     m.short_of_hold = res.stats.capacity_deficits;
     m.biggest_layer = res.stats.peak_layer_area;
-    m.top = doc.placed().bbox().max.z;
+    m.top = doc.part().placed().bbox().max.z;
     m.layers = layersFor(m.top);
     return m;
 }
@@ -113,7 +113,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
 
     // Search the model at its chosen scale, unrotated: the results are then
     // the placement's rotation angles.
-    fruit::TriangleMesh m = doc.model.mesh;
+    fruit::TriangleMesh m = doc.part().mesh();
     fruit::Transform scale;
     for (int i = 0; i < 3; ++i) scale.m[i][i] = p.scale;
     m.transform(scale);
@@ -169,7 +169,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     auto place = [&](const fruit::Vec3& rot) {
         fruit::Placement q = p;
         q.rotation_deg = rot;
-        placed.push_back(fruit::placeModel(doc.model.mesh, q));
+        placed.push_back(fruit::placeModel(doc.part().mesh(), q));
         const fruit::Vec3 sz = placed.back().bbox().size();
         extent = std::max({extent, sz.x, sz.y});
     };

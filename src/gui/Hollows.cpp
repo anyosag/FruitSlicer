@@ -31,6 +31,29 @@ std::size_t HollowPlan::missed() const {
         std::count_if(placed.begin(), placed.end(), [](const fruit::PlacedHole& h) { return h.cavity < 0; }));
 }
 
+std::vector<fruit::PlacedHole> placeHoles(const std::vector<fruit::DrainHole>& holes, const PartFrames& frames,
+                                          const fruit::LayerStack& solid, const fruit::HollowResult& hollow) {
+    // Each part's holes with its own transform, back in the holes' order.
+    std::vector<fruit::PlacedHole> out(holes.size());
+    std::vector<int> parts;
+    for (const fruit::DrainHole& h : holes)
+        if (std::find(parts.begin(), parts.end(), h.part) == parts.end()) parts.push_back(h.part);
+    for (const int part : parts) {
+        const fruit::Transform* t = frames.find(part);
+        std::vector<fruit::DrainHole> mine;
+        std::vector<std::size_t> at;
+        for (std::size_t i = 0; i < holes.size(); ++i)
+            if (holes[i].part == part) {
+                mine.push_back(holes[i]);
+                at.push_back(i);
+            }
+        if (!t) continue;  // not on the plate: not drilled
+        const std::vector<fruit::PlacedHole> placed = fruit::placeHoles(mine, *t, solid, hollow);
+        for (std::size_t k = 0; k < placed.size(); ++k) out[at[k]] = placed[k];
+    }
+    return out;
+}
+
 HollowPlan planHollow(const Document& doc, const HollowChoices& c, const std::vector<fruit::DrainHole>& manual,
                       double layer_height, const fruit::JobControl& ctl) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -55,11 +78,28 @@ HollowPlan planHollow(const Document& doc, const HollowChoices& c, const std::ve
     }
     ctl.step("holes", 0.85);
     const fruit::HollowResult& cav = p.cavities();
-    if (p.drilling() && !cav.cavities.empty())
-        p.holes = c.auto_holes ? fruit::suggestDrainHoles(doc.placed(), doc.transform(), *base, cav, c.hole_diameter)
-                               : manual;
+    const PartFrames frames = doc.frames();
+    if (p.drilling() && !cav.cavities.empty()) {
+        if (!c.auto_holes) {
+            // Those placed by hand, on the parts there are.
+            for (const fruit::DrainHole& h : manual)
+                if (frames.find(h.part)) p.holes.push_back(h);
+        } else if (doc.partCount() == 1) {
+            p.holes = fruit::suggestDrainHoles(doc.placed(), doc.part().transform(), *base, cav, c.hole_diameter);
+            for (fruit::DrainHole& h : p.holes) h.part = doc.part().id();
+        } else {
+            // Found on the parts together, then kept on the part each goes into.
+            p.holes = fruit::suggestDrainHoles(doc.placed(), fruit::Transform{}, *base, cav, c.hole_diameter);
+            for (fruit::DrainHole& h : p.holes) {
+                h.part = doc.partNear(h.at);
+                const fruit::Transform to_part = frames.find(h.part)->inverse();
+                h.at = to_part.apply(h.at);
+                h.axis = fruit::normalized(to_part.applyLinear(h.axis));
+            }
+        }
+    }
     if (!p.holes.empty()) {
-        p.placed = fruit::placeHoles(p.holes, doc.transform(), *base, cav);
+        p.placed = placeHoles(p.holes, frames, *base, cav);
         p.layers = std::make_shared<const fruit::LayerStack>(fruit::drilledLayers(*base, cav, p.placed));
     } else if (c.hollow) {
         p.layers = std::make_shared<const fruit::LayerStack>(fruit::hollowedLayers(*base, cav));
@@ -176,14 +216,18 @@ std::size_t hollowsToFix(const Document& doc) {
     // Until it is planned again: what was chosen is taken to work.
     if (hs.applied && (hs.choices.hollow || hs.choices.fix != HollowChoices::Fix::Leave)) return 0;
     if (hs.plan && hs.plan_revision == doc.revision()) return hs.plan->closed.cavities.size();
-    return static_cast<std::size_t>(std::max(0, doc.check.cavities));
+    std::size_t n = 0;
+    for (const Part& part : doc.parts()) n += static_cast<std::size_t>(std::max(0, part.check().cavities));
+    return n;
 }
 
 HollowOutcome hollowSummary(const Document& doc) {
     const HollowState& hs = doc.hollow;
     const HollowChoices& c = hs.choices;
     const std::size_t left = hollowsToFix(doc);
-    const std::size_t m = hs.manual.size();
+    const PartFrames frames = doc.frames();  // holes on a part off the job don't count
+    const auto m = static_cast<std::size_t>(
+        std::count_if(hs.manual.begin(), hs.manual.end(), [&](const fruit::DrainHole& h) { return frames.find(h.part); }));
     const std::string by_hand = m == 1 ? std::string("1 drain hole placed by hand")
                                        : strf("%zu drain holes placed by hand", m);
     const std::string holes = c.auto_holes ? std::string("Drain holes placed automatically") : by_hand;

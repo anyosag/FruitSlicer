@@ -52,6 +52,7 @@ set(app_sources
   main.cpp
   ABTest.cpp
   App.cpp
+  AppParts.cpp
   Calibration.cpp
   Capture.cpp
   Dialogs.cpp
@@ -68,6 +69,7 @@ set(app_sources
   Navigation.cpp
   ViewCube.cpp
   Orient.cpp
+  Parts.cpp
   Placing.cpp
   Plates.cpp
   Preferences.cpp
@@ -88,6 +90,7 @@ set(app_sources
   screens/JobPanel.cpp
   screens/JobScreen.cpp
   screens/LayersStep.cpp
+  screens/PartsList.cpp
   screens/PlaceHandles.cpp
   screens/PlateScreens.cpp
   screens/PrintStep.cpp
