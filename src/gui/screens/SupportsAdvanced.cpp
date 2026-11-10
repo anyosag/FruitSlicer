@@ -247,7 +247,7 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
     {
         const float right = ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x;
         ImGui::PushFont(fonts().bold, size::Body);
-        const float aw = ImGui::CalcTextSize("Apply and regenerate").x + 32;
+        const float aw = ImGui::CalcTextSize("Apply and remake supports").x + 32;
         ImGui::PopFont();
         ImGui::PushFont(fonts().semibold, size::Body);
         const float rw = ImGui::CalcTextSize("Reset all").x + 28;
@@ -257,7 +257,7 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
         if (secondaryButton("Reset all", ImVec2(rw, 38))) app.resetAdvanced();
         tooltip("Every value on this page back to FruitSlicer's own.");
         ImGui::SameLine(0, 10);
-        if (primaryButton("Apply and regenerate", ImVec2(aw, 38))) app.applyAdvanced();
+        if (primaryButton("Apply and remake supports", ImVec2(aw, 38))) app.applyAdvanced();
         ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ty + 52));
     }
     ImGui::Dummy(ImVec2(0, 4));

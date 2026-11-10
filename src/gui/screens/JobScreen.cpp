@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
-// The job: top bar with the step bar, the current step's panels around the
-// 3D view, and the status bar.
+// The job: the top bar (Prepare or Layers), the 3D view with the tools
+// around it and the Job panel, or the layers; and the status bar.
 #include <imgui.h>
 
 #include <algorithm>
@@ -60,6 +60,29 @@ void tooltip(const char* s) {
     ImGui::PopStyleVar();
 }
 
+// A card floating over the 3D view: rounded, bordered, as tall as what is in
+// it (up to `max_h`, then it scrolls); `w` 0 makes it as wide as what is in it.
+void beginFloat(const char* id, ImVec2 pos, float w, float max_h, ImVec2 padding) {
+    ImGui::SetCursorScreenPos(pos);
+    // A soft shadow under it, on the view.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0x18, 0x1B, 0x21, 248));
+    ImGui::PushStyleColor(ImGuiCol_Border, col::Border);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
+    if (max_h > 0) ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w > 0 ? w : 4000.0f, max_h));
+    ImGuiChildFlags flags = ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY;
+    if (w <= 0) flags |= ImGuiChildFlags_AutoResizeX;
+    ImGui::BeginChild(id, ImVec2(w, 0), flags, max_h > 0 ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 8));
+}
+
+void endFloat() {
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
 }  // namespace gui::screens::parts
 
 namespace gui::screens {
@@ -70,450 +93,77 @@ using namespace parts;
 
 // ---- Top bar ----
 
-// The accent button: what it says, whether it can be pressed (and why not),
-// and what it does.
-struct Action {
-    std::string label;
-    bool enabled = true;
-    std::string why;
-    std::function<void()> run;
-};
-
-// The fix that makes it fit where it is: back onto the plate, a quarter
-// turn, or the largest size that fits.
-Action fitAction(App& app, const Document& doc) {
-    const fruit::PlateFit& f = doc.fit();
-    if (f.overEdge()) return {"Move it back on the plate", true, "", [&app] { app.slideOntoPlate(); }};
-    if (f.fits_turned) return {"Turn 90° to fit", true, "", [&app] { app.turnQuarter(); }};
-    return {"Scale to fit", true, "", [&app] { app.scaleToFit(); }};
-}
-
-// Supports for the model where it is now, from any place; or the fix that
-// has to come first; or, once they are made, on to the layers.
-Action supportsAction(App& app, const Document& doc) {
-    if (app.jobs().busy() && app.jobs().progress().name == "Generating supports") return {"Generating...", false, "", {}};
-    if (!doc.fit().fits) return fitAction(app, doc);
-    if (!doc.supports.result) return {"Generate supports", true, "", [&app] { app.supportsNow(); }};
-    if (!doc.supports.fresh(doc.revision(), doc.supportSettings()))
-        return {"Regenerate supports", true, "", [&app] { app.supportsNow(); }};
-    return {"Go to Layers", true, "", [&app] { app.goToStep(Step::Layers); }};
+void iconButton(const char* id, IconFn ic, bool enabled, const char* tip, const std::function<void()>& run) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    if (ImGui::InvisibleButton(id, ImVec2(34, 34)) && enabled) run();
+    const bool h = enabled && ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + 34, p.y + 34), h ? col::Active : col::Panel, 8);
+    dl->AddRect(p, ImVec2(p.x + 34, p.y + 34), col::Border, 8);
+    ic(dl, ImVec2(p.x + 8, p.y + 8), 18, enabled ? col::TextSecondary : IM_COL32(0x4B, 0x52, 0x60, 255));
+    if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    tooltip(tip);
 }
 
 void topBar(App& app) {
     beginPanel("top", ImVec2(0, kTopH), col::Panel, ImVec2(16, 0));
     edge(false, true);
     const auto& doc = app.document();
-    ImGui::SetCursorPos(ImVec2(16, 12));
+    ImGui::SetCursorPos(ImVec2(16, 10));
     ImGui::BeginGroup();
     text(doc ? doc->name.c_str() : "New job", fonts().semibold, size::Body + 1, col::Text);
     const char* state = !doc || doc->job_path.empty() ? "Not saved" : doc->unsaved() ? "Edited since saving" : "Saved";
     text(state, fonts().regular, size::Help, col::TextMuted);
-    if (doc) parts::tooltip(doc->job_path.empty() ? "Save the job with ⌘S." : doc->job_path.c_str());
+    if (doc) tooltip(doc->job_path.empty() ? "Save the job with ⌘S." : doc->job_path.c_str());
     ImGui::EndGroup();
 
-    static const char* kPlaces[] = {"Model", "Orient", "Supports", "Layers", "Print"};
-    ImGui::SetCursorPos(ImVec2(152, 11));
-    for (int i = 0; i < 5; ++i) {
-        const Step s = static_cast<Step>(i);
-        std::string badge;
-        ImU32 badge_col = col::Warn;
-        if (s == Step::Model && doc && !doc->fit().fits) {
-            badge = doc->fit().overEdge() ? "over the edge" : "too big";
-            badge_col = col::Error;
-        }
-        if (s == Step::Orient && doc) {
-            if (const std::size_t n = hollowsToFix(*doc)) badge = strf("%zu to fix", n);
-        }
-        if (s == Step::Supports && doc && doc->supports.result) {
-            if (!doc->supports.fresh(doc->revision(), doc->supportSettings())) {
-                badge = "out of date";
-                badge_col = col::TextMuted;
-            } else if (const std::size_t n = doc->supports.result->count(SupportProblem::Level::Review) +
-                                             doc->supports.result->count(SupportProblem::Level::Blocks)) {
-                badge = strf("%zu to review", n);
-            }
-        }
-        const Mark m = doc ? markFor(*doc, s) : Mark::None;
-        const TabMark tm = m == Mark::Done ? TabMark::Done : m == Mark::Problem ? TabMark::Problem : TabMark::None;
-        if (placeTab(kPlaces[i], doc && app.step() == s, tm, badge.empty() ? nullptr : badge.c_str(), badge_col)) {
-            if (doc) app.goToStep(s);
-            else app.openDialog();
-        }
-        if (!doc) {
-            tooltip("Open a model first.");
-        } else {
-            switch (app.needFor(s)) {
-                case Need::Nothing: break;
-                case Need::Fit: tooltip("It doesn't fit the plate where it is yet."); break;
-                case Need::Supports: tooltip("No supports yet: it shows how to make them."); break;
-                case Need::FreshSupports: tooltip("The supports are out of date."); break;
-                case Need::Layers: tooltip("The layers aren't cut yet: Layers cuts them."); break;
-            }
-        }
-        ImGui::SameLine(0, 6);
-    }
-
-    // Right side: the resin in use, then the one accent button, which names
-    // the most useful thing to do from here.
-    Action next{"Open model...", true, "", [&app] { app.openDialog(); }};
-    if (doc && app.step() == Step::Model) {
-        next = supportsAction(app, *doc);
-    } else if (doc && app.step() == Step::Supports && app.editingTips()) {
-        next = {"Done editing", true, "", [&app] { app.editTips(false); }};
-    } else if (doc && app.step() == Step::Supports) {
-        next = supportsAction(app, *doc);
-    } else if (doc && app.step() == Step::Layers) {
-        if (app.needFor(Step::Layers) != Need::Nothing) {
-            next = supportsAction(app, *doc);
-        } else {
-            next = {"Go to Print", doc->layers.fresh(doc->supports.result), "Wait for the layers to be cut.",
-                    [&app] { app.goToStep(Step::Print); }};
-        }
-    } else if (doc && app.step() == Step::Print && showingSaved(*doc)) {
-        const bool drive = !doc->print.drive.empty();
-        next = {drive ? "Eject the drive" : "Show in Finder", !app.jobs().busy(), "",
-                [&app, drive] { drive ? app.ejectDrive() : app.revealSaved(); }};
-    } else if (doc && app.step() == Step::Print) {
-        const std::string why = app.printBlocker();
-        next = {app.sendOverWifi() ? "Send to printer" : "Save .goo", why.empty(), why, [&app] { app.savePrint(); }};
-    } else if (doc && app.step() == Step::Orient) {
-        const OrientState& o = doc->orient;
-        const HollowState& hs = doc->hollow;
-        const bool hollow_view = app.orientView() == OrientView::Hollow;
-        if (hollow_view && !hs.applied && app.planningHollow()) {
-            next = {"Finding hollows...", false, "", {}};
-        } else if (hollow_view && !hs.applied && hs.planFresh(doc->revision()) && hs.plan->changes()) {
-            next = {applyLabel(*hs.plan), true, "", [&app] { app.applyHollow(); }};
-        } else if (app.needFor(Step::Orient) == Need::Fit) {
-            next = fitAction(app, *doc);
-        } else if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
-            next = {"Use option 1", true, "", [&app] { app.useOrientation(0); }};
-        } else if (o.decided) {
-            next = supportsAction(app, *doc);
-        } else {
-            next = {"Find best orientation",
-                    !(app.jobs().busy() && app.jobs().progress().name == "Finding the best orientation"), "",
-                    [&app] { app.findOrientation(); }};
-        }
-    }
-    ImGui::PushFont(fonts().bold, size::Body);
-    const float bw = ImGui::CalcTextSize(next.label.c_str()).x + 32;
-    ImGui::PopFont();
-    const float right = ImGui::GetWindowWidth() - 16;
-    ImGui::SetCursorPos(ImVec2(right - bw, 10));
-    if (primaryButton(next.label.c_str(), ImVec2(bw, 38), next.enabled) && next.run) next.run();
-    if (!next.enabled && !next.why.empty()) tooltip(next.why.c_str());
-    // The job's resin: its print settings and support values. Click to change it.
-    const std::string label = doc ? resinLabel(doc->supports.choices.resin, doc->supports.choices.profile)
-                                  : resinLabel(app.newJobResin().name, app.newJobResin().profile);
-    ImGui::PushFont(fonts().medium, size::Body);
-    const float cw = ImGui::CalcTextSize(label.c_str()).x + 40;
-    ImGui::PopFont();
-    ImGui::SetCursorPos(ImVec2(right - bw - 16 - cw, 14));
-    const ImVec2 chip_at = ImGui::GetCursorScreenPos();
-    if (chip("resin", label.c_str(), col::TextMuted, col::TextSecondary, col::Panel, col::BorderStrong) && doc)
-        ImGui::OpenPopup("resin_menu");
-    tooltip(doc ? "The resin this job is printed in: its print settings and support values. Click to change it."
-                : "The resin new jobs start with.");
-    if (app.resinMenu() && doc) {  // opened by a script
-        ImGui::OpenPopup("resin_menu");
-        app.resinMenu() = false;
-    }
-    ImGui::SetNextWindowPos(ImVec2(chip_at.x, chip_at.y + 36));
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, col::Panel);
-    ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10);
-    if (ImGui::BeginPopup("resin_menu")) {
-        text("Print this job in", fonts().semibold, size::Help, col::TextMuted);
-        ImGui::Dummy(ImVec2(0, 2));
-        for (const Resin& r : app.resins()) {
-            ImGui::PushID(r.id.c_str());
-            const bool now = doc && doc->supports.choices.resin == r.name && doc->supports.choices.profile == r.profile;
-            const auto sample = app.resinSample(r);
-            const std::string sub = resinSummary(r, sample.get());
-            const ImVec2 p = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("pick", ImVec2(300, 44))) app.useResinForJob(r.id);
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            if (ImGui::IsItemHovered() || now) dl->AddRectFilled(p, ImVec2(p.x + 300, p.y + 44), col::Card, 8);
-            if (now) icon::check(dl, ImVec2(p.x + 8, p.y + 14), 14, col::Accent);
-            ImGui::PushFont(fonts().semibold, size::Body);
-            dl->AddText(ImVec2(p.x + 30, p.y + 6), col::Text, r.name.c_str());
-            ImGui::PopFont();
-            ImGui::PushFont(fonts().regular, size::Help);
-            dl->AddText(ImVec2(p.x + 30, p.y + 24), col::TextMuted, sub.c_str());
-            ImGui::PopFont();
-            ImGui::PopID();
-        }
-        ImGui::Dummy(ImVec2(0, 2));
-        if (linkButton("Manage resins…")) {
-            ImGui::CloseCurrentPopup();
-            app.resinSelected() = app.newJobResin().id;
-            app.setScreen(Screen::Resins);
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(2);
-    endPanel();
-}
-
-// ---- Left panel ----
-
-void emptyLeft(App&) {
-    sectionTitle("Model");
-    ImGui::Dummy(ImVec2(0, 2));
-    text("No model on the plate yet. Open a file or drop it on the plate.", fonts().regular, size::Body,
-         col::TextSecondary, true);
-    ImGui::Dummy(ImVec2(0, 6));
-    groupLabel("Files FruitSlicer reads");
-    for (auto [k, v] : {std::pair{"STL", "binary or text"}, std::pair{"OBJ", "shapes only, no colours"},
-                        std::pair{"3MF", "every object on the plate"}}) {
-        beginCard(k, ImVec2(0, 40), 0, col::Panel, col::Border);
-        ImGui::SetCursorPos(ImVec2(12, 12));
-        text(k, fonts().semibold, size::Body, col::Text);
-        ImGui::PushFont(fonts().regular, size::Body);
-        const float vw = ImGui::CalcTextSize(v).x;
-        ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 12 - vw, 12));
-        text(v, fonts().regular, size::Body, col::TextMuted);
-        endCard();
-    }
-    ImGui::Dummy(ImVec2(0, 6));
-    groupLabel("What happens next");
-    const char* steps[] = {"FruitSlicer checks the mesh, and repairs holes and inside-out parts.",
-                           "It checks the size against the plate.",
-                           "You place it: move it, turn it, scale it. Supports can come next; Orient helps if you want."};
-    for (int i = 0; i < 3; ++i) {
-        text(strf("%d.", i + 1).c_str(), fonts().regular, size::Body, col::TextSecondary);
-        ImGui::SameLine(0, 6);
-        text(steps[i], fonts().regular, size::Body, col::TextSecondary, true);
-    }
-}
-
-void fileCard(App& app, const Document& doc) {
-    beginCard("file", ImVec2(0, 62), 0, col::Card, col::Border);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 p = ImGui::GetWindowPos();
-    dl->AddRectFilled(ImVec2(p.x + 12, p.y + 15), ImVec2(p.x + 44, p.y + 47), col::Viewport, 7);
-    const std::string letter(1, static_cast<char>(std::toupper(static_cast<unsigned char>(doc.name.empty() ? '?' : doc.name[0]))));
-    ImGui::PushFont(fonts().bold, size::Section);
-    const ImVec2 ls = ImGui::CalcTextSize(letter.c_str());
-    dl->AddText(ImVec2(p.x + 28 - ls.x / 2, p.y + 31 - ls.y / 2), col::Text, letter.c_str());
-    ImGui::PopFont();
-    ImGui::SetCursorPos(ImVec2(56, 12));
-    ImGui::BeginGroup();
-    const std::string file = std::filesystem::path(doc.path).filename().string();
-    text(file.c_str(), fonts().semibold, size::Body, col::Text);
-    text((thousands(doc.check.triangles) + " triangles · " + (doc.check.closed() ? "closed" : "open")).c_str(),
-         fonts().regular, size::Help, col::TextMuted);
-    ImGui::EndGroup();
-    ImGui::PushFont(fonts().semibold, size::Body);
-    const float rw = ImGui::CalcTextSize("Replace").x;
-    ImGui::PopFont();
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 12 - rw, 22));
-    ImGui::PushFont(fonts().semibold, size::Body);
-    ImGui::PushStyleColor(ImGuiCol_Text, col::Accent);
-    if (ImGui::Selectable("Replace", false, 0, ImVec2(rw, 0))) app.openDialog();
-    ImGui::PopStyleColor();
-    ImGui::PopFont();
-    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    endCard();
-}
-
-void modelLeft(App& app, Document& doc) {
-    fileCard(app, doc);
-    ImGui::Dummy(ImVec2(0, 8));
-    groupLabel("Size");
-    const fruit::Placement& p = doc.placement();
-    const float w = ImGui::GetContentRegionAvail().x;
+    // Prepare or Layers, in the middle. Layers opens once there are up-to-date
+    // supports to slice; the Job panel's Slice button gets there too.
     {
-        const float y = ImGui::GetCursorPosY();
-        ImGui::SetCursorPosY(y + 8);
-        text("Scale", fonts().regular, size::Body, col::TextSecondary);
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - 108, y));
-        double pct = p.scale * 100;
-        if (numberField("scale", &pct, 90, "%g", 1, 100000)) app.setScalePercent(pct);
-        ImGui::SameLine(0, 6);  // ImGui aligns text with the field's own text
-        text("%", fonts().regular, size::Body, col::TextSecondary);
-    }
-    text(dims(doc.fit().size).c_str(), fonts().regular, size::Body, col::TextSecondary);
-    const fruit::PlateFit& f = doc.fit();
-    {
-        const double best = std::max(f.largest, f.largest_turned);
-        const std::string label = "Largest that fits (" + percent(best) + (f.largest_turned > f.largest ? ", turned)" : ")");
-        if (segmentButton(label.c_str(), false)) app.scaleToFit();
-    }
-    if (!f.fits) {
-        // Why it is red, in plain words, and the fix.
-        const char* why = f.overEdge() ? "Over the plate's edge where it is."
-                          : f.fits_turned ? "Too big for the plate as it lies. Turned 90° it fits at this size."
-                                          : "Too big for the plate at this size, however it is turned.";
-        text(why, fonts().regular, size::Body, col::Error, true);  // the fix is the accent button
-    }
-    ImGui::Dummy(ImVec2(0, 8));
-    // A group's label with a small button at the right end of its line.
-    auto labelWithButton = [&](const char* label, const char* button) {
-        const float y = ImGui::GetCursorPosY();
-        groupLabel(label);
-        const float after = ImGui::GetCursorPosY();
-        ImGui::PushFont(fonts().medium, size::Body);
-        const float bw = ImGui::CalcTextSize(button, nullptr, true).x + 22;
-        ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - bw, y - 8));
-        const bool clicked = segmentButton(button, false);
-        ImGui::SetCursorPosY(std::max(after, ImGui::GetCursorPosY() - 6));
-        return clicked;
-    };
-    if (labelWithButton("Position on the plate", "Centre")) app.centreModel();
-    {
-        const float fw = (w - 8) / 2;
-        const float x0 = ImGui::GetCursorPosX(), y = ImGui::GetCursorPosY();
-        const char* axes[] = {"X mm", "Y mm"};
-        fruit::Vec2 o = p.offset;
-        double* v[] = {&o.x, &o.y};
-        bool changed = false;
-        for (int i = 0; i < 2; ++i) {
-            ImGui::SetCursorPos(ImVec2(x0 + i * (fw + 8), y));
-            text(axes[i], fonts().regular, size::Help, col::TextMuted);
-            ImGui::SetCursorPos(ImVec2(x0 + i * (fw + 8), y + 20));
-            if (numberField(axes[i], v[i], fw, "%g", -1000, 1000)) changed = true;
-        }
-        if (changed) app.setPosition(o);
-        ImGui::SetCursorPos(ImVec2(x0, y + 20 + 34 + 8));
-    }
-    text("Its middle, from the plate's centre. Drag the arrows in the view, or use the arrow keys.", fonts().regular,
-         size::Body, col::TextSecondary, true);
-    ImGui::Dummy(ImVec2(0, 8));
-    if (labelWithButton("Rotation", "Turn 90°")) app.turnQuarter();
-    {
-        const float fw = (w - 16) / 3;
-        const float x0 = ImGui::GetCursorPosX(), y = ImGui::GetCursorPosY();
-        const char* axes[] = {"X °", "Y °", "Z °"};
-        fruit::Vec3 r = p.rotation_deg;
-        double* v[] = {&r.x, &r.y, &r.z};
-        bool changed = false;
-        for (int i = 0; i < 3; ++i) {
-            ImGui::SetCursorPos(ImVec2(x0 + i * (fw + 8), y));
-            text(axes[i], fonts().regular, size::Help, col::TextMuted);
-            ImGui::SetCursorPos(ImVec2(x0 + i * (fw + 8), y + 20));
-            if (numberField(axes[i], v[i], fw, "%g", -360, 360)) changed = true;
-        }
-        if (changed) app.setRotation(r);
-        ImGui::SetCursorPos(ImVec2(x0, y + 20 + 34 + 8));
-    }
-    text("Drag the rings in the view to turn it; hold ⇧ for 15° steps. Orient can look for a good way up if you "
-         "want; supports don't need it.",
-         fonts().regular, size::Body, col::TextSecondary, true);
-    ImGui::Dummy(ImVec2(0, 8));
-    groupLabel("How it sits on the plate");
-    const std::string raised = strf("%.0f mm above a 1 mm raft that comes off in one piece. Best for most models.",
-                                    fruit::Placement{}.elevation);
-    if (radioCard("raised", "Raised on supports", raised.c_str(), !p.on_plate)) app.setOnPlate(false);
-    ImGui::Dummy(ImVec2(0, 2));
-    if (radioCard("flat", "Flat on the plate", "For flat-backed parts. No raft; only overhangs get tips.", p.on_plate))
-        app.setOnPlate(true);
-}
-
-void leftPanel(App& app, float h) {
-    beginPanel("left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 18), true);
-    edge(true, false);
-    if (const auto& doc = app.document()) modelLeft(app, *doc);
-    else emptyLeft(app);
-    endPanel();
-}
-
-// ---- Right panel ----
-
-void plateMap(const App& app, const Document& doc) {
-    const fruit::PrinterProfile& pr = app.printer();
-    const float w = ImGui::GetContentRegionAvail().x;
-    const float h = std::round(w * static_cast<float>(pr.build_y / pr.build_x));
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(w, h));
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), col::Viewport, 8);
-    const float sx = w / static_cast<float>(pr.build_x), sy = h / static_cast<float>(pr.build_y);
-    auto map = [&](double x, double y) {
-        return ImVec2(p.x + w / 2 + static_cast<float>(x) * sx, p.y + h / 2 - static_cast<float>(y) * sy);
-    };
-    const fruit::BBox3 b = doc.placedBox();
-    const ImVec2 a = map(b.min.x, b.max.y), c = map(b.max.x, b.min.y);
-    dl->PushClipRect(p, ImVec2(p.x + w, p.y + h), true);
-    dl->AddRectFilled(a, c, doc.fit().fits ? IM_COL32(0xA9, 0xB1, 0xBE, 255) : IM_COL32(0xD8, 0x6A, 0x6A, 255), 2);
-    dashedRect(dl, ImVec2(p.x + w / 2, p.y), ImVec2(p.x + w / 2, p.y + h), IM_COL32(0x5A, 0x62, 0x70, 255), 1, 4, 4);
-    dashedRect(dl, ImVec2(p.x, p.y + h / 2), ImVec2(p.x + w, p.y + h / 2), IM_COL32(0x5A, 0x62, 0x70, 255), 1, 4, 4);
-    // As far as it may go: the margin the raft needs round it.
-    const double m = fruit::plateMargin(doc.placement());
-    dashedRect(dl, map(-pr.build_x / 2 + m, pr.build_y / 2 - m), map(pr.build_x / 2 - m, -pr.build_y / 2 + m),
-               doc.fit().fits ? IM_COL32(0x8A, 0x92, 0xA0, 255) : IM_COL32(0xD8, 0x6A, 0x6A, 255), 1, 5, 4);
-    dl->PopClipRect();
-    dl->AddRect(p, ImVec2(p.x + w, p.y + h), col::Border, 8);
-}
-
-void healthCard(App& app, const Document& doc) {
-    const fruit::MeshCheck& c = doc.check;
-    const RepairWords repair = repairWords(c);
-    using Level = RepairWords::Level;
-    std::string issues;
-    auto add = [&](const std::string& s) { issues += (issues.empty() ? "" : " ") + s; };
-    if (repair.level == Level::Open) add(repair.brief);
-    if (c.cavities) add(strf("%d closed %s inside.", c.cavities, c.cavities == 1 ? "hollow" : "hollows"));
-    // Fine as it is or as repaired; a big patch, like an open edge or a
-    // hollow, is something to look at.
-    const bool clean = issues.empty() && repair.level != Level::Check;
-    const char* title = "Mesh is clean";
-    std::string body;
-    if (repair.level == Level::Repaired || repair.level == Level::Check) {
-        title = repair.level == Level::Check ? "Mesh repaired: check the patch" : "Mesh repaired";
-        body = repair.brief + (issues.empty() ? "" : " " + issues);
-    } else if (clean) {
-        body = (c.shells == 1 ? std::string("One closed shell") : std::to_string(c.shells) + " closed shells") +
-               (c.flipped ? strf(", %d turned outward", c.flipped) : std::string(", nothing flipped")) + ", no hollows.";
-    } else {
-        title = "Check the mesh";
-        body = issues;
-    }
-    beginCard("health", ImVec2(0, 0), 14, clean ? col::Panel : col::WarnBg, clean ? col::Border : col::WarnBorder);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    if (clean) icon::check(dl, ImVec2(p.x, p.y + 2), 14, col::Ok);
-    else text("!", fonts().bold, size::Body, col::Warn);
-    ImGui::SetCursorScreenPos(ImVec2(p.x + 22, p.y));
-    ImGui::BeginGroup();
-    text(title, fonts().semibold, size::Body, col::Text);
-    text(body.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
-    if (c.repair.patch_faces > 0) {
-        // Patches are tinted in the view: this turns it to the biggest.
-        if (linkButton(c.repair.holes_filled + c.repair.gaps_closed > 1 ? "Show the biggest patch" : "Show the patch"))
-            app.showPatch();
-    }
-    ImGui::EndGroup();
-    endCard();
-}
-
-void rightPanel(App& app, float h) {
-    beginPanel("right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
-    {
+        const bool layers = doc && inLayersMode(app.step());
+        const MainButton mb = mainButton(doc.get());
+        const bool can_layers = doc && (mb.action == MainAction::Slice || mb.action == MainAction::ShowLayers);
+        const float tw = 104, w = tw * 2 + 6;
+        const float x = std::round((ImGui::GetWindowWidth() - w) / 2);
+        ImGui::SetCursorPos(ImVec2(x, 10));
+        const ImVec2 p = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p = ImGui::GetWindowPos();
-        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 36), col::App, 10);
+        dl->AddRect(p, ImVec2(p.x + w, p.y + 36), col::Border, 10);
+        const char* labels[] = {"Prepare", "Layers"};
+        for (int i = 0; i < 2; ++i) {
+            const ImVec2 q(p.x + 3 + i * tw, p.y + 3);
+            const bool on = (i == 1) == layers;
+            const bool enabled = i == 0 ? doc != nullptr : can_layers;
+            ImGui::SetCursorScreenPos(q);
+            ImGui::PushID(i);
+            const bool clicked = ImGui::InvisibleButton("mode", ImVec2(tw, 30));
+            const bool h = enabled && ImGui::IsItemHovered();
+            ImGui::PopID();
+            if (on) dl->AddRectFilled(q, ImVec2(q.x + tw, q.y + 30), col::Active, 8);
+            ImGui::PushFont(on ? fonts().semibold : fonts().medium, size::Body);
+            const ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+            dl->AddText(ImVec2(q.x + (tw - ts.x) / 2, q.y + (30 - ts.y) / 2),
+                        on ? col::Text : enabled ? (h ? col::Text : col::TextSecondary) : IM_COL32(0x5A, 0x61, 0x6E, 255),
+                        labels[i]);
+            ImGui::PopFont();
+            if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (i == 1 && !enabled) tooltip(doc ? "Nothing sliced yet: make supports, then Slice." : "Open a model first.");
+            if (clicked && enabled && !on) {
+                if (i == 0) app.goToPrepare();
+                else app.goToStep(Step::Layers);
+            }
+        }
     }
-    const auto& doc = app.document();
-    groupLabel("On the plate");
-    ImGui::Dummy(ImVec2(0, 2));
-    plateMap(app, *doc);
-    text("Top view, to scale. It must stay inside the dashed line: the raft needs room round it.", fonts().regular,
-         size::Body, col::TextSecondary, true);
-    ImGui::Dummy(ImVec2(0, 4));
-    const fruit::PlateFit& f = doc->fit();
-    const fruit::Placement& p = doc->placement();
-    keyValue("Footprint", dims2(f.size.x, f.size.y));
-    keyValue("Position", p.centred() ? std::string("centred") : strf("%g, %g mm from the centre", p.offset.x, p.offset.y));
-    keyValue("Height with lift", strf("%.1f of %.0f mm", f.top, app.printer().build_z));
-    keyValue("Model resin", strf("%.1f ml", doc->check.volume_ml * p.scale * p.scale * p.scale));
-    ImGui::Dummy(ImVec2(0, 8));
-    healthCard(app, *doc);
+
+    // Undo and redo, at the right.
+    {
+        const float right = ImGui::GetWindowWidth() - 16;
+        ImGui::SetCursorPos(ImVec2(right - 34 - 6 - 34, 11));
+        iconButton("undo", icon::undo, doc && doc->canUndo(), "Undo (⌘Z)", [&app] { app.undo(); });
+        ImGui::SameLine(0, 6);
+        iconButton("redo", icon::redo, doc && doc->canRedo(), "Redo (⇧⌘Z)", [&app] { app.redo(); });
+    }
     endPanel();
 }
 
@@ -547,30 +197,57 @@ void axisGizmo(App& app, ImVec2 origin, ImVec2 size) {
     ImGui::PopFont();
 }
 
+// How far the model sits above the plate: an arrow from the bottom corner
+// nearest the camera down to a ring on the plate under it, and a label. With
+// supports in the way it stands beside the corner, tied to the model and the
+// plate by dashed lines.
 void liftMarker(App& app, const Document& doc, const M4& vp, ImVec2 origin, ImVec2 size) {
     const double lift = doc.placement().lift();
     if (lift <= 0) return;
     const fruit::BBox3 b = doc.placedBox();
-    const V3 top{static_cast<float>(b.max.x + 6), static_cast<float>(b.min.y), static_cast<float>(lift)};
-    const V3 bottom{top.x, top.y, 0};
-    ImVec2 a, c;
-    if (!project(vp, origin, size, top, &a) || !project(vp, origin, size, bottom, &c)) return;
-    if (std::abs(c.y - a.y) < 8) return;  // seen edge-on: nothing to show
+    const V3 eye = app.camera().eye();
+    const float cx = static_cast<float>((b.min.x + b.max.x) / 2), cy = static_cast<float>((b.min.y + b.max.y) / 2);
+    const float x = static_cast<float>(eye.x >= cx ? b.max.x : b.min.x);
+    const float y = static_cast<float>(eye.y >= cy ? b.max.y : b.min.y);
+    const float z = static_cast<float>(lift);
+    if (eye.z < z) return;  // looking up from below: the plate hides the gap
+    ImVec2 a, c, mid;
+    if (!project(vp, origin, size, {x, y, z}, &a) || !project(vp, origin, size, {x, y, 0}, &c) ||
+        !project(vp, origin, size, {cx, cy, z}, &mid))
+        return;
+    if (c.y - a.y < 14) return;  // seen edge-on or from below: nothing to show
+    const ImU32 lc = col::Text, dc = IM_COL32(0xC3, 0xC8, 0xD2, 200);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 lc = IM_COL32(0xC3, 0xC8, 0xD2, 220);
-    dashedRect(dl, a, c, lc, 1.2f, 4, 3);
-    dl->AddLine(ImVec2(a.x - 7, a.y), ImVec2(a.x + 7, a.y), lc, 1.2f);
-    dl->AddLine(ImVec2(c.x - 7, c.y), ImVec2(c.x + 7, c.y), lc, 1.2f);
-    ImGui::PushFont(fonts().medium, size::Help);
+    const float out = a.x >= mid.x ? 1.0f : -1.0f;  // away from the model on screen
+    const bool aside = doc.supports.result != nullptr && app.step() == Step::Supports;
+    const float lx = aside ? a.x + out * 30 : a.x;
+    if (aside) {
+        dashedRect(dl, ImVec2(a.x + out * 3, a.y), ImVec2(lx + out * 7, a.y), dc, 1.2f, 3, 3);
+        dashedRect(dl, ImVec2(c.x + out * 3, c.y), ImVec2(lx + out * 7, c.y), dc, 1.2f, 3, 3);
+    } else {
+        dl->AddEllipse(c, ImVec2(8, 3), lc, 0, 20, 1.3f);
+    }
+    const float bx = aside ? lx : c.x;  // bottom end: under the corner
+    dl->AddLine(ImVec2(lx, a.y + 8), ImVec2(bx, c.y - 8), lc, 1.6f);
+    dl->AddTriangleFilled(ImVec2(lx, a.y + 1), ImVec2(lx + 4, a.y + 9), ImVec2(lx - 4, a.y + 9), lc);
+    dl->AddTriangleFilled(ImVec2(bx, c.y - 1), ImVec2(bx + 4, c.y - 9), ImVec2(bx - 4, c.y - 9), lc);
+    ImGui::PushFont(fonts().semibold, size::Help);
     const std::string label = strf("%.0f mm lift", lift);
-    dl->AddText(ImVec2(std::max(a.x, c.x) + 14, (a.y + c.y) / 2 - 7), col::TextSecondary, label.c_str());
+    const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    const ImVec2 ps(ts.x + 22, 24);
+    const float px = out > 0 ? lx + 10 : lx - 10 - ps.x;
+    const float py = std::round((a.y + c.y) / 2 - ps.y / 2);
+    dl->AddRectFilled(ImVec2(px, py), ImVec2(px + ps.x, py + ps.y), IM_COL32(0x18, 0x1B, 0x21, 240), 12);
+    dl->AddRect(ImVec2(px, py), ImVec2(px + ps.x, py + ps.y), col::BorderStrong, 12);
+    dl->AddText(ImVec2(px + 11, py + (ps.y - ts.y) / 2), col::Text, label.c_str());
     ImGui::PopFont();
-    (void)app;
 }
 
 void taskTray(App& app, ImVec2 vp_max) {
     const JobProgress p = app.jobs().progress();
     if (!p.running) return;
+    // The main button shows these two itself.
+    if (p.name == "Generating supports" || p.name == "Cutting layers") return;
     const ImVec2 size(340, 96);
     ImGui::SetCursorScreenPos(ImVec2(vp_max.x - size.x - 16, vp_max.y - size.y - 16));
     beginCard("tray", size, 14, col::Panel, col::BorderStrong);
@@ -585,7 +262,6 @@ void taskTray(App& app, ImVec2 vp_max) {
     if (secondaryButton("Cancel")) app.jobs().cancel();
     endCard();
 }
-
 void dropCard(App& app, ImVec2 origin, ImVec2 avail) {
     const ImVec2 cs(580, 246);
     const ImVec2 p(origin.x + std::round((avail.x - cs.x) / 2), origin.y + std::round((avail.y - cs.y) / 2) - 20);
@@ -610,8 +286,7 @@ void dropCard(App& app, ImVec2 origin, ImVec2 avail) {
     if (primaryButton("Open model...", ImVec2(bw, 40))) app.openDialog();
 }
 
-void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = {}, bool presets = true,
-              const std::function<void()>& toolbar = {}) {
+void viewport(App& app, ImVec2 size, const Overlay& overlay = {}) {
     app.syncScene();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, col::Viewport);
     ImGui::BeginChild("viewport", size, ImGuiChildFlags_None,
@@ -623,6 +298,15 @@ void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = 
     const int pw = static_cast<int>(avail.x * io.DisplayFramebufferScale.x);
     const int ph = static_cast<int>(avail.y * io.DisplayFramebufferScale.y);
     const auto& doc = app.document();
+    {
+        // A panel open over the view's left: keep the model in the middle of
+        // what it leaves, sliding there rather than jumping.
+        const bool panel = doc && (app.toolPanelOpen() || app.editingTips());
+        const float want = panel ? kToolPanelRight / std::max(1.0f, avail.x) : 0.0f;
+        const float now = app.camera().shift();
+        const float next = app.options().deterministic || std::abs(want - now) < 0.002f ? want : now + (want - now) * 0.25f;
+        app.camera().setShift(next);
+    }
     if (doc) {
         app.renderer().setModel(doc->model.mesh, doc->geometry_id);
         app.renderer().setModelTransform(doc->transform());
@@ -656,26 +340,6 @@ void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = 
     if (doc) {
         liftMarker(app, *doc, vp, origin, avail);
         axisGizmo(app, origin, avail);
-    }
-    if (hint) {
-        // A line of help across the top of the view instead of the presets.
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(origin, ImVec2(origin.x + avail.x, origin.y + 40), col::Panel);
-        dl->AddLine(ImVec2(origin.x, origin.y + 40), ImVec2(origin.x + avail.x, origin.y + 40), col::Border);
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 12));
-        text(hint, fonts().regular, size::Body, col::TextSecondary);
-    } else if (presets) {
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 10));
-        if (toolbar) {  // a step's own buttons first
-            toolbar();
-            ImGui::SameLine(0, 18);
-        }
-        for (auto [label, v] : {std::pair{"Front", ViewPreset::Front}, std::pair{"Side", ViewPreset::Side},
-                                std::pair{"Angled", ViewPreset::Angled}, std::pair{"From below", ViewPreset::Below}}) {
-            if (segmentButton(label, app.viewIs(v))) app.setView(v);
-            ImGui::SameLine(0, 6);
-        }
-        ImGui::NewLine();
     }
     if (overlay) overlay(origin, avail, vp.m);
     if (!doc && !app.jobs().busy() && !app.checking()) dropCard(app, origin, avail);
@@ -711,8 +375,7 @@ void statusBar(App& app) {
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(all ? "Every option fits the plate" : "An option does not fit the plate however it is turned", fonts().regular,
              size::Body, col::TextSecondary);
-    } else if (doc && (app.step() == Step::Layers || app.step() == Step::Print) &&
-               doc->layers.fresh(doc->supports.result)) {
+    } else if (doc && inLayersMode(app.step()) && doc->layers.fresh(doc->supports.result)) {
         const LayerResult& lr = *doc->layers.result;
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, col::Ok);
@@ -722,7 +385,7 @@ void statusBar(App& app) {
              col::TextSecondary);
         problems = static_cast<int>(lr.cups() + lr.traps());
         totals = strf("%s layers · %.1f ml of resin", thousands(lr.layers->size()).c_str(), lr.resin_ml);
-        if (app.step() == Step::Print) {
+        {
             const auto plan = app.printPlan();
             if (plan && plan->ready) {
                 const long m = std::max(1L, std::lround(plan->print_time_s / 60));
@@ -782,10 +445,36 @@ void statusBar(App& app) {
     endPanel();
 }
 
+// The advanced support settings, as a sheet over the workspace.
+void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area) {
+    // Over everything behind it, so clicks land on the sheet or nowhere.
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(6, 7, 9, 158));
+    ImGui::BeginChild("advanced_dim", area, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+    ImGui::InvisibleButton("dim", area);
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    const ImVec2 sz(std::min(1160.0f, area.x - 80), area.y - 48);
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + std::round((area.x - sz.x) / 2), origin.y + 24));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col::App);
+    ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 16);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::BeginChild("advanced_sheet", sz, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
+    supportsAdvanced(app, doc, ImVec2(0, sz.y - 16));
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
 }  // namespace
 
-void parts::viewport3d(App& app, ImVec2 size, const char* hint, const Overlay& overlay, bool presets) {
-    viewport(app, size, hint, overlay, presets);
+void parts::viewport3d(App& app, ImVec2 size, const char* hint, const Overlay& overlay) {
+    (void)hint;
+    viewport(app, size, overlay);
 }
 
 void job(App& app) {
@@ -793,88 +482,18 @@ void job(App& app) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     topBar(app);
     const float body_h = ImGui::GetContentRegionAvail().y - kStatusH;
+    const ImVec2 body_at = ImGui::GetCursorScreenPos();
+    const float body_w = ImGui::GetContentRegionAvail().x;
     const auto& doc = app.document();
-    if (doc && app.step() == Step::Print) {
-        printView(app, *doc, ImVec2(0, body_h));
-    } else if (doc && app.step() == Step::Layers) {
-        layersView(app, *doc, ImVec2(0, body_h));
-    } else if (doc && app.step() == Step::Supports && app.advancedOpen()) {
-        supportsAdvanced(app, *doc, ImVec2(0, body_h));
-    } else if (doc && app.step() == Step::Supports && app.editingTips()) {
-        tipEditLeft(app, *doc, body_h);
-        ImGui::SameLine(0, 0);
-        Document& d = *doc;
-        const char* hint = app.tipTool() == App::TipTool::Add
-                               ? "Click the model to add a tip · [ and ] change the selected tip's size"
-                           : app.tipTool() == App::TipTool::Zone
-                               ? "Click the model to keep tips away from there"
-                               : "Click a tip to select it · drag it to move it · Delete removes it · [ and ] change its size";
-        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h), hint,
-                 [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { tipEditOverlay(app, d, o, s, vp); }, false);
-        ImGui::SameLine(0, 0);
-        tipEditRight(app, *doc, body_h);
-    } else if (doc && app.step() == Step::Supports) {
-        supportsLeft(app, *doc, body_h);
-        ImGui::SameLine(0, 0);
-        const bool have = doc->supports.result != nullptr;
-        Document& d = *doc;
-        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
-                 have ? nullptr : "Faces that need tips are tinted: they lean more than 45° from upright.",
-                 [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { supportsOverlay(app, d, o, s, vp); }, !have);
-        ImGui::SameLine(0, 0);
-        supportsRight(app, *doc, body_h);
-    } else if (doc && app.step() == Step::Orient) {
-        if (app.orientView() == OrientView::Results && doc->orient.results) {
-            orientResults(app, *doc, ImVec2(0, body_h));
-        } else if (app.orientView() == OrientView::Hollow) {
-            hollowLeft(app, *doc, body_h);
-            ImGui::SameLine(0, 0);
-            Document& d = *doc;
-            viewport(
-                app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
-                d.hollow.choices.auto_holes ? nullptr : "Click on the model to put a hole there.",
-                [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { hollowOverlay(app, d, o, s, vp); }, true, [&app] {
-                    if (segmentButton("Cut in half", app.cutAway())) app.setCutAway(true);
-                    ImGui::SameLine(0, 6);
-                    if (segmentButton("Whole model", !app.cutAway())) app.setCutAway(false);
-                });
-            ImGui::SameLine(0, 0);
-            hollowRight(app, *doc, body_h);
-        } else {
-            orientLeft(app, *doc, body_h);
-            ImGui::SameLine(0, 0);
-            Document& d = *doc;
-            viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
-                     "Drag the rings to turn it yourself, or let the search try 65 ways.",
-                     [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { placeOverlay(app, d, o, s, vp); });
-            ImGui::SameLine(0, 0);
-            orientRight(app, *doc, body_h);
-        }
+    if (doc && inLayersMode(app.step())) {
+        layersMode(app, *doc, ImVec2(0, body_h));
     } else {
-        leftPanel(app, body_h);
-        ImGui::SameLine(0, 0);
-        // Where the repair patched the model, the patches are tinted: say so.
-        // The handles place it.
-        const bool patched = doc && doc->check.repair.patch_faces > 0;
         Document* d = doc.get();
-        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - (doc ? kRightW : 0), body_h), nullptr,
-                 d ? Overlay([&app, d, patched](ImVec2 o, ImVec2 s, const float* vp) {
-                     if (patched) {
-                         ImDrawList* dl = ImGui::GetWindowDrawList();
-                         ImGui::PushFont(fonts().regular, size::Body);
-                         const char* label = "Patched by FruitSlicer";
-                         const float x = o.x + s.x - 16 - ImGui::CalcTextSize(label).x;
-                         dl->AddText(ImVec2(x, o.y + 20), col::TextSecondary, label);
-                         dl->AddCircleFilled(ImVec2(x - 12, o.y + 28), 4, col::Warn);
-                         ImGui::PopFont();
-                     }
-                     placeOverlay(app, *d, o, s, vp);
-                 })
-                   : Overlay());
-        if (doc) {
-            ImGui::SameLine(0, 0);
-            rightPanel(app, body_h);
-        }
+        viewport(app, ImVec2(body_w - kJobW, body_h),
+                 [&app, d](ImVec2 o, ImVec2 s, const float* vp) { workspaceOverlay(app, d, o, s, vp); });
+        ImGui::SameLine(0, 0);
+        jobPanel(app, body_h);
+        if (doc && app.advancedOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h));
     }
     statusBar(app);
     ImGui::PopStyleVar(2);

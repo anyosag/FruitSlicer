@@ -37,4 +37,46 @@ Mark markFor(const Document& d, Step s) {
     return Mark::None;
 }
 
+Tool toolShown(Step s, bool hollow_view, Tool model_tool) {
+    switch (s) {
+        case Step::Model: return model_tool == Tool::Rotate || model_tool == Tool::Supports || model_tool == Tool::Hollow
+                                     ? Tool::None
+                                     : model_tool;
+        case Step::Orient: return hollow_view ? Tool::Hollow : Tool::Rotate;
+        case Step::Supports: return Tool::Supports;
+        case Step::Layers:
+        case Step::Print: return Tool::None;
+    }
+    return Tool::None;
+}
+
+Step stepFor(Tool t) {
+    switch (t) {
+        case Tool::Rotate:
+        case Tool::Hollow: return Step::Orient;
+        case Tool::Supports: return Step::Supports;
+        default: return Step::Model;
+    }
+}
+
+MainButton mainButton(const Document* d) {
+    if (!d) return {MainAction::OpenModel, true};
+    const bool fits = d->fit().fits;
+    if (!d->supports.result) return {MainAction::MakeSupports, fits};
+    if (!d->supports.fresh(d->revision(), d->supportSettings())) return {MainAction::RemakeSupports, fits};
+    if (d->layers.fresh(d->supports.result)) return {MainAction::ShowLayers, true};
+    return {MainAction::Slice, true};
+}
+
+const char* mainLabel(MainAction a) {
+    switch (a) {
+        case MainAction::OpenModel: return "Open a model";
+        case MainAction::MakeSupports: return "Make supports";
+        case MainAction::RemakeSupports: return "Remake supports";
+        case MainAction::Slice: return "Slice";
+        case MainAction::ShowLayers: return "Show the layers";
+    }
+    return "";
+}
+
 }  // namespace gui

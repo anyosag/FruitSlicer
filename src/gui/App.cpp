@@ -437,8 +437,10 @@ void App::slideOntoPlate() {
 }
 
 bool App::handlesShown() const {
+    // With Move or Rotate open: the arrows and rings that place it.
     return doc_ && screen_ == Screen::Job &&
-           (step_ == Step::Model || (step_ == Step::Orient && orient_view_ == OrientView::Settings));
+           ((step_ == Step::Model && model_tool_ == Tool::Move) ||
+            (step_ == Step::Orient && orient_view_ == OrientView::Settings));
 }
 
 void App::beginPlacing(const HandleDrag& d) {
@@ -510,12 +512,34 @@ void App::goToStep(Step s) {
     if (s != step_) {
         advanced_open_ = false;
         tip_editing_ = false;
+        tool_panel_ = true;  // a place opens with its panel showing
     }
     step_ = s;
+    if (!inLayersMode(s)) prepare_step_ = s;
     screen_ = Screen::Job;
     if (s == Step::Orient && (orient_view_ == OrientView::Hollow || !(doc_ && doc_->orient.resultsFresh(doc_->revision()))))
         orient_view_ = OrientView::Settings;
 }
+
+void App::openTool(Tool t) {
+    if (!doc_) return;
+    if (t != Tool::None && t == tool() && tool_panel_ && !inLayersMode(step_)) {
+        tool_panel_ = false;  // its panel was open: close it, stay where it is
+        return;
+    }
+    switch (t) {
+        case Tool::Rotate: goToStep(Step::Orient); break;
+        case Tool::Supports: goToStep(Step::Supports); break;
+        case Tool::Hollow: showHollow(); break;
+        default:
+            goToStep(Step::Model);
+            model_tool_ = t;
+            break;
+    }
+    tool_panel_ = t != Tool::None;
+}
+
+void App::goToPrepare() { goToStep(prepare_step_); }
 
 void App::supportsNow() {
     if (!doc_) return;
@@ -701,6 +725,7 @@ void App::showHollow() {
     if (!doc_) return;
     goToStep(Step::Orient);
     orient_view_ = OrientView::Hollow;
+    tool_panel_ = true;
     planHollowPreview();
 }
 
@@ -1148,7 +1173,9 @@ void App::syncScene() {
     const std::size_t patches = doc_ && screen_ == Screen::Job && step_ == Step::Model ? doc_->check.repair.patch_faces : 0;
     renderer_.setModelTint(doc_ ? doc_->check.triangles - std::min(patches, doc_->check.triangles) : 0, patches, 0xF2B84B);
     // Where it is placed, red while it doesn't fit there.
-    if (doc_ && handlesShown() && !doc_->fit().fits) renderer_.setModelTint(0, doc_->check.triangles, 0xD86A6A);
+    const bool placing_place = screen_ == Screen::Job &&
+                               (step_ == Step::Model || (step_ == Step::Orient && orient_view_ == OrientView::Settings));
+    if (doc_ && placing_place && !doc_->fit().fits) renderer_.setModelTint(0, doc_->check.triangles, 0xD86A6A);
     syncCut();
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
         renderer_.clearExtras();
@@ -1235,7 +1262,7 @@ std::string App::printBlocker() {
         case Need::Layers: return "Open Layers first: it cuts the layers.";
     }
     if (!doc_->supports.result->validation.floating.empty())
-        return "Parts start in mid-air: add tips in the Supports step.";
+        return "Parts start in mid-air: add tips with the Supports tool.";
     const auto plan = printPlan();
     if (!plan->fits) return "The model and supports reach past the printer's build volume.";
     if (!plan->ready) return plan->why_not;
@@ -2609,6 +2636,14 @@ void App::keys() {
         else redo();
     }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
+    // ⌘↩: the Job panel's main button (Make supports, Slice…).
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job && !jobs_.busy()) {
+        const MainButton mb = mainButton(doc_.get());
+        if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
+            supportsNow();
+        else if (mb.enabled && (mb.action == MainAction::Slice || mb.action == MainAction::ShowLayers))
+            goToStep(Step::Layers);
+    }
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper) return;
     if (screen_ == Screen::Job && step_ == Step::Supports && tip_editing_ && doc_) {
@@ -2638,7 +2673,7 @@ void App::keys() {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) advanced_open_ = false;
         return;
     }
-    if (screen_ == Screen::Job && step_ == Step::Layers && doc_ && doc_->layers.result) {
+    if (screen_ == Screen::Job && inLayersMode(step_) && doc_ && doc_->layers.fresh(doc_->supports.result)) {
         const int now = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(doc_->layers.result->biggest);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setLayer(now + 1);
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setLayer(now - 1);
@@ -2666,6 +2701,20 @@ void App::keys() {
         if (ImGui::IsKeyPressed(ImGuiKey_3, false)) setView(ViewPreset::Below);
         if (ImGui::IsKeyPressed(ImGuiKey_4, false)) setView(ViewPreset::Angled);
         if (ImGui::IsKeyPressed(ImGuiKey_F, false)) fitView();
+        if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {  // from the top
+            camera_.lookFrom({0, 0, 1});
+            viewChanged();
+        }
+        // The tools around the view, by their first letters.
+        if (doc_ && !inLayersMode(step_) && !io.KeyShift) {
+            if (ImGui::IsKeyPressed(ImGuiKey_P, false)) openTool(Tool::OnPlate);
+            if (ImGui::IsKeyPressed(ImGuiKey_M, false)) openTool(Tool::Move);
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) openTool(Tool::Rotate);
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false)) openTool(Tool::Scale);
+            if (ImGui::IsKeyPressed(ImGuiKey_T, false)) openTool(Tool::Supports);
+            if (ImGui::IsKeyPressed(ImGuiKey_H, false) || ImGui::IsKeyPressed(ImGuiKey_D, false)) openTool(Tool::Hollow);
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !placing()) tool_panel_ = false;
+        }
     }
     if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) shortcuts_open_ = true;  // "?"
 }

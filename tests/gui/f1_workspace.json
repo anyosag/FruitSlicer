@@ -1,0 +1,17 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "on_plate"}, {"shot": "f1_on_plate"},
+    {"tool": "move"}, {"shot": "f1_move"},
+    {"tool": "scale"}, {"shot": "f1_scale"},
+    {"tool": "repair"}, {"shot": "f1_repair"},
+    {"tool": "repair"}, {"shot": "f1_panel_closed"},
+    {"job_tab": "hollows"}, {"shot": "f1_hollows_tab"}, {"job_tab": "checks"},
+    {"tool": "rotate"}, {"wait": "jobs"}, {"shot": "f1_rotate"},
+    {"tool": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"shot": "f1_supports_made"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "f1_layers"},
+    {"step": "model"}, {"tool": "move"}, {"move": [10, 0]}, {"step": "supports"}, {"shot": "f1_supports_stale"}
+  ]
+}

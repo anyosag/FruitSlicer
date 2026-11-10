@@ -135,13 +135,13 @@ void choicesPanel(App& app, Document& doc) {
         dl->AddText(ImVec2(q.x + 12, q.y + 10), col::Text, raft.c_str());
         ImGui::PopFont();
         ImGui::PushFont(fonts().regular, size::Help);
-        dl->AddText(ImVec2(q.x + 12, q.y + 30), col::TextMuted, "Set in the Model step");
+        dl->AddText(ImVec2(q.x + 12, q.y + 30), col::TextMuted, "Set with On plate");
         ImGui::PopFont();
         ImGui::PushFont(fonts().semibold, size::Section);
         dl->AddText(ImVec2(q.x + sz.x - 20, q.y + 17), col::TextMuted, "›");
         ImGui::PopFont();
         if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (clicked) app.goToStep(Step::Model);
+        if (clicked) app.openTool(Tool::OnPlate);
     }
     if (changed) app.setSupportChoices(c);
 }
@@ -174,38 +174,47 @@ void resultPanel(App& app, Document& doc) {
 
 }  // namespace
 
-void supportsLeft(App& app, Document& doc, float h) {
-    beginPanel("supports_left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 22));
-    edge(true, false);
-    const float y = ImGui::GetCursorPosY();
-    text("Supports", fonts().semibold, size::Section + 1, col::Text);
+void supportsPanel(App& app, Document& doc) {
     const bool have = doc.supports.result != nullptr;
     if (have && !running(app)) {
-        ImGui::PushFont(fonts().semibold, size::Body);
-        const float rw = ImGui::CalcTextSize("Regenerate").x;
-        ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x - rw, y + 2));
-        if (linkButton("Regenerate")) app.generateSupports();
+        if (linkButton("Remake supports")) app.generateSupports();
+        ImGui::Dummy(ImVec2(0, 2));
+        resultPanel(app, doc);
+    } else {
+        choicesPanel(app, doc);
     }
-    ImGui::Dummy(ImVec2(0, 4));
-    if (have && !running(app)) resultPanel(app, doc);
-    else choicesPanel(app, doc);
-    // Bottom: editing by hand (later) and every other setting.
-    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 8, h - 22 - 80));
+    // The tip picked in the view, and why it is there.
+    const SupportState& s = doc.supports;
+    if (s.result && !running(app) && s.selected_tip >= 0 &&
+        s.selected_tip < static_cast<int>(s.result->points.size())) {
+        ImGui::Dummy(ImVec2(0, 6));
+        groupLabel("Selected tip");
+        const SupportResult& r = *s.result;
+        const fruit::SupportPoint& p = r.points[static_cast<std::size_t>(s.selected_tip)];
+        beginCard("tip", ImVec2(0, 0), 13, col::Card, col::Accent);
+        text(tipKind(p).c_str(), fonts().semibold, size::Body, col::Text);
+        text(tipWhy(p).c_str(), fonts().regular, size::Body, col::TextSecondary, true);
+        ImGui::Dummy(ImVec2(0, 2));
+        text(tipNumbers(p, r.cfg, r.tree_cfg).c_str(), fonts().regular, size::Help, col::TextMuted, true);
+        endCard();
+    } else if (s.result && !running(app) && app.supportsView() == SupportsView::Why) {
+        ImGui::Dummy(ImVec2(0, 4));
+        text("Click a tip in the view to see why it is there.", fonts().regular, size::Body, col::TextSecondary, true);
+    }
+    ImGui::Dummy(ImVec2(0, 8));
     if (have) {
         const bool fresh = doc.supports.fresh(doc.revision(), doc.supportSettings());
-        if (secondaryButton("Edit tips by hand", ImVec2(-1, 40), fresh && !running(app))) app.editTips(true);
-        if (!fresh) tooltip("Regenerate the supports first.");
+        if (secondaryButton("Edit tips by hand", ImVec2(-1, 38), fresh && !running(app))) app.editTips(true);
+        if (!fresh) tooltip("Remake the supports first.");
     }
     ImGui::Dummy(ImVec2(0, 4));
     if (linkButton("Advanced settings")) app.showAdvanced(true);
     std::size_t changed = 0;
-    for (const AdvancedSetting& s : advancedSettings()) changed += advancedChanged(s, doc.supports.choices);
+    for (const AdvancedSetting& a : advancedSettings()) changed += advancedChanged(a, doc.supports.choices);
     if (changed) {
         ImGui::SameLine(0, 8);
         text(strf("%zu changed", changed).c_str(), fonts().regular, size::Help, col::Accent);
     }
-    endPanel();
 }
 
 namespace {
@@ -264,142 +273,63 @@ void problemCard(App& app, const SupportProblem& p, int i) {
     ImGui::PopID();
 }
 
-void problemsDrawer(App& app, const SupportResult& r) {
-    const float y = ImGui::GetCursorPosY();
-    text("Problems", fonts().bold, size::DialogTitle, col::Text);
-    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x - 36, y - 4));
-    if (closeButton("close_problems")) app.showProblems(false);
-    const std::size_t blocks = r.count(SupportProblem::Level::Blocks), review = r.count(SupportProblem::Level::Review),
-                      notes = r.count(SupportProblem::Level::Note);
-    ImGui::SetCursorPosY(y + 34);
-    const std::string summary =
-        (blocks ? strf("%zu %s saving", blocks, blocks == 1 ? "blocks" : "block") : std::string("Nothing blocks saving")) +
-        strf(" · %zu to review · %zu %s", review, notes, notes == 1 ? "note" : "notes");
-    text(summary.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
-    ImGui::Dummy(ImVec2(0, 6));
-    ImGui::BeginChild("problems_list", ImVec2(0, 0));
-    int i = 0;
-    auto section = [&](SupportProblem::Level level, const char* label) {
-        std::size_t n = r.count(level);
-        groupLabel(strf("%s · %zu", label, n).c_str());
-        if (level == SupportProblem::Level::Blocks && n == 0)
-            checkRow("no_blocks", {true, "No part starts in mid-air after supports", ""});
-        for (const auto& p : r.problems)
-            if (p.level == level) problemCard(app, p, i++);
-        ImGui::Dummy(ImVec2(0, 6));
-    };
-    section(SupportProblem::Level::Blocks, "Blocks saving");
-    section(SupportProblem::Level::Review, "Review");
-    section(SupportProblem::Level::Note, "Notes");
-    ImGui::EndChild();
-}
-
 }  // namespace
 
-void supportsRight(App& app, Document& doc, float h) {
-    beginPanel("supports_right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p = ImGui::GetWindowPos();
-        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
-    }
+void supportChecks(App& app, Document& doc) {
     const SupportState& s = doc.supports;
-    if (s.result && app.problemsOpen()) {
-        problemsDrawer(app, *s.result);
-        endPanel();
-        return;
-    }
-    if (!s.result || running(app)) {
-        groupLabel("What to expect");
-        const OrientState& o = doc.orient;
-        if (o.nowFresh(doc.revision())) {
-            beginCard("expect", ImVec2(0, 0), 13, col::Panel, col::Border);
-            keyValue("Tips", "about " + thousands(o.now.tips));
-            keyValue("Island tips", "about " + thousands(o.now.island_tips));
-            text("From the Orient step's scoring", fonts().regular, size::Help, col::TextMuted);
-            endCard();
-        } else {
-            text("Generate to see how many tips it needs.", fonts().regular, size::Body, col::TextSecondary, true);
-        }
-        ImGui::Dummy(ImVec2(0, 6));
-        beginCard("starting", ImVec2(0, 0), 13, col::Panel, col::Border);
-        text("Using starting values", fonts().semibold, size::Body, col::Text);
-        text("How much a tip holds and how far it reaches are borrowed from PrusaSlicer until you calibrate this "
-             "resin. Calibration arrives in a later update.",
-             fonts().regular, size::Body, col::TextSecondary, true);
-        endCard();
-        ImGui::Dummy(ImVec2(0, 6));
-        text("You can keep looking around while it runs, and change settings: they apply to the next run.",
-             fonts().regular, size::Body, col::TextSecondary, true);
-        endPanel();
-        return;
-    }
+    if (!s.result) return;
     const SupportResult& r = *s.result;
-    if (!s.fresh(doc.revision(), doc.supportSettings())) {
-        text("These are the supports from before the change. Regenerate to plan them again.", fonts().regular,
-             size::Body, col::TextMuted, true);
-        ImGui::Dummy(ImVec2(0, 6));
-    }
-    groupLabel("Selected tip");
-    if (s.selected_tip >= 0) {
-        const fruit::SupportPoint& p = r.points[static_cast<std::size_t>(s.selected_tip)];
-        beginCard("tip", ImVec2(0, 0), 13, col::Panel, col::Border);
-        text(tipKind(p).c_str(), fonts().semibold, size::Body, col::Text);
-        text(tipWhy(p).c_str(), fonts().regular, size::Body, col::TextSecondary, true);
-        ImGui::Dummy(ImVec2(0, 2));
-        text(tipNumbers(p, r.cfg, r.tree_cfg).c_str(), fonts().regular, size::Help, col::TextMuted, true);
-        endCard();
-    } else {
-        text("Click a tip in the view to see why it is there.", fonts().regular, size::Body, col::TextSecondary, true);
-    }
-    ImGui::Dummy(ImVec2(0, 8));
-    groupLabel("Checks");
     for (std::size_t i = 0; i < r.checks.size(); ++i) {
         ImGui::PushID(static_cast<int>(i));
         checkRow("check", r.checks[i]);
         ImGui::PopID();
     }
-    const std::size_t review = r.count(SupportProblem::Level::Review) + r.count(SupportProblem::Level::Blocks);
-    if (review) {
-        beginCard("review", ImVec2(0, 0), 13, col::WarnBg, col::WarnBorder);
-        text(strf("%zu %s to review", review, review == 1 ? "thing" : "things").c_str(), fonts().semibold, size::Body,
-             col::Text);
-        if (linkButton("Review")) app.showProblems(true);
-        endCard();
-    }
-    endPanel();
+    if (r.problems.empty()) return;
+    ImGui::Dummy(ImVec2(0, 6));
+    int i = 0;
+    auto section = [&](SupportProblem::Level level, const char* label) {
+        const std::size_t n = r.count(level);
+        if (n == 0) return;
+        groupLabel(strf("%s · %zu", label, n).c_str());
+        for (const auto& p : r.problems)
+            if (p.level == level) problemCard(app, p, i++);
+        ImGui::Dummy(ImVec2(0, 4));
+    };
+    section(SupportProblem::Level::Blocks, "Blocks saving");
+    section(SupportProblem::Level::Review, "Review");
+    section(SupportProblem::Level::Note, "Notes");
 }
 
 // ---- Over the 3D view ----
 
 namespace {
 
-void legend(App& app, ImVec2 origin, ImVec2 size, const SupportResult& r) {
+// The legend, left to right from the cursor, on one line.
+void legend(App& app, const SupportResult& r) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    float x = origin.x + size.x - 16;
-    const float y = origin.y + 28;
-    ImGui::PushFont(fonts().regular, size::Body);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    float x = at.x;
+    const float y = at.y + 14;
+    ImGui::PushFont(fonts().regular, size::Help);
     auto item = [&](const char* label, ImU32 c, bool line) {
-        const float lw = ImGui::CalcTextSize(label).x;
-        x -= lw;
-        dl->AddText(ImVec2(x, y - 8), col::TextSecondary, label);
-        x -= 18;
         if (line) dl->AddLine(ImVec2(x, y), ImVec2(x + 12, y), c, 2);
-        else dl->AddCircleFilled(ImVec2(x + 6, y), 4, c);
-        x -= 14;
+        else dl->AddCircleFilled(ImVec2(x + 5, y), 4, c);
+        x += line ? 18 : 14;
+        dl->AddText(ImVec2(x, y - 7), col::TextSecondary, label);
+        x += ImGui::CalcTextSize(label).x + 14;
     };
     if (app.supportsView() == SupportsView::Why) {
-        item("By hand", IM_COL32(0xF2, 0xF4, 0xF7, 255), false);
-        item("Steadying", IM_COL32(0x5B, 0xD6, 0x9A, 255), false);
-        item("Extra hold", IM_COL32(0xB4, 0x8E, 0xF0, 255), false);
-        item("Overhang", IM_COL32(0x5B, 0x9B, 0xD5, 255), false);
         item("Island", col::Accent, false);
+        item("Overhang", IM_COL32(0x5B, 0x9B, 0xD5, 255), false);
+        item("Extra hold", IM_COL32(0xB4, 0x8E, 0xF0, 255), false);
+        item("Steadying", IM_COL32(0x5B, 0xD6, 0x9A, 255), false);
+        item("By hand", IM_COL32(0xF2, 0xF4, 0xF7, 255), false);
     } else {
+        for (const auto& t : r.tip_sizes) item(strf("%.1f mm", t.first).c_str(), IM_COL32(0xF2, 0xF4, 0xF7, 255), false);
         if (app.supportsView() == SupportsView::Supports) item("Support", IM_COL32(0xE2, 0xE6, 0xED, 255), true);
-        for (auto it = r.tip_sizes.rbegin(); it != r.tip_sizes.rend(); ++it)
-            item(strf("%.1f mm", it->first).c_str(), IM_COL32(0xF2, 0xF4, 0xF7, 255), false);
     }
     ImGui::PopFont();
+    ImGui::Dummy(ImVec2(x - at.x, 28));
 }
 
 void runningCard(App& app, ImVec2 origin, ImVec2 size) {
@@ -437,9 +367,15 @@ void runningCard(App& app, ImVec2 origin, ImVec2 size) {
     endCard();
 }
 
+// Banners sit in the free space right of the tool panel, above the model tools.
+ImVec2 bannerAt(ImVec2 origin, ImVec2 size, ImVec2 bs) {
+    const float left = origin.x + kToolPanelRight + 16;
+    return ImVec2(std::max(left, origin.x + size.x - 16 - bs.x), origin.y + size.y - kToolsBarH - 8 - bs.y);
+}
+
 void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
-    const ImVec2 bs(size.x - 32, 64);
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 16, origin.y + 56));
+    const ImVec2 bs(std::min(560.0f, size.x - kToolPanelRight - 32), 64);
+    ImGui::SetCursorScreenPos(bannerAt(origin, size, bs));
     beginCard("stale", bs, 14, col::WarnBg, col::WarnBorder);
     const float y = ImGui::GetCursorPosY();
     text("Supports are out of date", fonts().semibold, size::Body + 1, col::Text);
@@ -447,19 +383,12 @@ void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
                           ? "The model or the picked sides changed after they were made."
                           : "The settings changed after they were made.";
     text(why, fonts().regular, size::Body, col::TextSecondary);
-    const bool can_undo = doc.canUndo();
-    float x = bs.x - 14;
-    ImGui::PushFont(fonts().bold, size::Body);
-    const float rw = ImGui::CalcTextSize("Regenerate").x + 32;
-    ImGui::PopFont();
-    x -= rw;
-    ImGui::SetCursorPos(ImVec2(x, y + 1));
-    if (primaryButton("Regenerate", ImVec2(rw, 34))) app.generateSupports();
-    if (can_undo) {
+    // Remaking them is the Job panel's main button; here, the way back.
+    if (doc.canUndo()) {
         ImGui::PushFont(fonts().semibold, size::Body);
         const float uw = ImGui::CalcTextSize("Undo the change").x + 32;
         ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(x - 8 - uw, y + 1));
+        ImGui::SetCursorPos(ImVec2(bs.x - 14 - uw, y + 1));
         if (secondaryButton("Undo the change", ImVec2(uw, 34))) app.undo();
     }
     endCard();
@@ -468,25 +397,25 @@ void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 // Supports are made for the model where it stands, and only when it fits there.
 void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     const fruit::PlateFit& f = doc.fit();
-    const ImVec2 bs(size.x - 32, 64);
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 16, origin.y + 56));
+    const ImVec2 bs(std::min(560.0f, size.x - kToolPanelRight - 32), 64);
+    ImGui::SetCursorScreenPos(bannerAt(origin, size, bs));
     beginCard("fit", bs, 14, col::ErrorBg, col::Error);
     const float y = ImGui::GetCursorPosY();
     text(f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate", fonts().semibold, size::Body + 1,
          col::Text);
-    text(f.overEdge() ? "Supports are made for it where it stands, inside the dashed line on Model."
+    text(f.overEdge() ? "Supports are made for it where it stands, inside the dashed line Move shows."
          : f.fits_turned ? "Too big as it lies; turned 90° it fits at this size."
                          : "Too big at this size, however it is turned.",
          fonts().regular, size::Body, col::TextSecondary);
-    const char* fix = f.overEdge() ? "Move it back on" : f.fits_turned ? "Turn 90°" : "Go to Model";
-    ImGui::PushFont(fonts().bold, size::Body);
+    const char* fix = f.overEdge() ? "Move it back on" : f.fits_turned ? "Turn 90°" : "Scale it";
+    ImGui::PushFont(fonts().semibold, size::Body);
     const float rw = ImGui::CalcTextSize(fix).x + 32;
     ImGui::PopFont();
     ImGui::SetCursorPos(ImVec2(bs.x - 14 - rw, y + 1));
-    if (primaryButton(fix, ImVec2(rw, 34))) {
+    if (secondaryButton(fix, ImVec2(rw, 34))) {
         if (f.overEdge()) app.slideOntoPlate();
         else if (f.fits_turned) app.turnQuarter();
-        else app.goToStep(Step::Model);
+        else app.openTool(Tool::Scale);
     }
     endCard();
 }
@@ -502,16 +431,6 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     if (!doc.fit().fits) fitBanner(app, doc, origin, size);
     if (!s.result) return;
     const SupportResult& r = *s.result;
-    // View switch and legend, along the top.
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + 14, origin.y + 10));
-    const std::pair<const char*, SupportsView> views[] = {
-        {"Supports", SupportsView::Supports}, {"Tips only", SupportsView::TipsOnly}, {"Why", SupportsView::Why}};
-    for (const auto& [label, v] : views) {
-        if (segmentButton(label, app.supportsView() == v)) app.setSupportsView(v);
-        ImGui::SameLine(0, 4);
-    }
-    ImGui::NewLine();
-    legend(app, origin, size, r);
     const bool fresh = s.fresh(doc.revision(), doc.supportSettings());
     if (!fresh && doc.fit().fits) staleBanner(app, doc, origin, size);
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
@@ -533,7 +452,8 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     }
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 m = io.MousePos;
-    const bool inside = m.x >= origin.x && m.y >= origin.y + 50 && m.x < origin.x + size.x && m.y < origin.y + size.y;
+    const bool inside = m.x >= origin.x && m.y >= origin.y + 50 && m.x < origin.x + size.x && m.y < origin.y + size.y &&
+                        ImGui::IsWindowHovered();
     if (fresh && inside && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && io.MouseDragMaxDistanceSqr[0] < 9 &&
         !ImGui::IsAnyItemHovered()) {
         int best = -1;
@@ -549,6 +469,20 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
         }
         app.selectTip(best);
     }
+}
+
+// Over the view's top: which supports to show, and what the marks mean.
+void supportsViewPill(App& app, Document& doc) {
+    if (!doc.supports.result || running(app)) return;
+    const std::pair<const char*, SupportsView> views[] = {
+        {"Supports", SupportsView::Supports}, {"Tips only", SupportsView::TipsOnly}, {"Why", SupportsView::Why}};
+    bool first = true;
+    for (const auto& [label, v] : views) {
+        if (!first) ImGui::SameLine(0, 4);
+        first = false;
+        if (segmentButton(label, app.supportsView() == v)) app.setSupportsView(v);
+    }
+    legend(app, *doc.supports.result);
 }
 
 }  // namespace gui::screens::parts

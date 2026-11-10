@@ -150,6 +150,15 @@ public:
     bool canGoTo(Step s) const { return doc_ != nullptr && s >= Step::Model; }
     Need needFor(Step s) const;  // Need::Nothing: it can do its work now
     void goToStep(Step s);
+    // The tools around the 3D view (see Tool): a tool opens its panel and the
+    // place behind it; picking the tool whose panel is open closes the panel.
+    void openTool(Tool t);
+    Tool tool() const { return toolShown(step_, orient_view_ == OrientView::Hollow, model_tool_); }
+    bool toolPanelOpen() const { return tool_panel_ && tool() != Tool::None; }
+    void closeToolPanel() { tool_panel_ = false; }
+    void goToPrepare();                 // from Layers back to the place left last
+    int& jobTab() { return job_tab_; }  // the Job panel's tabs: 0 checks, 1 hollows
+    bool& printSettingsOpen() { return print_settings_open_; }  // Layers: the print settings unfolded
     // The model with supports for where it is now, from any place: makes
     // them (or makes them again), showing the Supports place.
     void supportsNow();
@@ -414,6 +423,11 @@ private:
     fruit::PrinterProfile printer_ = fruit::PrinterProfile::saturn4Ultra16k();
     Screen screen_ = Screen::Home;
     Step step_ = Step::Model;
+    Tool model_tool_ = Tool::None;    // the panel picked on Model
+    bool tool_panel_ = true;          // the open tool's panel is showing
+    Step prepare_step_ = Step::Model;  // where Prepare goes back to
+    int job_tab_ = 0;
+    bool print_settings_open_ = false;
     std::shared_ptr<Document> doc_, checking_;
     HealthDialog health_;
     Renderer renderer_;

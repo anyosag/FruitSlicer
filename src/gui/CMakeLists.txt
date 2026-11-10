@@ -66,6 +66,7 @@ set(app_sources
   Layers.cpp
   Log.cpp
   Navigation.cpp
+  ViewCube.cpp
   Orient.cpp
   Placing.cpp
   Plates.cpp
@@ -84,6 +85,7 @@ set(app_sources
   screens/HollowScreen.cpp
   screens/HomeScreen.cpp
   screens/JobDialogs.cpp
+  screens/JobPanel.cpp
   screens/JobScreen.cpp
   screens/LayersStep.cpp
   screens/PlaceHandles.cpp
@@ -97,6 +99,7 @@ set(app_sources
   screens/SupportsStep.cpp
   screens/ToolsScreens.cpp
   screens/TipEdit.cpp
+  screens/Workspace.cpp
   view3d/Camera.cpp
   view3d/Renderer.cpp
   platform/Platform.cpp

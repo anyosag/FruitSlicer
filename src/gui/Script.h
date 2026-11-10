@@ -21,6 +21,8 @@
 //     (handle: "move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z"; mm or degrees; snap as with ⇧)
 //   {"undo": n} {"redo": n} {"shortcuts": true | false}
 //   {"step": "model" | "orient" | "supports" | "layers" | "print"} (any place, any time) {"layer": n (1-based)} {"show_below": bool}
+//   {"tool": "on_plate" | "move" | "rotate" | "scale" | "supports" | "hollow" | "repair" | "none"} as the tool
+//     buttons (again on the open one closes its panel) {"close_tool": true} {"job_tab": "checks" | "hollows"}
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}

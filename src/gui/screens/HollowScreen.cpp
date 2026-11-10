@@ -90,11 +90,7 @@ int choiceRow(const char* label, const char* id, const char* const* items, int n
 
 }  // namespace
 
-void hollowLeft(App& app, Document& doc, float h) {
-    beginPanel("hollow_left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 22), true);
-    edge(true, false);
-    if (linkButton("‹ Orient")) app.showOrientSettings();
-    ImGui::Dummy(ImVec2(0, 2));
+void hollowPanel(App& app, Document& doc) {
     const HollowState& hs = doc.hollow;
     HollowChoices c = hs.choices;
     bool changed = false;
@@ -189,16 +185,25 @@ void hollowLeft(App& app, Document& doc, float h) {
         }
     }
     if (changed) app.setHollowChoices(c);
-    endPanel();
 }
 
-void hollowRight(App& app, Document& doc, float h) {
-    beginPanel("hollow_right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p = ImGui::GetWindowPos();
-        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
+// Nothing changes what prints until this is pressed: at the panel's foot.
+void hollowApplyArea(App& app, Document& doc) {
+    const HollowState& hs = doc.hollow;
+    const HollowPlan* fresh = hs.planFresh(doc.revision()) ? hs.plan.get() : nullptr;
+    if (!hs.applied && app.planningHollow()) {
+        primaryButton("Finding hollows…", ImVec2(-1, 38), false);
+    } else if (!hs.applied && fresh && fresh->changes()) {
+        if (primaryButton(applyLabel(*fresh).c_str(), ImVec2(-1, 38))) app.applyHollow();
+        text(("Nothing changes until you press " + applyLabel(*fresh) + ".").c_str(), fonts().regular, size::Help,
+             col::TextMuted, true);
+    } else if (hs.applied) {
+        text("Applied: what prints follows these choices as you change them.", fonts().regular, size::Help,
+             col::TextMuted, true);
     }
+}
+
+void hollowOutcomesList(App& app, Document& doc) {
     const HollowState& hs = doc.hollow;
     const HollowPlan* plan = hs.planFresh(doc.revision()) ? hs.plan.get() : nullptr;
     groupLabel(plan && !plan->holes.empty() ? "After the holes"
@@ -206,8 +211,8 @@ void hollowRight(App& app, Document& doc, float h) {
                                             : "What prints");
     ImGui::Dummy(ImVec2(0, 2));
     if (!plan) {
-        text(app.planningHollow() ? "Working it out…" : "…", fonts().regular, size::Body, col::TextMuted);
-        endPanel();
+        text(app.planningHollow() ? "Working it out…" : "Open Hollow to check this model's hollows.", fonts().regular,
+             size::Body, col::TextMuted, true);
         return;
     }
     std::vector<HollowOutcome> out = hollowOutcomes(*plan);
@@ -223,12 +228,7 @@ void hollowRight(App& app, Document& doc, float h) {
         endCard();
         ImGui::Dummy(ImVec2(0, 2));
     }
-    if (!hs.applied && plan->changes()) {
-        ImGui::Dummy(ImVec2(0, 4));
-        text(("Nothing changes until you press " + applyLabel(*plan) + ".").c_str(), fonts().regular, size::Help,
-             col::TextMuted, true);
-    }
-    endPanel();
+    (void)app;
 }
 
 void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
@@ -284,7 +284,8 @@ void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const fl
     if (hs.choices.auto_holes) return;
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 m = io.MousePos;
-    const bool inside = m.x >= origin.x && m.y >= origin.y + 44 && m.x < origin.x + size.x && m.y < origin.y + size.y;
+    const bool inside = m.x >= origin.x && m.y >= origin.y + 44 && m.x < origin.x + size.x && m.y < origin.y + size.y &&
+                        ImGui::IsWindowHovered();  // not over a panel floating on the view
     if (inside && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && io.MouseDragMaxDistanceSqr[0] < 9 &&
         !ImGui::IsAnyItemHovered()) {
         const float nx = 2 * (m.x - origin.x) / size.x - 1, ny = 1 - 2 * (m.y - origin.y) / size.y;

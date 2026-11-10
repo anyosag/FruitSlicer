@@ -119,6 +119,25 @@ bool railItem(const char* id, const char* label, IconFn icon, bool active) {
     return clicked;
 }
 
+bool toolButton(const char* id, const char* label, IconFn icon, bool active, bool enabled, const char* key,
+                ImVec2 sz) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, sz);
+    const bool hovered = enabled && ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (active) dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), IM_COL32(0xFF, 0x8F, 0x3F, 36), 10);
+    else if (hovered) dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), col::Active, 10);
+    const ImU32 c = active ? col::Accent : enabled ? (hovered ? col::Text : col::TextSecondary) : IM_COL32(0x4B, 0x52, 0x60, 255);
+    icon(dl, ImVec2(p.x + (sz.x - 22) / 2, p.y + 9), 22, c);
+    ImGui::PushFont(fonts().medium, size::Label);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(p.x + (sz.x - ts.x) / 2, p.y + sz.y - 20), c, label);
+    if (key) dl->AddText(ImVec2(p.x + sz.x - 6 - ImGui::CalcTextSize(key).x * 0.8f, p.y + 4), col::TextMuted, key);
+    ImGui::PopFont();
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked && enabled;
+}
+
 void keyValue(const char* key, const std::string& value, ImU32 value_color) {
     const float w = ImGui::GetContentRegionAvail().x;
     ImGui::PushFont(fonts().regular, size::Body);

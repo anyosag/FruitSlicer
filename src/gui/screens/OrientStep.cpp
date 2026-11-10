@@ -50,11 +50,52 @@ std::string sidesText(const App& app) {
 
 }  // namespace
 
-void orientLeft(App& app, Document& doc, float h) {
-    beginPanel("orient_left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 22));
-    edge(true, false);
+void orientPanel(App& app, Document& doc) {
     const OrientState& o = doc.orient;
-    text("Side you'll see", fonts().semibold, size::Section + 1, col::Text);
+    groupLabel("Find a good rotation");
+    text("Searching tries 64 directions plus this one, then runs the full tip planner on the best 6 and shows you "
+         "the three that beat how it sits now.",
+         fonts().regular, size::Body, col::TextSecondary, true);
+    ImGui::Dummy(ImVec2(0, 2));
+    {
+        const bool searching = app.jobs().busy() && app.jobs().progress().name == "Finding the best orientation";
+        const bool fits = app.needFor(Step::Orient) == Need::Nothing;
+        if (searching) {
+            const JobProgress jp = app.jobs().progress();
+            const ImVec2 bp = ImGui::GetCursorScreenPos();
+            const float bw = ImGui::GetContentRegionAvail().x;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 38), col::Active, 8);
+            dl->AddRectFilled(bp, ImVec2(bp.x + bw * static_cast<float>(jp.fraction), bp.y + 38),
+                              IM_COL32(0xFF, 0x8F, 0x3F, 90), 8);
+            ImGui::PushFont(fonts().semibold, size::Body);
+            const char* label = "Searching…";
+            const ImVec2 ts = ImGui::CalcTextSize(label);
+            dl->AddText(ImVec2(bp.x + (bw - ts.x) / 2, bp.y + (38 - ts.y) / 2), col::Text, label);
+            ImGui::PopFont();
+            ImGui::Dummy(ImVec2(bw, 38));
+            if (linkButton("Cancel the search")) app.jobs().cancel();
+        } else {
+            if (primaryButton("Find a good rotation", ImVec2(-1, 38), fits)) app.findOrientation();
+            if (!fits) tooltip("It doesn't fit the plate at this size: make it smaller first.");
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 8));
+    groupLabel("As it sits now");
+    {
+        const bool fresh = o.nowFresh(doc.revision());
+        auto v = [&](std::size_t n) { return fresh ? thousands(n) : std::string("…"); };
+        keyValue("Tips", v(o.now.tips));
+        keyValue("Island tips", v(o.now.island_tips));
+        keyValue("Biggest layer",
+                 fresh ? strf("%s mm²", thousands(static_cast<std::size_t>(std::lround(o.now.biggest_layer))).c_str())
+                       : "…");
+        keyValue("Height", fresh ? strf("%.1f mm", o.now.top) : "…");
+        keyValue("Layers short of hold", v(o.now.short_of_hold));
+        if (!fresh) text("Scoring how it sits…", fonts().regular, size::Help, col::TextMuted);
+    }
+    ImGui::Dummy(ImVec2(0, 8));
+    text("Side you'll see", fonts().semibold, size::Body, col::Text);
     text("Pick the sides people will look at. Tips stay off them, and the search counts them extra.",
          fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 2));
@@ -83,16 +124,8 @@ void orientLeft(App& app, Document& doc, float h) {
     }
     if (!help.empty()) text(help.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
 
-    ImGui::Dummy(ImVec2(0, 10));
-    text("Keep-out boxes", fonts().semibold, size::Section + 1, col::Text);
-    text("Draw a box around a face or detail that must stay clean, like eyes or lettering.", fonts().regular,
-         size::Body, col::TextSecondary, true);
-    secondaryButton("Draw a box", ImVec2(0, 0), false);
-    tooltip("Boxes arrive with tip editing, in a later update.");
-    text("No boxes yet.", fonts().regular, size::Body, col::TextMuted);
-
-    ImGui::Dummy(ImVec2(0, 10));
-    text("Hollows", fonts().semibold, size::Section + 1, col::Text);
+    ImGui::Dummy(ImVec2(0, 8));
+    text("Hollows", fonts().semibold, size::Body, col::Text);
     {
         // A link to the Hollow screen, saying how its hollows stand.
         const HollowOutcome s = hollowSummary(doc);
@@ -122,56 +155,6 @@ void orientLeft(App& app, Document& doc, float h) {
         if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         if (clicked) app.showHollow();
     }
-    endPanel();
-}
-
-namespace {
-
-void metricCard(const char* id, const char* label, const std::string& value, const char* help) {
-    beginCard(id, ImVec2(0, 0), 13, col::Panel, col::Border);
-    const float w = ImGui::GetContentRegionAvail().x;
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    text(label, fonts().regular, size::Body + 1, col::Text);
-    ImGui::PushFont(fonts().bold, size::Body + 1);
-    const float vw = ImGui::CalcTextSize(value.c_str()).x;
-    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + w - vw, p.y), col::Text, value.c_str());
-    ImGui::PopFont();
-    text(help, fonts().regular, size::Body, col::TextSecondary, true);
-    endCard();
-    ImGui::Dummy(ImVec2(0, 2));
-}
-
-}  // namespace
-
-void orientRight(App& app, Document& doc, float h) {
-    beginPanel("orient_right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p = ImGui::GetWindowPos();
-        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
-    }
-    groupLabel("As it sits now");
-    ImGui::Dummy(ImVec2(0, 2));
-    const OrientState& o = doc.orient;
-    const bool fresh = o.nowFresh(doc.revision());
-    auto v = [&](std::size_t n) { return fresh ? thousands(n) : std::string("…"); };
-    metricCard("tips", "Tips", v(o.now.tips), "Fewer tips means fewer marks to sand off.");
-    metricCard("islands", "Island tips", v(o.now.island_tips),
-               "Spots that start in mid-air. Each needs a tip at exactly the right place.");
-    metricCard("biggest", "Biggest layer", fresh ? strf("%s mm²", thousands(static_cast<std::size_t>(std::lround(o.now.biggest_layer))).c_str()) : "…",
-               "The biggest layer pulls hardest on the film when it peels.");
-    metricCard("height", "Height", fresh ? strf("%.1f mm", o.now.top) : "…",
-               fresh ? strf("Taller prints take longer: %s layers at %.2f mm.", thousands(o.now.layers).c_str(), kLayerHeight).c_str()
-                     : "Taller prints take longer.");
-    metricCard("short", "Layers short of hold", v(o.now.short_of_hold),
-               "Layers bigger than their tips can hold. Tilting usually fixes this.");
-    if (!fresh) text("Scoring how it sits…", fonts().regular, size::Body, col::TextMuted);
-    ImGui::Dummy(ImVec2(0, 4));
-    text("Searching tries 64 directions plus this one, then runs the full tip planner on the best 6 and shows you "
-         "the three that beat how it sits now.",
-         fonts().regular, size::Body, col::TextSecondary, true);
-    (void)app;
-    endPanel();
 }
 
 namespace {
@@ -268,14 +251,16 @@ void orientResults(App& app, Document& doc, ImVec2 size) {
     text(counts[std::min<std::size_t>(n, 3)], fonts().bold, size::DialogTitle + 2, col::Text);
     // Test captures leave out the time it took, which differs run to run.
     const std::string took = app.options().deterministic ? std::string() : strf(" in %.0f s", std::max(1.0, r.seconds));
+    ImGui::PushFont(fonts().semibold, size::Body);
+    const float cw = ImGui::CalcTextSize("Change what counts").x + 32;
+    ImGui::PopFont();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - cw - 24);
     text(strf("Searched %d directions%s and planned tips for the best %d. Each option is compared with how it sits "
               "now. Nothing changes until you pick one, and you can undo.",
               r.directions, took.c_str(), r.finalists)
              .c_str(),
-         fonts().regular, size::Body, col::TextSecondary);
-    ImGui::PushFont(fonts().semibold, size::Body);
-    const float cw = ImGui::CalcTextSize("Change what counts").x + 32;
-    ImGui::PopFont();
+         fonts().regular, size::Body, col::TextSecondary, true);
+    ImGui::PopTextWrapPos();
     ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - cw, y0 + 4));
     if (secondaryButton("Change what counts", ImVec2(cw, 0))) app.showOrientSettings();
     ImGui::SetCursorPosY(y0 + 72);

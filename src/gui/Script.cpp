@@ -235,6 +235,13 @@ Step stepFrom(const std::string& s) {
     throw std::runtime_error("unknown step " + s);
 }
 
+Tool toolFrom(const std::string& s) {
+    static const char* names[] = {"none", "on_plate", "move", "rotate", "scale", "supports", "hollow", "repair"};
+    for (int i = 0; i < 8; ++i)
+        if (s == names[i]) return static_cast<Tool>(i);
+    throw std::runtime_error("unknown tool " + s);
+}
+
 Side sideFrom(const std::string& s) {
     static const char* names[] = {"front", "back", "left", "right", "top", "bottom"};
     for (int i = 0; i < 6; ++i)
@@ -349,6 +356,12 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             for (int i = 0, n = step["redo"].get<int>(); i < n; ++i) app.redo();
         } else if (step.contains("step")) {
             app.goToStep(stepFrom(step["step"].get<std::string>()));
+        } else if (step.contains("tool")) {
+            app.openTool(toolFrom(step["tool"].get<std::string>()));
+        } else if (step.contains("close_tool")) {
+            app.closeToolPanel();
+        } else if (step.contains("job_tab")) {
+            app.jobTab() = step["job_tab"].get<std::string>() == "hollows" ? 1 : 0;
         } else if (step.contains("side")) {
             app.toggleSide(sideFrom(step["side"].get<std::string>()));
         } else if (step.contains("orient")) {

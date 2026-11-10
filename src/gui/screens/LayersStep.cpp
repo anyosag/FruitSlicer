@@ -151,6 +151,13 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
     ImGui::SameLine(0, 10);
     text(strf("%.0f mm² lit", r.area[static_cast<std::size_t>(at)]).c_str(), fonts().regular, size::Body,
          col::TextSecondary);
+    if (static_cast<std::size_t>(at) != r.biggest && r.biggest < r.area.size()) {
+        ImGui::SameLine(0, 16);
+        text(strf("Biggest: %.0f mm² at layer %zu", r.area[r.biggest], r.biggest + 1).c_str(), fonts().regular,
+             size::Body, col::TextMuted);
+        ImGui::SameLine(0, 8);
+        if (linkButton("Go there")) app.setLayer(static_cast<int>(r.biggest));
+    }
     // "Show the layer below", right-aligned.
     ImGui::PushFont(fonts().regular, size::Body);
     const float cw = ImGui::CalcTextSize("Show the layer below").x + 30;
@@ -222,69 +229,13 @@ void slicingCard(App& app, ImVec2 size) {
     endPanel();
 }
 
-void checkLine(const char* id, bool ok, const std::string& title, const std::string& detail) {
-    beginCard(id, ImVec2(0, 0), 12, ok ? col::Panel : col::WarnBg, ok ? col::Border : col::WarnBorder);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    dl->AddCircleFilled(ImVec2(p.x + 9, p.y + 9), 9, ok ? col::OkBg : IM_COL32(0x4A, 0x3A, 0x12, 255), 20);
-    if (ok) icon::check(dl, ImVec2(p.x + 3, p.y + 3), 12, col::Ok);
-    else text("!", fonts().bold, size::Help, col::Warn);
-    ImGui::SetCursorScreenPos(ImVec2(p.x + 28, p.y));
-    ImGui::BeginGroup();
-    text(title.c_str(), fonts().semibold, size::Body, col::Text);
-    if (!detail.empty()) text(detail.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
-    ImGui::EndGroup();
-    endCard();
-}
-
-void layersRight(App& app, Document& doc, float h) {
-    beginPanel("layers_right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p = ImGui::GetWindowPos();
-        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
-    }
-    const LayerResult& r = *doc.layers.result;
-    const auto at = static_cast<std::size_t>(shownLayer(doc));
-    groupLabel("This layer");
-    beginCard("this_layer", ImVec2(0, 0), 13, col::Panel, col::Border);
-    if (at < r.raft_layers) {
-        text("Raft", fonts().semibold, size::Body, col::Text);
-        text(strf("The first %zu layers make the raft that holds the print to the plate.", r.raft_layers).c_str(),
-             fonts().regular, size::Body, col::TextSecondary, true);
-    } else if (at == r.biggest) {
-        text("The biggest layer above the raft", fonts().semibold, size::Body, col::Text);
-        text(strf("%.0f mm² at %.2f mm, model and supports together.", r.area[at], r.layers->layerTop(at)).c_str(),
-             fonts().regular, size::Body, col::TextSecondary, true);
-    } else {
-        text(strf("%.0f mm² lit", r.area[at]).c_str(), fonts().semibold, size::Body, col::Text);
-        text(strf("The biggest above the raft is %.0f mm², at layer %zu.", r.area[r.biggest], r.biggest + 1).c_str(),
-             fonts().regular, size::Body, col::TextSecondary, true);
-        if (linkButton("Go to the biggest layer")) app.setLayer(static_cast<int>(r.biggest));
-    }
-    endCard();
-    ImGui::Dummy(ImVec2(0, 8));
-    groupLabel("Whole print");
-    const SupportResult& sup = *doc.supports.result;
-    const bool floating = !sup.validation.floating.empty();
-    checkLine("floating", !floating, floating ? "Parts start in mid-air" : "No part starts in mid-air",
-              floating ? strf("%zu islands have nothing under them", sup.validation.floating.size()) : "");
-    const std::size_t cups = r.cups(), traps = r.traps();
-    checkLine("hollows", cups + traps == 0,
-              cups + traps == 0 ? "No suction cups or resin traps"
-                                : strf("%zu suction %s, %zu resin %s", cups, cups == 1 ? "cup" : "cups", traps,
-                                       traps == 1 ? "trap" : "traps"),
-              cups + traps == 0 ? "" : "Marked on the layer slider. Turning the model usually helps.");
-    ImGui::Dummy(ImVec2(0, 8));
-    keyValue("Layers", thousands(r.layers->size()));
-    keyValue("Height", strf("%.2f mm", r.top));
-    keyValue("Resin", strf("%.1f ml", r.resin_ml));
-    endPanel();
-}
-
 }  // namespace
 
-void layersView(App& app, Document& doc, ImVec2 size) {
+void layersMode(App& app, Document& doc, ImVec2 size) {
+    if (showingSaved(doc)) {
+        savedView(app, doc, size);
+        return;
+    }
     if (const Need need = app.needFor(Step::Layers); need != Need::Nothing) {
         needCard(app, doc, need, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
         return;
@@ -302,12 +253,12 @@ void layersView(App& app, Document& doc, ImVec2 size) {
     layerColumn(app, doc, size.y);
     ImGui::SameLine(0, 0);
     ImGui::BeginGroup();
-    const float w = ImGui::GetContentRegionAvail().x - kRightW;
+    const float w = ImGui::GetContentRegionAvail().x - kJobW;
     layerPicture(app, doc, ImVec2(w, size.y - kChartH));
     chart(app, *doc.layers.result, shownLayer(doc), ImVec2(w, kChartH));
     ImGui::EndGroup();
     ImGui::SameLine(0, 0);
-    layersRight(app, doc, size.y);
+    printSide(app, doc, size.y);
 }
 
 }  // namespace gui::screens::parts

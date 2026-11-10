@@ -20,4 +20,23 @@ void cross(ImDrawList* dl, ImVec2 p, float size, ImU32 c);
 // The FruitSlicer logo (a citrus slice), in the accent colour.
 void logo(ImDrawList* dl, ImVec2 p, float size);
 
+// The tools around the 3D view (canvas "Tool rail", "Model tools").
+void folder(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // Open
+void onPlate(ImDrawList* dl, ImVec2 p, float size, ImU32 c);     // a block coming down onto the plate
+void move(ImDrawList* dl, ImVec2 p, float size, ImU32 c);        // four arrows
+void rotate(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a turning arrow
+void scale(ImDrawList* dl, ImVec2 p, float size, ImU32 c);       // a box and an arrow out of its corner
+void supports(ImDrawList* dl, ImVec2 p, float size, ImU32 c);    // a slab on legs
+void hollow(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a box with a dashed box inside
+void drainHole(ImDrawList* dl, ImVec2 p, float size, ImU32 c);   // a hole and a drop
+void repair(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a sticking plaster
+void cursor(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // select and move
+void addTip(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // a tip and a plus
+void zone(ImDrawList* dl, ImVec2 p, float size, ImU32 c);        // a dashed box, struck through
+void back(ImDrawList* dl, ImVec2 p, float size, ImU32 c);        // a chevron pointing left
+void undo(ImDrawList* dl, ImVec2 p, float size, ImU32 c);
+void redo(ImDrawList* dl, ImVec2 p, float size, ImU32 c);
+void lookUp(ImDrawList* dl, ImVec2 p, float size, ImU32 c);      // from below: an arrow up to a line
+void dots(ImDrawList* dl, ImVec2 p, float size, ImU32 c);        // ⋮, a menu
+
 }  // namespace gui::icon

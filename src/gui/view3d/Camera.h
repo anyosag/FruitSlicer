@@ -32,6 +32,12 @@ public:
     void ray(float ndc_x, float ndc_y, float aspect, V3* origin, V3* dir) const;
     V3 target() const { return target_; }
     float distance() const { return distance_; }
+    // Moves the picture sideways by `ndc_x` (normalised device units, + is
+    // right) without turning the camera: a panel over the view's left keeps
+    // the model centred in what the panel leaves. Projections and rays both
+    // follow it.
+    void setShift(float ndc_x) { shift_ = ndc_x; }
+    float shift() const { return shift_; }
 
 private:
     float yaw_deg_ = -60;   // around Z, from +X
@@ -39,6 +45,7 @@ private:
     float distance_ = 320;
     float fov_deg_ = 30;
     V3 target_{0, 0, 15};
+    float shift_ = 0;
 };
 
 }  // namespace gui

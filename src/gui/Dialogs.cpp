@@ -159,10 +159,10 @@ void health(App& app) {
                        (std::to_string(c.cavities) + (c.cavities == 1 ? " closed hollow" : " closed hollows") +
                         " inside")
                            .c_str(),
-                       "A closed hollow traps resin and can burst. Give it drain holes, or print it solid, in "
-                       "the Orient step.");
+                       "A closed hollow traps resin and can burst. Give it drain holes, or print it solid, with "
+                       "the Hollow tool.");
         verdictRow("low", Verdict::Ok, "Low points found",
-                   strf("As it sits now, %zu %s in mid-air. The Orient step looks for a way to have fewer.",
+                   strf("As it sits now, %zu %s in mid-air. Rotate › Find a good rotation looks for a way to have fewer.",
                         doc->low_points, doc->low_points == 1 ? "spot starts" : "spots start")
                        .c_str());
         if (doc->fit().fits)
@@ -236,7 +236,7 @@ void health(App& app) {
         if (!fruit::checkFit(doc->model.mesh, chosen, pr).fits) {
             ImGui::Dummy(ImVec2(0, 2));
             text(("At " + percent(chosen.scale) + " it does not fit the plate; you can still place it and change "
-                                                  "the size on the Model step.")
+                                                  "the size with the Scale tool.")
                      .c_str(),
                  fonts().regular, size::Help, col::Error, true);
         }
@@ -291,11 +291,16 @@ void shortcuts(App&, bool& open) {
                                        {"Save the job as…", cmd("S", true)},
                                        {"Undo", cmd("Z")},
                                        {"Redo", cmd("Z", true)},
-                                       {"Keyboard shortcuts", cmd("/")}};
+                                       {"Keyboard shortcuts", cmd("/")},
+                                       {"The Job panel's main button", cmd("↩")}};
+    const std::vector<Row> tools = {{"On plate · Move · Rotate · Scale", "P · M · R · S"},
+                                    {"Supports · Hollow", "T · H"},
+                                    {"Close the tool's panel", "Esc"}};
     const std::vector<Row> looking = {{"Turn the view", "drag"},
                                       {"Move the view", "Shift drag"},
                                       {"Zoom", "scroll"},
-                                      {"Front · side · from below · angled", "1 · 2 · 3 · 4"},
+                                      {"Front · right · from below · start view", "1 · 2 · 3 · 4"},
+                                      {"From the top", "5"},
                                       {"Fit the model", "F"}};
     const std::vector<Row> placing = {{"Move it on the plate", "drag an arrow"},
                                       {"Turn it", "drag a ring"},
@@ -330,7 +335,8 @@ void shortcuts(App&, bool& open) {
         return ImGui::GetCursorPosY();
     };
     float left = column(kPad, y0, "Anywhere", anywhere);
-    left = column(kPad, left + 14, "Placing the model (Model and Orient)", placing);
+    left = column(kPad, left + 14, "Tools", tools);
+    left = column(kPad, left + 14, "Placing the model (Move and Rotate)", placing);
     const float x1 = kPad + col_w + 24;
     float right = column(x1, y0, "Looking around", looking);
     right = column(x1, right + 14, "In Layers", layers);

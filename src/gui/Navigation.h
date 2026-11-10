@@ -26,4 +26,31 @@ Need needFor(const Document& d, Step s);
 enum class Mark { None, Done, Problem };
 Mark markFor(const Document& d, Step s);
 
+// The tools around the 3D view: On plate, Move, Rotate and Scale on the rail
+// at its left, Supports, Hollow and Repair along its foot. Each opens a
+// floating panel. Rotate, Supports and Hollow open the place they belong to
+// (Orient, Supports, Orient · Hollows); the others are parts of Model.
+enum class Tool { None, OnPlate, Move, Rotate, Scale, Supports, Hollow, Repair };
+// The tool whose panel a place shows: its own, or on Model the one picked there.
+Tool toolShown(Step s, bool hollow_view, Tool model_tool);
+// The place a tool opens.
+Step stepFor(Tool t);
+// Two modes: Prepare (placing it, supports) and Layers (the layers, saving).
+inline bool inLayersMode(Step s) { return s == Step::Layers || s == Step::Print; }
+
+// The Job panel's main button: the next thing the job needs.
+enum class MainAction {
+    OpenModel,       // nothing on the plate yet
+    MakeSupports,    // fits, no supports yet
+    RemakeSupports,  // supports made for an earlier placement or settings
+    Slice,           // supports are up to date: cut the layers
+    ShowLayers,      // the layers are cut for these supports
+};
+struct MainButton {
+    MainAction action = MainAction::OpenModel;
+    bool enabled = true;  // false while it doesn't fit the plate
+};
+MainButton mainButton(const Document* d);
+const char* mainLabel(MainAction a);
+
 }  // namespace gui

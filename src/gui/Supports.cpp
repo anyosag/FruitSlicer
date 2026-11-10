@@ -775,7 +775,7 @@ std::pair<std::string, std::string> describeEdit(const TipEdit& e, const fruit::
                                                  t.apply(e.to).z)};
         case K::Delete: return {"Deleted a tip", fmt("Leaves a %.1f mm no-tip zone, %.1f mm up", 2 * e.radius, z)};
         case K::Resize: return {"Resized a tip", fmt("Now %.1f mm, %.1f mm up", e.diameter, z)};
-        case K::Pin: return {"Pinned a tip", fmt("Kept when supports are regenerated, %.1f mm up", z)};
+        case K::Pin: return {"Pinned a tip", fmt("Kept when supports are remade, %.1f mm up", z)};
         case K::Zone: return {"No-tip zone", fmt("%.1f mm across, %.1f mm up", 2 * e.radius, z)};
     }
     return {"", ""};

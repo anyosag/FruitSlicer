@@ -65,7 +65,7 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
     const std::size_t islands = sup.validation.floating.size();
     verdictRow("mid-air", islands ? Verdict::Error : Verdict::Ok,
                islands ? "Parts start in mid-air" : "No part starts in mid-air",
-               islands ? strf("%zu %s nothing under them. Add tips in the Supports step.", islands,
+               islands ? strf("%zu %s nothing under them. Add tips with the Supports tool.", islands,
                               islands == 1 ? "island has" : "islands have")
                              .c_str()
                        : strf("Checked on all %s layers with the supports", thousands(lr.layers->size()).c_str()).c_str());
@@ -86,10 +86,10 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
     const std::size_t review = sup.count(SupportProblem::Level::Review);
     if (review) {
         verdictRow("review", Verdict::Warn, strf("%zu %s to review", review, review == 1 ? "thing" : "things").c_str(),
-                   "From the Supports step. Saving is still allowed.");
-        if (linkButton("Review them")) {
-            app.goToStep(Step::Supports);
-            app.showProblems(true);
+                   "Listed under Checks, with the supports. Saving is still allowed.");
+        if (linkButton("Review them")) {  // in the Job panel's checks, with Supports open
+            app.openTool(Tool::Supports);
+            app.jobTab() = 0;
         }
     }
     if (app.printerSetup().orientation_confirmed) {
@@ -152,10 +152,8 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
     endCard();
 }
 
-void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h) {
-    beginCard("this_print", ImVec2(w, h), 18, col::Panel, col::Border);
-    text("This print", fonts().semibold, size::Section + 1, col::Text);
-    ImGui::Dummy(ImVec2(0, 2));
+// Print time, resin, layers and the file, as four tiles.
+void printTiles(Document& doc, const PrintPlan* plan) {
     const float cw = (ImGui::GetContentRegionAvail().x - 10) / 2;
     auto tile = [&](const char* id, const char* label, const std::string& big, const std::string& small) {
         beginCard(id, ImVec2(cw, 82), 12, col::Card, col::Border);
@@ -173,8 +171,10 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
          strf("%.1f mm tall", doc.layers.result->top));
     ImGui::SameLine(0, 10);
     tile("file", "File", ".goo", ready ? strf("%.2f mm layers", plan->layer_height) : "");
-    ImGui::Dummy(ImVec2(0, 6));
+}
 
+// Where it goes, and the button that saves or sends it (or the save running now).
+void saveArea(App& app, Document& doc) {
     JobProgress jp;
     if (saving(app, &jp)) {
         // The save in progress: writing, then reading the file back.
@@ -191,7 +191,6 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
         dl->AddRectFilled(bp, ImVec2(bp.x + bw * static_cast<float>(jp.fraction), bp.y + 6), col::Accent, 3);
         ImGui::Dummy(ImVec2(bw, 12));
         if (secondaryButton("Cancel", ImVec2(0, 34))) app.jobs().cancel();
-        endCard();
         return;
     }
 
@@ -238,11 +237,10 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
     }
     ImGui::Dummy(ImVec2(0, 4));
     const std::string blocker = app.printBlocker();
-    if (primaryButton(wifi ? "Send to printer" : "Save .goo", ImVec2(wifi ? 140 : 110, 40), blocker.empty()))
-        app.savePrint();
+    if (primaryButton(wifi ? "Send to printer" : "Save .goo", ImVec2(-1, 44), blocker.empty())) app.savePrint();
     if (!blocker.empty()) tooltip(blocker.c_str());
-    ImGui::SameLine(0, 8);
-    if (secondaryButton("Export STL instead", ImVec2(0, 40), !app.jobs().busy())) app.exportStl(false);
+    ImGui::Dummy(ImVec2(0, 2));
+    if (secondaryButton("Export STL instead", ImVec2(-1, 34), !app.jobs().busy())) app.exportStl(false);
     tooltip("The model and its supports as one mesh, for another slicer.");
     if (doc.supports.result && doc.supports.result->hollow) {
         // A mesh can't carry what was cut from the layers.
@@ -256,7 +254,6 @@ void thisPrint(App& app, Document& doc, const PrintPlan* plan, float w, float h)
                               "another slicer would leave its hollows sealed.",
              fonts().regular, size::Help, col::Warn, true);
     }
-    endCard();
 }
 
 void savedPage(App& app, Document& doc, ImVec2 size) {
@@ -361,6 +358,8 @@ void savedPage(App& app, Document& doc, ImVec2 size) {
 
 }  // namespace
 
+void savedView(App& app, Document& doc, ImVec2 size) { savedPage(app, doc, size); }
+
 bool showingSaved(const Document& doc) {
     return doc.print.saved && doc.layers.result && doc.print.saved_from == doc.layers.result;
 }
@@ -405,44 +404,82 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
                 if (primaryButton("Move it back on the plate", ImVec2(0, 38))) app.slideOntoPlate();
             } else if (f.fits_turned) {
                 if (primaryButton("Turn 90° to fit", ImVec2(0, 38))) app.turnQuarter();
-            } else if (primaryButton("Go to Model", ImVec2(0, 38))) {
-                app.goToStep(Step::Model);
+            } else if (primaryButton("Scale to fit", ImVec2(0, 38))) {
+                app.scaleToFit();
             }
             break;
         case Need::Supports:
-            if (primaryButton("Generate supports", ImVec2(0, 38))) app.supportsNow();
+            if (primaryButton("Make supports", ImVec2(0, 38))) app.supportsNow();
             break;
         case Need::FreshSupports:
-            if (primaryButton("Regenerate supports", ImVec2(0, 38))) app.supportsNow();
+            if (primaryButton("Remake supports", ImVec2(0, 38))) app.supportsNow();
             ImGui::SameLine(0, 8);
-            if (secondaryButton("Go to Supports", ImVec2(0, 38))) app.goToStep(Step::Supports);
+            if (secondaryButton("Back to Prepare", ImVec2(0, 38))) app.goToPrepare();
             break;
         case Need::Layers:
-            if (primaryButton("Go to Layers", ImVec2(0, 38))) app.goToStep(Step::Layers);
+            if (primaryButton("Slice", ImVec2(0, 38))) app.goToStep(Step::Layers);
             break;
     }
     endCard();
     endPanel();
 }
 
-void printView(App& app, Document& doc, ImVec2 size) {
-    if (const Need need = app.needFor(Step::Print); need != Need::Nothing) {
-        needCard(app, doc, need, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
-        return;
-    }
-    if (showingSaved(doc)) {
-        savedPage(app, doc, size);
-        return;
-    }
+// Layers mode's side panel: this print, what has been checked before saving,
+// the print settings (folded away), and saving it.
+void printSide(App& app, Document& doc, float h) {
     const auto plan = app.printPlan();
-    beginPanel("print", ImVec2(0, size.y), col::App, ImVec2(24, 24));
-    const float gap = 16, w = ImGui::GetContentRegionAvail().x, h = std::min(590.0f, ImGui::GetContentRegionAvail().y);
-    const float cw = std::floor((w - 2 * gap) / 3);
-    beforeYouSave(app, doc, plan.get(), cw, h);
-    ImGui::SameLine(0, gap);
-    settingsCard(app, doc, plan.get(), cw, h);
-    ImGui::SameLine(0, gap);
-    thisPrint(app, doc, plan.get(), cw, h);
+    beginPanel("print_side", ImVec2(kJobW, h), col::Panel, ImVec2(16, 16));
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetWindowPos();
+        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
+    }
+    text("This print", fonts().semibold, size::Section + 1, col::Text);
+    ImGui::Dummy(ImVec2(0, 2));
+    const float save_h = doc.supports.result && doc.supports.result->hollow ? 270 : 222;
+    ImGui::BeginChild("print_details", ImVec2(0, std::max(120.0f, ImGui::GetContentRegionAvail().y - save_h)),
+                      ImGuiChildFlags_None);
+    printTiles(doc, plan.get());
+    ImGui::Dummy(ImVec2(0, 4));
+    beforeYouSave(app, doc, plan.get(), 0, 0);
+    ImGui::Dummy(ImVec2(0, 4));
+    {
+        // Print settings, folded away until wanted.
+        bool& open = app.printSettingsOpen();
+        const PrintSettings& st = doc.print.settings;
+        const std::string summary = plan && plan->ready ? strf("%.2g s · bottom %.0f s", plan->setup.header.print.exposure,
+                                                               plan->setup.header.print.bottom_exposure)
+                                    : st.exposure > 0 ? strf("%.2g s · bottom %.0f s", st.exposure, st.bottom_exposure)
+                                                      : std::string("not set yet");
+        const float w = ImGui::GetContentRegionAvail().x;
+        const ImVec2 q = ImGui::GetCursorScreenPos();
+        if (ImGui::InvisibleButton("settings_fold", ImVec2(w, 40))) open = !open;
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 40), hovered ? col::Active : col::Panel, 10);
+        dl->AddRect(q, ImVec2(q.x + w, q.y + 40), col::Border, 10);
+        ImGui::PushFont(fonts().semibold, size::Body);
+        dl->AddText(ImVec2(q.x + 12, q.y + 12), col::Text, "Print settings");
+        ImGui::PopFont();
+        ImGui::PushFont(fonts().regular, size::Help);
+        const std::string right = summary + (open ? "  ▴" : "  ▾");
+        const float rw = ImGui::CalcTextSize(right.c_str()).x;
+        dl->AddText(ImVec2(q.x + w - 12 - rw, q.y + 13), plan && plan->ready ? col::TextMuted : col::Warn, right.c_str());
+        ImGui::PopFont();
+        if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        if (open) {
+            ImGui::Dummy(ImVec2(0, 2));
+            settingsCard(app, doc, plan.get(), 0, 0);
+        }
+    }
+    ImGui::EndChild();
+    {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float w = ImGui::GetContentRegionAvail().x;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x - 16, p.y + 4), ImVec2(p.x + w + 16, p.y + 4), col::Border);
+        ImGui::Dummy(ImVec2(w, 12));
+    }
+    saveArea(app, doc);
     endPanel();
 }
 

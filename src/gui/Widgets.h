@@ -30,6 +30,11 @@ void endCard();
 // Left-rail item: icon above its label; returns true when clicked.
 using IconFn = void (*)(ImDrawList*, ImVec2, float, ImU32);
 bool railItem(const char* id, const char* label, IconFn icon, bool active);
+// A tool around the 3D view: its icon over a short label. The open tool
+// carries the accent; a disabled one is dimmed and can't be pressed. `key`,
+// when given, sits small in the top right corner.
+bool toolButton(const char* id, const char* label, IconFn icon, bool active, bool enabled = true,
+                const char* key = nullptr, ImVec2 size = ImVec2(68, 58));
 
 // "Key ........ value" row across the available width.
 void keyValue(const char* key, const std::string& value, ImU32 value_color = 0);

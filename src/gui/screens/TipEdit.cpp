@@ -35,40 +35,7 @@ int classOf(double diameter) {
 
 }  // namespace
 
-void tipEditLeft(App& app, Document& doc, float h) {
-    beginPanel("tip_edit_left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 22));
-    edge(true, false);
-    text("Editing tips", fonts().semibold, size::Section + 1, col::Text);
-    ImGui::Dummy(ImVec2(0, 4));
-    groupLabel("Tool");
-    struct Tool {
-        App::TipTool tool;
-        const char* label;
-        const char* key;
-    };
-    const Tool tools[] = {{App::TipTool::Select, "Select and move", "V"},
-                          {App::TipTool::Add, "Add tips", "A"},
-                          {App::TipTool::Zone, "No-tip zone", "Z"}};
-    for (const Tool& t : tools) {
-        const bool on = app.tipTool() == t.tool;
-        ImGui::PushID(t.key);
-        const float w = ImGui::GetContentRegionAvail().x;
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        const bool clicked = ImGui::InvisibleButton("tool", ImVec2(w, 36));
-        const bool hovered = ImGui::IsItemHovered();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 36), on ? IM_COL32(0x2A, 0x1E, 0x14, 255) : (hovered ? col::Card : col::Panel), 8);
-        dl->AddRect(p, ImVec2(p.x + w, p.y + 36), on ? col::Accent : col::Border, 8, on ? 1.5f : 1.0f);
-        ImGui::PushFont(on ? fonts().semibold : fonts().medium, size::Body);
-        dl->AddText(ImVec2(p.x + 12, p.y + 10), on ? col::Text : col::TextSecondary, t.label);
-        ImGui::PopFont();
-        ImGui::SetCursorScreenPos(ImVec2(p.x + w - keyBadgeWidth(t.key) - 8, p.y + 6));
-        keyBadge(t.key);
-        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 40));
-        ImGui::Dummy(ImVec2(0, 0));
-        if (clicked) app.tipTool() = t.tool;
-        ImGui::PopID();
-    }
+void tipEditPanel(App& app, Document& doc) {
     ImGui::Dummy(ImVec2(0, 6));
     groupLabel("Size for new tips");
     for (int c = 1; c < 4; ++c) {
@@ -78,6 +45,8 @@ void tipEditLeft(App& app, Document& doc, float h) {
     ImGui::Dummy(ImVec2(0, 6));
     if (radioCard("zones", "Show no-tip zones", "Where deleted tips were, and the zones you drew.", app.showZones()))
         app.showZones() = !app.showZones();
+    ImGui::Dummy(ImVec2(0, 8));
+    tipEditSelected(app, doc);
     ImGui::Dummy(ImVec2(0, 8));
     // Your edits, newest first.
     const auto& edits = doc.supports.edits;
@@ -97,7 +66,7 @@ void tipEditLeft(App& app, Document& doc, float h) {
              col::TextMuted, true);
     } else {
         const fruit::Transform t = doc.transform();
-        const float list_h = std::max(80.0f, h - ImGui::GetCursorPosY() - 70);
+        const float list_h = std::min(220.0f, 70.0f * static_cast<float>(edits.size()));
         ImGui::BeginChild("edits", ImVec2(0, list_h), ImGuiChildFlags_None);
         for (int i = static_cast<int>(edits.size()) - 1; i >= 0; --i) {
             const auto [title, detail] = describeEdit(edits[static_cast<std::size_t>(i)], t);
@@ -116,25 +85,20 @@ void tipEditLeft(App& app, Document& doc, float h) {
         }
         ImGui::EndChild();
     }
-    ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY() + 6, h - 22 - 48));
-    text("Edits stay when you regenerate: the planner works around your tips and keeps its own out of the zones.",
+    ImGui::Dummy(ImVec2(0, 4));
+    text("Edits stay when you remake supports: the planner works around your tips and keeps its own out of the "
+         "zones.",
          fonts().regular, size::Help, col::TextMuted, true);
-    endPanel();
+    ImGui::Dummy(ImVec2(0, 4));
+    if (primaryButton("Done", ImVec2(-1, 38))) app.editTips(false);
 }
 
-void tipEditRight(App& app, Document& doc, float h) {
-    beginPanel("tip_edit_right", ImVec2(kRightW, h), col::Panel, ImVec2(18, 22));
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p = ImGui::GetWindowPos();
-        dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
-    }
+void tipEditSelected(App& app, Document& doc) {
     const SupportState& s = doc.supports;
     groupLabel("Selected tip");
     if (!s.result || s.selected_tip < 0 || s.selected_tip >= static_cast<int>(s.result->points.size())) {
         text("Click a tip to change its size, pin it or delete it. Drag it to move it.", fonts().regular, size::Body,
              col::TextSecondary, true);
-        endPanel();
         return;
     }
     const SupportResult& r = *s.result;
@@ -142,7 +106,7 @@ void tipEditRight(App& app, Document& doc, float h) {
     const bool yours = p.category == fruit::PointCategory::Manual;
     beginCard("tip", ImVec2(0, 0), 13, col::Panel, col::Border);
     text(yours ? "Your tip" : tipKind(p).c_str(), fonts().semibold, size::Body, col::Text);
-    text(yours ? "Added, moved, resized or pinned by you: kept when supports are regenerated." : tipWhy(p).c_str(),
+    text(yours ? "Added, moved, resized or pinned by you: kept when supports are remade." : tipWhy(p).c_str(),
          fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 4));
     text("Size", fonts().semibold, size::Help, col::TextMuted);
@@ -162,9 +126,8 @@ void tipEditRight(App& app, Document& doc, float h) {
     ImGui::SameLine(0, 8);
     if (secondaryButton("Delete", ImVec2(0, 36))) app.deleteTip(s.selected_tip);
     ImGui::Dummy(ImVec2(0, 4));
-    text("A pinned tip is never removed when supports are regenerated. Moving or resizing a tip pins it.",
+    text("A pinned tip is never removed when supports are remade. Moving or resizing a tip pins it.",
          fonts().regular, size::Help, col::TextMuted, true);
-    endPanel();
 }
 
 void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
@@ -211,7 +174,7 @@ void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
     }
     // Legend.
     {
-        const ImVec2 p(origin.x + size.x - 210, origin.y + 50);
+        const ImVec2 p(origin.x + kToolPanelRight + 16, origin.y + size.y - 34);  // clear of the floating panel
         dl->AddCircleFilled(ImVec2(p.x + 6, p.y + 8), 6, IM_COL32(0xFF, 0x6B, 0x6B, 60), 16);
         dl->AddCircle(ImVec2(p.x + 6, p.y + 8), 6, IM_COL32(0xFF, 0x6B, 0x6B, 200), 16, 1.5f);
         ImGui::PushFont(fonts().regular, size::Help);
@@ -224,7 +187,8 @@ void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
     // The mouse: pick, add, draw zones, drag tips.
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 m = io.MousePos;
-    const bool inside = m.x >= origin.x && m.y >= origin.y + 44 && m.x < origin.x + size.x && m.y < origin.y + size.y;
+    const bool inside = m.x >= origin.x && m.y >= origin.y + 44 && m.x < origin.x + size.x && m.y < origin.y + size.y &&
+                        ImGui::IsWindowHovered();  // not over a panel floating on the view
     auto ray = [&](fruit::Vec3* pos, fruit::Vec3* normal) {
         const float nx = 2 * (m.x - origin.x) / size.x - 1, ny = 1 - 2 * (m.y - origin.y) / size.y;
         V3 o, d;
