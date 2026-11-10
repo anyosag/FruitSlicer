@@ -17,7 +17,8 @@ struct MeshCheck {
     int shells = 0;              // connected pieces
     int flipped = 0;             // inside-out shells turned around while loading
     int cavities = 0;            // closed hollows inside the model
-    std::size_t open_edges = 0;  // edges not shared by two triangles facing the same way
+    std::size_t open_edges = 0;  // edges still not used as often one way round as the other
+    RepairReport repair;         // what loading did to close it
     double volume_ml = 0;        // at 100 %
     BBox3 bbox;                  // model coordinates at 100 %
 

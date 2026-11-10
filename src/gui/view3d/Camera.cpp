@@ -3,6 +3,7 @@
 #include "view3d/Camera.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace gui {
 
@@ -38,6 +39,13 @@ void Camera::preset(ViewPreset p) {
         case ViewPreset::Angled: yaw_deg_ = -60, pitch_deg_ = 25; break;
         case ViewPreset::Below: yaw_deg_ = -90, pitch_deg_ = -60; break;
     }
+}
+
+void Camera::lookFrom(V3 dir) {
+    const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len <= 0) return;
+    pitch_deg_ = std::clamp(std::asin(dir.z / len) / kDeg, -80.0f, 80.0f);
+    if (dir.x != 0 || dir.y != 0) yaw_deg_ = std::atan2(dir.y, dir.x) / kDeg;
 }
 
 V3 Camera::eye() const {

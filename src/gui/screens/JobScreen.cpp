@@ -14,6 +14,7 @@
 #include "App.h"
 #include "Format.h"
 #include "Icons.h"
+#include "Repairs.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "screens/JobParts.h"
@@ -271,7 +272,7 @@ void emptyLeft(App&) {
     }
     ImGui::Dummy(ImVec2(0, 6));
     groupLabel("What happens next");
-    const char* steps[] = {"FruitSlicer checks the mesh and fixes inside-out parts.",
+    const char* steps[] = {"FruitSlicer checks the mesh, and repairs holes and inside-out parts.",
                            "It checks the size against the plate.",
                            "You choose a scale, then move on to orienting it."};
     for (int i = 0; i < 3; ++i) {
@@ -395,18 +396,27 @@ void plateMap(const App& app, const Document& doc) {
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), col::Border, 8);
 }
 
-void healthCard(const Document& doc) {
+void healthCard(App& app, const Document& doc) {
     const fruit::MeshCheck& c = doc.check;
+    const RepairWords repair = repairWords(c);
+    using Level = RepairWords::Level;
     std::string issues;
     auto add = [&](const std::string& s) { issues += (issues.empty() ? "" : " ") + s; };
-    if (!c.closed()) add(thousands(c.open_edges) + " open edges.");
+    if (repair.level == Level::Open) add(repair.brief);
     if (c.cavities) add(strf("%d closed %s inside.", c.cavities, c.cavities == 1 ? "hollow" : "hollows"));
-    const bool clean = issues.empty();
+    // Fine as it is or as repaired; a big patch, like an open edge or a
+    // hollow, is something to look at.
+    const bool clean = issues.empty() && repair.level != Level::Check;
+    const char* title = "Mesh is clean";
     std::string body;
-    if (clean) {
+    if (repair.level == Level::Repaired || repair.level == Level::Check) {
+        title = repair.level == Level::Check ? "Mesh repaired: check the patch" : "Mesh repaired";
+        body = repair.brief + (issues.empty() ? "" : " " + issues);
+    } else if (clean) {
         body = (c.shells == 1 ? std::string("One closed shell") : std::to_string(c.shells) + " closed shells") +
                (c.flipped ? strf(", %d turned outward", c.flipped) : std::string(", nothing flipped")) + ", no hollows.";
     } else {
+        title = "Check the mesh";
         body = issues;
     }
     beginCard("health", ImVec2(0, 0), 14, clean ? col::Panel : col::WarnBg, clean ? col::Border : col::WarnBorder);
@@ -416,8 +426,13 @@ void healthCard(const Document& doc) {
     else text("!", fonts().bold, size::Body, col::Warn);
     ImGui::SetCursorScreenPos(ImVec2(p.x + 22, p.y));
     ImGui::BeginGroup();
-    text(clean ? "Mesh is clean" : "Check the mesh", fonts().semibold, size::Body, col::Text);
+    text(title, fonts().semibold, size::Body, col::Text);
     text(body.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
+    if (c.repair.patch_faces > 0) {
+        // Patches are tinted in the view: this turns it to the biggest.
+        if (linkButton(c.repair.holes_filled + c.repair.gaps_closed > 1 ? "Show the biggest patch" : "Show the patch"))
+            app.showPatch();
+    }
     ImGui::EndGroup();
     endCard();
 }
@@ -441,7 +456,7 @@ void rightPanel(App& app, float h) {
     keyValue("Height with lift", strf("%.1f of %.0f mm", f.top, app.printer().build_z));
     keyValue("Model resin", strf("%.1f ml", doc->check.volume_ml * p.scale * p.scale * p.scale));
     ImGui::Dummy(ImVec2(0, 8));
-    healthCard(*doc);
+    healthCard(app, *doc);
     endPanel();
 }
 
@@ -770,7 +785,19 @@ void job(App& app) {
     } else {
         leftPanel(app, body_h);
         ImGui::SameLine(0, 0);
-        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - (doc ? kRightW : 0), body_h), nullptr);
+        // Where the repair patched the model, the patches are tinted: say so.
+        const bool patched = doc && doc->check.repair.patch_faces > 0;
+        viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - (doc ? kRightW : 0), body_h), nullptr,
+                 patched ? Overlay([](ImVec2 o, ImVec2 s, const float*) {
+                     ImDrawList* dl = ImGui::GetWindowDrawList();
+                     ImGui::PushFont(fonts().regular, size::Body);
+                     const char* label = "Patched by FruitSlicer";
+                     const float x = o.x + s.x - 16 - ImGui::CalcTextSize(label).x;
+                     dl->AddText(ImVec2(x, o.y + 20), col::TextSecondary, label);
+                     dl->AddCircleFilled(ImVec2(x - 12, o.y + 28), 4, col::Warn);
+                     ImGui::PopFont();
+                 })
+                         : Overlay());
         if (doc) {
             ImGui::SameLine(0, 0);
             rightPanel(app, body_h);

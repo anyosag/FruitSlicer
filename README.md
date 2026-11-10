@@ -24,6 +24,7 @@ behind it, and the milestone plan are in
 | Physical validation: overlap coupon, calibration plates, A/B plate | **needs your printer** |
 | Native `.goo` writer/reader (`goo`, `goo-info`, `goo-compare`, orientation coupon) | done; header verified against SatelLite 1.0.2.43's 16K file; image orientation pending the F comparison |
 | macOS (Apple Silicon) build in CI | done |
+| Mesh repair on load: holes, cracks, unjoined seams, wrong-way and doubled faces (`repair`) | done |
 | Desktop app for macOS: open and check, orient, supports, layers, save a checked `.goo` | early build, downloadable from CI; calibration and hollowing next |
 | Grey-level tips (weaker contacts, smaller marks) | next |
 
@@ -45,7 +46,12 @@ ctest --test-dir build
 A Mac app is being built in stages on top of the same engine. Today it
 opens STL, OBJ and 3MF files and checks them: closed shells, inside-out
 parts, hollows, low points, and whether the model fits the Saturn 4 Ultra
-16K's plate. You then choose its size (full, the largest that fits, a custom
+16K's plate. A file that is not watertight is **repaired as it opens** (see
+[Mesh repair](#mesh-repair)): the check says what was done, in amber when a
+patch is big enough to be worth a look or when the file could not be closed;
+the patches are tinted on the model in the Model step, and **Show the
+patch** turns the view to the biggest. A saved job keeps the repaired mesh
+and what was repaired. You then choose its size (full, the largest that fits, a custom
 percentage, or ×25.4 for models drawn in inches), rotation, and whether it
 stands raised on supports or flat on the plate. Edits undo with ⌘Z, and ⌘/
 lists the shortcuts. **⌘S saves the job** (a `.fruitjob` file): the model's
@@ -237,6 +243,54 @@ Every command reads STL (binary or text), OBJ and 3MF models.
 ./build/src/fruitslicer coupon overlap -o overlap_coupon.stl --png-dir out/overlap_ref
 ```
 
+### Mesh repair
+
+A mesh slices into layers with a clear inside and outside when every edge is
+used as often one way round as the other. Edges where that fails are *open*:
+at holes, along seams that were never joined, and where a face is turned the
+wrong way. Every command, and the app, repairs a model as it loads; a mesh
+with no open edges is left exactly as it is. The repair never moves a point
+of the model. It only
+
+- turns faces so that neighbours run the same way round, and turns a piece
+  it had to repair to face outward as a whole;
+- drops faces that are there twice, where that closes edges;
+- adds faces over each hole, and across each gap between open edges that run
+  within 2 ‰ of the model's size of each other (0.1 mm at most): the patch
+  with the least area, which is the flat cap for a flat hole and the strip
+  that zips a crack shut;
+- drops loose surfaces that have no thickness.
+
+```sh
+# What loading repairs in a file; -o writes the repaired mesh. Exit status 1 if it is still not watertight.
+./build/src/fruitslicer repair model.stl -o repaired.stl
+```
+
+`info` reports `"watertight"` and the same `"repair"` block. The other
+commands say on stderr when a file needed repair and put the block in their
+JSON report, with sizes at the scale the model is placed at.
+
+What it does not do:
+
+- **It guesses nothing about shape.** A hole gets the flattest patch that
+  fits: a ball with its top cut off stays cut off, with a flat lid.
+- **Surfaces further apart than the seam gap are not joined.** Each is
+  closed on its own, and a flat one, which then holds no volume, is dropped.
+  A file that is all loose surfaces is left as it is and reported as not
+  watertight: that one needs fixing in the modelling program.
+- **A broken hollow prints solid.** A hollow is a shell that faces inward,
+  and a shell the repair had to close can't be told from one that is simply
+  inside out, so it is turned outward. Hollows whose shell needed no repair
+  are kept.
+- **Parts that pass through each other are left alone**: the slicer's
+  non-zero union already prints them as one.
+
+The Stanford bunny scan is an example: it has five holes in its underside
+(223 open edges; the largest is 13.2 mm across with the bunny 46 mm tall).
+As loaded, 53 of its 927 layers at 0.05 mm came out more than 1 % off in
+area, one of them with 294 mm² in place of 641 mm². Repaired, the volume of
+the layers equals the volume of the mesh (20.38 ml).
+
 ### Calibration plates
 
 The support generator's limits (how much area a tip of each size holds, how
@@ -316,9 +370,14 @@ then go through the real point generator. The command prints the best
 | Model | Points (input → best) | Peak layer area | Island tips |
 |---|---|---|---|
 | Armadillo | 239 → 204 (−15 %) | 750 → 551 mm² | 33 → 10 |
-| Stanford bunny | 214 → 177 (−17 %) | 842 → 690 mm² | 62 → 61 |
+| Stanford bunny | 198 → 99 (−50 %) | 842 → 697 mm² | 12 → 5 |
 
-Each search takes about 30 s at 0.1 mm evaluation layers.
+Each search takes about 30 s at 0.1 mm evaluation layers. The bunny's row is
+for the repaired mesh. Before mesh repair existed it read 214 → 177 points
+and 62 → 61 island tips: the holes in the scan's underside broke the layers
+they pass through, and the pieces counted as islands. In the input
+orientation that accounts for 50 of the 62 island tips (the same run with
+the repair switched off gives 214 points and 62, with it 198 and 12).
 
 ### Supports and printable file
 

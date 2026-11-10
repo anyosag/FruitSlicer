@@ -20,6 +20,9 @@ public:
     // Fit a box (centre + radius) in view, keeping the direction.
     void frame(V3 center, float radius);
     void preset(ViewPreset p);
+    // Look at the target from the side `dir` points to (need not be of unit
+    // length; kept a little off straight up or down).
+    void lookFrom(V3 dir);
 
     V3 eye() const;
     M4 view() const;

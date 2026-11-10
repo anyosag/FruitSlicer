@@ -178,6 +178,9 @@ public:
     void applyAdvanced();  // back to the Supports step, generating with these values
     bool problemsOpen() const { return problems_open_; }
     void focusOn(const fruit::Vec3& where);  // turn the camera to look at a point
+    // Turns the view to the biggest patch the repair put on the model, seen
+    // from outside.
+    void showPatch();
     // Editing tips by hand (canvas board "TipEdit"). Every edit is kept in
     // model coordinates and can be undone on its own. An edit applies on top
     // of the planner's tips (only the tree is rebuilt) unless it takes back

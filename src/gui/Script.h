@@ -9,6 +9,8 @@
 //
 // Steps drive the app through the same commands its buttons use:
 //   {"open": path | "@demo" | "@demo-big" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
+//     ("@demo-hollow": a ball with a sealed hollow; "@demo-worn", "@demo-open", "@demo-loose": faulty
+//     meshes for the repair) {"show_patch": true} turns the view to the biggest patch
 //   {"save_job": path | "@demo"} {"unsaved": "save" | "discard" | "cancel"}
 //   {"relink": "copy" | "cancel" | path | "@demo"} {"remove": path | "@demo"} (test set-up)
 //   {"wait": "jobs"}            finish background work
