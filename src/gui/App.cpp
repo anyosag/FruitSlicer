@@ -26,6 +26,7 @@
 #include "Format.h"
 #include "Icons.h"
 #include "Log.h"
+#include "Measure.h"
 #include "Setup.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -436,6 +437,20 @@ void App::slideOntoPlate() {
     doc_->edit(slidOnto(doc_->model.mesh, doc_->placement(), doc_->printer));
 }
 
+void App::mirrorModel(int axis) {
+    if (!doc_ || placing()) return;
+    doc_->mirror(axis);
+}
+
+void App::measureClick(const fruit::Vec3& on_plate) {
+    if (!doc_) return;
+    if (measure_.geometry_id != doc_->geometry_id) measure_.clear();
+    measure_.geometry_id = doc_->geometry_id;
+    measure_.click(doc_->transform().inverse().apply(on_plate));
+}
+
+void App::clearMeasure() { measure_.clear(); }
+
 bool App::handlesShown() const {
     // With Move or Rotate open: the arrows and rings that place it.
     return doc_ && screen_ == Screen::Job &&
@@ -553,7 +568,7 @@ namespace {
 
 // A printer-frame direction in the model's own frame (rotation only).
 fruit::Vec3 toModel(const fruit::Placement& p, const fruit::Vec3& d) {
-    const fruit::Transform r = fruit::Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z);
+    const fruit::Transform r = fruit::placementRotation(p);
     return fruit::normalized({r.m[0][0] * d.x + r.m[1][0] * d.y + r.m[2][0] * d.z,
                               r.m[0][1] * d.x + r.m[1][1] * d.y + r.m[2][1] * d.z,
                               r.m[0][2] * d.x + r.m[1][2] * d.y + r.m[2][2] * d.z});
@@ -1058,18 +1073,10 @@ bool App::pickModel(const fruit::Vec3& origin, const fruit::Vec3& dir, fruit::Ve
         pick_doc_ = doc_.get();
         pick_revision_ = doc_->revision();
     }
-    const auto hit = pick_tree_->raycast(origin, dir);
+    const auto hit = pickSurface(*pick_tree_, origin, dir);
     if (!hit) return false;
-    const fruit::TriangleMesh& m = doc_->placed();
-    const auto& f = m.faces[static_cast<std::size_t>(hit->face)];
-    const fruit::Vec3 a = m.vertices[static_cast<std::size_t>(f[0])], b = m.vertices[static_cast<std::size_t>(f[1])],
-                      c = m.vertices[static_cast<std::size_t>(f[2])];
-    const fruit::Vec3 u{b.x - a.x, b.y - a.y, b.z - a.z}, v{c.x - a.x, c.y - a.y, c.z - a.z};
-    fruit::Vec3 n{u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
-    const double len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
-    if (len > 0) n = {n.x / len, n.y / len, n.z / len};
     *pos = hit->point;
-    *normal = n;
+    *normal = hit->normal;
     return true;
 }
 
@@ -2713,7 +2720,10 @@ void App::keys() {
             if (ImGui::IsKeyPressed(ImGuiKey_S, false)) openTool(Tool::Scale);
             if (ImGui::IsKeyPressed(ImGuiKey_T, false)) openTool(Tool::Supports);
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) || ImGui::IsKeyPressed(ImGuiKey_D, false)) openTool(Tool::Hollow);
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !placing()) tool_panel_ = false;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !placing()) {
+                if (tool_panel_ && tool() == Tool::Measure && !measure_.empty()) measure_.clear();  // first Esc: start again
+                else tool_panel_ = false;
+            }
         }
     }
     if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Slash, false)) shortcuts_open_ = true;  // "?"

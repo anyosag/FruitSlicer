@@ -49,11 +49,14 @@ TEST_CASE("Workspace: each tool opens its place, and each place shows its tool",
     CHECK(stepFor(Tool::Move) == Step::Model);
     CHECK(stepFor(Tool::Scale) == Step::Model);
     CHECK(stepFor(Tool::Repair) == Step::Model);
+    CHECK(stepFor(Tool::Mirror) == Step::Model);
+    CHECK(stepFor(Tool::Measure) == Step::Model);
     CHECK(stepFor(Tool::Rotate) == Step::Orient);
     CHECK(stepFor(Tool::Hollow) == Step::Orient);
     CHECK(stepFor(Tool::Supports) == Step::Supports);
     // The way back: a place shows the tool that opens it.
-    for (Tool t : {Tool::OnPlate, Tool::Move, Tool::Rotate, Tool::Scale, Tool::Supports, Tool::Hollow, Tool::Repair})
+    for (Tool t : {Tool::OnPlate, Tool::Move, Tool::Rotate, Tool::Scale, Tool::Supports, Tool::Hollow, Tool::Repair, Tool::Mirror,
+                   Tool::Measure})
         CHECK(toolShown(stepFor(t), t == Tool::Hollow, t) == t);
     // Model shows only its own tools; Layers and Print show none.
     CHECK(toolShown(Step::Model, false, Tool::Supports) == Tool::None);

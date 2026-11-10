@@ -1,0 +1,17 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "mirror"}, {"shot": "g1_mirror_panel"},
+    {"mirror": "x"}, {"shot": "g1_mirror_left_right"},
+    {"mirror": "x"}, {"mirror": "y"}, {"shot": "g1_mirror_front_back"},
+    {"undo": 3}, {"mirror": "z"}, {"shot": "g1_mirror_top_bottom"},
+    {"undo": 1},
+    {"tool": "measure"}, {"shot": "g1_measure_empty"},
+    {"measure": [[-30, -10, 7]]}, {"shot": "g1_measure_first"},
+    {"measure": "clear"}, {"measure": [[-30, -15, 7], [30, 15, 7]]}, {"shot": "g1_measure_two"},
+    {"measure": "clear"}, {"measure": [[-40, -10, 29], [-40, -10, 5]]}, {"shot": "g1_measure_height"},
+    {"measure": "clear"}, {"shot": "g1_measure_cleared"}
+  ]
+}

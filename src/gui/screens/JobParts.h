@@ -90,6 +90,11 @@ void relinkDialog(App& app);         // "Where is … now?"
 // Rotate: the search, how it sits now, the sides people see; the results.
 void orientPanel(App& app, Document& doc);
 void orientResults(App& app, Document& doc, ImVec2 size);
+// Mirror and Measure: each tool's panel, and Measure's marks in the view (the
+// points, the line between them, and the clicks that pick them).
+void mirrorPanel(App& app, Document& doc);
+void measurePanel(App& app, Document& doc);
+void measureOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 // Hollow: the tool's panel, what prints after it (in the Job panel), and the
 // view's marks (holes, and placing holes by hand).
 void hollowPanel(App& app, Document& doc);
