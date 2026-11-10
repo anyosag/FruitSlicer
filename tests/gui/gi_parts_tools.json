@@ -1,0 +1,18 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "mirror"}, {"shot": "gi_mirror_panel_part"},
+    {"mirror": "x"}, {"shot": "gi_mirror_second_part"},
+    {"select_part": 1}, {"shot": "gi_mirror_first_selected"},
+    {"tool": "measure"}, {"shot": "gi_measure_parts_empty"},
+    {"measure": [[-120, 0, 10], [120, 0, 10]]}, {"shot": "gi_measure_two_parts"},
+    {"select_part": 2}, {"nudge": [0, 20]}, {"shot": "gi_measure_part_moved"},
+    {"remove_part": 2}, {"shot": "gi_measure_part_removed"},
+    {"undo": 1}, {"shot": "gi_measure_part_back"},
+    {"close_tool": true}, {"save_job": "@demo"}, {"wait": "jobs"},
+    {"open": "@demo-job"}, {"wait": "jobs"}, {"tool": "mirror"}, {"shot": "gi_job_reopened_mirrored"}
+  ]
+}
