@@ -344,7 +344,7 @@ TEST_CASE("Tip edits: when the tips are planned again, the planner works around 
     for (const auto& q : plain.points)
         if (q.category == fruit::PointCategory::Overhang) overhang.push_back(q);
     REQUIRE(overhang.size() > 6);
-    const fruit::Transform t = doc->transform();
+    const fruit::Transform t = doc->part().transform();
     // Delete one of the planner's tips, resize another, and add a tip of your own
     // where the planner has a third: edits in model coordinates.
     const fruit::SupportPoint gone = overhang[0], bigger = overhang[overhang.size() / 2], yours = overhang.back();
@@ -386,7 +386,7 @@ TEST_CASE("Tip edits: when the tips are planned again, the planner works around 
     // Turned back, the same edits are kept to where those places now are.
     p.rotation_deg = {0, 0, 0};
     doc->edit(p);
-    const fruit::Transform t0 = doc->transform();
+    const fruit::Transform t0 = doc->part().transform();
     const SupportResult back = generate(*doc, SupportChoices{}, {}, none, edits);
     CHECK(tipsNear(back.planned, t0.apply(edits[0].at), kDeletedZone, true) == 0);
     CHECK(tipsNear(back.points, t0.apply(edits[0].at), kDeletedZone, true) == 0);

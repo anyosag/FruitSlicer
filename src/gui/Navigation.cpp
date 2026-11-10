@@ -9,11 +9,12 @@ namespace gui {
 Need needFor(const Document& d, Step s) {
     switch (s) {
         case Step::Model: return Need::Nothing;
-        case Step::Orient: return d.fit().fits_centred ? Need::Nothing : Need::Fit;  // the search turns it, keeps the size
-        case Step::Supports: return d.fit().fits ? Need::Nothing : Need::Fit;
+        case Step::Orient:  // the search turns the selected part, keeps the size
+            return d.fit().fits_centred ? Need::Nothing : Need::Fit;
+        case Step::Supports: return d.fits() ? Need::Nothing : Need::Fit;
         case Step::Layers:
         case Step::Print: {
-            if (!d.fit().fits) return Need::Fit;
+            if (!d.fits()) return Need::Fit;
             if (!d.supports.result) return Need::Supports;
             if (!d.supports.fresh(d.revision(), d.supportSettings())) return Need::FreshSupports;
             if (s == Step::Print && !d.layers.fresh(d.supports.result)) return Need::Layers;
@@ -26,8 +27,8 @@ Need needFor(const Document& d, Step s) {
 Mark markFor(const Document& d, Step s) {
     const bool fresh = d.supports.result && d.supports.fresh(d.revision(), d.supportSettings());
     switch (s) {
-        case Step::Model: return d.fit().fits ? Mark::None : Mark::Problem;
-        case Step::Orient: return d.orient.decided ? Mark::Done : Mark::None;
+        case Step::Model: return d.fits() ? Mark::None : Mark::Problem;
+        case Step::Orient: return d.orientDecided() ? Mark::Done : Mark::None;
         case Step::Supports: return fresh ? Mark::Done : Mark::None;
         case Step::Layers: return fresh && d.layers.fresh(d.supports.result) ? Mark::Done : Mark::None;
         case Step::Print:
@@ -61,7 +62,7 @@ Step stepFor(Tool t) {
 
 MainButton mainButton(const Document* d) {
     if (!d) return {MainAction::OpenModel, true};
-    const bool fits = d->fit().fits;
+    const bool fits = d->fits();
     if (!d->supports.result) return {MainAction::MakeSupports, fits};
     if (!d->supports.fresh(d->revision(), d->supportSettings())) return {MainAction::RemakeSupports, fits};
     if (d->layers.fresh(d->supports.result)) return {MainAction::ShowLayers, true};

@@ -29,8 +29,8 @@ catch_discover_tests(fruit_tests)
 if(FRUIT_BUILD_APP)
   add_executable(fruit_gui_tests gui/test_document.cpp gui/test_orient_logic.cpp gui/test_supports_logic.cpp
     gui/test_layers_logic.cpp gui/test_print_logic.cpp gui/test_send_logic.cpp gui/test_calibration_logic.cpp gui/test_jobfile_logic.cpp
-    gui/test_settings_logic.cpp gui/test_resins_logic.cpp gui/test_plates_logic.cpp gui/test_fit_logic.cpp gui/test_ab_logic.cpp gui/test_goo_tools_logic.cpp gui/test_hollow_logic.cpp gui/test_repair_logic.cpp gui/test_placing_logic.cpp gui/test_workspace_logic.cpp
-    ${PROJECT_SOURCE_DIR}/src/gui/Document.cpp ${PROJECT_SOURCE_DIR}/src/gui/Orient.cpp
+    gui/test_settings_logic.cpp gui/test_resins_logic.cpp gui/test_plates_logic.cpp gui/test_fit_logic.cpp gui/test_ab_logic.cpp gui/test_goo_tools_logic.cpp gui/test_hollow_logic.cpp gui/test_repair_logic.cpp gui/test_placing_logic.cpp gui/test_workspace_logic.cpp gui/test_parts_logic.cpp
+    ${PROJECT_SOURCE_DIR}/src/gui/Document.cpp ${PROJECT_SOURCE_DIR}/src/gui/Parts.cpp ${PROJECT_SOURCE_DIR}/src/gui/Orient.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Supports.cpp ${PROJECT_SOURCE_DIR}/src/gui/Layers.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Print.cpp ${PROJECT_SOURCE_DIR}/src/gui/Send.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Calibration.cpp ${PROJECT_SOURCE_DIR}/src/gui/JobFile.cpp

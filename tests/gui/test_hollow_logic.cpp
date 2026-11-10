@@ -51,7 +51,7 @@ bool inside(const fruit::Paths& p, fruit::Vec2 q) {
 
 TEST_CASE("Hollow: a sealed hollow gets a drain and an air hole and then drains", "[gui][hollow]") {
     const auto doc = load(sealed(), "hollow_sealed.stl");
-    REQUIRE(doc->check.cavities == 1);
+    REQUIRE(doc->part().check().cavities == 1);
     const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
     REQUIRE(p.closed.cavities.size() == 1);
     const fruit::Cavity& c = p.closed.cavities[0];
@@ -162,7 +162,7 @@ TEST_CASE("Hollow: applied, the supports, the layers and the print file use the 
     REQUIRE(s.hollow->holes.size() == 2);
     CHECK(s.hollow->drains == std::vector<char>{1});
     CHECK(s.validation.floating.empty());
-    const fruit::Vec3 mouth = doc->transform().apply(s.hollow->holes[0].at);  // underneath, among the tips
+    const fruit::Vec3 mouth = doc->part().transform().apply(s.hollow->holes[0].at);  // underneath, among the tips
     CHECK(mouth.z == Approx(5.0).margin(1e-6));
     for (const auto& p : s.points) CHECK(fruit::distance(p.pos, mouth) > s.hollow->placed[0].radius);
     // None inside the hollow, though it drains now: they could never come
@@ -246,7 +246,7 @@ TEST_CASE("Hollow: what the step bar, the Orient card and the 3D view say", "[gu
     CHECK_FALSE(cavityLabel(*doc->hollow.plan, 0, false).ok);
     // In the middle of the hollow, half-way up (printer coordinates).
     const fruit::Vec3 at = cavityLabelAt(doc->hollow.plan->closed, 0, kH);
-    const fruit::Vec3 mid = doc->transform().apply({10, 10, 6});
+    const fruit::Vec3 mid = doc->part().transform().apply({10, 10, 6});
     CHECK(at.x == Approx(mid.x).margin(0.1));
     CHECK(at.y == Approx(mid.y).margin(0.1));
     CHECK(at.z == Approx(mid.z).margin(0.1));
@@ -286,7 +286,7 @@ TEST_CASE("Hollow: the cut through the middle shows the wall, the hollow and the
     const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
     REQUIRE(p.holes.size() == 2);
     // Straight through the middle of the block, along x (printer coordinates).
-    const fruit::Vec3 mid = doc->transform().apply({10, 10, 6});
+    const fruit::Vec3 mid = doc->part().transform().apply({10, 10, 6});
     const HollowSection s = hollowSection(p, mid.xy(), {1, 0});
     auto bands = [&](const std::vector<SectionBand>& v, double z) {
         std::vector<std::pair<double, double>> out;

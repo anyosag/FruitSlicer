@@ -97,7 +97,7 @@ void App::showError(std::string title, std::string message) {
 }
 
 void App::frameModel() {
-    if (!doc_ || doc_->model.mesh.empty()) {
+    if (!doc_ || doc_->parts().empty()) {
         camera_.frame({0, 0, 15}, 110);
         return;
     }
@@ -135,7 +135,7 @@ void App::openPath(const std::string& path) {
     });
 }
 
-void App::openModel(const std::string& path) {
+void App::openModel(const std::string& path, bool add) {
     const std::string name = std::filesystem::path(path).filename().string();
     screen_ = Screen::Job;
     auto result = std::make_shared<std::shared_ptr<Document>>();
@@ -143,9 +143,10 @@ void App::openModel(const std::string& path) {
     jobs_.start(
         "Opening " + name,
         [path, printer, result](const fruit::JobControl& ctl) { *result = loadDocument(path, printer, ctl); },
-        [this, result, name](std::exception_ptr err) {
+        [this, result, name, add](std::exception_ptr err) {
             if (!err) {
                 checking_ = *result;
+                adding_part_ = add && doc_ != nullptr;
                 const fruit::PlateFit& f = checking_->fit();
                 health_ = HealthDialog{};
                 health_.open = true;
@@ -269,6 +270,7 @@ void App::openJobFile(const std::string& path) {
                 relink_.open = true;
                 relink_.doc = out->doc;
                 relink_.model_path = out->model_path;
+                relink_.part = out->part;
                 return;
             }
             installJob(out->doc);
@@ -339,18 +341,22 @@ void App::relinkOpen() {
 void App::relinkTo(const std::string& model_path) {
     if (!relink_.doc) return;
     auto d = relink_.doc;
+    const int id = relink_.part;
     relink_ = RelinkDialog{};
     try {
         fruit::LoadedModel m = fruit::loadModel(model_path);
-        if (meshHash(m.mesh) != meshHash(d->model.mesh)) {
-            // Changed since: the job uses the new file, and its supports go out of date.
-            d->model = std::move(m);
-            d->check = fruit::checkMesh(d->model);
-            d->geometry_id = newGeometryId();
-            d->modelChanged();
-            log::info("relinked to a changed model: " + model_path);
-        }
-        d->path = model_path;
+        const Part* part = d->findPart(id);
+        const bool changed = part && meshHash(m.mesh) != meshHash(part->mesh());
+        // Changed since: the job uses the new file, and its supports go out of date.
+        auto model = changed ? makePartModel(std::move(m)) : nullptr;
+        d->editParts([&](PartsEdit& e) {
+            if (PartState* s = e.find(id)) {
+                s->path = model_path;
+                if (model) s->model = model;
+            }
+        });
+        d->clearHistory();  // undo can't go back to the old file
+        if (changed) log::info("relinked to a changed model: " + model_path);
     } catch (const std::exception& e) {
         showError("Couldn't read that model", std::string(e.what()) + " The job keeps its own copy.");
     }
@@ -365,7 +371,7 @@ void App::requestQuit() {
 
 fruit::Placement App::healthPlacement() const {
     if (!checking_) return {};
-    return sizeChoicePlacement(checking_->model.mesh, checking_->printer, health_.choice, health_.custom_percent);
+    return sizeChoicePlacement(checking_->part().mesh(), checking_->printer, health_.choice, health_.custom_percent);
 }
 
 void App::chooseSize(SizeChoice c, double custom_percent) {
@@ -375,6 +381,11 @@ void App::chooseSize(SizeChoice c, double custom_percent) {
 
 void App::placeChecked() {
     if (!checking_) return;
+    if (adding_part_ && doc_) {
+        placeAddedPart();
+        return;
+    }
+    adding_part_ = false;
     checking_->place(healthPlacement());
     doc_ = std::move(checking_);
     checking_.reset();
@@ -394,6 +405,7 @@ void App::placeChecked() {
 void App::cancelChecked() {
     checking_.reset();
     health_.open = false;
+    adding_part_ = false;
 }
 
 void App::setScalePercent(double percent) {
@@ -428,12 +440,12 @@ void App::nudge(double dx_mm, double dy_mm) {
 
 void App::turnQuarter() {
     if (!doc_ || placing()) return;
-    doc_->edit(turnedQuarter(doc_->model.mesh, doc_->placement(), doc_->printer));
+    doc_->edit(turnedQuarter(doc_->part().mesh(), doc_->placement(), doc_->printer));
 }
 
 void App::slideOntoPlate() {
     if (!doc_ || placing()) return;
-    doc_->edit(slidOnto(doc_->model.mesh, doc_->placement(), doc_->printer));
+    doc_->edit(slidOnto(doc_->part().mesh(), doc_->placement(), doc_->printer));
 }
 
 bool App::handlesShown() const {
@@ -471,7 +483,7 @@ void App::dragHandleBy(Handle h, double amount, bool snap) {
     HandleDrag d;
     d.handle = h;
     d.start = doc_->placement();
-    d.frame = handleFrame(doc_->placedBox());
+    d.frame = handleFrame(doc_->part().box());
     d.now = d.start;
     beginPlacing(d);
     // In a few moves, as a hand would, then let go: one undo step.
@@ -517,7 +529,8 @@ void App::goToStep(Step s) {
     step_ = s;
     if (!inLayersMode(s)) prepare_step_ = s;
     screen_ = Screen::Job;
-    if (s == Step::Orient && (orient_view_ == OrientView::Hollow || !(doc_ && doc_->orient.resultsFresh(doc_->revision()))))
+    if (s == Step::Orient &&
+        (orient_view_ == OrientView::Hollow || !(doc_ && doc_->orient().resultsFresh(doc_->part().revision()))))
         orient_view_ = OrientView::Settings;
 }
 
@@ -564,14 +577,14 @@ fruit::Vec3 toModel(const fruit::Placement& p, const fruit::Vec3& d) {
 bool App::sidePicked(Side s) const {
     if (!doc_) return false;
     const fruit::Vec3 d = sideDirection(s);
-    for (const fruit::Vec3& v : visibleInPrinter(doc_->orient.visible, doc_->placement()))
+    for (const fruit::Vec3& v : visibleInPrinter(doc_->orient().visible, doc_->placement()))
         if (fruit::dot(v, d) > 0.9) return true;
     return false;
 }
 
 void App::toggleSide(Side s) {
     if (!doc_) return;
-    OrientState& o = doc_->orient;
+    OrientState& o = doc_->orient();
     const fruit::Vec3 d = sideDirection(s);
     const auto in_printer = visibleInPrinter(o.visible, doc_->placement());
     bool removed = false;
@@ -586,10 +599,10 @@ void App::toggleSide(Side s) {
 }
 
 void App::clearSides() {
-    if (!doc_ || doc_->orient.visible.empty()) return;
-    doc_->orient.visible.clear();
-    ++doc_->orient.settings;
-    doc_->orient.decided = false;
+    if (!doc_ || doc_->orient().visible.empty()) return;
+    doc_->orient().visible.clear();
+    ++doc_->orient().settings;
+    doc_->orient().decided = false;
 }
 
 void App::maintain() {
@@ -636,8 +649,9 @@ void App::maintain() {
         planHollowPreview();
         if (jobs_.busy()) return;
     }
-    OrientState& o = doc_->orient;
-    const int rev = doc_->revision(), settings = o.settings;
+    // How the selected part sits (part revisions are never shared between parts).
+    OrientState& o = doc_->orient();
+    const int part = doc_->selectedId(), rev = doc_->part().revision(), settings = o.settings;
     if (o.nowFresh(rev) || (scored_revision_ == rev && scored_settings_ == settings)) return;
     scored_revision_ = rev;
     scored_settings_ = settings;
@@ -647,8 +661,8 @@ void App::maintain() {
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
         "Scoring how it sits",
-        [snap, out](const fruit::JobControl& ctl) { *out = measure(*snap, snap->orient.visible, ctl); },
-        [this, target, out, rev, settings](std::exception_ptr err) {
+        [snap, out](const fruit::JobControl& ctl) { *out = measure(*snap, snap->orient().visible, ctl); },
+        [this, target, out, part, rev, settings](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
             if (err) {
@@ -660,9 +674,10 @@ void App::maintain() {
                 }
                 return;
             }
-            d->orient.now = *out;
-            d->orient.now_revision = rev;
-            d->orient.now_settings = settings;
+            OrientState& o = d->orientOf(part);
+            o.now = *out;
+            o.now_revision = rev;
+            o.now_settings = settings;
         });
 }
 
@@ -670,12 +685,12 @@ void App::findOrientation() {
     if (!doc_ || !doc_->fit().fits_centred) return;  // where it stands doesn't matter to the search
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<OrientSearch>();
-    const int rev = doc_->revision(), settings = doc_->orient.settings;
+    const int part = doc_->selectedId(), rev = doc_->part().revision(), settings = doc_->orient().settings;
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
         "Finding the best orientation",
-        [snap, out](const fruit::JobControl& ctl) { *out = search(*snap, snap->orient.visible, ctl); },
-        [this, target, out, rev, settings](std::exception_ptr err) {
+        [snap, out](const fruit::JobControl& ctl) { *out = search(*snap, snap->orient().visible, ctl); },
+        [this, target, out, part, rev, settings](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
             if (err) {
@@ -688,7 +703,7 @@ void App::findOrientation() {
                 return;
             }
             auto res = std::make_shared<const OrientSearch>(std::move(*out));
-            OrientState& o = d->orient;
+            OrientState& o = d->orientOf(part);
             o.results = res;
             o.results_revision = rev;
             o.results_settings = settings;
@@ -697,7 +712,7 @@ void App::findOrientation() {
                 o.now_revision = rev;
                 o.now_settings = settings;
             }
-            if (d == doc_ && step_ == Step::Orient) orient_view_ = OrientView::Results;
+            if (d == doc_ && step_ == Step::Orient && d->selectedId() == part) orient_view_ = OrientView::Results;
             log::info("orientation search: " + std::to_string(res->options.size()) + " better options in " +
                       std::to_string(res->seconds) + " s");
         });
@@ -705,15 +720,15 @@ void App::findOrientation() {
 
 void App::useOrientation(int option) {
     if (!doc_) return;
-    OrientState& o = doc_->orient;
+    OrientState& o = doc_->orient();
     if (option >= 0 && o.results && option < static_cast<int>(o.results->options.size())) {
         const OrientOption& op = o.results->options[static_cast<std::size_t>(option)];
         fruit::Placement p = doc_->placement();
         p.rotation_deg = op.rotation_deg;
-        doc_->edit(slidOnto(doc_->model.mesh, p, doc_->printer));  // kept where it is, if it fits there
+        doc_->edit(slidOnto(doc_->part().mesh(), p, doc_->printer));  // kept where it is, if it fits there
         // Its numbers came from the same planner: no need to score it again.
         o.now = op.m;
-        o.now_revision = doc_->revision();
+        o.now_revision = doc_->part().revision();
         o.now_settings = o.settings;
         frameModel();
     }
@@ -732,7 +747,7 @@ void App::showHollow() {
 bool App::planningHollow() const { return jobs_.busy() && jobs_.progress().name == "Finding hollows"; }
 
 void App::planHollowPreview() {
-    if (!doc_ || !doc_->fit().fits_centred) return;
+    if (!doc_ || !doc_->fitsCentred()) return;
     const HollowState& hs = doc_->hollow;
     const int rev = doc_->revision();
     if (hs.planFresh(rev)) return;
@@ -790,11 +805,15 @@ void App::applyHollow() {
 
 void App::addHoleAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
     if (!doc_) return;
-    const fruit::Transform to_model = doc_->transform().inverse();
+    const int part = partAt(pos);
+    const Part* on = doc_->findPart(part);
+    if (!on) return;
+    const fruit::Transform to_model = on->transform().inverse();  // the part it goes into
     fruit::DrainHole h;
     h.at = to_model.apply(pos);
     h.axis = fruit::normalized(to_model.applyLinear(-normal));  // into the model
     h.diameter = doc_->hollow.choices.hole_diameter;
+    h.part = part;
     doc_->hollow.manual.push_back(h);
     if (doc_->hollow.applied) ++doc_->hollow.settings;
     planHollowPreview();
@@ -808,7 +827,7 @@ void App::removeHole(int index) {
 }
 
 void App::generateSupports() {
-    if (!doc_ || !doc_->fit().fits) return;
+    if (!doc_ || !doc_->fits()) return;
     advanced_open_ = false;  // the run shows in the 3D view
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
@@ -819,7 +838,7 @@ void App::generateSupports() {
     jobs_.start(
         "Generating supports",
         [snap, out, choices, edits](const fruit::JobControl& ctl) {
-            *out = generate(*snap, choices, snap->orient.visible, ctl, edits);
+            *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
         },
         [this, target, out, rev, settings](std::exception_ptr err) {
             const auto d = target.lock();
@@ -953,7 +972,7 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
         replan ? "Planning the tips again" : "Updating the tips",
         [snap, prev, out, choices, edits, replan](const fruit::JobControl& ctl) {
             if (replan) {
-                *out = generate(*snap, choices, snap->orient.visible, ctl, edits);
+                *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
             } else {
                 SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits, prev->hollow};
                 *out = finishWithEdits(*snap, choices, std::move(plan), edits, ctl);
@@ -988,13 +1007,15 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
         });
 }
 
-fruit::Transform App::modelFromPrinter() const { return doc_ ? doc_->transform().inverse() : fruit::Transform{}; }
-
 void App::addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
     if (!doc_) return;
-    const fruit::Transform m = modelFromPrinter();
+    const int part = partAt(pos);
+    const Part* on = doc_->findPart(part);
+    if (!on) return;
+    const fruit::Transform m = on->transform().inverse();  // kept on the part it is on
     TipEdit e;
     e.kind = TipEdit::Kind::Add;
+    e.part = part;
     e.at = m.apply(pos);
     e.normal = m.applyLinear(normal);
     // FruitSlicer's own sizes (a resin profile may have measured fewer).
@@ -1006,9 +1027,13 @@ void App::addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
 
 void App::addZoneAt(const fruit::Vec3& pos) {
     if (!doc_) return;
+    const int part = partAt(pos);
+    const Part* on = doc_->findPart(part);
+    if (!on) return;
     TipEdit e;
     e.kind = TipEdit::Kind::Zone;
-    e.at = modelFromPrinter().apply(pos);
+    e.part = part;
+    e.at = on->transform().inverse().apply(pos);
     e.radius = kZoneRadius;
     std::vector<TipEdit> edits = doc_->supports.edits;
     edits.push_back(e);
@@ -1027,38 +1052,33 @@ void App::moveTip(int index, const fruit::Vec3& to, const fruit::Vec3& normal) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
-    if (recordMove(edits, *p, to, normal, doc_->transform())) setTipEdits(std::move(edits), to);
+    if (recordMove(edits, *p, to, normal, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits), to);
 }
 
 void App::deleteTip(int index) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
-    if (recordDelete(edits, *p, doc_->transform())) setTipEdits(std::move(edits));
+    if (recordDelete(edits, *p, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits));
 }
 
 void App::resizeTip(int index, double diameter) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
-    if (recordResize(edits, *p, diameter, doc_->transform())) setTipEdits(std::move(edits), p->pos);
+    if (recordResize(edits, *p, diameter, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits), p->pos);
 }
 
 void App::pinTip(int index) {
     const fruit::SupportPoint* p = tipAt(doc_, index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
-    if (recordPin(edits, *p, doc_->transform())) setTipEdits(std::move(edits), p->pos);
+    if (recordPin(edits, *p, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits), p->pos);
 }
 
 bool App::pickModel(const fruit::Vec3& origin, const fruit::Vec3& dir, fruit::Vec3* pos, fruit::Vec3* normal) {
     if (!doc_) return false;
-    if (!pick_tree_ || pick_doc_ != doc_.get() || pick_revision_ != doc_->revision()) {
-        pick_tree_ = std::make_shared<fruit::AabbTree>(doc_->placed());
-        pick_doc_ = doc_.get();
-        pick_revision_ = doc_->revision();
-    }
-    const auto hit = pick_tree_->raycast(origin, dir);
+    const auto hit = pickTree().raycast(origin, dir);
     if (!hit) return false;
     const fruit::TriangleMesh& m = doc_->placed();
     const auto& f = m.faces[static_cast<std::size_t>(hit->face)];
@@ -1085,11 +1105,16 @@ void App::focusOn(const fruit::Vec3& where) {
 }
 
 void App::showPatch() {
-    if (!doc_ || doc_->check.repair.patch_faces == 0) return;
-    const fruit::RepairReport& r = doc_->check.repair;
-    const fruit::Vec3 at = doc_->transform().apply(r.biggest_patch_at);
-    const fruit::Vec3 facing = doc_->transform().applyLinear(r.biggest_patch_facing);
-    const double across = r.biggest_patch_across * doc_->placement().scale;
+    if (!doc_) return;
+    // The selected part's biggest patch, or the first patched part's.
+    const Part* part = &doc_->part();
+    for (const Part& p : doc_->parts())
+        if (part->check().repair.patch_faces == 0 && p.check().repair.patch_faces > 0) part = &p;
+    if (part->check().repair.patch_faces == 0) return;
+    const fruit::RepairReport& r = part->check().repair;
+    const fruit::Vec3 at = part->transform().apply(r.biggest_patch_at);
+    const fruit::Vec3 facing = part->transform().applyLinear(r.biggest_patch_facing);
+    const double across = r.biggest_patch_across * part->placement().scale;
     camera_.frame({static_cast<float>(at.x), static_cast<float>(at.y), static_cast<float>(at.z)},
                   static_cast<float>(std::max(5.0, 0.75 * across)));
     camera_.lookFrom({static_cast<float>(facing.x), static_cast<float>(facing.y), static_cast<float>(facing.z)});
@@ -1169,13 +1194,32 @@ void App::syncCut() {
 
 void App::syncScene() {
     renderer_.setOverhangTint(0);
-    // The Model step shows where the repair patched the mesh.
-    const std::size_t patches = doc_ && screen_ == Screen::Job && step_ == Step::Model ? doc_->check.repair.patch_faces : 0;
-    renderer_.setModelTint(doc_ ? doc_->check.triangles - std::min(patches, doc_->check.triangles) : 0, patches, 0xF2B84B);
-    // Where it is placed, red while it doesn't fit there.
+    // Every part. With several, the ones not selected are a shade darker.
+    // The Model step shows where the repair patched each mesh; where it is
+    // placed, a part is red while it doesn't fit there.
     const bool placing_place = screen_ == Screen::Job &&
                                (step_ == Step::Model || (step_ == Step::Orient && orient_view_ == OrientView::Settings));
-    if (doc_ && placing_place && !doc_->fit().fits) renderer_.setModelTint(0, doc_->check.triangles, 0xD86A6A);
+    std::vector<Renderer::ModelDraw> models;
+    if (doc_)
+        for (const Part& p : doc_->parts()) {
+            Renderer::ModelDraw m;
+            m.mesh = &p.mesh();
+            m.geometry = p.geometryId();
+            m.transform = p.transform();
+            m.rgb = doc_->partCount() > 1 && p.id() != doc_->selectedId() ? 0x6F7682u : 0xAEB6C4u;
+            const std::size_t faces = p.check().triangles;
+            const std::size_t patches = screen_ == Screen::Job && step_ == Step::Model ? p.check().repair.patch_faces : 0;
+            m.tint_first = faces - std::min(patches, faces);
+            m.tint_count = patches;
+            m.tint_rgb = 0xF2B84B;
+            if (placing_place && !p.fit().fits) {
+                m.tint_first = 0;
+                m.tint_count = faces;
+                m.tint_rgb = 0xD86A6A;
+            }
+            models.push_back(m);
+        }
+    renderer_.setModels(models);
     syncCut();
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
         renderer_.clearExtras();
@@ -1638,8 +1682,10 @@ void App::useResinForJob(const std::string& id) {
     if (!doc_ || !r) return;
     applyResin(*doc_, *r);
     // How it stands is scored with the resin's values: score again.
-    doc_->orient.now_revision = -1;
-    doc_->orient.results_revision = -1;
+    for (const Part& part : doc_->parts()) {
+        doc_->orientOf(part.id()).now_revision = -1;
+        doc_->orientOf(part.id()).results_revision = -1;
+    }
     log::info("resin for this job: " + r->name);
 }
 
@@ -2524,8 +2570,8 @@ void App::freePictures() {
 }
 
 unsigned App::orientPicture(int option) {
-    if (!doc_ || !doc_->orient.results) return 0;
-    const auto& res = doc_->orient.results;
+    if (!doc_ || !doc_->orient().results) return 0;
+    const auto& res = doc_->orient().results;
     if (pictures_for_ != res) {
         freePictures();
         for (const OrientOption& op : res->options)
@@ -2623,6 +2669,7 @@ void App::keys() {
     if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
     const ImGuiInputFlags global = ImGuiInputFlags_RouteGlobal;
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, global)) openDialog();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_O, global)) addPartDialog();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, global)) saveJob();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, global)) saveJobAs();
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Q, global)) requestQuit();

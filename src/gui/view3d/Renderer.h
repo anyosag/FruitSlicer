@@ -27,11 +27,22 @@ public:
     // the GL context cannot do it.
     bool init(const fruit::PrinterProfile& printer, std::string* error);
 
-    // Uploads the model (its own coordinates) unless `geometry` is already
-    // on the GPU; placement changes only change the transform.
-    void setModel(const fruit::TriangleMesh& mesh, int geometry);
-    void setModelTransform(const fruit::Transform& model_to_printer);
-    void clearModel();
+    // The models on the plate (each part of the job), drawn in order. Each
+    // is in its own coordinates and uploaded once per `geometry`: moving it
+    // only changes its transform, and colours can change every frame.
+    struct ModelDraw {
+        const fruit::TriangleMesh* mesh = nullptr;
+        int geometry = -1;
+        fruit::Transform transform;  // model -> printer
+        unsigned rgb = 0xAEB6C4;     // 0xRRGGBB
+        // `tint_count` faces from face `tint_first` on in `tint_rgb` instead:
+        // the patches a repair added (its last faces), or all of it in red
+        // while it doesn't fit. 0 faces: none.
+        std::size_t tint_first = 0, tint_count = 0;
+        unsigned tint_rgb = 0;
+    };
+    void setModels(const std::vector<ModelDraw>& models);
+    void clearModels();
 
     // Extra meshes in printer coordinates, each with its own colour
     // (0xRRGGBB): the support tree and the tips. Uploaded when `key`
@@ -41,14 +52,6 @@ public:
     void setExtraStyle(std::size_t i, unsigned rgb, bool visible);
     // Tints faces leaning further than `critical_deg` from vertical (0 = off).
     void setOverhangTint(double critical_deg) { overhang_deg_ = critical_deg; }
-    // Draws `count` faces of the model from face `first` on in colour `rgb`
-    // (0xRRGGBB) instead of the model's own: the patches a repair added,
-    // which are its last faces. 0 faces: none.
-    void setModelTint(std::size_t first, std::size_t count, unsigned rgb) {
-        tint_first_ = first;
-        tint_count_ = count;
-        tint_rgb_ = rgb;
-    }
 
     // The cut-away: the model and the extras are drawn only where
     // a·x + b·y + c·z + d >= 0 for `plane` (a, b, c, d), and the cap is
@@ -85,8 +88,16 @@ private:
     void ensureTarget(int w, int h, int samples);
 
     unsigned mesh_prog_ = 0, line_prog_ = 0;
-    Mesh plate_fill_, plate_lines_, model_;
-    int model_revision_ = -1;
+    Mesh plate_fill_, plate_lines_;
+    struct Model {
+        Mesh mesh;
+        int geometry = -1;
+        float matrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        unsigned rgb = 0xAEB6C4;
+        std::size_t tint_first = 0, tint_count = 0;
+        unsigned tint_rgb = 0;
+    };
+    std::vector<Model> models_;
     struct Extra {
         Mesh mesh;
         unsigned rgb = 0xC8CDD6;
@@ -105,9 +116,6 @@ private:
     int cap_key_ = -1;
     void destroyCap();
     double overhang_deg_ = 0;
-    std::size_t tint_first_ = 0, tint_count_ = 0;
-    unsigned tint_rgb_ = 0;
-    float model_matrix_[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     unsigned fbo_ms_ = 0, rb_color_ = 0, rb_depth_ = 0;  // multisampled target
     unsigned fbo_ = 0, tex_ = 0, rb_depth_plain_ = 0;    // resolved target
     int w_ = 0, h_ = 0, samples_ = -1;

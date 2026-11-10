@@ -133,7 +133,7 @@ void placeOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const flo
 
     HandleDrag& drag = app.handleDrag();
     const bool dragging = app.placing() && drag.active();
-    const HandleFrame f = dragging ? drag.frame : handleFrame(doc.placedBox());
+    const HandleFrame f = dragging ? drag.frame : handleFrame(doc.part().box());
     const float aspect = size.x / std::max(1.0f, size.y);
     auto mouseRay = [&](fruit::Vec3* o, fruit::Vec3* d) {
         const float nx = 2 * (io.MousePos.x - origin.x) / size.x - 1, ny = 1 - 2 * (io.MousePos.y - origin.y) / size.y;

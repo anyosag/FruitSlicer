@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #pragma once
-// The job being worked on: the model as loaded, what the check found, and
-// where it sits. Placement edits are undoable.
+// The job being worked on: its parts (each model on the plate: its mesh as
+// loaded, what the check found, where it sits) and what is made for them.
+// Edits to the parts are undoable.
 
 #include <cstddef>
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +15,7 @@
 
 #include "Layers.h"
 #include "Orient.h"
+#include "Parts.h"
 #include "Print.h"
 #include "Supports.h"
 #include "core/JobControl.h"
@@ -22,9 +26,10 @@
 
 namespace gui {
 
-// The Orient step's choices and results for this job.
+// The Rotate tool's choices and results for one part. Revisions here are
+// the part's own (Part::revision).
 struct OrientState {
-    std::vector<fruit::Vec3> visible;  // sides people will see, model coordinates
+    std::vector<fruit::Vec3> visible;  // sides people will see, the part's own coordinates
     int settings = 0;                  // bumped whenever `visible` changes
     // How it sits now, measured for (revision, settings).
     OrientMetrics now;
@@ -92,10 +97,11 @@ struct PrintState {
 
 // What a saved job records, to tell whether anything changed since.
 struct JobStamp {
-    std::string model_path;   // where the model file is
-    int revision = -1;        // placement
-    int orient_settings = -1;  // sides people will see
-    bool orient_decided = false;
+    std::vector<int> parts;                // the parts' ids, in order
+    std::vector<std::string> model_paths;  // where each part's model file is
+    int revision = -1;                     // the parts' meshes and placements
+    int orient_settings = -1;              // sides people will see
+    std::vector<bool> orient_decided;      // each part's
     const void* supports = nullptr;  // the supports result, by identity
     SupportChoices choices;
     std::vector<TipEdit> edits;
@@ -108,27 +114,25 @@ struct JobStamp {
     bool operator==(const JobStamp&) const = default;
 };
 
+// The job: its parts on the plate (see Parts.h), and what is made for them
+// all together (supports, hollows, layers, the print file). Edits to the
+// parts are undoable.
 class Document {
 public:
     Document() = default;
-    // Copies (a worker's snapshot) get the placed mesh made first, on the
-    // thread that copies, so no copy ever makes it lazily.
+    // Copies (a worker's snapshot) get the placed meshes made first, on the
+    // thread that copies, so no copy ever makes them lazily.
     Document(const Document& o) {
-        o.placed();
+        o.prepare();
         *this = o;
     }
     Document& operator=(const Document&) = default;
     Document(Document&&) = default;
     Document& operator=(Document&&) = default;
 
-    std::string path;  // file it came from
-    std::string name;  // file name without folder and extension
-    fruit::LoadedModel model;
-    fruit::MeshCheck check;      // what loading found
-    std::size_t low_points = 0;  // mid-air spots as first placed
+    std::string name;            // the job's: its first model's file name without folder and extension
+    std::size_t low_points = 0;  // mid-air spots of the first part as first placed (the health dialog)
     fruit::PrinterProfile printer;
-    int geometry_id = 0;         // unique per load: the renderer re-uploads when it changes
-    OrientState orient;
     HollowState hollow;
     SupportState supports;
     LayerState layers;
@@ -138,23 +142,79 @@ public:
     JobStamp stamp() const;
     bool unsaved() const { return !saved || !(*saved == stamp()); }
 
-    const fruit::Placement& placement() const { return placement_; }
-    const fruit::Transform& transform() const { return transform_; }  // model -> printer
-    const fruit::TriangleMesh& placed() const;                         // printer coordinates
-    const fruit::BBox3& placedBox() const { return placed_box_; }      // its outline, kept up to date while dragging
-    const fruit::PlateFit& fit() const { return fit_; }
-    // Names the placement (and model) shown now: a new number for every
-    // change, and the same number again when undo or redo goes back to a
-    // placement. Results carry it, so what was made for a placement counts
-    // again once it is back.
-    int revision() const { return revision_; }
-    // What supports are made for besides the placement: the sides people
-    // see and, once applied, the Hollow screen's choices.
-    int supportSettings() const { return orient.settings * 100003 + (hollow.applied ? 1 + hollow.settings : 0); }
+    // ---- The parts (see Parts.h) ----
+    const std::vector<Part>& parts() const { return parts_; }
+    std::size_t partCount() const { return parts_.size(); }
+    // The selected part: the tools act on it. There is always one once a
+    // model is placed.
+    const Part& part() const { return parts_[static_cast<std::size_t>(selected_)]; }
+    int selectedId() const { return parts_.empty() ? -1 : part().id(); }
+    const Part* findPart(int id) const;
+    int partIndex(int id) const;  // -1 when it is not in the job
+    // Selects a part (not an edit: nothing to undo).
+    void select(int id);
+    // Adds a part (undoable) and selects it; its placement's lift is the
+    // job's. Returns its id.
+    int addPart(NewPart p);
+    // Removes a part (undoable); false for the last one: a job keeps one.
+    bool removePart(int id);
+    // A part's mesh changed (undoable): its placement stays.
+    bool replaceMesh(int id, fruit::LoadedModel m);
+    bool replaceMesh(int id, std::shared_ptr<const PartModel> m);
+    // Every part at once (undoable): the first is selected.
+    void replaceParts(std::vector<NewPart> parts);
+    // Any change to the parts as one undo step: `fn` gets a working copy of
+    // the list. Nothing is recorded, and false comes back, when it is left
+    // as it was. A part whose lift changed gives every part that lift.
+    bool editParts(const std::function<void(PartsEdit&)>& fn);
+    // Each part's model -> printer transform.
+    PartFrames frames() const;
 
-    // Sets the placement without recording it (loading, the health dialog).
+    // The selected part's placement, and its fit alone on the plate.
+    const fruit::Placement& placement() const { return part().placement(); }
+    const fruit::PlateFit& fit() const { return part().fit(); }
+    // The job as it prints: every part placed, in order, in one mesh
+    // (printer coordinates), and its outline (kept up to date while
+    // dragging). The mesh is made when first asked for.
+    const fruit::TriangleMesh& placed() const;
+    const fruit::BBox3& placedBox() const { return box_; }
+    // The part (an index into parts()) a face of placed() belongs to.
+    int partOfFace(std::size_t face) const;
+    // The part (an id) whose surface is nearest a point (printer
+    // coordinates): the one a tip or a hole there is on.
+    int partNear(const fruit::Vec3& at) const;
+    // Every part fits the plate where it is; as fit().fits_centred, for every part.
+    bool fits() const;
+    bool fitsCentred() const;
+    // A part that doesn't fit where it is: the selected one if it doesn't,
+    // else the first; null when they all fit.
+    const Part* partOff() const;
+
+    // The Rotate tool's choices and results: the selected part's, a part's.
+    OrientState& orient() { return orient_[selectedId()]; }
+    const OrientState& orient() const { return orientOf(selectedId()); }
+    OrientState& orientOf(int id) { return orient_[id]; }
+    const OrientState& orientOf(int id) const;
+    // The sides people will see on every part, in printer directions: what
+    // supports are planned for (they are the same for every part's faces).
+    std::vector<fruit::Vec3> visibleInPrinter() const;
+    bool orientDecided() const;  // for every part
+
+    // Names the parts' meshes and placements shown now: a new number for
+    // every change, and the same number again when undo or redo goes back.
+    // Results carry it, so what was made for them counts again once it is
+    // back.
+    int revision() const { return revision_; }
+    // What supports are made for besides the parts: the sides people see
+    // and, once applied, the Hollow screen's choices.
+    int supportSettings() const { return orientSettings() * 100003 + (hollow.applied ? 1 + hollow.settings : 0); }
+    int orientSettings() const;  // changes whenever any part's sides do
+
+    // Sets the selected part's placement without recording it (loading, the
+    // health dialog).
     void place(const fruit::Placement& p);
-    // An edit the user can undo (nothing happens when it changes nothing).
+    // An edit of the selected part's placement the user can undo (nothing
+    // happens when it changes nothing).
     void edit(const fruit::Placement& p);
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
@@ -169,31 +229,38 @@ public:
     void endDrag();
     void cancelDrag();
     bool dragging() const { return drag_from_.has_value(); }
-    // The model file itself was replaced: everything made for the old one is
-    // out of date, and undo can't go back past it.
-    void modelChanged();
+    // Undo can't go back past now (a model file replaced under the job).
+    void clearHistory();
 
 private:
-    struct Placed {
-        fruit::Placement placement;
+    struct Snapshot {
+        std::vector<Part> parts;  // without their placed meshes
+        int selected = 0;
         int revision = 0;
     };
-    void set(const fruit::Placement& p);  // placement, transform, outline and fit; the mesh later
-    fruit::Placement placement_;
-    fruit::Transform transform_;
-    mutable fruit::TriangleMesh placed_;
-    mutable bool placed_stale_ = true;
-    fruit::BBox3 placed_box_;
-    fruit::PlateFit fit_;
+    Snapshot snapshot() const;
+    void restore(Snapshot s);
+    void record(Snapshot before);         // an undo step
+    void changed();                       // outline, fit, the placed mesh later
+    void setPlacement(std::size_t i, const fruit::Placement& p);  // and the lift on every part
+    void prepare() const;                 // every placed mesh made
+    std::vector<Part> parts_;
+    int selected_ = 0;  // index into parts_
+    int next_id_ = 0;
+    std::map<int, OrientState> orient_;
+    mutable std::shared_ptr<const fruit::TriangleMesh> placed_;
+    mutable std::vector<std::size_t> face_start_;  // where each part's faces begin in placed_
+    fruit::BBox3 box_;
     int revision_ = 0, last_revision_ = 0;
-    std::vector<Placed> undo_, redo_;
-    std::optional<Placed> drag_from_;
+    std::vector<Snapshot> undo_, redo_;
+    std::optional<Snapshot> drag_from_;
 };
 
 // A new value for Document::geometry_id.
 int newGeometryId();
 
-// Reads, checks and places a model file (worker thread).
+// Reads, checks and places a model file (worker thread): a job with that
+// one part.
 std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::PrinterProfile& printer,
                                        const fruit::JobControl& ctl);
 

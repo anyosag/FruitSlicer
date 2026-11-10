@@ -43,15 +43,15 @@ TEST_CASE("Jobs: what was decided comes back, supports included", "[gui][jobs][s
     p.scale = 1.25;
     p.rotation_deg = {0, 0, 30};
     doc->edit(p);
-    doc->orient.visible = {{0, 0, 1}};
-    doc->orient.decided = true;
+    doc->orient().visible = {{0, 0, 1}};
+    doc->orient().decided = true;
     doc->supports.choices.usual_tip = 3;
     doc->supports.choices.advanced["head_length"] = 1.4;
-    auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, doc->orient.visible,
+    auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, doc->visibleInPrinter(),
                                                       fruit::JobControl::none()));
     doc->supports.result = r;
     doc->supports.result_revision = doc->revision();
-    doc->supports.result_settings = doc->orient.settings;
+    doc->supports.result_settings = doc->orient().settings;
     doc->print.settings.exposure = 2.5;
     doc->print.settings.bottom_exposure = 30;
 
@@ -60,18 +60,18 @@ TEST_CASE("Jobs: what was decided comes back, supports included", "[gui][jobs][s
     const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     const Document& d = *o.doc;
     CHECK_FALSE(o.model_missing);
-    CHECK(o.model_path == doc->path);
+    CHECK(o.model_path == doc->part().path());
     CHECK(d.name == "bracket");
     CHECK(d.job_path == job);
-    CHECK(meshHash(d.model.mesh) == meshHash(doc->model.mesh));
+    CHECK(meshHash(d.part().mesh()) == meshHash(doc->part().mesh()));
     CHECK(d.placement().scale == Approx(1.25));
     CHECK(d.placement().rotation_deg.z == Approx(30));
     CHECK(d.placed().bbox().max.x == Approx(doc->placed().bbox().max.x));
-    REQUIRE(d.orient.visible.size() == 1);
-    CHECK(d.orient.decided);
+    REQUIRE(d.orient().visible.size() == 1);
+    CHECK(d.orient().decided);
     CHECK(d.supports.choices == doc->supports.choices);
     REQUIRE(d.supports.result);
-    CHECK(d.supports.fresh(d.revision(), d.orient.settings));
+    CHECK(d.supports.fresh(d.revision(), d.orient().settings));
     CHECK(d.supports.result->tips == r->tips);
     CHECK(d.supports.result->pillars == r->pillars);
     CHECK(d.supports.result->tree_cfg.head_length == Approx(1.4));
@@ -107,7 +107,7 @@ TEST_CASE("Jobs: the SatelLite settings travel with the job; a moved model is no
     CHECK(o.doc->print.settings.sample->print.exposure == Approx(1.5));
     CHECK(o.doc->print.settings.sample->layer_height == Approx(0.03));
     CHECK_FALSE(o.doc->supports.result);  // none were made
-    CHECK(o.doc->model.mesh.faces.size() == demoModel().faces.size());
+    CHECK(o.doc->part().mesh().faces.size() == demoModel().faces.size());
 }
 
 TEST_CASE("Jobs: the SatelLite settings are kept even when that file went before saving", "[gui][jobs]") {
@@ -175,7 +175,7 @@ TEST_CASE("Jobs: recent jobs, newest first, each once", "[gui][jobs]") {
 TEST_CASE("Jobs: tip edits come back, applied to the planner's tips", "[gui][jobs][slow]") {
     const auto doc = bracketAt(dir() / "edited.stl");
     auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, {}, fruit::JobControl::none()));
-    const fruit::Transform to_model = doc->transform().inverse();
+    const fruit::Transform to_model = doc->part().transform().inverse();
     TipEdit del;
     del.kind = TipEdit::Kind::Delete;
     del.at = to_model.apply(r->points[0].pos);
@@ -192,14 +192,14 @@ TEST_CASE("Jobs: tip edits come back, applied to the planner's tips", "[gui][job
     REQUIRE(r->plan_edits == doc->supports.edits);
     doc->supports.result = r;
     doc->supports.result_revision = doc->revision();
-    doc->supports.result_settings = doc->orient.settings;
+    doc->supports.result_settings = doc->orient().settings;
     const auto job = (dir() / "edited.fruitjob").string();
     saveJob(job, *doc);
     const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     const SupportState& s = o.doc->supports;
     CHECK(s.edits == doc->supports.edits);
     REQUIRE(s.result);
-    CHECK(s.fresh(o.doc->revision(), o.doc->orient.settings));
+    CHECK(s.fresh(o.doc->revision(), o.doc->orient().settings));
     CHECK(s.result->points.size() == r->points.size());
     CHECK(s.result->planned.size() == r->planned.size());
     CHECK(s.result->plan_edits == r->plan_edits);

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "Parts.h"
 #include "core/JobControl.h"
 #include "layers/Drain.h"
 #include "layers/Hollow.h"
@@ -44,7 +45,7 @@ struct HollowPlan {
     std::shared_ptr<const fruit::LayerStack> solid;   // the placed model, sliced
     fruit::HollowResult closed;                       // its own hollows that hold resin
     fruit::HollowResult hollowed;                     // what hollowing takes out
-    std::vector<fruit::DrainHole> holes;              // the holes, model coordinates
+    std::vector<fruit::DrainHole> holes;              // the holes, each in its part's coordinates
     std::vector<fruit::PlacedHole> placed;            // the same as drilled, printer coordinates
     std::vector<char> drains;                         // for each of cavities(): it no longer holds resin
     std::shared_ptr<const fruit::LayerStack> layers;  // what prints
@@ -62,10 +63,16 @@ struct HollowPlan {
     bool changes() const { return layers && layers != solid; }
 };
 
-// Plans the model of `doc` as placed, at `layer_height`. Progress: "slice",
-// then "hollow" when hollowing, then "holes".
+// Plans every part of `doc` as placed, together, at `layer_height`. Holes
+// placed by hand on a part that is not on the plate are left out. Progress:
+// "slice", then "hollow" when hollowing, then "holes".
 HollowPlan planHollow(const Document& doc, const HollowChoices& c, const std::vector<fruit::DrainHole>& manual,
                       double layer_height, const fruit::JobControl& ctl);
+
+// fruit::placeHoles for holes on several parts: each with its part's frame
+// (one whose part has none is not drilled: cavity -1).
+std::vector<fruit::PlacedHole> placeHoles(const std::vector<fruit::DrainHole>& holes, const PartFrames& frames,
+                                          const fruit::LayerStack& solid, const fruit::HollowResult& hollow);
 
 // A tip may not sit in a hole's mouth: where the hole enters the surface,
 // with this much room around its edge.

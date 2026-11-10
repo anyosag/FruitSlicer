@@ -15,7 +15,7 @@ enum class Step { Model, Orient, Supports, Layers, Print };
 // What a place needs before it can do its work.
 enum class Need {
     Nothing,
-    Fit,            // the model doesn't fit the plate where it is (too big, or over the edge)
+    Fit,            // a part doesn't fit the plate where it is (too big, or over the edge)
     Supports,       // no supports yet
     FreshSupports,  // the supports were made for an earlier placement or settings
     Layers,         // the layers aren't cut for these supports yet (the Layers place cuts them)

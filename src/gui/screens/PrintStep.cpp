@@ -369,13 +369,16 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
     const ImVec2 cs(480, 0);
     ImGui::SetCursorPos(ImVec2(std::round((size.x - cs.x) / 2), std::round(size.y / 2) - 110));
     beginCard("need_card", cs, 20, col::Panel, col::BorderStrong);
-    const fruit::PlateFit& f = doc.fit();
+    const Part* off = doc.partOff();  // the selected part, for Rotate, when it doesn't fit
+    const fruit::PlateFit& f = off ? off->fit() : doc.fit();
+    const bool several = doc.partCount() > 1;
     const char* title = "";
     const char* body = "";
     switch (need) {
         case Need::Nothing: break;
         case Need::Fit:
-            title = f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate yet";
+            title = f.overEdge() ? (several ? "A part is over the plate's edge" : "It's over the plate's edge")
+                                 : (several ? "A part doesn't fit the plate yet" : "It doesn't fit the plate yet");
             body = "Supports and layers are made for the model where it stands. Bring it onto the plate with Move, "
                    "Rotate or Scale first.";
             break;

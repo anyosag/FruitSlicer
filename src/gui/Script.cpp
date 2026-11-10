@@ -292,6 +292,27 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (p == "@demo-job") p = (demoDir() / "bracket.fruitjob").string();
             else if (!p.empty() && p[0] == '@') p = demoPath(p);
             app.openPath(p);
+        } else if (step.contains("add_part")) {
+            // Another model onto the plate (then the health dialog, as for open).
+            std::string p = step["add_part"].get<std::string>();
+            if (!p.empty() && p[0] == '@') p = demoPath(p);
+            app.addPartFrom(p);
+        } else if (step.contains("select_part") || step.contains("remove_part")) {
+            const bool select = step.contains("select_part");
+            const int i = step[select ? "select_part" : "remove_part"].get<int>() - 1;  // 1 = the first
+            const auto& doc = app.document();
+            if (!doc || i < 0 || i >= static_cast<int>(doc->partCount()))
+                throw std::runtime_error("select_part/remove_part: no such part");
+            const int id = doc->parts()[static_cast<std::size_t>(i)].id();
+            if (select) app.selectPart(id);
+            else app.removePart(id);
+        } else if (step.contains("select_at")) {
+            // [x, y, z, dx, dy, dz]: a click in the 3D view along that ray (printer coordinates) selects the part it meets.
+            const auto& a = step["select_at"];
+            const int id = app.pickPart({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()},
+                                        {a[3].get<double>(), a[4].get<double>(), a[5].get<double>()});
+            if (id < 0) throw std::runtime_error("select_at: meets no part");
+            app.selectPart(id);
         } else if (step.contains("save_job")) {
             std::string p = step["save_job"].get<std::string>();
             if (p == "@demo") p = (demoDir() / "bracket.fruitjob").string();
@@ -398,7 +419,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const auto& a = step["hole_ray"];
             const auto& doc = app.document();
             if (!doc) throw std::runtime_error("hole_ray: no model open");
-            const fruit::BBox3 b = doc->placedBox();
+            const fruit::BBox3 b = doc->part().box();  // the selected part's
             const fruit::Vec3 mid = (b.min + b.max) * 0.5;
             fruit::Vec3 pos, n;
             if (!app.pickModel({mid.x + a[0].get<double>(), mid.y + a[1].get<double>(), mid.z + a[2].get<double>()},
@@ -716,7 +737,10 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("show_patch")) {
             // As the Model step's "Show the patch" link.
             const auto& doc = app.document();
-            if (!doc || doc->check.repair.patch_faces == 0) throw std::runtime_error("show_patch: nothing was patched");
+            bool patched = false;
+            if (doc)
+                for (const Part& part : doc->parts()) patched = patched || part.check().repair.patch_faces > 0;
+            if (!patched) throw std::runtime_error("show_patch: nothing was patched");
             app.showPatch();
         } else if (step.contains("frames")) {
             for (int i = 0, n = step["frames"].get<int>(); i < n; ++i) render();

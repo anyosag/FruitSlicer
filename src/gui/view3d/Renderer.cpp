@@ -117,7 +117,7 @@ Renderer::~Renderer() {
     if (!mesh_prog_) return;  // never initialised (no GL context)
     destroyMesh(plate_fill_);
     destroyMesh(plate_lines_);
-    destroyMesh(model_);
+    clearModels();
     clearExtras();
     destroyCap();
     glDeleteProgram(mesh_prog_);
@@ -186,20 +186,53 @@ bool Renderer::init(const fruit::PrinterProfile& printer, std::string* error) {
     return true;
 }
 
-void Renderer::setModel(const fruit::TriangleMesh& mesh, int revision) {
-    if (revision == model_revision_ && model_.vao) return;
-    destroyMesh(model_);
-    std::vector<float> pos;
-    pos.reserve(mesh.vertices.size() * 3);
-    for (const auto& v : mesh.vertices)
-        pos.insert(pos.end(), {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z)});
-    std::vector<unsigned> idx;
-    idx.reserve(mesh.faces.size() * 3);
-    for (const auto& f : mesh.faces)
-        idx.insert(idx.end(), {static_cast<unsigned>(f[0]), static_cast<unsigned>(f[1]), static_cast<unsigned>(f[2])});
-    upload(model_.vao, model_.vbo, model_.ibo, pos, idx);
-    model_.count = static_cast<int>(idx.size());
-    model_revision_ = revision;
+void Renderer::setModels(const std::vector<ModelDraw>& models) {
+    // A model already on the GPU keeps its buffers, wherever it is in the list.
+    std::vector<Model> next(models.size());
+    for (std::size_t i = 0; i < models.size(); ++i) {
+        const ModelDraw& d = models[i];
+        Model& m = next[i];
+        for (Model& old : models_)
+            if (old.mesh.vao && old.geometry == d.geometry) {
+                m.mesh = old.mesh;
+                old.mesh = Mesh{};
+                break;
+            }
+        m.geometry = d.geometry;
+        if (!m.mesh.vao && d.mesh && !d.mesh->empty()) {
+            std::vector<float> pos;
+            pos.reserve(d.mesh->vertices.size() * 3);
+            for (const auto& v : d.mesh->vertices)
+                pos.insert(pos.end(), {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z)});
+            std::vector<unsigned> idx;
+            idx.reserve(d.mesh->faces.size() * 3);
+            for (const auto& f : d.mesh->faces)
+                idx.insert(idx.end(),
+                           {static_cast<unsigned>(f[0]), static_cast<unsigned>(f[1]), static_cast<unsigned>(f[2])});
+            upload(m.mesh.vao, m.mesh.vbo, m.mesh.ibo, pos, idx);
+            m.mesh.count = static_cast<int>(idx.size());
+        }
+        // Column-major 4x4 from p' = R p + t.
+        const fruit::Transform& t = d.transform;
+        for (int c = 0; c < 3; ++c)
+            for (int r = 0; r < 3; ++r) m.matrix[c * 4 + r] = static_cast<float>(t.m[r][c]);
+        m.matrix[3] = m.matrix[7] = m.matrix[11] = 0;
+        m.matrix[12] = static_cast<float>(t.t.x);
+        m.matrix[13] = static_cast<float>(t.t.y);
+        m.matrix[14] = static_cast<float>(t.t.z);
+        m.matrix[15] = 1;
+        m.rgb = d.rgb;
+        m.tint_first = d.tint_first;
+        m.tint_count = d.tint_count;
+        m.tint_rgb = d.tint_rgb;
+    }
+    for (Model& old : models_) destroyMesh(old.mesh);
+    models_ = std::move(next);
+}
+
+void Renderer::clearModels() {
+    for (Model& m : models_) destroyMesh(m.mesh);
+    models_.clear();
 }
 
 void Renderer::setExtras(const std::vector<const fruit::TriangleMesh*>& meshes, int key) {
@@ -276,17 +309,6 @@ void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible) {
     extras_[i].visible = visible;
 }
 
-void Renderer::setModelTransform(const fruit::Transform& t) {
-    // Column-major 4x4 from p' = R p + t.
-    for (int c = 0; c < 3; ++c)
-        for (int r = 0; r < 3; ++r) model_matrix_[c * 4 + r] = static_cast<float>(t.m[r][c]);
-    model_matrix_[3] = model_matrix_[7] = model_matrix_[11] = 0;
-    model_matrix_[12] = static_cast<float>(t.t.x);
-    model_matrix_[13] = static_cast<float>(t.t.y);
-    model_matrix_[14] = static_cast<float>(t.t.z);
-    model_matrix_[15] = 1;
-}
-
 unsigned Renderer::uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb) {
     if (w <= 0 || h <= 0 || alpha.size() != static_cast<std::size_t>(w) * h) return 0;
     std::vector<unsigned char> px(alpha.size() * 4);
@@ -328,11 +350,6 @@ void Renderer::freeTexture(unsigned tex) {
     if (!tex) return;
     const GLuint t = tex;
     glDeleteTextures(1, &t);
-}
-
-void Renderer::clearModel() {
-    destroyMesh(model_);
-    model_revision_ = -1;
 }
 
 void Renderer::ensureTarget(int w, int h, int samples) {
@@ -428,11 +445,12 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         glUniform4fv(glGetUniformLocation(mesh_prog_, "uClip"), 1, cut_plane_);
         glEnable(GL_CLIP_DISTANCE0);
     }
-    if (model_.vao) {
+    for (const Model& md : models_) {
+        if (!md.mesh.vao) continue;
         glUseProgram(mesh_prog_);
-        rgb(0xAEB6C4, c);
+        rgb(md.rgb, c);
         glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
-        glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, model_matrix_);
+        glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, md.matrix);
         // Faces that need supports, when asked: tinted by how they lean.
         // As the planner decides (OrientationSearch, PointGenerator): a face
         // needs tips when its normal points down past sin(angle from vertical).
@@ -440,16 +458,16 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
             overhang_deg_ > 0 ? static_cast<float>(std::sin(overhang_deg_ * 3.14159265358979 / 180.0)) : 0.0f;
         glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), overhang_sin);
         glUniform3f(glGetUniformLocation(mesh_prog_, "uOverhangColor"), 0x4F / 255.0f, 0x8A / 255.0f, 0xC9 / 255.0f);
-        glBindVertexArray(model_.vao);
-        glDrawElements(GL_TRIANGLES, model_.count, GL_UNSIGNED_INT, nullptr);
+        glBindVertexArray(md.mesh.vao);
+        glDrawElements(GL_TRIANGLES, md.mesh.count, GL_UNSIGNED_INT, nullptr);
         glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
         // The tinted faces once more, over themselves: the same points
         // through the same shader land at the same depth, which passes.
-        if (tint_count_ > 0 && (tint_first_ + tint_count_) * 3 <= static_cast<std::size_t>(model_.count)) {
-            rgb(tint_rgb_, c);
+        if (md.tint_count > 0 && (md.tint_first + md.tint_count) * 3 <= static_cast<std::size_t>(md.mesh.count)) {
+            rgb(md.tint_rgb, c);
             glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(tint_count_ * 3), GL_UNSIGNED_INT,
-                           reinterpret_cast<const void*>(tint_first_ * 3 * sizeof(unsigned)));
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(md.tint_count * 3), GL_UNSIGNED_INT,
+                           reinterpret_cast<const void*>(md.tint_first * 3 * sizeof(unsigned)));
         }
     }
     // Supports and tips, already in printer coordinates.

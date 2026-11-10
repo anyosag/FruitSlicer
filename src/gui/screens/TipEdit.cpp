@@ -65,10 +65,13 @@ void tipEditPanel(App& app, Document& doc) {
         text("None yet. Click the model to add a tip, or select one to change it.", fonts().regular, size::Body,
              col::TextMuted, true);
     } else {
-        const fruit::Transform t = doc.transform();
-        const float list_h = std::min(220.0f, 70.0f * static_cast<float>(edits.size()));
+        // Those on a part off the job (removed, until undo) are left out.
+        const PartFrames t = doc.frames();
+        const auto shown = std::count_if(edits.begin(), edits.end(), [&](const TipEdit& e) { return t.find(e.part); });
+        const float list_h = std::min(220.0f, 70.0f * static_cast<float>(shown));
         ImGui::BeginChild("edits", ImVec2(0, list_h), ImGuiChildFlags_None);
         for (int i = static_cast<int>(edits.size()) - 1; i >= 0; --i) {
+            if (!t.find(edits[static_cast<std::size_t>(i)].part)) continue;
             const auto [title, detail] = describeEdit(edits[static_cast<std::size_t>(i)], t);
             ImGui::PushID(i);
             beginCard("e", ImVec2(0, 0), 10, col::Panel, col::Border);
@@ -144,13 +147,15 @@ void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
         return true;
     };
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const fruit::Transform t = doc.transform();
+    const PartFrames frames = doc.frames();
     // No-tip zones: a ring the zone's size, at its centre.
     if (app.showZones()) {
         for (const TipEdit& e : s.edits) {
             if (e.kind != TipEdit::Kind::Delete && e.kind != TipEdit::Kind::Zone && e.kind != TipEdit::Kind::Move)
                 continue;
-            const fruit::Vec3 c = t.apply(e.at);
+            const fruit::Transform* t = frames.find(e.part);
+            if (!t) continue;  // its part is not on the plate
+            const fruit::Vec3 c = t->apply(e.at);
             const double rad = e.radius;
             ImVec2 a, b;
             if (!project(c, &a) || !project({c.x + rad, c.y, c.z}, &b)) continue;

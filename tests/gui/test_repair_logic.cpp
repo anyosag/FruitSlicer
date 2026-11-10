@@ -38,16 +38,16 @@ using Level = RepairWords::Level;
 
 TEST_CASE("Repair: a sound model says nothing of repair", "[gui][repair]") {
     const auto doc = open(demoModel(), "sound.stl");
-    const RepairWords w = repairWords(doc->check);
+    const RepairWords w = repairWords(doc->part().check());
     CHECK(w.level == Level::None);
     CHECK(w.title.empty());
-    CHECK(doc->check.closed());
-    CHECK_FALSE(doc->check.repair.changed());
+    CHECK(doc->part().check().closed());
+    CHECK_FALSE(doc->part().check().repair.changed());
 }
 
 TEST_CASE("Repair: a worn file loads repaired, with nothing worth a look", "[gui][repair]") {
     const auto doc = open(demoFaultyModel("worn"), "worn.stl");
-    const fruit::MeshCheck& c = doc->check;
+    const fruit::MeshCheck& c = doc->part().check();
     CHECK(c.closed());
     CHECK(c.repair.open_edges_before > 0);
     CHECK(c.repair.holes_filled == 1);
@@ -71,7 +71,7 @@ TEST_CASE("Repair: a worn file loads repaired, with nothing worth a look", "[gui
 
 TEST_CASE("Repair: big holes are closed, and flagged to look at", "[gui][repair]") {
     const auto doc = open(demoFaultyModel("open"), "open.stl");
-    const fruit::MeshCheck& c = doc->check;
+    const fruit::MeshCheck& c = doc->part().check();
     CHECK(c.closed());
     CHECK(c.repair.holes_filled == 2);
     CHECK(c.repair.largest_hole == Approx(std::hypot(17.0, 12.0)).epsilon(1e-3));  // the shelf's top
@@ -88,7 +88,7 @@ TEST_CASE("Repair: big holes are closed, and flagged to look at", "[gui][repair]
 
 TEST_CASE("Repair: loose surfaces stay as they are, and say so", "[gui][repair]") {
     const auto doc = open(demoFaultyModel("loose"), "loose.stl");
-    const fruit::MeshCheck& c = doc->check;
+    const fruit::MeshCheck& c = doc->part().check();
     CHECK_FALSE(c.closed());
     CHECK(c.open_edges == 24);
     CHECK(c.triangles == 12);
@@ -173,15 +173,15 @@ TEST_CASE("Repair: a saved job keeps what was repaired", "[gui][repair][jobs]") 
     const Document& d = *o.doc;
     // The job's own copy is the repaired mesh, so there is nothing to
     // repair again; what was done the first time comes back with it.
-    CHECK(d.check.closed());
-    CHECK(meshHash(d.model.mesh) == meshHash(doc->model.mesh));
-    CHECK(d.check.repair.holes_filled == 2);
-    CHECK(d.check.repair.patch_faces == doc->check.repair.patch_faces);
-    CHECK(d.check.repair.largest_hole == Approx(doc->check.repair.largest_hole));
-    CHECK(d.check.repair.biggest_patch_at.z == Approx(doc->check.repair.biggest_patch_at.z));
-    CHECK(d.check.repair.biggest_patch_facing.z == Approx(1));
-    CHECK(repairWords(d.check).title == "Repaired, with a big patch");
+    CHECK(d.part().check().closed());
+    CHECK(meshHash(d.part().mesh()) == meshHash(doc->part().mesh()));
+    CHECK(d.part().check().repair.holes_filled == 2);
+    CHECK(d.part().check().repair.patch_faces == doc->part().check().repair.patch_faces);
+    CHECK(d.part().check().repair.largest_hole == Approx(doc->part().check().repair.largest_hole));
+    CHECK(d.part().check().repair.biggest_patch_at.z == Approx(doc->part().check().repair.biggest_patch_at.z));
+    CHECK(d.part().check().repair.biggest_patch_facing.z == Approx(1));
+    CHECK(repairWords(d.part().check()).title == "Repaired, with a big patch");
     CHECK_FALSE(d.unsaved());
     // The file itself still loads to the same mesh: not "changed since".
-    CHECK(meshHash(fruit::loadModel(doc->path).mesh) == meshHash(d.model.mesh));
+    CHECK(meshHash(fruit::loadModel(doc->part().path()).mesh) == meshHash(d.part().mesh()));
 }

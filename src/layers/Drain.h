@@ -38,6 +38,9 @@ struct DrainHole {
     // of the drain hole at its bottom, so it doesn't hold back like a
     // finger over a straw. Drilled the same way.
     bool air = false;
+    // Which model of several it is in (the app's part id; nothing here uses
+    // it): `at` and `axis` are in that model's coordinates.
+    int part = 0;
     bool operator==(const DrainHole&) const = default;
 };
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #pragma once
-// Saved jobs (.fruitjob): a zip holding job.json, the job's own copy of the
-// model (model.stl) and, when a SatelLite file gave the print settings, that
+// Saved jobs (.fruitjob): a zip holding job.json, the job's own copy of each
+// part's mesh (model.bin for a job with one part, else part-1.bin,
+// part-2.bin...) and, when a SatelLite file gave the print settings, that
 // file's header (sample-header.bin). The tips are kept, so supports come
 // back as they were without planning them again. No UI here.
 
@@ -27,6 +28,7 @@ struct OpenedJob {
     std::shared_ptr<Document> doc;  // placed, with its supports rebuilt from the saved tips
     std::string model_path;         // where the model was when the job was saved
     bool model_missing = false;     // it is not there any more (the job's own copy is used)
+    int part = 0;                   // the part (an id) whose model that is: the first whose file has gone
 };
 
 // Reads a job; supports are rebuilt (progress "tree", "check"). Throws with a

@@ -27,14 +27,14 @@ std::shared_ptr<Document> loadDemo(const char* name = "doc_test_bracket.stl") {
 TEST_CASE("Document: loading checks the mesh and places it raised", "[gui]") {
     const auto doc = loadDemo();
     CHECK(doc->name == "doc_test_bracket");
-    CHECK(doc->check.closed());
-    CHECK(doc->check.shells == 4);
+    CHECK(doc->part().check().closed());
+    CHECK(doc->part().check().shells == 4);
     CHECK(doc->low_points >= 1);
     CHECK(doc->fit().fits);
     CHECK(doc->placed().bbox().min.z == Approx(5.0));
     CHECK_FALSE(doc->canUndo());
     // Each load gets its own geometry id, so the 3D view re-uploads.
-    CHECK(loadDemo("doc_test_other.stl")->geometry_id != doc->geometry_id);
+    CHECK(loadDemo("doc_test_other.stl")->part().geometryId() != doc->part().geometryId());
 }
 
 TEST_CASE("Document: edits are undoable and every change bumps the revision", "[gui]") {
@@ -74,11 +74,11 @@ TEST_CASE("Document: the transform and the placed mesh agree", "[gui]") {
     p.scale = 1.5;
     p.rotation_deg = {10, 20, 30};
     doc->edit(p);
-    const auto& m = doc->model.mesh.vertices;
+    const auto& m = doc->part().mesh().vertices;
     const auto& w = doc->placed().vertices;
     REQUIRE(m.size() == w.size());
     for (std::size_t i = 0; i < m.size(); i += 7) {
-        const fruit::Vec3 q = doc->transform().apply(m[i]);
+        const fruit::Vec3 q = doc->part().transform().apply(m[i]);
         CHECK(q.x == Approx(w[i].x));
         CHECK(q.y == Approx(w[i].y));
         CHECK(q.z == Approx(w[i].z));
