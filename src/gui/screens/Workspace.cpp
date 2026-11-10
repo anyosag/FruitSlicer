@@ -383,7 +383,7 @@ void modelTools(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     if (app.editingTips()) return;
     const Tool open = doc && app.toolPanelOpen() ? app.tool() : Tool::None;
     const int n_tools = 6;  // Supports, Hollow, Drain holes, Repair, Merge, Split
-    const float w = static_cast<float>(n_tools) * 68 + (n_tools - 1) * 2 + 2 * 8 + 2;
+    const float w = static_cast<float>(n_tools) * 68 + (n_tools - 1) * 10 + 2 * 8 + 2;
     const ImVec2 pos(origin.x + std::round((size.x - w) / 2), origin.y + size.y - 16 - 72);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
     beginFloat("model_tools", pos, w, 0, ImVec2(8, 6));

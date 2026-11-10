@@ -51,7 +51,7 @@
 //   {"orientation_piece": path | "@demo"} {"orientation_sample": path | "@stand-in-flip-y" (-flip-x, -as-is)}
 //   {"orientation_fix": "use"} {"hinge": "back" | "left" | "right" | "front" | "none"}
 //   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)
-//   {"screen": "home" | "job" | "calibrate" | "orientation_check" | "printer" | "about"} {"view": "front" | "side" | "angled" | "below"}
+//   {"screen": "home" | "job" | "calibrate" | "orientation_check" | "printer" | "about"} {"view": "front" | "side" | "angled" | "below" | "top"}
 // Shots are written as <dir>/<name>.png once two consecutive frames are
 // identical.
 

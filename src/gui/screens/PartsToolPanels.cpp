@@ -25,10 +25,12 @@ bool numberRow(const char* label, const char* id, double* v, const char* unit, d
     const float y = ImGui::GetCursorPosY();
     ImGui::SetCursorPosY(y + 8);
     text(label, fonts().regular, size::Body, col::TextSecondary);
-    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - 108, y));
-    const bool changed = numberField(id, v, 90, "%g", lo, hi);
-    ImGui::SameLine(0, 6);
-    text(unit, fonts().regular, size::Body, col::TextSecondary);
+    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - 100, y));
+    const bool changed = numberField(id, v, *unit ? 72 : 90, "%g", lo, hi);
+    if (*unit) {
+        ImGui::SameLine(0, 6);
+        text(unit, fonts().regular, size::Body, col::TextSecondary);
+    }
     return changed;
 }
 
@@ -59,7 +61,7 @@ void duplicatePanel(App& app, Document& doc) {
     PartsToolState& st = app.partsTools();
     groupLabel("Copies");
     double n = st.copies;
-    if (numberRow("How many", "copies", &n, "copies", 1, kMaxCopies)) st.copies = std::clamp(static_cast<int>(n), 1, kMaxCopies);
+    if (numberRow("How many copies", "copies", &n, "", 1, kMaxCopies)) st.copies = std::clamp(static_cast<int>(n), 1, kMaxCopies);
     text(strf("Each copy goes in the room beside the other parts, %g mm clear of them. The other parts do not move. "
               "Supports need making again.",
               kPartGap)
@@ -72,9 +74,8 @@ void arrangePanel(App& app, Document& doc) {
     PartsToolState& st = app.partsTools();
     groupLabel("Lay them out");
     numberRow("Gap between parts", "gap", &st.arrange_gap, "mm", 0, 50);
-    text("Every part is moved into rows, biggest first, with this much room between them, and the whole layout is "
-         "centred on the plate. Parts are not turned. Their rafts and the supports at their edges need room: "
-         "5 mm is a good gap.",
+    text("Every part is moved, biggest first, with this much room between them, and the whole layout is centred on "
+         "the plate. Parts are not turned. Their rafts and the supports at their edges need room: 5 mm is a good gap.",
          fonts().regular, size::Help, col::TextMuted, true);
     if (doc.partCount() < 2) {
         ImGui::Dummy(ImVec2(0, 6));

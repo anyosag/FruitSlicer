@@ -392,7 +392,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (a != "x" && a != "y" && a != "z") throw std::runtime_error("unknown mirror axis " + a);
             app.mirrorModel(a == "x" ? 0 : a == "y" ? 1 : 2);
         } else if (step.contains("duplicate")) {
-            app.partsTools().copies = step["duplicate"].get<int>();
+            app.partsTools().copies = std::clamp(step["duplicate"].get<int>(), 1, kMaxCopies);
             app.duplicateParts();
         } else if (step.contains("arrange")) {
             if (step["arrange"].is_number()) app.partsTools().arrange_gap = step["arrange"].get<double>();
@@ -793,7 +793,13 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("wait")) {
             app.jobs().wait();
         } else if (step.contains("view")) {
-            app.setView(viewFrom(step["view"].get<std::string>()));
+            const std::string v = step["view"].get<std::string>();
+            if (v == "top") {  // from above, the whole plate's job in view
+                app.camera().lookFrom({0, -0.18f, 1});  // as steep as the camera goes, the plate square on
+                app.fitView();
+            } else {
+                app.setView(viewFrom(v));
+            }
         } else if (step.contains("show_patch")) {
             // As the Model step's "Show the patch" link.
             const auto& doc = app.document();

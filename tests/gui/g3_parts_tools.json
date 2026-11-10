@@ -1,0 +1,32 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "arrange"}, {"shot": "g3_arrange_one_part"},
+    {"tool": "merge"}, {"shot": "g3_merge_one_part"},
+    {"tool": "split"}, {"shot": "g3_split_panel"},
+    {"close_tool": true}, {"job_tab": "collisions"}, {"shot": "g3_collisions_one_part"},
+    {"tool": "duplicate"}, {"shot": "g3_duplicate_panel"},
+    {"duplicate": 3}, {"view": "top"}, {"collisions": "wait"}, {"shot": "g3_duplicate_done"},
+    {"duplicate": 40}, {"collisions": "wait"}, {"shot": "g3_duplicate_not_all_fit"},
+    {"undo": 1}, {"collisions": "wait"}, {"shot": "g3_duplicate_undone"},
+    {"close_tool": true},
+    {"select_part": 2}, {"move": [-5, 5]}, {"select_part": 3}, {"move": [0, 8]},
+    {"collisions": "wait"}, {"shot": "g3_collisions_overlap"},
+    {"job_tab": "checks"}, {"shot": "g3_checks_overlap"}, {"job_tab": "collisions"},
+    {"tool": "arrange"}, {"shot": "g3_arrange_panel"},
+    {"arrange": 5}, {"collisions": "wait"}, {"shot": "g3_arrange_done"},
+    {"arrange": 5}, {"shot": "g3_arrange_again"},
+    {"tool": "merge"}, {"merge_pick": [1, 2, 3]}, {"shot": "g3_merge_panel"},
+    {"merge_parts": "join"}, {"collisions": "wait"}, {"shot": "g3_merge_joined"},
+
+    {"open": "@demo"}, {"unsaved": "discard"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "split"}, {"shot": "g3_split_four"},
+    {"split": true}, {"view": "angled"}, {"collisions": "wait"}, {"shot": "g3_split_done"},
+    {"close_tool": true}, {"job_tab": "collisions"}, {"shot": "g3_collisions_pieces"},
+    {"tool": "merge"}, {"merge_pick": [1, 2]}, {"shot": "g3_merge_fuse_panel"},
+    {"merge_parts": "fuse"}, {"collisions": "wait"}, {"shot": "g3_merge_fused"},
+    {"undo": 1}, {"collisions": "wait"}, {"shot": "g3_merge_undone"}
+  ]
+}

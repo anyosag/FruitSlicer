@@ -38,23 +38,25 @@ void collisionsTab(App& app, Document* doc) {
         endCard();
         return;
     }
-    // The least gap.
-    {
+    const auto gapRow = [&] {
+        {
         const float w = ImGui::GetContentRegionAvail().x;
         const float y = ImGui::GetCursorPosY();
         ImGui::SetCursorPosY(y + 8);
         text("Closer than", fonts().regular, size::Body, col::TextSecondary);
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - 108, y));
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - 100, y));
         double gap = app.collisionGap();
-        if (numberField("mingap", &gap, 90, "%g", 0, 20)) app.collisionGap() = gap;
+        if (numberField("mingap", &gap, 72, "%g", 0, 20)) app.collisionGap() = gap;
         ImGui::SameLine(0, 6);
         text("mm", fonts().regular, size::Body, col::TextSecondary);
     }
     ImGui::Dummy(ImVec2(0, 2));
+    };
     const CollisionReport* r = app.collisions();
     if (!r) {
         text(app.checkingCollisions() ? "Checking the parts…" : "Not checked yet: it starts when the parts are at rest.",
              fonts().regular, size::Body, col::TextMuted, true);
+        gapRow();
         return;
     }
     const Document& d = *doc;
@@ -66,6 +68,8 @@ void collisionsTab(App& app, Document* doc) {
                  .c_str(),
              fonts().regular, size::Body, col::TextSecondary, true);
         endCard();
+        ImGui::Dummy(ImVec2(0, 4));
+        gapRow();
         return;
     }
     if (!r->problems.empty()) {
@@ -79,15 +83,14 @@ void collisionsTab(App& app, Document* doc) {
             text((nameOf(d, p.a) + " and " + nameOf(d, p.b)).c_str(), fonts().semibold, size::Body, col::Text, true);
             text(("They " + describePair(p) + (bad ? ": they print as one lump." : ".")).c_str(), fonts().regular,
                  size::Body, col::TextSecondary, true);
-            ImGui::Dummy(ImVec2(0, 2));
             // A way to each: selecting it, so the tools (Move…) act on it.
-            if (const Part* pa = d.findPart(p.a)) {
-                const bool sel = d.selectedId() == p.a;
-                if (secondaryButton(sel ? "Selected" : ("Select " + pa->name()).c_str(), ImVec2(-1, 28), !sel)) app.selectCollision(p.a);
-            }
-            if (const Part* pb = d.findPart(p.b)) {
-                const bool sel = d.selectedId() == p.b;
-                if (secondaryButton(sel ? "Selected" : ("Select " + pb->name()).c_str(), ImVec2(-1, 28), !sel)) app.selectCollision(p.b);
+            for (int k = 0; k < 2; ++k) {
+                const int id = k == 0 ? p.a : p.b;
+                const Part* pt = d.findPart(id);
+                if (!pt) continue;
+                if (k) ImGui::SameLine(0, 16);
+                if (d.selectedId() == id) text("Selected", fonts().semibold, size::Body, col::TextMuted);
+                else if (linkButton(("Select " + pt->name()).c_str())) app.selectCollision(id);
             }
             endCard();
             ImGui::PopID();
@@ -100,6 +103,8 @@ void collisionsTab(App& app, Document* doc) {
             text((nameOf(d, n.part) + ": " + n.why + ".").c_str(), fonts().regular, size::Help, col::Warn, true);
     }
     text("The Arrange tool spaces the parts out again.", fonts().regular, size::Help, col::TextMuted, true);
+    ImGui::Dummy(ImVec2(0, 4));
+    gapRow();
 }
 
 }  // namespace gui::screens::parts

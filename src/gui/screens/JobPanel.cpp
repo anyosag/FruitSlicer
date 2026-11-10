@@ -371,9 +371,6 @@ void mainArea(App& app, Document* doc) {
     } else {
         note = "The layers are cut for these supports.";
     }
-    if (doc && doc->partCount() > 1)
-        if (const CollisionReport* cr = app.collisions(); cr && cr->overlapping() > 0 && !off)
-            note += " Parts overlap: see Collisions.";
     const float w = ImGui::GetContentRegionAvail().x;
     {
         const float y = ImGui::GetCursorPosY();
