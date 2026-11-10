@@ -23,17 +23,7 @@ FetchContent_Declare(sdl3
   GIT_TAG release-3.4.20
   GIT_SHALLOW TRUE)
 
-# Dear ImGui (MIT) - immediate-mode UI. No CMake project of its own.
-FetchContent_Declare(imgui
-  GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG v1.93.0
-  GIT_SHALLOW TRUE)
-
-# Inter 4.1 (SIL Open Font License 1.1) - the UI typeface.
-FetchContent_Declare(inter
-  URL https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
-  URL_HASH SHA256=9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e)
-
+# Dear ImGui and Inter are declared in Dependencies.cmake (the engine uses them too).
 FetchContent_MakeAvailable(sdl3 imgui inter)
 
 add_library(fruit_imgui STATIC

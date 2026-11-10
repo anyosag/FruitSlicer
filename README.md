@@ -33,7 +33,7 @@ behind it, and the milestone plan are in
 Requires CMake ≥ 3.24 and a C++20 compiler (GCC 12+, Clang 15+, or Apple
 Clang from current Xcode command line tools; CI builds on Ubuntu and on
 macOS/Apple Silicon). Dependencies
-(Clipper2, CLI11, nlohmann/json, Catch2) are fetched by CMake.
+(Clipper2, Manifold, CLI11, nlohmann/json, Catch2) are fetched by CMake.
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
