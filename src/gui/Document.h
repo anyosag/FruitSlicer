@@ -110,6 +110,17 @@ struct JobStamp {
 
 class Document {
 public:
+    Document() = default;
+    // Copies (a worker's snapshot) get the placed mesh made first, on the
+    // thread that copies, so no copy ever makes it lazily.
+    Document(const Document& o) {
+        o.placed();
+        *this = o;
+    }
+    Document& operator=(const Document&) = default;
+    Document(Document&&) = default;
+    Document& operator=(Document&&) = default;
+
     std::string path;  // file it came from
     std::string name;  // file name without folder and extension
     fruit::LoadedModel model;
@@ -129,29 +140,54 @@ public:
 
     const fruit::Placement& placement() const { return placement_; }
     const fruit::Transform& transform() const { return transform_; }  // model -> printer
-    const fruit::TriangleMesh& placed() const { return placed_; }      // printer coordinates
+    const fruit::TriangleMesh& placed() const;                         // printer coordinates
+    const fruit::BBox3& placedBox() const { return placed_box_; }      // its outline, kept up to date while dragging
     const fruit::PlateFit& fit() const { return fit_; }
-    int revision() const { return revision_; }  // bumped on every change; results carry it
+    // Names the placement (and model) shown now: a new number for every
+    // change, and the same number again when undo or redo goes back to a
+    // placement. Results carry it, so what was made for a placement counts
+    // again once it is back.
+    int revision() const { return revision_; }
     // What supports are made for besides the placement: the sides people
     // see and, once applied, the Hollow screen's choices.
     int supportSettings() const { return orient.settings * 100003 + (hollow.applied ? 1 + hollow.settings : 0); }
 
     // Sets the placement without recording it (loading, the health dialog).
     void place(const fruit::Placement& p);
-    // An edit the user can undo.
+    // An edit the user can undo (nothing happens when it changes nothing).
     void edit(const fruit::Placement& p);
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
     void undo();
     void redo();
+    // Dragging a handle in the 3D view: begin, any number of previews (the
+    // transform and the fit follow at once; the placed mesh is made again
+    // only when asked for), then end, which is one undo step for the whole
+    // drag, or cancel, which puts it back as it was.
+    void beginDrag();
+    void preview(const fruit::Placement& p);
+    void endDrag();
+    void cancelDrag();
+    bool dragging() const { return drag_from_.has_value(); }
+    // The model file itself was replaced: everything made for the old one is
+    // out of date, and undo can't go back past it.
+    void modelChanged();
 
 private:
+    struct Placed {
+        fruit::Placement placement;
+        int revision = 0;
+    };
+    void set(const fruit::Placement& p);  // placement, transform, outline and fit; the mesh later
     fruit::Placement placement_;
     fruit::Transform transform_;
-    fruit::TriangleMesh placed_;
+    mutable fruit::TriangleMesh placed_;
+    mutable bool placed_stale_ = true;
+    fruit::BBox3 placed_box_;
     fruit::PlateFit fit_;
-    int revision_ = 0;
-    std::vector<fruit::Placement> undo_, redo_;
+    int revision_ = 0, last_revision_ = 0;
+    std::vector<Placed> undo_, redo_;
+    std::optional<Placed> drag_from_;
 };
 
 // A new value for Document::geometry_id.

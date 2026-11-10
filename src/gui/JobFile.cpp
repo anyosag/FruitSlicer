@@ -2,6 +2,8 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "JobFile.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -23,7 +25,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr int kVersion = 1;
+// 2: the model can sit anywhere on the plate ("placement"/"offset"). A job
+// whose model is centred is still written as 1, which older FruitSlicers
+// open; a moved one as 2, which they refuse rather than open it centred
+// with its tips where the model no longer is.
+constexpr int kVersion = 2;
 constexpr char kMeshMagic[8] = {'F', 'S', 'M', 'E', 'S', 'H', '1', 0};
 
 // The model exactly as the job uses it: doubles, little-endian (every
@@ -146,7 +152,7 @@ std::uint64_t meshHash(const fruit::TriangleMesh& m) {
 void saveJob(const std::string& path, const Document& doc) {
     json j;
     j["format"] = "fruitslicer-job";
-    j["version"] = kVersion;
+    j["version"] = doc.placement().centred() ? 1 : kVersion;
     j["name"] = doc.name;
     j["model"] = {{"path", doc.path}, {"file", "model.bin"}, {"hash", std::to_string(meshHash(doc.model.mesh))}};
     // The job's copy of the mesh is the repaired one: what was repaired, and
@@ -168,6 +174,7 @@ void saveJob(const std::string& path, const Document& doc) {
     const fruit::Placement& p = doc.placement();
     j["placement"] = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation},
                       {"on_plate", p.on_plate}};
+    if (!p.centred()) j["placement"]["offset"] = {p.offset.x, p.offset.y};
     json visible = json::array();
     for (const auto& v : doc.orient.visible) visible.push_back(vec(v));
     j["orient"] = {{"visible", visible}, {"decided", doc.orient.decided}};
@@ -300,6 +307,11 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     p.rotation_deg = vecFrom(pj.at("rotation"));
     p.elevation = pj.value("elevation", 5.0);
     p.on_plate = pj.value("on_plate", false);
+    if (pj.contains("offset") && pj["offset"].is_array() && pj["offset"].size() == 2 && pj["offset"][0].is_number() &&
+        pj["offset"][1].is_number()) {  // older jobs: centred
+        auto mm = [](double v) { return std::isfinite(v) ? std::clamp(v, -1000.0, 1000.0) : 0.0; };
+        p.offset = {mm(pj["offset"][0].get<double>()), mm(pj["offset"][1].get<double>())};
+    }
     doc->place(p);
     doc->low_points = fruit::countLowPoints(doc->placed(), p.on_plate);
 

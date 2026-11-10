@@ -20,6 +20,8 @@
 #include "ABTest.h"
 #include "Fit.h"
 #include "GooTools.h"
+#include "Navigation.h"
+#include "Placing.h"
 #include "Resins.h"
 #include "Send.h"
 #include "platform/Platform.h"
@@ -36,8 +38,6 @@ enum class Screen {
     Home, Job, Calibrate, OrientationCheck, Printer, About, Settings, Setup, Resins, Plate, Score, Fit, ABSetup, ABResults,
     Tools
 };
-// The job's steps, in order. Only Model works yet; the rest follow.
-enum class Step { Model, Orient, Supports, Layers, Print };
 
 struct AppOptions {
     bool deterministic = false;  // scripted captures: no MSAA, hide machine-specific text
@@ -50,9 +50,6 @@ enum class OrientView { Settings, Results, Hollow };
 
 // How the Supports step draws the result.
 enum class SupportsView { Supports, TipsOnly, Why };
-
-// The size choice in the health dialog.
-enum class SizeChoice { Full, Largest, Custom, Inches };
 
 struct HealthDialog {
     bool open = false;
@@ -127,14 +124,35 @@ public:
     // Placement edits on the open job (undoable).
     void setScalePercent(double percent);
     void setRotation(const fruit::Vec3& degrees);
+    void setPosition(const fruit::Vec2& mm);  // the middle of its outline, from the plate's centre
+    void centreModel();
+    void nudge(double dx_mm, double dy_mm);    // the arrow keys
+    void turnQuarter();                        // 90° about the vertical, slid back onto the plate if need be
+    void slideOntoPlate();                     // over the edge: the least move that puts it back on
     void setOnPlate(bool on_plate);
     void scaleToFit();
     void undo();
     void redo();
+    // The handles in the 3D view (Model, and Orient's settings): a drag is
+    // previewed as it goes and is one undo step when it ends.
+    HandleDrag& handleDrag() { return handle_drag_; }
+    Handle& hoverHandle() { return hover_handle_; }
+    bool handlesShown() const;     // on this screen, with a model open
+    bool placing() const { return doc_ && doc_->dragging(); }
+    void beginPlacing(const HandleDrag& d);
+    void previewPlacement(const fruit::Placement& p);
+    void endPlacing();
+    void cancelPlacing();          // Escape: back to where the drag started
+    bool& mouseSpent() { return mouse_spent_; }  // after Escape, until the button is let go
+    void dragHandleBy(Handle h, double amount, bool snap);  // scripts: one whole drag
     void showShortcuts(bool show) { shortcuts_open_ = show; }
-    // Steps.
-    bool canGoTo(Step s) const;
+    // Places (not steps: any opens at any time; each says what it needs).
+    bool canGoTo(Step s) const { return doc_ != nullptr && s >= Step::Model; }
+    Need needFor(Step s) const;  // Need::Nothing: it can do its work now
     void goToStep(Step s);
+    // The model with supports for where it is now, from any place: makes
+    // them (or makes them again), showing the Supports place.
+    void supportsNow();
     // Orient: sides people will see, the search, and the choice.
     void toggleSide(Side s);
     void clearSides();
@@ -419,6 +437,9 @@ private:
     SupportsView supports_view_ = SupportsView::Supports;
     bool problems_open_ = false;
     bool advanced_open_ = false;
+    HandleDrag handle_drag_;
+    Handle hover_handle_ = Handle::None;
+    bool mouse_spent_ = false;
     bool tip_editing_ = false;
     TipTool tip_tool_ = TipTool::Select;
     int new_tip_class_ = 2;

@@ -10,35 +10,94 @@
 
 namespace gui {
 
-void Document::place(const fruit::Placement& p) {
+void Document::set(const fruit::Placement& p) {
     placement_ = p;
     transform_ = fruit::placementTransform(model.mesh, p);
-    placed_ = model.mesh;
-    placed_.transform(transform_);
+    placed_box_ = fruit::BBox3{};
+    for (const fruit::Vec3& v : model.mesh.vertices) placed_box_.extend(transform_.apply(v));
     fit_ = fruit::checkFit(model.mesh, p, printer);
-    ++revision_;
+    placed_stale_ = true;
+}
+
+const fruit::TriangleMesh& Document::placed() const {
+    if (placed_stale_) {
+        placed_ = model.mesh;
+        placed_.transform(transform_);
+        placed_stale_ = false;
+    }
+    return placed_;
+}
+
+void Document::place(const fruit::Placement& p) {
+    set(p);
+    revision_ = ++last_revision_;
+    placed();
 }
 
 void Document::edit(const fruit::Placement& p) {
-    undo_.push_back(placement_);
+    if (p == placement_) return;
+    undo_.push_back({placement_, revision_});
     redo_.clear();
     place(p);
 }
 
 void Document::undo() {
-    if (undo_.empty()) return;
-    redo_.push_back(placement_);
-    const fruit::Placement p = undo_.back();
+    if (undo_.empty() || dragging()) return;
+    redo_.push_back({placement_, revision_});
+    const Placed u = undo_.back();
     undo_.pop_back();
-    place(p);
+    set(u.placement);
+    revision_ = u.revision;
+    placed();
 }
 
 void Document::redo() {
-    if (redo_.empty()) return;
-    undo_.push_back(placement_);
-    const fruit::Placement p = redo_.back();
+    if (redo_.empty() || dragging()) return;
+    undo_.push_back({placement_, revision_});
+    const Placed r = redo_.back();
     redo_.pop_back();
-    place(p);
+    set(r.placement);
+    revision_ = r.revision;
+    placed();
+}
+
+void Document::beginDrag() {
+    if (!dragging()) drag_from_ = Placed{placement_, revision_};
+}
+
+void Document::preview(const fruit::Placement& p) {
+    if (!dragging() || p == placement_) return;
+    set(p);
+    revision_ = ++last_revision_;
+}
+
+void Document::endDrag() {
+    if (!dragging()) return;
+    const Placed from = *drag_from_;
+    drag_from_.reset();
+    if (placement_ == from.placement) {
+        revision_ = from.revision;  // dragged back to where it started: nothing changed
+    } else {
+        undo_.push_back(from);
+        redo_.clear();
+    }
+    placed();
+}
+
+void Document::cancelDrag() {
+    if (!dragging()) return;
+    const Placed from = *drag_from_;
+    drag_from_.reset();
+    set(from.placement);
+    revision_ = from.revision;
+    placed();
+}
+
+void Document::modelChanged() {
+    undo_.clear();
+    redo_.clear();
+    drag_from_.reset();
+    place(placement_);
 }
 
 int newGeometryId() {

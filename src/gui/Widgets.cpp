@@ -233,47 +233,36 @@ bool chip(const char* id, const char* label, ImU32 dot, ImU32 fg, ImU32 bg, ImU3
     return clicked;
 }
 
-bool stepPill(int number, const char* label, StepState state, bool enabled, const char* badge, ImU32 badge_color) {
+bool placeTab(const char* label, bool current, TabMark mark, const char* badge, ImU32 badge_color) {
     ImGui::PushFont(fonts().medium, size::Help);
     const float bw = badge ? ImGui::CalcTextSize(badge).x + 8 : 0.0f;
     ImGui::PopFont();
-    ImGui::PushFont(state == StepState::Current ? fonts().semibold : fonts().medium, size::Body);
+    ImGui::PushFont(current ? fonts().semibold : fonts().medium, size::Body);
     const ImVec2 ts = ImGui::CalcTextSize(label);
-    const ImVec2 sz(ts.x + 54 + bw, 38);
+    const float lead = mark == TabMark::None ? 16.0f : 36.0f;  // room for the mark
+    const ImVec2 sz(lead + ts.x + 16 + bw, 38);
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::PushID(number);
-    const bool clicked = ImGui::InvisibleButton("step", sz) && enabled;
+    ImGui::PushID(label);
+    const bool clicked = ImGui::InvisibleButton("place", sz);
     ImGui::PopID();
-    const bool hovered = ImGui::IsItemHovered() && enabled;
+    const bool hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (state == StepState::Current || hovered)
-        dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), state == StepState::Current ? col::Active : col::Card,
-                          sz.y / 2);
-    const ImVec2 c(p.x + 19, p.y + sz.y / 2);
-    char num[4];
-    std::snprintf(num, sizeof num, "%d", number);
-    if (state == StepState::Current) {
-        dl->AddCircleFilled(c, 13, col::Accent, 32);
-    } else if (state == StepState::Done) {
-        dl->AddCircleFilled(c, 13, col::OkBg, 32);
-    } else {
-        dl->AddCircle(c, 12.5f, col::BorderStrong, 32, 1.0f);
+    if (current || hovered)
+        dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), current ? col::Active : col::Card, sz.y / 2);
+    const ImVec2 c(p.x + 21, p.y + sz.y / 2);
+    if (mark == TabMark::Done) {
+        dl->AddCircleFilled(c, 10, col::OkBg, 24);
+        icon::check(dl, ImVec2(c.x - 6, c.y - 6), 12, col::Ok);
+    } else if (mark == TabMark::Problem) {
+        dl->AddCircleFilled(c, 4.5f, col::Error, 16);
     }
-    const ImU32 fg = state == StepState::Current ? col::Text : (enabled ? col::TextSecondary : col::TextMuted);
-    if (state == StepState::Done) {
-        icon::check(dl, ImVec2(c.x - 7, c.y - 7), 14, col::Ok);
-    } else {
-        ImGui::PushFont(fonts().semibold, size::Help);
-        const ImVec2 ns = ImGui::CalcTextSize(num);
-        dl->AddText(ImVec2(c.x - ns.x / 2, c.y - ns.y / 2), state == StepState::Current ? col::OnAccent : fg, num);
-        ImGui::PopFont();
-    }
-    dl->AddText(ImVec2(p.x + 40, p.y + (sz.y - ts.y) / 2), fg, label);
+    dl->AddText(ImVec2(p.x + lead, p.y + (sz.y - ts.y) / 2), current ? col::Text : col::TextSecondary, label);
     ImGui::PopFont();
     if (badge) {
         ImGui::PushFont(fonts().medium, size::Help);
         const ImVec2 bs = ImGui::CalcTextSize(badge);
-        dl->AddText(ImVec2(p.x + 48 + ts.x, p.y + (sz.y - bs.y) / 2), badge_color ? badge_color : col::Warn, badge);
+        dl->AddText(ImVec2(p.x + lead + ts.x + 8, p.y + (sz.y - bs.y) / 2), badge_color ? badge_color : col::Warn,
+                    badge);
         ImGui::PopFont();
     }
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

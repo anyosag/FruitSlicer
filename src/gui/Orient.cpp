@@ -63,7 +63,7 @@ bool fitYaw(const Document& doc, fruit::Vec3& rotation_deg) {
     for (int k = 0; k < 12; ++k) {
         q.rotation_deg = rotation_deg;
         q.rotation_deg.z = std::fmod(rotation_deg.z + 15.0 * k, 360.0);
-        if (fruit::checkFit(doc.model.mesh, q, doc.printer).fits) {
+        if (fruit::checkFit(doc.model.mesh, q, doc.printer).fits_centred) {  // useOrientation slides it on
             rotation_deg = q.rotation_deg;
             return true;
         }

@@ -36,12 +36,18 @@ double plateMargin(const Placement& p);
 struct PlateFit {
     Vec3 size;                  // placed model, mm
     double top = 0;             // highest point above the plate (size.z + lift)
-    bool fits = false;          // within the margins and the build height
+    bool fits = false;          // where it is: within the margins and the build height
+    bool fits_centred = false;  // the same if it stood in the middle of the plate (its size alone)
+    bool fits_turned = false;   // its size alone, turned a quarter about the vertical
+    Vec2 room;                  // how far its middle may go from the plate's centre in X and in Y,
+                                // within the margins (negative: too big that way)
     double largest = 0;         // largest scale that fits as rotated now (1.0 = 100 %), floored to 1 %
     double largest_turned = 0;  // the same, turned 90° about the vertical
+
+    bool overEdge() const { return fits_centred && !fits; }  // fits, but not where it is
 };
 
-// Fit of `model` (its own coordinates) placed per `p`.
+// Fit of `model` (its own coordinates) placed per `p`, where `p.offset` puts it.
 PlateFit checkFit(const TriangleMesh& model, const Placement& p, const PrinterProfile& printer);
 
 // Downward-pointing spots of `placed` that start in mid-air and need a

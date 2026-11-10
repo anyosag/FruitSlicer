@@ -1,0 +1,19 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "job"},
+    {"open": "@demo-bar"}, {"wait": "jobs"}, {"shot": "b1b_health_bar"},
+    {"health": "full"}, {"health": "place"}, {"view": "angled"}, {"shot": "b1b_bar_turned_to_fit"},
+    {"rotate": [0, 0, 0]}, {"shot": "b1b_bar_too_big"},
+    {"step": "supports"}, {"shot": "b1b_supports_too_big"},
+    {"step": "model"}, {"turn": 90},
+    {"drag": ["move_x", 40]}, {"drag": ["move_y", -21.5]}, {"shot": "b1b_bar_moved"},
+    {"move": [60, -30]}, {"shot": "b1b_bar_over_edge"},
+    {"slide_on": true}, {"drag": ["turn_x", 50, true]}, {"shot": "b1b_bar_turned_ring"},
+    {"undo": 1}, {"step": "layers"}, {"shot": "b1b_layers_no_supports"},
+    {"step": "model"}, {"supports": "now"}, {"wait": "jobs"}, {"shot": "b1b_supports_from_model"},
+    {"nudge": [5, 0]}, {"step": "print"}, {"shot": "b1b_print_out_of_date"},
+    {"undo": 1}, {"step": "model"}, {"shot": "b1b_model_supports_back"}
+  ]
+}

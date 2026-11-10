@@ -48,10 +48,11 @@ bool segmentButton(const char* label, bool active);
 // Rounded pill: optional dot, text. Returns true when clicked.
 bool chip(const char* id, const char* text, ImU32 dot, ImU32 fg, ImU32 bg, ImU32 border);
 
-// One step of the job's step bar.
-enum class StepState { Current, Done, Upcoming };
-bool stepPill(int number, const char* label, StepState state, bool enabled, const char* badge = nullptr,
-              ImU32 badge_color = 0);
+// One of the job's places in the top bar (not steps: any opens at any
+// time): its name, a mark (done: a tick; a problem: a red dot) and an
+// optional badge. Returns true when clicked.
+enum class TabMark { None, Done, Problem };
+bool placeTab(const char* label, bool current, TabMark mark, const char* badge = nullptr, ImU32 badge_color = 0);
 
 // A keyboard shortcut drawn as a key cap, e.g. "⌘ Z".
 void keyBadge(const char* keys);

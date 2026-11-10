@@ -365,24 +365,69 @@ bool showingSaved(const Document& doc) {
     return doc.print.saved && doc.layers.result && doc.print.saved_from == doc.layers.result;
 }
 
-void staleSupports(App& app, ImVec2 size) {
-    beginPanel("stale", ImVec2(0, size.y), col::App, ImVec2(0, 0));
-    const ImVec2 cs(460, 0);
+void needCard(App& app, Document& doc, Need need, ImVec2 size) {
+    beginPanel("need", ImVec2(0, size.y), col::App, ImVec2(0, 0));
+    const ImVec2 cs(480, 0);
     ImGui::SetCursorPos(ImVec2(std::round((size.x - cs.x) / 2), std::round(size.y / 2) - 110));
-    beginCard("stale_card", cs, 20, col::Panel, col::BorderStrong);
-    text("The supports are out of date", fonts().semibold, size::Section + 2, col::Text);
-    text("The model changed after they were made, so these layers no longer match it. Generate the supports again; "
-         "the layers are cut again after that.",
-         fonts().regular, size::Body, col::TextSecondary, true);
+    beginCard("need_card", cs, 20, col::Panel, col::BorderStrong);
+    const fruit::PlateFit& f = doc.fit();
+    const char* title = "";
+    const char* body = "";
+    switch (need) {
+        case Need::Nothing: break;
+        case Need::Fit:
+            title = f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate yet";
+            body = "Supports and layers are made for the model where it stands. Move it, turn it or scale it on the "
+                   "Model tab first.";
+            break;
+        case Need::Supports:
+            title = "No supports yet";
+            body = "The layers are cut from the model with its supports. Nothing else has to come first: Orient is "
+                   "there if you want help choosing how it stands.";
+            break;
+        case Need::FreshSupports:
+            title = "The supports are out of date";
+            body = "The model or the support settings changed after they were made, so layers cut now wouldn't match "
+                   "it. Generate them again, or undo the change (⌘Z) to have these back.";
+            break;
+        case Need::Layers:
+            title = "The layers aren't cut yet";
+            body = "Layers cuts them from the model and its supports; it takes a moment.";
+            break;
+    }
+    text(title, fonts().semibold, size::Section + 2, col::Text);
+    text(body, fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 6));
-    if (primaryButton("Go to Supports", ImVec2(0, 38))) app.goToStep(Step::Supports);
+    switch (need) {
+        case Need::Nothing: break;
+        case Need::Fit:
+            if (f.overEdge()) {
+                if (primaryButton("Move it back on the plate", ImVec2(0, 38))) app.slideOntoPlate();
+            } else if (f.fits_turned) {
+                if (primaryButton("Turn 90° to fit", ImVec2(0, 38))) app.turnQuarter();
+            } else if (primaryButton("Go to Model", ImVec2(0, 38))) {
+                app.goToStep(Step::Model);
+            }
+            break;
+        case Need::Supports:
+            if (primaryButton("Generate supports", ImVec2(0, 38))) app.supportsNow();
+            break;
+        case Need::FreshSupports:
+            if (primaryButton("Regenerate supports", ImVec2(0, 38))) app.supportsNow();
+            ImGui::SameLine(0, 8);
+            if (secondaryButton("Go to Supports", ImVec2(0, 38))) app.goToStep(Step::Supports);
+            break;
+        case Need::Layers:
+            if (primaryButton("Go to Layers", ImVec2(0, 38))) app.goToStep(Step::Layers);
+            break;
+    }
     endCard();
     endPanel();
 }
 
 void printView(App& app, Document& doc, ImVec2 size) {
-    if (!app.canGoTo(Step::Print)) {
-        staleSupports(app, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
+    if (const Need need = app.needFor(Step::Print); need != Need::Nothing) {
+        needCard(app, doc, need, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
         return;
     }
     if (showingSaved(doc)) {

@@ -8,7 +8,7 @@
 //              {"open": "@demo"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "model"}]}
 //
 // Steps drive the app through the same commands its buttons use:
-//   {"open": path | "@demo" | "@demo-big" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
+//   {"open": path | "@demo" | "@demo-big" | "@demo-bar" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
 //     ("@demo-hollow": a ball with a sealed hollow; "@demo-worn", "@demo-open", "@demo-loose": faulty
 //     meshes for the repair) {"show_patch": true} turns the view to the biggest patch
 //   {"save_job": path | "@demo"} {"unsaved": "save" | "discard" | "cancel"}
@@ -16,11 +16,14 @@
 //   {"wait": "jobs"}            finish background work
 //   {"health": "full" | "largest" | "custom" (+ "percent") | "inches" | "place" | "cancel"}
 //   {"scale": percent} {"rotate": [x, y, z]} {"sits": "raised" | "flat"} {"fit": true}
+//   {"move": [x, y]} (mm from the plate's centre) {"nudge": [dx, dy]} {"centre": true} {"turn": 90}
+//   {"slide_on": true} {"drag": [handle, amount, snap]} one whole drag of a handle in the 3D view
+//     (handle: "move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z"; mm or degrees; snap as with ⇧)
 //   {"undo": n} {"redo": n} {"shortcuts": true | false}
-//   {"step": "model" | "orient" | "supports" | "layers" | "print"} {"layer": n (1-based)} {"show_below": bool}
+//   {"step": "model" | "orient" | "supports" | "layers" | "print"} (any place, any time) {"layer": n (1-based)} {"show_below": bool}
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
-//   {"supports": "generate"} {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
+//   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
 //   {"supports_view": "supports" | "tips" | "why"} {"select_tip": index} {"problems": bool}
 //   {"advanced": "open" | "close" | "reset" | "apply"} {"setting": [key, value]} (keys: advancedSettings())
 //   {"exposures": [normal_s, bottom_s]} {"sample": path | "@demo-sample"} (a 0.03 mm print file)

@@ -97,11 +97,11 @@ void App::showError(std::string title, std::string message) {
 }
 
 void App::frameModel() {
-    if (!doc_ || doc_->placed().empty()) {
+    if (!doc_ || doc_->model.mesh.empty()) {
         camera_.frame({0, 0, 15}, 110);
         return;
     }
-    const fruit::BBox3 b = doc_->placed().bbox();
+    const fruit::BBox3 b = doc_->placedBox();
     const fruit::Vec3 c = b.center();
     const fruit::Vec3 s = b.size();
     // Frame the model and the plate under it, so the lift stays readable.
@@ -149,8 +149,10 @@ void App::openModel(const std::string& path) {
                 const fruit::PlateFit& f = checking_->fit();
                 health_ = HealthDialog{};
                 health_.open = true;
-                health_.choice = f.fits ? SizeChoice::Full : SizeChoice::Largest;
-                health_.custom_percent = f.fits ? 100 : std::round(std::max(f.largest, f.largest_turned) * 100);
+                // Full size first whenever it fits, turned a quarter if need be: the size it was drawn at.
+                const bool full = f.fits || f.fits_turned;
+                health_.choice = full ? SizeChoice::Full : SizeChoice::Largest;
+                health_.custom_percent = full ? 100 : std::round(std::max(f.largest, f.largest_turned) * 100);
                 return;
             }
             try {
@@ -345,7 +347,7 @@ void App::relinkTo(const std::string& model_path) {
             d->model = std::move(m);
             d->check = fruit::checkMesh(d->model);
             d->geometry_id = newGeometryId();
-            d->edit(d->placement());
+            d->modelChanged();
             log::info("relinked to a changed model: " + model_path);
         }
         d->path = model_path;
@@ -362,19 +364,8 @@ void App::requestQuit() {
 }
 
 fruit::Placement App::healthPlacement() const {
-    fruit::Placement p;
-    if (!checking_) return p;
-    const fruit::PlateFit& f = checking_->fit();
-    switch (health_.choice) {
-        case SizeChoice::Full: p.scale = 1.0; break;
-        case SizeChoice::Largest:
-            p.scale = std::max(f.largest, f.largest_turned);
-            if (f.largest_turned > f.largest) p.rotation_deg.z = 90;
-            break;
-        case SizeChoice::Custom: p.scale = health_.custom_percent / 100.0; break;
-        case SizeChoice::Inches: p.scale = 25.4; break;
-    }
-    return p;
+    if (!checking_) return {};
+    return sizeChoicePlacement(checking_->model.mesh, checking_->printer, health_.choice, health_.custom_percent);
 }
 
 void App::chooseSize(SizeChoice c, double custom_percent) {
@@ -419,6 +410,73 @@ void App::setRotation(const fruit::Vec3& degrees) {
     doc_->edit(p);
 }
 
+void App::setPosition(const fruit::Vec2& mm) {
+    if (!doc_ || placing()) return;
+    fruit::Placement p = doc_->placement();
+    p.offset = mm;
+    doc_->edit(p);
+}
+
+void App::centreModel() { setPosition({0, 0}); }
+
+void App::nudge(double dx_mm, double dy_mm) {
+    if (!doc_) return;
+    const fruit::Vec2 o = doc_->placement().offset;
+    // To the nearest tenth, so nudges from a typed position stay tidy.
+    setPosition({snapTo(o.x + dx_mm, 0.1), snapTo(o.y + dy_mm, 0.1)});
+}
+
+void App::turnQuarter() {
+    if (!doc_ || placing()) return;
+    doc_->edit(turnedQuarter(doc_->model.mesh, doc_->placement(), doc_->printer));
+}
+
+void App::slideOntoPlate() {
+    if (!doc_ || placing()) return;
+    doc_->edit(slidOnto(doc_->model.mesh, doc_->placement(), doc_->printer));
+}
+
+bool App::handlesShown() const {
+    return doc_ && screen_ == Screen::Job &&
+           (step_ == Step::Model || (step_ == Step::Orient && orient_view_ == OrientView::Settings));
+}
+
+void App::beginPlacing(const HandleDrag& d) {
+    if (!doc_ || !d.active()) return;
+    handle_drag_ = d;
+    doc_->beginDrag();
+}
+
+void App::previewPlacement(const fruit::Placement& p) {
+    if (placing()) doc_->preview(p);
+}
+
+void App::endPlacing() {
+    if (placing()) doc_->endDrag();
+    handle_drag_ = HandleDrag{};
+}
+
+void App::cancelPlacing() {
+    if (placing()) {
+        doc_->cancelDrag();
+        mouse_spent_ = true;  // the button still held turns nothing until it is let go
+    }
+    handle_drag_ = HandleDrag{};
+}
+
+void App::dragHandleBy(Handle h, double amount, bool snap) {
+    if (!doc_ || h == Handle::None) return;
+    HandleDrag d;
+    d.handle = h;
+    d.start = doc_->placement();
+    d.frame = handleFrame(doc_->placedBox());
+    d.now = d.start;
+    beginPlacing(d);
+    // In a few moves, as a hand would, then let go: one undo step.
+    for (int i = 1; i <= 4; ++i) previewPlacement(draggedBy(d.start, h, amount * i / 4, snap));
+    endPlacing();
+}
+
 void App::setOnPlate(bool on_plate) {
     if (!doc_ || doc_->placement().on_plate == on_plate) return;
     fruit::Placement p = doc_->placement();
@@ -434,31 +492,21 @@ void App::scaleToFit() {
     // Largest at the current rotation, or a quarter turn more if that is
     // larger. Both are absolute scales (1.0 = 100 %).
     if (f.largest_turned > f.largest) {
-        p.rotation_deg.z = std::fmod(p.rotation_deg.z + 90, 360);
+        p.rotation_deg = turnAbout(p.rotation_deg, 2, 90);
         p.scale = f.largest_turned;
     } else {
         p.scale = f.largest;
     }
+    p.offset = {0, 0};  // the largest that fits only fits in the middle
     doc_->edit(p);
     frameModel();
 }
 
-bool App::canGoTo(Step s) const {
-    switch (s) {
-        case Step::Model: return true;
-        case Step::Orient:
-        case Step::Supports: return doc_ && doc_->fit().fits;
-        case Step::Layers:
-            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->supportSettings());
-        case Step::Print:
-            return doc_ && doc_->supports.fresh(doc_->revision(), doc_->supportSettings()) &&
-                   doc_->layers.fresh(doc_->supports.result);
-        default: return false;  // the next updates
-    }
-}
+Need App::needFor(Step s) const { return doc_ ? gui::needFor(*doc_, s) : Need::Fit; }
 
 void App::goToStep(Step s) {
     if (!canGoTo(s)) return;
+    if (placing()) endPlacing();
     if (s != step_) {
         advanced_open_ = false;
         tip_editing_ = false;
@@ -467,6 +515,14 @@ void App::goToStep(Step s) {
     screen_ = Screen::Job;
     if (s == Step::Orient && (orient_view_ == OrientView::Hollow || !(doc_ && doc_->orient.resultsFresh(doc_->revision()))))
         orient_view_ = OrientView::Settings;
+}
+
+void App::supportsNow() {
+    if (!doc_) return;
+    goToStep(Step::Supports);
+    if (needFor(Step::Supports) == Need::Nothing &&
+        !doc_->supports.fresh(doc_->revision(), doc_->supportSettings()))
+        generateSupports();
 }
 
 namespace {
@@ -513,6 +569,8 @@ void App::clearSides() {
 }
 
 void App::maintain() {
+    if (placing() && !handlesShown()) endPlacing();  // its handles went (a search finished, another screen)
+    if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !jobs_.busy()) {
         // Cut the layers for the current supports, once per supports result.
         const auto& sup = doc_->supports.result;
@@ -585,7 +643,7 @@ void App::maintain() {
 }
 
 void App::findOrientation() {
-    if (!doc_ || !doc_->fit().fits) return;
+    if (!doc_ || !doc_->fit().fits_centred) return;  // where it stands doesn't matter to the search
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<OrientSearch>();
     const int rev = doc_->revision(), settings = doc_->orient.settings;
@@ -628,7 +686,7 @@ void App::useOrientation(int option) {
         const OrientOption& op = o.results->options[static_cast<std::size_t>(option)];
         fruit::Placement p = doc_->placement();
         p.rotation_deg = op.rotation_deg;
-        doc_->edit(p);
+        doc_->edit(slidOnto(doc_->model.mesh, p, doc_->printer));  // kept where it is, if it fits there
         // Its numbers came from the same planner: no need to score it again.
         o.now = op.m;
         o.now_revision = doc_->revision();
@@ -640,7 +698,7 @@ void App::useOrientation(int option) {
 }
 
 void App::showHollow() {
-    if (!doc_ || !canGoTo(Step::Orient)) return;
+    if (!doc_) return;
     goToStep(Step::Orient);
     orient_view_ = OrientView::Hollow;
     planHollowPreview();
@@ -649,7 +707,7 @@ void App::showHollow() {
 bool App::planningHollow() const { return jobs_.busy() && jobs_.progress().name == "Finding hollows"; }
 
 void App::planHollowPreview() {
-    if (!doc_ || !doc_->fit().fits) return;
+    if (!doc_ || !doc_->fit().fits_centred) return;
     const HollowState& hs = doc_->hollow;
     const int rev = doc_->revision();
     if (hs.planFresh(rev)) return;
@@ -1038,7 +1096,7 @@ void App::syncCut() {
         return;
     }
     if (plan != cut_for_) {
-        const fruit::BBox3 b = doc_->placed().bbox();
+        const fruit::BBox3 b = doc_->placedBox();
         cut_mid_ = (b.min + b.max) * 0.5;
     }
     const V3 eye = camera_.eye();
@@ -1055,7 +1113,7 @@ void App::syncCut() {
         const fruit::Vec2 along{-toward.y, toward.x};
         const fruit::Vec2 at{cut_mid_.x, cut_mid_.y};
         const HollowSection s = hollowSection(*plan, at, along);
-        const fruit::BBox3 b = doc_->placed().bbox();
+        const fruit::BBox3 b = doc_->placedBox();
         const double rim = std::clamp(0.004 * fruit::norm(b.max - b.min), 0.1, 0.6);
         auto quads = [&](const std::vector<SectionBand>& bands, double grow, unsigned rgb) {
             Renderer::CapGroup g;
@@ -1089,6 +1147,8 @@ void App::syncScene() {
     // The Model step shows where the repair patched the mesh.
     const std::size_t patches = doc_ && screen_ == Screen::Job && step_ == Step::Model ? doc_->check.repair.patch_faces : 0;
     renderer_.setModelTint(doc_ ? doc_->check.triangles - std::min(patches, doc_->check.triangles) : 0, patches, 0xF2B84B);
+    // Where it is placed, red while it doesn't fit there.
+    if (doc_ && handlesShown() && !doc_->fit().fits) renderer_.setModelTint(0, doc_->check.triangles, 0xD86A6A);
     syncCut();
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
         renderer_.clearExtras();
@@ -1167,7 +1227,13 @@ std::shared_ptr<const PrintPlan> App::printPlan() {
 }
 
 std::string App::printBlocker() {
-    if (!doc_ || !canGoTo(Step::Print)) return "Generate supports, then let the Layers step cut the layers.";
+    switch (needFor(Step::Print)) {
+        case Need::Nothing: break;
+        case Need::Fit: return "Make it fit the plate first.";
+        case Need::Supports: return "Generate supports first; the Layers place then cuts the layers.";
+        case Need::FreshSupports: return "The supports are out of date: generate them again first.";
+        case Need::Layers: return "Open Layers first: it cuts the layers.";
+    }
     if (!doc_->supports.result->validation.floating.empty())
         return "Parts start in mid-air: add tips in the Supports step.";
     const auto plan = printPlan();
@@ -2581,6 +2647,18 @@ void App::keys() {
         if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) setLayer(0);
         if (ImGui::IsKeyPressed(ImGuiKey_End, false)) setLayer(1 << 30);
         return;
+    }
+    if (handlesShown()) {
+        // Escape lets go of a handle, putting it back; the arrows move the
+        // model 1 mm (⇧: 10 mm) across the plate.
+        if (placing() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) cancelPlacing();
+        if (!placing() && !io.NavVisible) {  // not while the arrows move between buttons
+            const double mm = io.KeyShift ? 10.0 : 1.0;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) nudge(-mm, 0);
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) nudge(mm, 0);
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) nudge(0, mm);
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) nudge(0, -mm);
+        }
     }
     if (screen_ == Screen::Job) {
         if (ImGui::IsKeyPressed(ImGuiKey_1, false)) setView(ViewPreset::Front);

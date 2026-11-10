@@ -285,8 +285,8 @@ void layersRight(App& app, Document& doc, float h) {
 }  // namespace
 
 void layersView(App& app, Document& doc, ImVec2 size) {
-    if (!doc.supports.fresh(doc.revision(), doc.supportSettings())) {
-        staleSupports(app, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
+    if (const Need need = app.needFor(Step::Layers); need != Need::Nothing) {
+        needCard(app, doc, need, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
         return;
     }
     const bool cutting = app.jobs().busy() && app.jobs().progress().name == "Cutting layers";

@@ -76,7 +76,9 @@ void writeDemo3mf(const std::string& path, const fruit::TriangleMesh& m) {
 
 // "@demo": the bracket; "@demo-big": six times larger (too deep for the
 // plate); "@demo-3mf": the bracket as a 3MF file; "@demo-hollow": a 30 mm
-// ball with a sealed hollow inside, under a 2 mm wall.
+// ball with a sealed hollow inside, under a 2 mm wall; "@demo-bar": a
+// 13.4 × 154 × 10 mm rack bar with posts, lying along Y: deeper than the
+// plate, but it fits turned a quarter.
 std::string demoPath(const std::string& which) {
     // Brackets with faults for the repair: see demoFaultyModel.
     for (const char* kind : {"worn", "open", "loose"})
@@ -91,6 +93,16 @@ std::string demoPath(const std::string& which) {
         for (auto& f : v.faces) std::swap(f[1], f[2]);  // facing in: a void
         m.append(v);
         const auto p = (demoDir() / "sphere.stl").string();
+        fruit::writeStl(p, m);
+        return p;
+    }
+    if (which == "@demo-bar") {
+        fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {13.4, 154, 4});
+        for (int i = 0; i < 9; ++i) {
+            const double y = 6 + i * 17.5;  // posts overlap the bar, so every shell stays closed
+            m.append(fruit::makeBox({3, y, 3.5}, {10.4, y + 6, 10}));
+        }
+        const auto p = (demoDir() / "rack bar.stl").string();
         fruit::writeStl(p, m);
         return p;
     }
@@ -307,6 +319,30 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setOnPlate(step["sits"].get<std::string>() == "flat");
         } else if (step.contains("fit")) {
             app.scaleToFit();
+        } else if (step.contains("move")) {
+            const auto& m = step["move"];
+            app.setPosition({m[0].get<double>(), m[1].get<double>()});
+        } else if (step.contains("nudge")) {
+            const auto& m = step["nudge"];
+            app.nudge(m[0].get<double>(), m[1].get<double>());
+        } else if (step.contains("centre")) {
+            app.centreModel();
+        } else if (step.contains("turn")) {
+            app.turnQuarter();
+        } else if (step.contains("slide_on")) {
+            app.slideOntoPlate();
+        } else if (step.contains("drag")) {
+            // ["move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z", amount (mm or degrees), snap (⇧)]
+            const auto& d = step["drag"];
+            const std::string h = d[0].get<std::string>();
+            const Handle handle = h == "move_x"   ? Handle::MoveX
+                                  : h == "move_y" ? Handle::MoveY
+                                  : h == "turn_x" ? Handle::TurnX
+                                  : h == "turn_y" ? Handle::TurnY
+                                  : h == "turn_z" ? Handle::TurnZ
+                                                  : Handle::None;
+            if (handle == Handle::None) throw std::runtime_error("unknown handle " + h);
+            app.dragHandleBy(handle, d[1].get<double>(), d.size() > 2 && d[2].get<bool>());
         } else if (step.contains("undo")) {
             for (int i = 0, n = step["undo"].get<int>(); i < n; ++i) app.undo();
         } else if (step.contains("redo")) {
@@ -349,7 +385,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const auto& a = step["hole_ray"];
             const auto& doc = app.document();
             if (!doc) throw std::runtime_error("hole_ray: no model open");
-            const fruit::BBox3 b = doc->placed().bbox();
+            const fruit::BBox3 b = doc->placedBox();
             const fruit::Vec3 mid = (b.min + b.max) * 0.5;
             fruit::Vec3 pos, n;
             if (!app.pickModel({mid.x + a[0].get<double>(), mid.y + a[1].get<double>(), mid.z + a[2].get<double>()},
@@ -364,8 +400,12 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
         } else if (step.contains("supports")) {
             const std::string what = step["supports"].get<std::string>();
-            if (what != "generate") throw std::runtime_error("unknown supports step " + what);
-            app.generateSupports();
+            if (what == "now") {
+                app.supportsNow();  // the accent button from any place
+            } else {
+                if (what != "generate") throw std::runtime_error("unknown supports step " + what);
+                app.generateSupports();
+            }
         } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
             SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
             if (step.contains("tip_size")) {

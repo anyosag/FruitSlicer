@@ -59,7 +59,12 @@ PlateFit checkFit(const TriangleMesh& model, const Placement& p, const PrinterPr
     f.top = f.size.z + p.lift();
     const double m = plateMargin(p);
     const double rx = printer.build_x - 2 * m, ry = printer.build_y - 2 * m, rz = printer.build_z - p.lift();
-    f.fits = f.size.x <= rx && f.size.y <= ry && f.size.z <= rz;
+    f.fits_centred = f.size.x <= rx && f.size.y <= ry && f.size.z <= rz;
+    f.fits_turned = f.size.y <= rx && f.size.x <= ry && f.size.z <= rz;  // a quarter turn swaps the outline's sides
+    f.room = {(rx - f.size.x) / 2, (ry - f.size.y) / 2};
+    // A hair over (from typing or dragging) still counts as inside.
+    constexpr double kSlack = 1e-6;
+    f.fits = f.fits_centred && std::abs(p.offset.x) <= f.room.x + kSlack && std::abs(p.offset.y) <= f.room.y + kSlack;
     f.largest = largestScale(unit.x, unit.y, unit.z, rx, ry, rz);
     f.largest_turned = largestScale(unit.y, unit.x, unit.z, rx, ry, rz);
     return f;

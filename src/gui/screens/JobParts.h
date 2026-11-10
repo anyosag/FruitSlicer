@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #pragma once
-// Pieces the job's steps share: panel layout, the 3D view, and each step's
+// Pieces the job's places share: panel layout, the 3D view, and each step's
 // panels (defined in that step's file).
 
 #include <imgui.h>
 
 #include <functional>
+
+#include "Navigation.h"
 
 namespace gui {
 class App;
@@ -38,6 +40,11 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
 void tipEditLeft(App& app, Document& doc, float h);
 void tipEditRight(App& app, Document& doc, float h);
 void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// The handles that place the model (Model, and Orient's settings): arrows
+// that move it, rings that turn it; the plate's edge red while it doesn't fit.
+void placeOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// What a place needs before it can do its work, and the way there.
+void needCard(App& app, Document& doc, Need need, ImVec2 size);
 // The advanced settings page, in place of the whole step.
 void supportsAdvanced(App& app, Document& doc, ImVec2 size);
 
@@ -52,8 +59,6 @@ void sendDialog(App& app);  // "Send to the printer" over Wi-Fi
 void unsavedDialog(App& app);  // "Save … before closing?"
 void relinkDialog(App& app);   // "Where is … now?"
 bool showingSaved(const Document& doc);  // the "saved" page, for the file just written
-// In place of the Layers or Print step when the supports no longer match the model.
-void staleSupports(App& app, ImVec2 size);
 
 // Orient.
 void orientLeft(App& app, Document& doc, float h);

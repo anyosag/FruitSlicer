@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 #include "App.h"
@@ -69,6 +70,35 @@ using namespace parts;
 
 // ---- Top bar ----
 
+// The accent button: what it says, whether it can be pressed (and why not),
+// and what it does.
+struct Action {
+    std::string label;
+    bool enabled = true;
+    std::string why;
+    std::function<void()> run;
+};
+
+// The fix that makes it fit where it is: back onto the plate, a quarter
+// turn, or the largest size that fits.
+Action fitAction(App& app, const Document& doc) {
+    const fruit::PlateFit& f = doc.fit();
+    if (f.overEdge()) return {"Move it back on the plate", true, "", [&app] { app.slideOntoPlate(); }};
+    if (f.fits_turned) return {"Turn 90° to fit", true, "", [&app] { app.turnQuarter(); }};
+    return {"Scale to fit", true, "", [&app] { app.scaleToFit(); }};
+}
+
+// Supports for the model where it is now, from any place; or the fix that
+// has to come first; or, once they are made, on to the layers.
+Action supportsAction(App& app, const Document& doc) {
+    if (app.jobs().busy() && app.jobs().progress().name == "Generating supports") return {"Generating...", false, "", {}};
+    if (!doc.fit().fits) return fitAction(app, doc);
+    if (!doc.supports.result) return {"Generate supports", true, "", [&app] { app.supportsNow(); }};
+    if (!doc.supports.fresh(doc.revision(), doc.supportSettings()))
+        return {"Regenerate supports", true, "", [&app] { app.supportsNow(); }};
+    return {"Go to Layers", true, "", [&app] { app.goToStep(Step::Layers); }};
+}
+
 void topBar(App& app) {
     beginPanel("top", ImVec2(0, kTopH), col::Panel, ImVec2(16, 0));
     edge(false, true);
@@ -81,16 +111,16 @@ void topBar(App& app) {
     if (doc) parts::tooltip(doc->job_path.empty() ? "Save the job with ⌘S." : doc->job_path.c_str());
     ImGui::EndGroup();
 
-    static const char* kSteps[] = {"Model", "Orient", "Supports", "Layers", "Print"};
+    static const char* kPlaces[] = {"Model", "Orient", "Supports", "Layers", "Print"};
     ImGui::SetCursorPos(ImVec2(152, 11));
-    const int at = static_cast<int>(app.step());
     for (int i = 0; i < 5; ++i) {
         const Step s = static_cast<Step>(i);
-        const bool done = i < at || (s == Step::Orient && doc && doc->orient.decided && at != i);
-        const StepState state = i == at ? StepState::Current : (done ? StepState::Done : StepState::Upcoming);
-        const bool can = app.canGoTo(s);
         std::string badge;
         ImU32 badge_col = col::Warn;
+        if (s == Step::Model && doc && !doc->fit().fits) {
+            badge = doc->fit().overEdge() ? "over the edge" : "too big";
+            badge_col = col::Error;
+        }
         if (s == Step::Orient && doc) {
             if (const std::size_t n = hollowsToFix(*doc)) badge = strf("%zu to fix", n);
         }
@@ -103,97 +133,76 @@ void topBar(App& app) {
                 badge = strf("%zu to review", n);
             }
         }
-        if (stepPill(i + 1, kSteps[i], state, can, badge.empty() ? nullptr : badge.c_str(), badge_col))
-            app.goToStep(s);
-        if (can || !doc) {
-        } else if (s == Step::Print && app.canGoTo(Step::Layers)) {
-            tooltip("Open the Layers step: it cuts the layers first.");
-        } else if (s == Step::Layers || s == Step::Print) {
-            tooltip("Generate supports first.");
-        } else {
-            tooltip("Make it fit the plate first.");
+        const Mark m = doc ? markFor(*doc, s) : Mark::None;
+        const TabMark tm = m == Mark::Done ? TabMark::Done : m == Mark::Problem ? TabMark::Problem : TabMark::None;
+        if (placeTab(kPlaces[i], doc && app.step() == s, tm, badge.empty() ? nullptr : badge.c_str(), badge_col)) {
+            if (doc) app.goToStep(s);
+            else app.openDialog();
         }
-        ImGui::SameLine(0, 8);
+        if (!doc) {
+            tooltip("Open a model first.");
+        } else {
+            switch (app.needFor(s)) {
+                case Need::Nothing: break;
+                case Need::Fit: tooltip("It doesn't fit the plate where it is yet."); break;
+                case Need::Supports: tooltip("No supports yet: it shows how to make them."); break;
+                case Need::FreshSupports: tooltip("The supports are out of date."); break;
+                case Need::Layers: tooltip("The layers aren't cut yet: Layers cuts them."); break;
+            }
+        }
+        ImGui::SameLine(0, 6);
     }
 
     // Right side: the resin in use, then the one accent button, which names
-    // the next thing to do.
-    std::string next = "Open model...";
-    bool enabled = true;
-    bool apply_hollow = false;  // the Hollow screen's choices, made to count
-    const char* why = nullptr;
-    std::string why_s;
+    // the most useful thing to do from here.
+    Action next{"Open model...", true, "", [&app] { app.openDialog(); }};
     if (doc && app.step() == Step::Model) {
-        next = "Next: Orient";
-        enabled = app.canGoTo(Step::Orient);
-        if (!enabled) why = "Make it fit the plate first.";
+        next = supportsAction(app, *doc);
     } else if (doc && app.step() == Step::Supports && app.editingTips()) {
-        next = "Done editing";
+        next = {"Done editing", true, "", [&app] { app.editTips(false); }};
     } else if (doc && app.step() == Step::Supports) {
-        const SupportState& sp = doc->supports;
-        const bool running = app.jobs().busy() && app.jobs().progress().name == "Generating supports";
-        if (running) {
-            next = "Generating...";
-            enabled = false;
-        } else if (!sp.result) {
-            next = "Generate supports";
-        } else if (!sp.fresh(doc->revision(), doc->supportSettings())) {
-            next = "Regenerate supports";
-        } else {
-            next = "Next: Layers";
-        }
+        next = supportsAction(app, *doc);
     } else if (doc && app.step() == Step::Layers) {
-        next = "Next: Print";
-        enabled = app.canGoTo(Step::Print);
-        if (!enabled) why = "Wait for the layers to be cut.";
+        if (app.needFor(Step::Layers) != Need::Nothing) {
+            next = supportsAction(app, *doc);
+        } else {
+            next = {"Go to Print", doc->layers.fresh(doc->supports.result), "Wait for the layers to be cut.",
+                    [&app] { app.goToStep(Step::Print); }};
+        }
     } else if (doc && app.step() == Step::Print && showingSaved(*doc)) {
-        next = doc->print.drive.empty() ? "Show in Finder" : "Eject the drive";
-        enabled = !app.jobs().busy();
+        const bool drive = !doc->print.drive.empty();
+        next = {drive ? "Eject the drive" : "Show in Finder", !app.jobs().busy(), "",
+                [&app, drive] { drive ? app.ejectDrive() : app.revealSaved(); }};
     } else if (doc && app.step() == Step::Print) {
-        next = app.sendOverWifi() ? "Send to printer" : "Save .goo";
-        why_s = app.printBlocker();
-        enabled = why_s.empty();
-        if (!enabled) why = why_s.c_str();
+        const std::string why = app.printBlocker();
+        next = {app.sendOverWifi() ? "Send to printer" : "Save .goo", why.empty(), why, [&app] { app.savePrint(); }};
     } else if (doc && app.step() == Step::Orient) {
         const OrientState& o = doc->orient;
         const HollowState& hs = doc->hollow;
         const bool hollow_view = app.orientView() == OrientView::Hollow;
         if (hollow_view && !hs.applied && app.planningHollow()) {
-            next = "Finding hollows...";
-            enabled = false;
+            next = {"Finding hollows...", false, "", {}};
         } else if (hollow_view && !hs.applied && hs.planFresh(doc->revision()) && hs.plan->changes()) {
-            next = applyLabel(*hs.plan);
-            apply_hollow = true;
+            next = {applyLabel(*hs.plan), true, "", [&app] { app.applyHollow(); }};
+        } else if (app.needFor(Step::Orient) == Need::Fit) {
+            next = fitAction(app, *doc);
         } else if (app.orientView() == OrientView::Results && o.results && !o.results->options.empty()) {
-            next = "Use option 1";
+            next = {"Use option 1", true, "", [&app] { app.useOrientation(0); }};
         } else if (o.decided) {
-            next = "Next: Supports";
+            next = supportsAction(app, *doc);
         } else {
-            next = "Find best orientation";
-            enabled = !(app.jobs().busy() && app.jobs().progress().name == "Finding the best orientation");
+            next = {"Find best orientation",
+                    !(app.jobs().busy() && app.jobs().progress().name == "Finding the best orientation"), "",
+                    [&app] { app.findOrientation(); }};
         }
     }
     ImGui::PushFont(fonts().bold, size::Body);
-    const float bw = ImGui::CalcTextSize(next.c_str()).x + 32;
+    const float bw = ImGui::CalcTextSize(next.label.c_str()).x + 32;
     ImGui::PopFont();
     const float right = ImGui::GetWindowWidth() - 16;
     ImGui::SetCursorPos(ImVec2(right - bw, 10));
-    if (primaryButton(next.c_str(), ImVec2(bw, 38), enabled)) {
-        if (!doc) app.openDialog();
-        else if (apply_hollow) app.applyHollow();
-        else if (app.step() == Step::Model) app.goToStep(Step::Orient);
-        else if (next == "Use option 1") app.useOrientation(0);
-        else if (next == "Find best orientation") app.findOrientation();
-        else if (next == "Next: Supports") app.goToStep(Step::Supports);
-        else if (next == "Generate supports" || next == "Regenerate supports") app.generateSupports();
-        else if (next == "Next: Layers") app.goToStep(Step::Layers);
-        else if (next == "Next: Print") app.goToStep(Step::Print);
-        else if (next == "Done editing") app.editTips(false);
-        else if (next == "Save .goo" || next == "Send to printer") app.savePrint();
-        else if (next == "Eject the drive") app.ejectDrive();
-        else if (next == "Show in Finder") app.revealSaved();
-    }
-    if (why) tooltip(why);
+    if (primaryButton(next.label.c_str(), ImVec2(bw, 38), next.enabled) && next.run) next.run();
+    if (!next.enabled && !next.why.empty()) tooltip(next.why.c_str());
     // The job's resin: its print settings and support values. Click to change it.
     const std::string label = doc ? resinLabel(doc->supports.choices.resin, doc->supports.choices.profile)
                                   : resinLabel(app.newJobResin().name, app.newJobResin().profile);
@@ -274,7 +283,7 @@ void emptyLeft(App&) {
     groupLabel("What happens next");
     const char* steps[] = {"FruitSlicer checks the mesh, and repairs holes and inside-out parts.",
                            "It checks the size against the plate.",
-                           "You choose a scale, then move on to orienting it."};
+                           "You place it: move it, turn it, scale it. Supports can come next; Orient helps if you want."};
     for (int i = 0; i < 3; ++i) {
         text(strf("%d.", i + 1).c_str(), fonts().regular, size::Body, col::TextSecondary);
         ImGui::SameLine(0, 6);
@@ -329,14 +338,54 @@ void modelLeft(App& app, Document& doc) {
         text("%", fonts().regular, size::Body, col::TextSecondary);
     }
     text(dims(doc.fit().size).c_str(), fonts().regular, size::Body, col::TextSecondary);
+    const fruit::PlateFit& f = doc.fit();
     {
-        const fruit::PlateFit& f = doc.fit();
         const double best = std::max(f.largest, f.largest_turned);
         const std::string label = "Largest that fits (" + percent(best) + (f.largest_turned > f.largest ? ", turned)" : ")");
         if (segmentButton(label.c_str(), false)) app.scaleToFit();
     }
+    if (!f.fits) {
+        // Why it is red, in plain words, and the fix.
+        const char* why = f.overEdge() ? "Over the plate's edge where it is."
+                          : f.fits_turned ? "Too big for the plate as it lies. Turned 90° it fits at this size."
+                                          : "Too big for the plate at this size, however it is turned.";
+        text(why, fonts().regular, size::Body, col::Error, true);  // the fix is the accent button
+    }
     ImGui::Dummy(ImVec2(0, 8));
-    groupLabel("Rotation");
+    // A group's label with a small button at the right end of its line.
+    auto labelWithButton = [&](const char* label, const char* button) {
+        const float y = ImGui::GetCursorPosY();
+        groupLabel(label);
+        const float after = ImGui::GetCursorPosY();
+        ImGui::PushFont(fonts().medium, size::Body);
+        const float bw = ImGui::CalcTextSize(button, nullptr, true).x + 22;
+        ImGui::PopFont();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - bw, y - 8));
+        const bool clicked = segmentButton(button, false);
+        ImGui::SetCursorPosY(std::max(after, ImGui::GetCursorPosY() - 6));
+        return clicked;
+    };
+    if (labelWithButton("Position on the plate", "Centre")) app.centreModel();
+    {
+        const float fw = (w - 8) / 2;
+        const float x0 = ImGui::GetCursorPosX(), y = ImGui::GetCursorPosY();
+        const char* axes[] = {"X mm", "Y mm"};
+        fruit::Vec2 o = p.offset;
+        double* v[] = {&o.x, &o.y};
+        bool changed = false;
+        for (int i = 0; i < 2; ++i) {
+            ImGui::SetCursorPos(ImVec2(x0 + i * (fw + 8), y));
+            text(axes[i], fonts().regular, size::Help, col::TextMuted);
+            ImGui::SetCursorPos(ImVec2(x0 + i * (fw + 8), y + 20));
+            if (numberField(axes[i], v[i], fw, "%g", -1000, 1000)) changed = true;
+        }
+        if (changed) app.setPosition(o);
+        ImGui::SetCursorPos(ImVec2(x0, y + 20 + 34 + 8));
+    }
+    text("Its middle, from the plate's centre. Drag the arrows in the view, or use the arrow keys.", fonts().regular,
+         size::Body, col::TextSecondary, true);
+    ImGui::Dummy(ImVec2(0, 8));
+    if (labelWithButton("Rotation", "Turn 90°")) app.turnQuarter();
     {
         const float fw = (w - 16) / 3;
         const float x0 = ImGui::GetCursorPosX(), y = ImGui::GetCursorPosY();
@@ -353,7 +402,9 @@ void modelLeft(App& app, Document& doc) {
         if (changed) app.setRotation(r);
         ImGui::SetCursorPos(ImVec2(x0, y + 20 + 34 + 8));
     }
-    text("Next step finds a good rotation for you.", fonts().regular, size::Body, col::TextSecondary, true);
+    text("Drag the rings in the view to turn it; hold ⇧ for 15° steps. Orient can look for a good way up if you "
+         "want; supports don't need it.",
+         fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 8));
     groupLabel("How it sits on the plate");
     const std::string raised = strf("%.0f mm above a 1 mm raft that comes off in one piece. Best for most models.",
@@ -365,7 +416,7 @@ void modelLeft(App& app, Document& doc) {
 }
 
 void leftPanel(App& app, float h) {
-    beginPanel("left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 18));
+    beginPanel("left", ImVec2(kLeftW, h), col::Panel, ImVec2(18, 18), true);
     edge(true, false);
     if (const auto& doc = app.document()) modelLeft(app, *doc);
     else emptyLeft(app);
@@ -386,12 +437,16 @@ void plateMap(const App& app, const Document& doc) {
     auto map = [&](double x, double y) {
         return ImVec2(p.x + w / 2 + static_cast<float>(x) * sx, p.y + h / 2 - static_cast<float>(y) * sy);
     };
-    const fruit::BBox3 b = doc.placed().bbox();
+    const fruit::BBox3 b = doc.placedBox();
     const ImVec2 a = map(b.min.x, b.max.y), c = map(b.max.x, b.min.y);
     dl->PushClipRect(p, ImVec2(p.x + w, p.y + h), true);
     dl->AddRectFilled(a, c, doc.fit().fits ? IM_COL32(0xA9, 0xB1, 0xBE, 255) : IM_COL32(0xD8, 0x6A, 0x6A, 255), 2);
     dashedRect(dl, ImVec2(p.x + w / 2, p.y), ImVec2(p.x + w / 2, p.y + h), IM_COL32(0x5A, 0x62, 0x70, 255), 1, 4, 4);
     dashedRect(dl, ImVec2(p.x, p.y + h / 2), ImVec2(p.x + w, p.y + h / 2), IM_COL32(0x5A, 0x62, 0x70, 255), 1, 4, 4);
+    // As far as it may go: the margin the raft needs round it.
+    const double m = fruit::plateMargin(doc.placement());
+    dashedRect(dl, map(-pr.build_x / 2 + m, pr.build_y / 2 - m), map(pr.build_x / 2 - m, -pr.build_y / 2 + m),
+               doc.fit().fits ? IM_COL32(0x8A, 0x92, 0xA0, 255) : IM_COL32(0xD8, 0x6A, 0x6A, 255), 1, 5, 4);
     dl->PopClipRect();
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), col::Border, 8);
 }
@@ -448,11 +503,13 @@ void rightPanel(App& app, float h) {
     groupLabel("On the plate");
     ImGui::Dummy(ImVec2(0, 2));
     plateMap(app, *doc);
-    text("Top view, to scale. Centred automatically.", fonts().regular, size::Body, col::TextSecondary, true);
+    text("Top view, to scale. It must stay inside the dashed line: the raft needs room round it.", fonts().regular,
+         size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 4));
     const fruit::PlateFit& f = doc->fit();
     const fruit::Placement& p = doc->placement();
     keyValue("Footprint", dims2(f.size.x, f.size.y));
+    keyValue("Position", p.centred() ? std::string("centred") : strf("%g, %g mm from the centre", p.offset.x, p.offset.y));
     keyValue("Height with lift", strf("%.1f of %.0f mm", f.top, app.printer().build_z));
     keyValue("Model resin", strf("%.1f ml", doc->check.volume_ml * p.scale * p.scale * p.scale));
     ImGui::Dummy(ImVec2(0, 8));
@@ -493,7 +550,7 @@ void axisGizmo(App& app, ImVec2 origin, ImVec2 size) {
 void liftMarker(App& app, const Document& doc, const M4& vp, ImVec2 origin, ImVec2 size) {
     const double lift = doc.placement().lift();
     if (lift <= 0) return;
-    const fruit::BBox3 b = doc.placed().bbox();
+    const fruit::BBox3 b = doc.placedBox();
     const V3 top{static_cast<float>(b.max.x + 6), static_cast<float>(b.min.y), static_cast<float>(lift)};
     const V3 bottom{top.x, top.y, 0};
     ImVec2 a, c;
@@ -576,8 +633,14 @@ void viewport(App& app, ImVec2 size, const char* hint, const Overlay& overlay = 
         app.renderer().render(pw, ph, app.camera(), app.viewSamples());
     if (tex) ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex)), avail, ImVec2(0, 1), ImVec2(1, 0));
     else ImGui::Dummy(avail);
-    // Mouse: left drag turns, right/middle (or Shift + left) drag moves, wheel zooms.
-    if (ImGui::IsItemHovered()) {
+    // Mouse: left drag turns, right/middle (or Shift + left) drag moves, wheel
+    // zooms; not while a handle or a tip is held, or over a handle.
+    if (!app.handlesShown()) app.hoverHandle() = Handle::None;  // left where the handles were
+    if (app.mouseSpent() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) app.mouseSpent() = false;
+    const bool holding = app.placing() || app.draggingTip() >= 0 || app.hoverHandle() != Handle::None ||
+                         app.mouseSpent();
+    if (ImGui::IsItemHovered() && holding && io.MouseWheel != 0) app.camera().zoom(io.MouseWheel);
+    if (ImGui::IsItemHovered() && !holding) {
         if (io.MouseWheel != 0) app.camera().zoom(io.MouseWheel);
         const bool pan = ImGui::IsMouseDragging(ImGuiMouseButton_Right) ||
                          ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
@@ -688,7 +751,10 @@ void statusBar(App& app) {
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, fits ? col::Ok : col::Error);
         x += 14;
-        const std::string msg = (fits ? "Fits the plate · " : "Too big for the plate · ") + dims(doc->fit().size);
+        const std::string msg = (fits                     ? "Fits the plate · "
+                                 : doc->fit().overEdge() ? "Over the plate's edge · "
+                                                         : "Too big for the plate · ") +
+                                dims(doc->fit().size);
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(msg.c_str(), fonts().regular, size::Body, col::TextSecondary);
     } else {
@@ -777,8 +843,10 @@ void job(App& app) {
         } else {
             orientLeft(app, *doc, body_h);
             ImGui::SameLine(0, 0);
+            Document& d = *doc;
             viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - kRightW, body_h),
-                     "Turn it by typing angles in the Model step, or let the search try 65 ways.");
+                     "Drag the rings to turn it yourself, or let the search try 65 ways.",
+                     [&app, &d](ImVec2 o, ImVec2 s, const float* vp) { placeOverlay(app, d, o, s, vp); });
             ImGui::SameLine(0, 0);
             orientRight(app, *doc, body_h);
         }
@@ -786,18 +854,23 @@ void job(App& app) {
         leftPanel(app, body_h);
         ImGui::SameLine(0, 0);
         // Where the repair patched the model, the patches are tinted: say so.
+        // The handles place it.
         const bool patched = doc && doc->check.repair.patch_faces > 0;
+        Document* d = doc.get();
         viewport(app, ImVec2(ImGui::GetContentRegionAvail().x - (doc ? kRightW : 0), body_h), nullptr,
-                 patched ? Overlay([](ImVec2 o, ImVec2 s, const float*) {
-                     ImDrawList* dl = ImGui::GetWindowDrawList();
-                     ImGui::PushFont(fonts().regular, size::Body);
-                     const char* label = "Patched by FruitSlicer";
-                     const float x = o.x + s.x - 16 - ImGui::CalcTextSize(label).x;
-                     dl->AddText(ImVec2(x, o.y + 20), col::TextSecondary, label);
-                     dl->AddCircleFilled(ImVec2(x - 12, o.y + 28), 4, col::Warn);
-                     ImGui::PopFont();
+                 d ? Overlay([&app, d, patched](ImVec2 o, ImVec2 s, const float* vp) {
+                     if (patched) {
+                         ImDrawList* dl = ImGui::GetWindowDrawList();
+                         ImGui::PushFont(fonts().regular, size::Body);
+                         const char* label = "Patched by FruitSlicer";
+                         const float x = o.x + s.x - 16 - ImGui::CalcTextSize(label).x;
+                         dl->AddText(ImVec2(x, o.y + 20), col::TextSecondary, label);
+                         dl->AddCircleFilled(ImVec2(x - 12, o.y + 28), 4, col::Warn);
+                         ImGui::PopFont();
+                     }
+                     placeOverlay(app, *d, o, s, vp);
                  })
-                         : Overlay());
+                   : Overlay());
         if (doc) {
             ImGui::SameLine(0, 0);
             rightPanel(app, body_h);

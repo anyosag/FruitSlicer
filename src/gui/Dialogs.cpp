@@ -297,6 +297,12 @@ void shortcuts(App&, bool& open) {
                                       {"Zoom", "scroll"},
                                       {"Front · side · from below · angled", "1 · 2 · 3 · 4"},
                                       {"Fit the model", "F"}};
+    const std::vector<Row> placing = {{"Move it on the plate", "drag an arrow"},
+                                      {"Turn it", "drag a ring"},
+                                      {"Turn it in 15° steps", "Shift drag a ring"},
+                                      {"Move it 1 mm", "← → ↑ ↓"},
+                                      {"Move it 10 mm", "Shift ← → ↑ ↓"},
+                                      {"Let go and put it back", "Esc"}};
     const std::vector<Row> layers = {{"Next or previous layer", "↑ · ↓"},
                                      {"Ten layers at a time", "Page Up · Page Down"},
                                      {"First or last layer", "Home · End"}};
@@ -323,10 +329,11 @@ void shortcuts(App&, bool& open) {
         ImGui::EndGroup();
         return ImGui::GetCursorPosY();
     };
-    const float left = column(kPad, y0, "Anywhere", anywhere);
+    float left = column(kPad, y0, "Anywhere", anywhere);
+    left = column(kPad, left + 14, "Placing the model (Model and Orient)", placing);
     const float x1 = kPad + col_w + 24;
     float right = column(x1, y0, "Looking around", looking);
-    right = column(x1, right + 14, "In the Layers step", layers);
+    right = column(x1, right + 14, "In Layers", layers);
     ImGui::SetCursorPos(ImVec2(kPad, std::max(left, right)));
     ImGui::Dummy(ImVec2(0, kPad - 4));
     endModal();

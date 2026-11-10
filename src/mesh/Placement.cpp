@@ -33,7 +33,7 @@ Transform placementTransform(const TriangleMesh& model, const Placement& p) {
     for (const Vec3& v : model.vertices) b.extend(sr.apply(v));
     if (model.vertices.empty()) return sr;
     const Vec3 c = b.center();
-    return sr.then(Transform::translation({-c.x, -c.y, p.lift() - b.min.z}));
+    return sr.then(Transform::translation({p.offset.x - c.x, p.offset.y - c.y, p.lift() - b.min.z}));
 }
 
 TriangleMesh placeModel(const TriangleMesh& model, const Placement& p) {
@@ -44,6 +44,7 @@ TriangleMesh placeModel(const TriangleMesh& model, const Placement& p) {
         m.transform(s);
     }
     placeOnPlate(m, p.rotation_deg, p.lift());
+    if (!p.centred()) m.translate({p.offset.x, p.offset.y, 0});
     return m;
 }
 

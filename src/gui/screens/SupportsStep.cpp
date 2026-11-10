@@ -465,6 +465,32 @@ void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     endCard();
 }
 
+// Supports are made for the model where it stands, and only when it fits there.
+void fitBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
+    const fruit::PlateFit& f = doc.fit();
+    const ImVec2 bs(size.x - 32, 64);
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + 16, origin.y + 56));
+    beginCard("fit", bs, 14, col::ErrorBg, col::Error);
+    const float y = ImGui::GetCursorPosY();
+    text(f.overEdge() ? "It's over the plate's edge" : "It doesn't fit the plate", fonts().semibold, size::Body + 1,
+         col::Text);
+    text(f.overEdge() ? "Supports are made for it where it stands, inside the dashed line on Model."
+         : f.fits_turned ? "Too big as it lies; turned 90° it fits at this size."
+                         : "Too big at this size, however it is turned.",
+         fonts().regular, size::Body, col::TextSecondary);
+    const char* fix = f.overEdge() ? "Move it back on" : f.fits_turned ? "Turn 90°" : "Go to Model";
+    ImGui::PushFont(fonts().bold, size::Body);
+    const float rw = ImGui::CalcTextSize(fix).x + 32;
+    ImGui::PopFont();
+    ImGui::SetCursorPos(ImVec2(bs.x - 14 - rw, y + 1));
+    if (primaryButton(fix, ImVec2(rw, 34))) {
+        if (f.overEdge()) app.slideOntoPlate();
+        else if (f.fits_turned) app.turnQuarter();
+        else app.goToStep(Step::Model);
+    }
+    endCard();
+}
+
 }  // namespace
 
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
@@ -473,6 +499,7 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
         runningCard(app, origin, size);
         return;
     }
+    if (!doc.fit().fits) fitBanner(app, doc, origin, size);
     if (!s.result) return;
     const SupportResult& r = *s.result;
     // View switch and legend, along the top.
@@ -486,7 +513,7 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     ImGui::NewLine();
     legend(app, origin, size, r);
     const bool fresh = s.fresh(doc.revision(), doc.supportSettings());
-    if (!fresh) staleBanner(app, doc, origin, size);
+    if (!fresh && doc.fit().fits) staleBanner(app, doc, origin, size);
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
     auto project = [&](const fruit::Vec3& w, ImVec2* out) {
         const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];
