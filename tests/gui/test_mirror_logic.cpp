@@ -14,6 +14,8 @@
 #include "JobFile.h"
 #include "Orient.h"
 #include "Placing.h"
+#include "mesh/ModelLoad.h"
+#include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
 
 using Catch::Approx;
@@ -203,4 +205,57 @@ TEST_CASE("Mirror: the sides people will see are mirrored with it", "[gui][mirro
     const auto dirs = visibleInPrinter({{1, 0, 0}, {0, 1, 0}}, p);
     CHECK(dirs[0].x == Approx(-1));
     CHECK(dirs[1].y == Approx(1));
+}
+
+TEST_CASE("Mirror: with several parts it mirrors the selected one, and the job keeps that", "[gui][mirror][parts]") {
+    auto doc = std::make_shared<Document>();
+    doc->name = "two";
+    doc->printer = kPrinter;
+    auto partAt = [](const fruit::TriangleMesh& m, const char* name, fruit::Vec2 at) {
+        fruit::Placement p;
+        p.offset = at;
+        return NewPart{name, "", makePartModel(fruit::prepareModel(m)), p};
+    };
+    doc->replaceParts(
+        {partAt(demoModel(), "bracket", {-40, 0}), partAt(fruit::makeBox({0, 0, 0}, {12, 8, 6}), "block", {40, 0})});
+    doc->clearHistory();
+    const int bracket = doc->parts()[0].id(), block = doc->parts()[1].id();
+    const fruit::TriangleMesh bracket_before = doc->findPart(bracket)->placed();
+    const fruit::TriangleMesh block_before = doc->findPart(block)->placed();
+    const fruit::BBox3 box_before = doc->findPart(bracket)->box();
+    const int rev = doc->revision();
+
+    doc->select(bracket);
+    doc->mirror(0);
+    CHECK(doc->revision() != rev);  // supports and layers made for the job no longer fit
+    const Part& mirrored = *doc->findPart(bracket);
+    CHECK(mirrored.placement().mirrorImage());
+    CHECK_FALSE(doc->findPart(block)->placement().mirrored());
+    checkSameVertices(doc->findPart(block)->placed(), block_before);  // the other part is left as it was
+    // The mirrored part stays where it was, the outside still outside.
+    CHECK(mirrored.box().min.x == Approx(box_before.min.x).margin(1e-9));
+    CHECK(mirrored.box().max.x == Approx(box_before.max.x).margin(1e-9));
+    CHECK(mirrored.box().min.z == Approx(box_before.min.z).margin(1e-9));
+    CHECK(mirrored.placed().volume() == Approx(bracket_before.volume()).epsilon(1e-9));
+    CHECK(doc->placed().volume() == Approx(bracket_before.volume() + block_before.volume()).epsilon(1e-9));
+
+    // Saved (several parts: version 3) and opened again, the same.
+    const auto path = (dir() / "two parts mirrored.fruitjob").string();
+    saveJob(path, *doc);
+    const auto j = jobJson(path);
+    CHECK(j["version"] == 3);
+    CHECK(j["parts"][0]["placement"]["mirror"].size() == 3);
+    CHECK_FALSE(j["parts"][1]["placement"].contains("mirror"));
+    const OpenedJob o = openJob(path, kPrinter, fruit::JobControl::none());
+    REQUIRE(o.doc->partCount() == 2);
+    for (std::size_t i = 0; i < 2; ++i) {
+        CHECK(o.doc->parts()[i].placement() == doc->parts()[i].placement());
+        checkSameVertices(o.doc->parts()[i].placed(), doc->parts()[i].placed());
+    }
+
+    // Undo takes it back, with the revision.
+    doc->undo();
+    CHECK(doc->revision() == rev);
+    CHECK_FALSE(doc->findPart(bracket)->placement().mirrored());
+    checkSameVertices(doc->findPart(bracket)->placed(), bracket_before);
 }

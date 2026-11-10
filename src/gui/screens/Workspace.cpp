@@ -338,7 +338,8 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     // view allows), then a footer that stays in sight: Hollow's apply button.
     const bool footer = t == Tool::Hollow;
     beginFloat("panel", pos, kToolPanelW);
-    const bool on_part = t == Tool::Move || t == Tool::Rotate || t == Tool::Scale || t == Tool::Repair;
+    const bool on_part =
+        t == Tool::Move || t == Tool::Rotate || t == Tool::Scale || t == Tool::Repair || t == Tool::Mirror;
     if (floatTitle(toolTitleFor(doc, toolTitle(t), on_part).c_str())) app.closeToolPanel();
     const float body_max = size.y - 32 - kToolsBarH - 32 - 36 - (footer ? 96 : 0);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(4000, std::max(120.0f, body_max)));

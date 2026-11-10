@@ -216,9 +216,9 @@ public:
     // An edit of the selected part's placement the user can undo (nothing
     // happens when it changes nothing).
     void edit(const fruit::Placement& p);
-    // The mirror image of the model along the plate's axis (0 X, 1 Y, 2 Z):
-    // an undoable edit like any other. Everything that acts on "the model" goes
-    // through here, so it can later point at the selected part.
+    // The selected part as its mirror image along the plate's axis (0 X, 1 Y,
+    // 2 Z): an undoable edit of its placement like any other. Its middle and
+    // its lift stay; the other parts are left as they are.
     void mirror(int axis);
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
