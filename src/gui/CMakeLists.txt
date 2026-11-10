@@ -54,6 +54,11 @@ set(app_sources
   ABTest.cpp
   App.cpp
   AppParts.cpp
+  AppPartsTools.cpp
+  PartsTools.cpp
+  Collisions.cpp
+  screens/PartsToolPanels.cpp
+  screens/CollisionsTab.cpp
   Calibration.cpp
   Capture.cpp
   Dialogs.cpp

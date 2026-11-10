@@ -17,6 +17,8 @@
 #include "JobFile.h"
 #include "Jobs.h"
 #include "Measure.h"
+#include "PartsTools.h"
+#include "Collisions.h"
 #include "Preferences.h"
 #include "ABTest.h"
 #include "Fit.h"
@@ -159,6 +161,24 @@ public:
     // one undo step, once any drag is let go (see Document::editParts).
     // False when nothing changed.
     bool editParts(const std::function<void(PartsEdit&)>& fn);
+    // The parts tools (PartsTools.h): each is one undo step and makes
+    // supports and layers out of date. They report what they did in
+    // partsTools().last.
+    PartsToolState& partsTools() { return parts_tools_; }
+    void duplicateParts();            // copies of the selected part, partsTools().copies of them
+    void arrangeAll();                // every part, partsTools().arrange_gap apart
+    void splitSelected();             // the selected part into its shells
+    void mergeParts(bool fuse);       // the parts not left out (partsTools().merge_off), joined or fused
+    std::vector<int> mergeChosen() const;  // ids of the parts Merge would join
+    void mergePick(int id, bool on);
+    // The Collisions check (Collisions.h): for the job as it is now, or null
+    // while it is being made (or with one part). `collisionGap()` is the
+    // least gap, mm; changing it makes the check again.
+    const CollisionReport* collisions() const;
+    bool checkingCollisions() const;
+    double& collisionGap() { return collision_gap_; }
+    void finishCollisions();          // scripts and tests: starts the check if it is due and waits for it
+    void selectCollision(int part);   // from the Collisions tab: selects the part, shows it
     // The handles in the 3D view (Model, and Orient's settings): a drag is
     // previewed as it goes and is one undo step when it ends.
     HandleDrag& handleDrag() { return handle_drag_; }
@@ -488,6 +508,15 @@ private:
     bool show_zones_ = true;
     int dragging_tip_ = -1;
     MeasureState measure_;
+    PartsToolState parts_tools_;
+    std::shared_ptr<const CollisionReport> collision_report_;
+    const void* collision_doc_ = nullptr;  // the job it is for
+    int collision_tried_ = -1;             // the revision whose check was started
+    const void* collision_tried_doc_ = nullptr;
+    double collision_tried_gap_ = 0;
+    double collision_gap_ = kMinPartGap;
+    int collision_generation_ = 0;
+    void startCollisionCheck();
     std::shared_ptr<fruit::AabbTree> pick_tree_;
     const void* pick_doc_ = nullptr;
     int pick_revision_ = -1;

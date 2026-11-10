@@ -187,6 +187,35 @@ void jobSection(App& app, Document* doc) {
     fact("Resin to print", resin);
 }
 
+// The Collisions check's verdict, as one line of the Checks tab.
+void collisionsLine(App& app, const Document& d) {
+    const CollisionReport* r = app.collisions();
+    if (!r) {
+        checkLine("collisions", Tick::Todo, "No parts overlap",
+                  app.checkingCollisions() ? "Not checked yet: checking now." : "Not checked yet.");
+        return;
+    }
+    if (!r->problems.empty()) {
+        const int over = r->overlapping();
+        const std::size_t n = r->problems.size();
+        checkLine("collisions", over ? Tick::Error : Tick::Warn,
+                  over ? (over == 1 ? "Two parts overlap" : "Parts overlap") : (n == 1 ? "Two parts are close" : "Parts are close"),
+                  strf("%zu %s than %g mm apart, or overlap%s.", n, n == 1 ? "pair is closer" : "pairs are closer", r->min_gap,
+                       n == 1 ? "s" : ""));
+        if (linkButton("Open Collisions")) app.jobTab() = 2;
+        return;
+    }
+    if (!r->not_checked.empty()) {
+        const Part* p = d.findPart(r->not_checked.front().part);
+        checkLine("collisions", Tick::Warn, "Not every part was checked",
+                  (p ? p->name() : std::string("A part")) + ": " + r->not_checked.front().why + ".");
+        if (linkButton("Open Collisions")) app.jobTab() = 2;
+        return;
+    }
+    checkLine("collisions", Tick::Ok, "No parts overlap or touch",
+              strf("%d pairs checked: none is closer than %g mm.", r->pairs_checked, r->min_gap));
+}
+
 void checksTab(App& app, Document* doc) {
     if (!doc) {
         checkLine("none", Tick::Todo, "Nothing checked yet",
@@ -211,8 +240,7 @@ void checksTab(App& app, Document* doc) {
         };
         const std::size_t n = d.partCount();
         if (off.empty())
-            checkLine("fit", Tick::Ok, "Every part fits the plate",
-                      strf("%zu parts, where they are now. Whether they touch is not checked.", n));
+            checkLine("fit", Tick::Ok, "Every part fits the plate", strf("%zu parts, where they are now.", n));
         else
             checkLine("fit", Tick::Error, off.size() == 1 ? "A part doesn't fit the plate" : "Parts don't fit the plate",
                       names(off) + ": the Parts list above has the fix.");
@@ -228,6 +256,7 @@ void checksTab(App& app, Document* doc) {
         bool patched = false;
         for (const Part& part : d.parts()) patched = patched || part.check().repair.patch_faces > 0;
         if (patched && linkButton("Show the patch")) app.showPatch();
+        collisionsLine(app, d);
     } else {
     const fruit::PlateFit& f = d.fit();
     if (f.fits) checkLine("fit", Tick::Ok, "Fits the plate", dims(f.size) + ", where it is now.");
@@ -287,17 +316,17 @@ void hollowsTab(App& app, Document* doc) {
     if (secondaryButton("Open Hollow", ImVec2(0, 32))) app.openTool(Tool::Hollow);
 }
 
-// Two tabs side by side, as one control.
-void tabs(int& at, const char* a, const std::string& b) {
+// Tabs side by side, as one control.
+void tabs(int& at, const std::vector<std::string>& labels) {
     const float w = ImGui::GetContentRegionAvail().x;
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 36), col::App, 10);
     dl->AddRect(p, ImVec2(p.x + w, p.y + 36), col::Border, 10);
-    const float tw = (w - 6) / 2;
-    const char* labels[] = {a, b.c_str()};
-    for (int i = 0; i < 2; ++i) {
-        const ImVec2 q(p.x + 3 + i * tw, p.y + 3);
+    const int n = static_cast<int>(labels.size());
+    const float tw = (w - 6) / static_cast<float>(n);
+    for (int i = 0; i < n; ++i) {
+        const ImVec2 q(p.x + 3 + static_cast<float>(i) * tw, p.y + 3);
         ImGui::SetCursorScreenPos(q);
         ImGui::PushID(i);
         if (ImGui::InvisibleButton("tab", ImVec2(tw, 30))) at = i;
@@ -305,9 +334,9 @@ void tabs(int& at, const char* a, const std::string& b) {
         ImGui::PopID();
         if (at == i) dl->AddRectFilled(q, ImVec2(q.x + tw, q.y + 30), col::Active, 8);
         ImGui::PushFont(fonts().semibold, size::Body);
-        const ImVec2 ts = ImGui::CalcTextSize(labels[i]);
+        const ImVec2 ts = ImGui::CalcTextSize(labels[static_cast<std::size_t>(i)].c_str());
         dl->AddText(ImVec2(q.x + (tw - ts.x) / 2, q.y + (30 - ts.y) / 2), at == i || h ? col::Text : col::TextMuted,
-                    labels[i]);
+                    labels[static_cast<std::size_t>(i)].c_str());
         ImGui::PopFont();
         if (h) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
@@ -342,6 +371,9 @@ void mainArea(App& app, Document* doc) {
     } else {
         note = "The layers are cut for these supports.";
     }
+    if (doc && doc->partCount() > 1)
+        if (const CollisionReport* cr = app.collisions(); cr && cr->overlapping() > 0 && !off)
+            note += " Parts overlap: see Collisions.";
     const float w = ImGui::GetContentRegionAvail().x;
     {
         const float y = ImGui::GetCursorPosY();
@@ -432,12 +464,16 @@ void jobPanel(App& app, float h) {
     std::size_t hollows = 0;
     if (doc)
         for (const Part& part : doc->parts()) hollows += static_cast<std::size_t>(std::max(0, part.check().cavities));
-    tabs(tab, "Checks", strf("Hollows · %zu", hollows));
+    std::string collisions_label = "Collisions";
+    if (const CollisionReport* cr = doc ? app.collisions() : nullptr)
+        if (!cr->problems.empty()) collisions_label += strf(" · %zu", cr->problems.size());
+    tabs(tab, {"Checks", strf("Hollows · %zu", hollows), collisions_label});
     const float list_h = std::max(80.0f, ImGui::GetContentRegionAvail().y - kMainH);
     ImGui::BeginChild("job_checks", ImVec2(0, list_h), ImGuiChildFlags_None);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 6));
     if (tab == 0) checksTab(app, doc);
-    else hollowsTab(app, doc);
+    else if (tab == 1) hollowsTab(app, doc);
+    else collisionsTab(app, doc);
     ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::Dummy(ImVec2(0, 2));

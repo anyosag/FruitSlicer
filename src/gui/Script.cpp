@@ -2,6 +2,8 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "Script.h"
 
+#include <algorithm>
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -238,6 +240,10 @@ Step stepFrom(const std::string& s) {
 Tool toolFrom(const std::string& s) {
     if (s == "mirror") return Tool::Mirror;
     if (s == "measure") return Tool::Measure;
+    if (s == "duplicate") return Tool::Duplicate;
+    if (s == "arrange") return Tool::Arrange;
+    if (s == "merge") return Tool::Merge;
+    if (s == "split") return Tool::Split;
     static const char* names[] = {"none", "on_plate", "move", "rotate", "scale", "supports", "hollow", "repair"};
     for (int i = 0; i < 8; ++i)
         if (s == names[i]) return static_cast<Tool>(i);
@@ -385,6 +391,33 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const std::string a = step["mirror"].get<std::string>();
             if (a != "x" && a != "y" && a != "z") throw std::runtime_error("unknown mirror axis " + a);
             app.mirrorModel(a == "x" ? 0 : a == "y" ? 1 : 2);
+        } else if (step.contains("duplicate")) {
+            app.partsTools().copies = step["duplicate"].get<int>();
+            app.duplicateParts();
+        } else if (step.contains("arrange")) {
+            if (step["arrange"].is_number()) app.partsTools().arrange_gap = step["arrange"].get<double>();
+            app.arrangeAll();
+        } else if (step.contains("split")) {
+            app.splitSelected();
+        } else if (step.contains("merge_parts")) {
+            // {"merge_parts": "join" | "fuse"}; {"merge_pick": [n, ...]} (1-based) first leaves the others out
+            const std::string how = step["merge_parts"].get<std::string>();
+            if (how != "join" && how != "fuse") throw std::runtime_error("unknown merge " + how);
+            app.mergeParts(how == "fuse");
+        } else if (step.contains("merge_pick")) {
+            if (!app.document()) throw std::runtime_error("merge_pick: no job");
+            std::vector<int> on;
+            for (const auto& n : step["merge_pick"]) {
+                const int i = n.get<int>() - 1;
+                if (i < 0 || i >= static_cast<int>(app.document()->partCount())) throw std::runtime_error("merge_pick: no such part");
+                on.push_back(app.document()->parts()[static_cast<std::size_t>(i)].id());
+            }
+            for (const Part& p : app.document()->parts())
+                app.mergePick(p.id(), std::find(on.begin(), on.end(), p.id()) != on.end());
+        } else if (step.contains("collisions")) {
+            // {"collisions": "wait"} lets the background check finish; {"collisions": mm} sets the least gap
+            if (step["collisions"].is_number()) app.collisionGap() = step["collisions"].get<double>();
+            else app.finishCollisions();
         } else if (step.contains("measure")) {
             // Points on the plate; each is brought onto the surface along the line to the middle of the
             // part whose middle is nearest it (with one part, the model's middle).
@@ -408,7 +441,8 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("close_tool")) {
             app.closeToolPanel();
         } else if (step.contains("job_tab")) {
-            app.jobTab() = step["job_tab"].get<std::string>() == "hollows" ? 1 : 0;
+            const std::string tab = step["job_tab"].get<std::string>();
+            app.jobTab() = tab == "collisions" ? 2 : tab == "hollows" ? 1 : 0;
         } else if (step.contains("side")) {
             app.toggleSide(sideFrom(step["side"].get<std::string>()));
         } else if (step.contains("orient")) {

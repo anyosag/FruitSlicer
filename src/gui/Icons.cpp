@@ -211,6 +211,35 @@ void measure(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
     dl->AddCircleFilled(g.at(12, 12), 1.3f * g.u, c);
 }
 
+void duplicate(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{4, 9}, {14, 9}, {14, 19}, {4, 19}}, c, true);
+    poly(dl, g, {{10, 5}, {10, 3.5f}, {20, 3.5f}, {20, 13.5f}, {18.5f, 13.5f}}, c, false);
+}
+
+void arrange(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{3.5f, 3.5f}, {11, 3.5f}, {11, 11}, {3.5f, 11}}, c, true);
+    poly(dl, g, {{13.5f, 3.5f}, {20.5f, 3.5f}, {20.5f, 8.5f}, {13.5f, 8.5f}}, c, true);
+    poly(dl, g, {{3.5f, 14}, {8.5f, 14}, {8.5f, 20.5f}, {3.5f, 20.5f}}, c, true);
+    poly(dl, g, {{11.5f, 11.5f}, {20.5f, 11.5f}, {20.5f, 20.5f}, {11.5f, 20.5f}}, c, true);
+}
+
+void merge(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{3.5f, 4}, {11, 4}, {11, 11.5f}, {3.5f, 11.5f}}, c, true);
+    poly(dl, g, {{13, 12.5f}, {20.5f, 12.5f}, {20.5f, 20}, {13, 20}}, c, true);
+    line(dl, g, 14, 7, 14, 10, c);
+    poly(dl, g, {{11.5f, 8}, {14, 10.5f}, {16.5f, 8}}, c, false);
+}
+
+void split(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
+    const G24 g{p, size / 24};
+    poly(dl, g, {{3.5f, 5}, {10, 5}, {10, 19}, {3.5f, 19}}, c, true);
+    poly(dl, g, {{14, 5}, {20.5f, 5}, {20.5f, 19}, {14, 19}}, c, true);
+    dashed(dl, g, 12, 3, 12, 21, c);
+}
+
 void supports(ImDrawList* dl, ImVec2 p, float size, ImU32 c) {
     const G24 g{p, size / 24};
     poly(dl, g, {{5, 3.5f}, {19, 3.5f}, {19, 9.5f}, {5, 9.5f}}, c, true);
