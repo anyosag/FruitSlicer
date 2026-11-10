@@ -198,3 +198,27 @@ TEST_CASE("cosmetic keep-out pushes tips elsewhere when coverage allows", "[poin
     };
     CHECK(inside(r) <= inside(plain));
 }
+
+TEST_CASE("an island tip at a lowest corner faces down and not along a side wall", "[points]") {
+    // A 1 x 1 x 3 mm pin whose bottom tips 1-2° so its lowest point is one
+    // corner, shared with two vertical sides: the tip there must take the
+    // bottom's normal (it touches the underside), however the pin is turned.
+    TriangleMesh pin = makeBox({0, 0, 0}, {1, 1, 3});
+    pin.vertices[0].z = 0.04;  // bottom corners: (lo, lo) highest ...
+    pin.vertices[1].z = 0.02;
+    pin.vertices[2].z = 0.02;
+    pin.vertices[3].z = 0.0;   // ... (hi, hi) lowest
+    for (int turn = 0; turn < 360; turn += 15) {
+        TriangleMesh m = pin;
+        placeOnPlate(m, {0, 0, static_cast<double>(turn)}, 5.0);
+        const PointGenResult r = generateSupportPoints(m, fastConfig());
+        size_t islands = 0;
+        for (const auto& p : r.points) {
+            if (p.category != PointCategory::Island) continue;
+            ++islands;
+            INFO("turned " << turn << "°: normal " << p.normal.x << " " << p.normal.y << " " << p.normal.z);
+            CHECK(p.normal.z < -0.9);
+        }
+        CHECK(islands == 1);
+    }
+}
