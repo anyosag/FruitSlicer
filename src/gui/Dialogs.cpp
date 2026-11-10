@@ -149,8 +149,11 @@ void health(App& app) {
                            .c_str(),
                        "They were saved facing inward; FruitSlicer turned them the right way");
         if (c.cavities == 0)
+            // A hollow is a closed shell facing inward: among open surfaces
+            // there is no telling.
             verdictRow("hollows", Verdict::Ok, "No hollows inside",
-                       "Solid model: no suction cups or resin traps from cavities");
+                       c.closed() ? "Solid model: no suction cups or resin traps from cavities"
+                                  : "None found, though with open edges that can't be told for sure");
         else
             verdictRow("hollows", Verdict::Warn,
                        (std::to_string(c.cavities) + (c.cavities == 1 ? " closed hollow" : " closed hollows") +
