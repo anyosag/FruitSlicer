@@ -26,6 +26,11 @@
     {"edit_tips": true}, {"shot": "g2_tips_part_moved"}, {"edit_tips": false}, {"view": "angled"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"}, {"layer": 300}, {"shot": "g2_layers"},
     {"step": "model"}, {"save_job": "@demo"}, {"wait": "jobs"},
-    {"open": "@demo-job"}, {"wait": "jobs"}, {"shot": "g2_job_reopened"}
+    {"open": "@demo-job"}, {"wait": "jobs"}, {"shot": "g2_job_reopened"},
+    {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo-bar"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"step": "model"}, {"close_tool": true}, {"shot": "g2_many_parts"}
   ]
 }

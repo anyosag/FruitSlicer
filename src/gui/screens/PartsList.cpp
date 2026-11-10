@@ -140,7 +140,17 @@ void partsList(App& app, Document* doc) {
     } else if (!on.empty()) {
         const bool scroll = on.size() > static_cast<std::size_t>(kRowsShown);
         if (scroll) ImGui::BeginChild("on_plate", ImVec2(0, kRowsShown * kRowH + kRowH / 2), ImGuiChildFlags_None);
-        for (const Part* part : on) partRow(app, *doc, *part);
+        // A part selected (in the view, by undo…) scrolls into sight once.
+        static const void* shown_doc = nullptr;
+        static int shown = -1;
+        for (const Part* part : on) {
+            if (scroll && part->id() == doc->selectedId() && (shown != part->id() || shown_doc != doc)) {
+                ImGui::SetScrollHereY(0.0f);
+                shown = part->id();
+                shown_doc = doc;
+            }
+            partRow(app, *doc, *part);
+        }
         if (scroll) ImGui::EndChild();
     } else {
         text("Nothing on the plate.", fonts().regular, size::Help, col::TextMuted);
