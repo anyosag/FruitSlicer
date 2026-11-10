@@ -93,4 +93,24 @@ struct PointGenOptions {
 PointGenResult generateSupportPoints(const TriangleMesh& mesh, const SupportConfig& cfg,
                                      const PointGenOptions& opts = {}, const JobControl& ctl = JobControl::none());
 
+// What the tips the support tree could not build leave unheld. The planner's
+// own tests decide, on the same layers: a surface sample counts when a dropped
+// tip covered it and no built tip does; a layer counts when a part of it is
+// short of hold without the dropped tips (and was not short with them).
+struct DropCheck {
+    size_t tips = 0;          // dropped tips that were the only cover of some surface
+    size_t samples = 0;       // surface samples that only dropped tips covered
+    size_t short_layers = 0;  // (layer, part) pairs short of hold only without the dropped tips
+    std::vector<Vec3> at;     // where those `tips` were, lowest first
+    bool any() const { return samples > 0 || short_layers > 0; }
+};
+
+// `built`: the tips that got a support; `dropped`: those that did not (see
+// splitByTree). `opts` gives the layers and hollows as for planning; its tip
+// options are ignored. Costs about one planning pass; nothing to do (and
+// nothing reported) without dropped tips. Reports stages as planning does.
+DropCheck checkDroppedTips(const TriangleMesh& mesh, const SupportConfig& cfg, const std::vector<SupportPoint>& built,
+                           const std::vector<SupportPoint>& dropped, const PointGenOptions& opts = {},
+                           const JobControl& ctl = JobControl::none());
+
 }  // namespace fruit

@@ -419,6 +419,16 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
 
 double tipPenetration(double tip_d, const TreeConfig& cfg) { return penetrationFor(tip_d, cfg); }
 
+void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& points, std::vector<SupportPoint>& built,
+                 std::vector<SupportPoint>& dropped) {
+    std::vector<char> has_head(points.size(), 0);
+    for (const Head& h : tree.heads)
+        if (h.point >= 0 && static_cast<size_t>(h.point) < points.size()) has_head[h.point] = 1;
+    built.clear();
+    dropped.clear();
+    for (size_t i = 0; i < points.size(); ++i) (has_head[i] ? built : dropped).push_back(points[i]);
+}
+
 TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;

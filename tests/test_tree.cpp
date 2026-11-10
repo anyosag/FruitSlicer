@@ -123,3 +123,63 @@ TEST_CASE("branching merges pillars into fewer trunks without touching the model
     CHECK(v.floating.empty());
     CHECK(v.first_layer_islands == 1);
 }
+
+namespace {
+
+// A box open on one side, stood so the opening faces sideways (+Y), like a
+// lid stood on its edge: 30 mm cube, 2 mm walls. Tips on the ceiling deep
+// inside have no clear drop (the floor is 26 mm below) and no way out.
+TriangleMesh sidewaysCap() {
+    TriangleMesh m = makeBox({0, 0, 0}, {30, 2, 30});  // back wall
+    m.append(makeBox({0, 0, 0}, {30, 30, 2}));         // floor
+    m.append(makeBox({0, 0, 28}, {30, 30, 30}));       // ceiling
+    m.append(makeBox({0, 0, 0}, {2, 30, 30}));         // side walls
+    m.append(makeBox({28, 0, 0}, {30, 30, 30}));
+    return m;
+}
+
+}  // namespace
+
+TEST_CASE("tips the tree drops are checked: what only they held is reported, and where", "[tree]") {
+    const Built b = build(sidewaysCap());
+    REQUIRE(b.tree.dropped_points > 0);
+    std::vector<SupportPoint> built, dropped;
+    splitByTree(b.tree, b.points, built, dropped);
+    CHECK(built.size() == b.tree.heads.size());
+    CHECK(dropped.size() == b.tree.dropped_points);
+    SupportConfig cfg;
+    cfg.layer_height = 0.1;
+    const DropCheck dc = checkDroppedTips(b.model, cfg, built, dropped);
+    CHECK(dc.any());
+    CHECK(dc.samples > 0);
+    CHECK(dc.tips > 0);
+    CHECK(dc.tips <= dropped.size());
+    REQUIRE(dc.at.size() == dc.tips);
+    // They were on the ceiling inside the cap, away from its opening.
+    const BBox3 box = b.model.bbox();
+    for (const Vec3& p : dc.at) {
+        CHECK(p.z == Approx(box.max.z - 2).margin(0.2));
+        CHECK(p.x > box.min.x + 2);
+        CHECK(p.x < box.max.x - 2);
+        CHECK(p.y < box.max.y - 5);
+    }
+    for (size_t i = 1; i < dc.at.size(); ++i) CHECK(dc.at[i - 1].z <= dc.at[i].z);
+}
+
+TEST_CASE("a dropped tip whose spot other tips still hold is not counted", "[tree]") {
+    const Built b = build(makeBox({0, 0, 0}, {20, 20, 2}));
+    REQUIRE(b.tree.dropped_points == 0);
+    REQUIRE_FALSE(b.points.empty());
+    // A second tip right next to a built one, "dropped": everything it covered
+    // the built tips cover too, and the plan had hold to spare without it.
+    SupportPoint extra = b.points.front();
+    extra.pos.x += 0.2;
+    SupportConfig cfg;
+    cfg.layer_height = 0.1;
+    const DropCheck dc = checkDroppedTips(b.model, cfg, b.points, {extra});
+    CHECK_FALSE(dc.any());
+    CHECK(dc.tips == 0);
+    CHECK(dc.at.empty());
+    // Nothing dropped: nothing to check.
+    CHECK_FALSE(checkDroppedTips(b.model, cfg, b.points, {}).any());
+}

@@ -473,6 +473,7 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     cfg.coverage.density = popts.density;
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
+    std::shared_ptr<const LayerStack> layers;  // the planner's, reused by the check of dropped tips
     if (!o.points_in.empty()) {
         pts = pointsFromJson(points_file);
     } else {
@@ -482,6 +483,7 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
         opts.cosmetic = &cosmetic;
         const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
         pts = res.points;
+        layers = res.analysis.layers;
         r["point_stats"] = {{"uncovered_samples", res.stats.uncovered},
                             {"capacity_deficit_layers", res.stats.capacity_deficits},
                             {"small_islands_skipped", res.stats.tiny_islands_skipped},
@@ -538,12 +540,28 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
         json fl = json::array();
         for (const auto& f : v.floating)
             if (fl.size() < 20) fl.push_back({{"layer", f.layer}, {"z", f.z}, {"area_mm2", f.area}, {"at", {f.at.x, f.at.y}}});
+        // Tips the tree could not build: what only they held has nothing now.
+        DropCheck drops;
+        if (tree.dropped_points > 0) {
+            std::vector<SupportPoint> built, dropped;
+            splitByTree(tree, pts, built, dropped);
+            PointGenOptions po;
+            po.layers = layers;
+            drops = checkDroppedTips(mesh, cfg, built, dropped, po);
+        }
+        json at = json::array();
+        for (const Vec3& p : drops.at)
+            if (at.size() < 20) at.push_back({p.x, p.y, p.z});
         r["validation"] = {{"layers", v.layers},
                            {"plate_contacts", v.first_layer_islands},
                            {"floating_islands", v.floating.size()},
                            {"small_floating_islands", v.small_floating},
                            {"subpixel_slivers", v.subpixel},
-                           {"first_floating", fl}};
+                           {"first_floating", fl},
+                           {"unsupported", {{"tips", drops.tips},
+                                            {"samples", drops.samples},
+                                            {"short_layers", drops.short_layers},
+                                            {"first_tips_at", at}}}};
     }
     if (!o.preview.empty()) {
         RenderView view;
