@@ -13,6 +13,7 @@
 //     meshes for the repair) {"show_patch": true} turns the view to the biggest patch
 //   {"add_part": path | "@demo"…} another model beside the others (then "health", as for open)
 //   {"select_part": n} {"remove_part": n} (1-based, in the Parts list's order)
+//   {"select_at": [x, y, z, dx, dy, dz]} selects the part that ray meets, as a click on it in the view
 //   {"save_job": path | "@demo"} {"unsaved": "save" | "discard" | "cancel"}
 //   {"relink": "copy" | "cancel" | path | "@demo"} {"remove": path | "@demo"} (test set-up)
 //   {"wait": "jobs"}            finish background work

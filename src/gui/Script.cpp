@@ -306,6 +306,13 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const int id = doc->parts()[static_cast<std::size_t>(i)].id();
             if (select) app.selectPart(id);
             else app.removePart(id);
+        } else if (step.contains("select_at")) {
+            // [x, y, z, dx, dy, dz]: a click in the 3D view along that ray (printer coordinates) selects the part it meets.
+            const auto& a = step["select_at"];
+            const int id = app.pickPart({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()},
+                                        {a[3].get<double>(), a[4].get<double>(), a[5].get<double>()});
+            if (id < 0) throw std::runtime_error("select_at: meets no part");
+            app.selectPart(id);
         } else if (step.contains("save_job")) {
             std::string p = step["save_job"].get<std::string>();
             if (p == "@demo") p = (demoDir() / "bracket.fruitjob").string();

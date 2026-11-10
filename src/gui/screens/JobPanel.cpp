@@ -196,12 +196,13 @@ void checksTab(App& app, Document* doc) {
     Document& d = *doc;
     if (d.partCount() > 1) {
         // Each part alone: whether it fits where it is, and its mesh.
-        std::vector<std::string> off, open, check;
+        std::vector<std::string> off, open, check, repaired;
         for (const Part& part : d.parts()) {
             if (!part.fit().fits) off.push_back(part.name());
             const RepairWords r = repairWords(part.check());
             if (r.level == RepairWords::Level::Open) open.push_back(part.name());
             else if (r.level == RepairWords::Level::Check) check.push_back(part.name());
+            else if (r.level == RepairWords::Level::Repaired) repaired.push_back(part.name());
         }
         auto names = [](const std::vector<std::string>& v) {
             std::string s;
@@ -219,8 +220,11 @@ void checksTab(App& app, Document* doc) {
             checkLine("mesh", Tick::Warn, "Not watertight", names(open) + ". Select it to see what the check found.");
         else if (!check.empty())
             checkLine("mesh", Tick::Warn, "Mesh repaired: check the patch", names(check) + ".");
+        else if (!repaired.empty())
+            checkLine("mesh", Tick::Ok, "Every mesh is closed",
+                      names(repaired) + (repaired.size() == 1 ? " was" : " were") + " repaired when opened.");
         else
-            checkLine("mesh", Tick::Ok, "Every mesh is closed", "Checked when each model opened, repaired if it needed it.");
+            checkLine("mesh", Tick::Ok, "Every mesh is clean", "Each was checked when it opened: closed, nothing repaired.");
         bool patched = false;
         for (const Part& part : d.parts()) patched = patched || part.check().repair.patch_faces > 0;
         if (patched && linkButton("Show the patch")) app.showPatch();

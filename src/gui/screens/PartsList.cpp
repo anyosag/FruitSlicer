@@ -155,6 +155,18 @@ void partsList(App& app, Document* doc) {
     }
 }
 
+std::string toolTitleFor(const Document& doc, const char* title, bool on_part) {
+    if (!on_part || doc.partCount() < 2) return title;
+    constexpr std::size_t kMax = 18;  // bytes; the panel's title row has room for about this much
+    std::string name = doc.part().name();
+    if (name.size() > kMax) {
+        std::size_t cut = kMax - 1;
+        while (cut > 0 && (static_cast<unsigned char>(name[cut]) & 0xC0) == 0x80) --cut;  // not inside a character
+        name = name.substr(0, cut) + "…";
+    }
+    return std::string(title) + " · " + name;
+}
+
 void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     if (doc.partCount() < 2 || app.editingTips() || app.placing() || app.hoverHandle() != Handle::None) return;
     // Not while a click there puts a hole in.

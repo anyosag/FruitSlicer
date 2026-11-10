@@ -287,7 +287,6 @@ void shortcuts(App&, bool& open) {
         std::string what, keys;
     };
     const std::vector<Row> anywhere = {{"Open a model or a job", cmd("O")},
-                                       {"Add a part to the plate", cmd("O", true)},
                                        {"Save the job", cmd("S")},
                                        {"Save the job as…", cmd("S", true)},
                                        {"Undo", cmd("Z")},
@@ -309,6 +308,8 @@ void shortcuts(App&, bool& open) {
                                       {"Move it 1 mm", "← → ↑ ↓"},
                                       {"Move it 10 mm", "Shift ← → ↑ ↓"},
                                       {"Let go and put it back", "Esc"}};
+    const std::vector<Row> parts = {{"Add a part to the plate", cmd("O", true)},
+                                    {"Select a part: the tools act on it", "click it"}};
     const std::vector<Row> layers = {{"Next or previous layer", "↑ · ↓"},
                                      {"Ten layers at a time", "Page Up · Page Down"},
                                      {"First or last layer", "Home · End"}};
@@ -341,6 +342,7 @@ void shortcuts(App&, bool& open) {
     const float x1 = kPad + col_w + 24;
     float right = column(x1, y0, "Looking around", looking);
     right = column(x1, right + 14, "In Layers", layers);
+    right = column(x1, right + 14, "Several parts", parts);
     ImGui::SetCursorPos(ImVec2(kPad, std::max(left, right)));
     ImGui::Dummy(ImVec2(0, kPad - 4));
     endModal();

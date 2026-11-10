@@ -1205,7 +1205,7 @@ void App::syncScene() {
             m.mesh = &p.mesh();
             m.geometry = p.geometryId();
             m.transform = p.transform();
-            m.rgb = doc_->partCount() > 1 && p.id() != doc_->selectedId() ? 0x7D8592u : 0xAEB6C4u;
+            m.rgb = doc_->partCount() > 1 && p.id() != doc_->selectedId() ? 0x6F7682u : 0xAEB6C4u;
             const std::size_t faces = p.check().triangles;
             const std::size_t patches = screen_ == Screen::Job && step_ == Step::Model ? p.check().repair.patch_faces : 0;
             m.tint_first = faces - std::min(patches, faces);

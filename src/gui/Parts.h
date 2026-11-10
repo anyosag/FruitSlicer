@@ -167,8 +167,8 @@ inline constexpr double kPartGap = 5.0;
 // without overlapping any of `taken` (other parts' outlines, printer
 // coordinates), `gap` mm clear of them and inside the plate's margins: the
 // free spot nearest the middle of what is taken (the plate's centre when
-// nothing is). Off the plate, to the right of everything, when there is no
-// room.
+// nothing is), beside them in a row first (front to back counts double).
+// Off the plate, to the right of everything, when there is no room.
 fruit::Vec2 freeSpot(const std::vector<fruit::BBox2>& taken, fruit::Vec2 size, const fruit::PrinterProfile& printer,
                      double margin, double gap = kPartGap);
 

@@ -136,11 +136,13 @@ fruit::Vec2 freeSpot(const std::vector<fruit::BBox2>& taken, fruit::Vec2 size, c
     if (rx >= 0 && ry >= 0) {
         // Every whole millimetre the middle can stand at; the nearest free
         // one wins, the one further right (then further forward) on a tie.
+        // Front to back counts double, so parts go side by side in a row
+        // along the plate's long side before they start another.
         constexpr double kStep = 1.0;
         for (double y = -std::floor(ry / kStep) * kStep; y <= ry + 1e-9; y += kStep)
             for (double x = -std::floor(rx / kStep) * kStep; x <= rx + 1e-9; x += kStep) {
                 const fruit::Vec2 c{x, y};
-                const double d = fruit::distance(c, mid);
+                const double d = std::hypot(x - mid.x, 2 * (y - mid.y));
                 const bool better = !best || d < best_d - 1e-9 ||
                                     (std::abs(d - best_d) <= 1e-9 && (x > best->x || (x == best->x && y < best->y)));
                 if (better && clear(c)) {
