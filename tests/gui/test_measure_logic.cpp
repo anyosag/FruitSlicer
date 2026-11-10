@@ -9,10 +9,21 @@
 #include "Document.h"
 #include "Measure.h"
 #include "mesh/AabbTree.h"
+#include "mesh/ModelLoad.h"
 #include "mesh/Primitives.h"
 
 using Catch::Approx;
 using namespace gui;
+
+namespace {
+
+NewPart cubeAt(fruit::Vec2 at, const char* name) {
+    fruit::Placement p;
+    p.offset = at;
+    return NewPart{name, "", makePartModel(fruit::prepareModel(fruit::makeBox({0, 0, 0}, {10, 10, 10}))), p};
+}
+
+}  // namespace
 
 TEST_CASE("Measure: the distance and its X, Y and Z parts", "[gui][measure]") {
     const Measurement m = measureBetween({1, 2, 3}, {4, 6, 3});
@@ -38,7 +49,7 @@ TEST_CASE("Measure: a third click starts again; clear empties it", "[gui][measur
     CHECK(s.points.size() == 2);
     s.click({9, 9, 9});
     CHECK(s.points.size() == 1);
-    CHECK(s.points[0].x == 9);
+    CHECK(s.points[0].at.x == 9);
     CHECK_FALSE(s.complete());
     s.clear();
     CHECK(s.empty());
@@ -111,4 +122,52 @@ TEST_CASE("Measure: a click on the view picks the surface point the camera sees 
     fruit::Vec3 o, d;
     rayThroughPixel(cam, left + 2, top + 2, left, top, w, h, &o, &d);
     CHECK_FALSE(pickSurface(tree, o, d));
+}
+
+TEST_CASE("Measure: the two points can be on two parts, and each stays on its own", "[gui][measure][parts]") {
+    Document doc;
+    doc.printer = fruit::PrinterProfile::saturn4Ultra16k();
+    doc.replaceParts({cubeAt({-30, 0}, "left"), cubeAt({30, 0}, "right")});
+    doc.clearHistory();
+    const int a = doc.parts()[0].id(), b = doc.parts()[1].id();
+    // The middle of each cube's top, in its own coordinates.
+    MeasureState s;
+    s.click({5, 5, 10}, a, doc.findPart(a)->geometryId());
+    s.click({5, 5, 10}, b, doc.findPart(b)->geometryId());
+    REQUIRE(measureStillOn(s, doc));
+    auto m = measurementOf(s, doc.frames());
+    REQUIRE(m);
+    CHECK(m->distance == Approx(60));
+    CHECK(m->dx == Approx(60));
+    CHECK(m->dy == Approx(0).margin(1e-9));
+    CHECK(m->dz == Approx(0).margin(1e-9));
+
+    // Moving one part moves only the point on it.
+    doc.select(b);
+    fruit::Placement p = doc.placement();
+    p.offset = {30, 20};
+    doc.edit(p);
+    m = measurementOf(s, doc.frames());
+    REQUIRE(m);
+    CHECK(m->dx == Approx(60));
+    CHECK(m->dy == Approx(20));
+    // Mirroring it keeps the point on it: the mesh is the same.
+    doc.mirror(0);
+    CHECK(measureStillOn(s, doc));
+    CHECK(measurementOf(s, doc.frames())->dy == Approx(20));
+
+    // Removed, its point no longer counts; undo brings the part and the point back.
+    REQUIRE(doc.removePart(b));
+    CHECK_FALSE(measureStillOn(s, doc));
+    CHECK(pointsOnPlate(s, doc.frames()).size() == 1);
+    CHECK_FALSE(measurementOf(s, doc.frames()).has_value());
+    doc.undo();
+    CHECK(measureStillOn(s, doc));
+    CHECK(measurementOf(s, doc.frames())->dy == Approx(20));
+
+    // A new mesh for a part (a repair, a cut) ends the measure on it.
+    REQUIRE(doc.replaceMesh(a, fruit::prepareModel(fruit::makeBox({0, 0, 0}, {10, 10, 10}))));
+    CHECK_FALSE(measureStillOn(s, doc));
+    MeasureState none;
+    CHECK(measureStillOn(none, doc));  // nothing picked: nothing out of date
 }

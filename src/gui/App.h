@@ -129,14 +129,16 @@ public:
     void setPosition(const fruit::Vec2& mm);  // the middle of its outline, from the plate's centre
     void centreModel();
     void nudge(double dx_mm, double dy_mm);    // the arrow keys
-    // Mirror: the model as its mirror image along the plate's axis (0 X: left to
-    // right, 1 Y: front to back, 2 Z: top to bottom); one undoable edit.
+    // Mirror: the selected part as its mirror image along the plate's axis (0
+    // X: left to right, 1 Y: front to back, 2 Z: top to bottom); one undoable edit.
     void mirrorModel(int axis);
-    // Measure: a point picked on the model (plate coordinates), the points so
-    // far, and starting again. The measure changes nothing in the job.
+    // Measure: a point picked on any part (plate coordinates), the points so
+    // far, whether they are still on the job to show, and starting again.
+    // The measure changes nothing in the job.
     void measureClick(const fruit::Vec3& on_plate);
     void clearMeasure();
     const MeasureState& measured() const { return measure_; }
+    bool measureShown() const;
     void turnQuarter();                        // 90° about the vertical, slid back onto the plate if need be
     void slideOntoPlate();                     // over the edge: the least move that puts it back on
     void setOnPlate(bool on_plate);

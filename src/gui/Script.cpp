@@ -386,13 +386,20 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (a != "x" && a != "y" && a != "z") throw std::runtime_error("unknown mirror axis " + a);
             app.mirrorModel(a == "x" ? 0 : a == "y" ? 1 : 2);
         } else if (step.contains("measure")) {
-            // Points on the plate; each is brought onto the model's surface, along the line to its middle.
+            // Points on the plate; each is brought onto the surface along the line to the middle of the
+            // part whose middle is nearest it (with one part, the model's middle).
             if (step["measure"].is_string()) {
                 app.clearMeasure();
             } else if (app.document()) {
-                const fruit::Vec3 mid = app.document()->placedBox().center();
                 for (const auto& q : step["measure"]) {
                     const fruit::Vec3 from{q[0].get<double>(), q[1].get<double>(), q[2].get<double>()};
+                    fruit::Vec3 mid = app.document()->placedBox().center();
+                    double best = -1;
+                    for (const Part& part : app.document()->parts()) {
+                        const fruit::Vec3 c = part.box().center(), d = c - from;
+                        const double dd = d.x * d.x + d.y * d.y + d.z * d.z;
+                        if (app.document()->partCount() > 1 && (best < 0 || dd < best)) best = dd, mid = c;
+                    }
                     fruit::Vec3 at, n;
                     if (!app.pickModel(from, mid - from, &at, &n)) throw std::runtime_error("measure: no model there");
                     app.measureClick(at);

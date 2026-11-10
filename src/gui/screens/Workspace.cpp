@@ -490,7 +490,8 @@ void topPill(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     } else if (hollow && !doc->hollow.choices.auto_holes) {
         hint = "Click on the model to put a hole there.";
     } else if (app.step() == Step::Model && app.toolPanelOpen() && app.tool() == Tool::Measure) {
-        hint = "Click a point on the model, then a second one · Esc starts again";
+        hint = doc->partCount() > 1 ? "Click a point on a part, then a second one · Esc starts again"
+                                    : "Click a point on the model, then a second one · Esc starts again";
     }
     if (!supports && !hollow && !patched && !hint) return;
     const bool panel = app.toolPanelOpen() || app.editingTips();

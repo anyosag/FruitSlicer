@@ -456,12 +456,16 @@ void App::mirrorModel(int axis) {
 
 void App::measureClick(const fruit::Vec3& on_plate) {
     if (!doc_) return;
-    if (measure_.geometry_id != doc_->part().geometryId()) measure_.clear();
-    measure_.geometry_id = doc_->part().geometryId();
-    measure_.click(doc_->part().transform().inverse().apply(on_plate));
+    // The point is kept on the part it was picked on, whichever that is.
+    const Part* part = doc_->findPart(partAt(on_plate));
+    if (!part) return;
+    if (!measureStillOn(measure_, *doc_)) measure_.clear();
+    measure_.click(part->transform().inverse().apply(on_plate), part->id(), part->geometryId());
 }
 
 void App::clearMeasure() { measure_.clear(); }
+
+bool App::measureShown() const { return doc_ && !measure_.empty() && measureStillOn(measure_, *doc_); }
 
 bool App::handlesShown() const {
     // With Move or Rotate open: the arrows and rings that place it.
@@ -2768,7 +2772,8 @@ void App::keys() {
             if (ImGui::IsKeyPressed(ImGuiKey_T, false)) openTool(Tool::Supports);
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) || ImGui::IsKeyPressed(ImGuiKey_D, false)) openTool(Tool::Hollow);
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !placing()) {
-                if (tool_panel_ && tool() == Tool::Measure && !measure_.empty()) measure_.clear();  // first Esc: start again
+                // Measuring, the first Esc starts again; the next closes the panel.
+                if (tool_panel_ && tool() == Tool::Measure && measureShown()) measure_.clear();
                 else tool_panel_ = false;
             }
         }

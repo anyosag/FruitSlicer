@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Document.h"
+
 namespace gui {
 
 Measurement measureBetween(const fruit::Vec3& from, const fruit::Vec3& to) {
@@ -18,20 +20,31 @@ Measurement measureBetween(const fruit::Vec3& from, const fruit::Vec3& to) {
     return m;
 }
 
-void MeasureState::click(const fruit::Vec3& p) {
+void MeasureState::click(const fruit::Vec3& p, int part, int geometry_id) {
     if (points.size() >= 2) points.clear();
-    points.push_back(p);
+    points.push_back({p, part, geometry_id});
 }
 
-std::vector<fruit::Vec3> pointsOnPlate(const MeasureState& s, const fruit::Transform& t) {
+bool measureStillOn(const MeasureState& s, const Document& doc) {
+    for (const MeasureState::Point& p : s.points) {
+        const Part* part = doc.findPart(p.part);
+        if (!part || part->geometryId() != p.geometry_id) return false;
+    }
+    return true;
+}
+
+std::vector<fruit::Vec3> pointsOnPlate(const MeasureState& s, const PartFrames& frames) {
     std::vector<fruit::Vec3> out;
-    for (const fruit::Vec3& p : s.points) out.push_back(t.apply(p));
+    for (const MeasureState::Point& p : s.points)
+        if (const fruit::Transform* t = frames.find(p.part)) out.push_back(t->apply(p.at));
     return out;
 }
 
-std::optional<Measurement> measurementOf(const MeasureState& s, const fruit::Transform& t) {
+std::optional<Measurement> measurementOf(const MeasureState& s, const PartFrames& frames) {
     if (!s.complete()) return std::nullopt;
-    return measureBetween(t.apply(s.points[0]), t.apply(s.points[1]));
+    const std::vector<fruit::Vec3> on = pointsOnPlate(s, frames);
+    if (on.size() != 2) return std::nullopt;
+    return measureBetween(on[0], on[1]);
 }
 
 std::optional<SurfacePoint> pickSurface(const fruit::AabbTree& tree, const fruit::Vec3& origin, const fruit::Vec3& dir) {

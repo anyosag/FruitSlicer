@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
-// The Measure tool: click a point on the model, then a second; the panel gives
-// the distance and its X, Y and Z parts, the view draws the line. It changes
-// nothing in the job.
+// The Measure tool: click a point on the model, then a second (on the same
+// part or another); the panel gives the distance and its X, Y and Z parts,
+// the view draws the line. It changes nothing in the job.
 #include <imgui.h>
 
 #include <algorithm>
@@ -26,8 +26,9 @@ std::string mm(double v) { return strf("%.2f mm", v < kShown ? 0.0 : v); }
 
 void measurePanel(App& app, Document& doc) {
     const MeasureState& ms = app.measured();
-    const bool mine = ms.geometry_id == doc.part().geometryId();
-    const auto m = mine ? measurementOf(ms, doc.part().transform()) : std::nullopt;
+    const bool mine = app.measureShown();
+    const bool several = doc.partCount() > 1;
+    const auto m = mine ? measurementOf(ms, doc.frames()) : std::nullopt;
     groupLabel("Distance");
     if (m) {
         keyValue("Between the points", mm(m->distance));
@@ -39,22 +40,33 @@ void measurePanel(App& app, Document& doc) {
         keyValue("Along Z", mm(m->dz));
         ImGui::Dummy(ImVec2(0, 4));
         text("Click again to start a new one.", fonts().regular, size::Help, col::TextMuted, true);
-    } else if (mine && !ms.empty()) {
-        text("Now click a second point on the model.", fonts().regular, size::Body, col::TextSecondary, true);
+    } else if (mine) {
+        text(several ? "Now click a second point, on this part or another." : "Now click a second point on the model.",
+             fonts().regular, size::Body, col::TextSecondary, true);
     } else {
-        text("Click a point on the model, then a second one.", fonts().regular, size::Body, col::TextSecondary, true);
+        text(several ? "Click a point on a part, then a second one." : "Click a point on the model, then a second one.",
+             fonts().regular, size::Body, col::TextSecondary, true);
     }
     ImGui::Dummy(ImVec2(0, 6));
-    if (secondaryButton("Clear", ImVec2(0, 32), mine && !ms.empty())) app.clearMeasure();
+    if (secondaryButton("Clear", ImVec2(0, 32), mine)) app.clearMeasure();
     text("Esc clears it too.", fonts().regular, size::Help, col::TextMuted);
     ImGui::Dummy(ImVec2(0, 10));
-    groupLabel("The whole model");
-    const fruit::Vec3 s = doc.placedBox().size();
-    keyValue("Width (X)", mm(s.x));
-    ImGui::Dummy(ImVec2(0, 4));
-    keyValue("Depth (Y)", mm(s.y));
-    ImGui::Dummy(ImVec2(0, 4));
-    keyValue("Height (Z)", mm(s.z));
+    if (several) {
+        // The selected part's size and all of them together, one line each.
+        groupLabel("Sizes · width × depth × height");
+        auto size3 = [](const fruit::Vec3& v) { return strf("%.1f × %.1f × %.1f mm", v.x, v.y, v.z); };
+        keyValue("Selected part", size3(doc.part().box().size()));
+        ImGui::Dummy(ImVec2(0, 4));
+        keyValue("All the parts", size3(doc.placedBox().size()));
+    } else {
+        groupLabel("The whole model");
+        const fruit::Vec3 s = doc.placedBox().size();
+        keyValue("Width (X)", mm(s.x));
+        ImGui::Dummy(ImVec2(0, 4));
+        keyValue("Depth (Y)", mm(s.y));
+        ImGui::Dummy(ImVec2(0, 4));
+        keyValue("Height (Z)", mm(s.z));
+    }
     ImGui::Dummy(ImVec2(0, 8));
     text("Measuring changes nothing in the job. Distances are on the surface points you click, at the model's current size.",
          fonts().regular, size::Help, col::TextMuted, true);
@@ -94,8 +106,9 @@ void measureOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
     }
 
     // The points picked and the line between them.
-    if (ms.geometry_id == doc.part().geometryId() && !ms.empty()) {
-        const std::vector<fruit::Vec3> pts = pointsOnPlate(ms, doc.part().transform());
+    const PartFrames frames = doc.frames();
+    if (app.measureShown()) {
+        const std::vector<fruit::Vec3> pts = pointsOnPlate(ms, frames);
         ImVec2 a[2];
         bool ok[2] = {false, false};
         for (std::size_t i = 0; i < pts.size(); ++i) ok[i] = project(pts[i], &a[i]);
@@ -109,7 +122,7 @@ void measureOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
             dl->AddCircleFilled(a[i], 6, IM_COL32(0x0E, 0x10, 0x14, 230), 20);
             dl->AddCircleFilled(a[i], 4.2f, line, 20);
         }
-        if (const auto m = measurementOf(ms, doc.part().transform()); m && ok[0] && ok[1]) {
+        if (const auto m = measurementOf(ms, frames); m && ok[0] && ok[1]) {
             const std::string label = strf("%.2f mm", m->distance);
             ImGui::PushFont(fonts().semibold, size::Help);
             const ImVec2 ts = ImGui::CalcTextSize(label.c_str());

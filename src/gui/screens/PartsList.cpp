@@ -182,6 +182,8 @@ void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     // Not while a click there puts a hole in.
     if (app.step() == Step::Orient && app.orientView() == OrientView::Hollow && !doc.hollow.choices.auto_holes) return;
     if (app.step() == Step::Orient && app.orientView() == OrientView::Results) return;
+    // Not while a click there picks a point to measure from.
+    if (app.step() == Step::Model && app.toolPanelOpen() && app.tool() == Tool::Measure) return;
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 m = io.MousePos;
     const bool inside = m.x >= origin.x && m.y >= origin.y && m.x < origin.x + size.x && m.y < origin.y + size.y &&

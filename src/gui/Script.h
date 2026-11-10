@@ -24,9 +24,9 @@
 //     (handle: "move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z"; mm or degrees; snap as with ⇧)
 //   {"undo": n} {"redo": n} {"shortcuts": true | false}
 //   {"step": "model" | "orient" | "supports" | "layers" | "print"} (any place, any time) {"layer": n (1-based)} {"show_below": bool}
-//   {"mirror": "x" | "y" | "z"} (left to right, front to back, top to bottom)
-//   {"measure": [[x, y, z], [x, y, z]]} clicks, in mm on the plate, each put on the model's surface along the line
-//     to its middle; {"measure": "clear"} starts again
+//   {"mirror": "x" | "y" | "z"} the selected part (left to right, front to back, top to bottom)
+//   {"measure": [[x, y, z], [x, y, z]]} clicks, in mm on the plate, each put on the surface along the line to the
+//     middle of the part whose middle is nearest it; {"measure": "clear"} starts again
 //   {"tool": "on_plate" | "move" | "rotate" | "scale" | "mirror" | "measure" | "supports" | "hollow" | "repair" | "none"} as the tool
 //     buttons (again on the open one closes its panel) {"close_tool": true} {"job_tab": "checks" | "hollows"}
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
