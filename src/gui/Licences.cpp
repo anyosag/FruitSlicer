@@ -11,6 +11,7 @@
     extern const std::size_t kLicence_##id##_size;
 FRUIT_LICENCE(fruitslicer)
 FRUIT_LICENCE(clipper2)
+FRUIT_LICENCE(manifold)
 FRUIT_LICENCE(json)
 FRUIT_LICENCE(httplib)
 FRUIT_LICENCE(miniz)
@@ -34,6 +35,7 @@ const std::vector<Licence>& licences() {
     static const std::vector<Licence> all = {
         {"FruitSlicer", "this app", "GNU AGPL 3.0 or later", FRUIT_TEXT(fruitslicer)},
         {"Clipper2", "polygon clipping", "Boost Software License 1.0", FRUIT_TEXT(clipper2)},
+        {"Manifold", "joining, cutting and labelling models", "Apache-2.0", FRUIT_TEXT(manifold)},
         {"nlohmann/json", "JSON files", "MIT", FRUIT_TEXT(json)},
         {"cpp-httplib", "sending over Wi-Fi", "MIT", FRUIT_TEXT(httplib)},
         {"miniz", "compression, 3MF and job files", "MIT", FRUIT_TEXT(miniz)},

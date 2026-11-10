@@ -19,6 +19,7 @@ endforeach()
 set(FRUIT_LICENCE_FILES
   fruitslicer ${PROJECT_SOURCE_DIR}/LICENSE
   clipper2 ${clipper2_SOURCE_DIR}/LICENSE
+  manifold ${manifold_SOURCE_DIR}/LICENSE
   json ${json_SOURCE_DIR}/LICENSE.MIT
   httplib ${httplib_SOURCE_DIR}/LICENSE
   miniz ${miniz_SOURCE_DIR}/LICENSE
@@ -135,6 +136,7 @@ if(APPLE)
   set(licences
     FruitSlicer ${PROJECT_SOURCE_DIR}/LICENSE
     Clipper2 ${clipper2_SOURCE_DIR}/LICENSE
+    Manifold ${manifold_SOURCE_DIR}/LICENSE
     nlohmann-json ${json_SOURCE_DIR}/LICENSE.MIT
     cpp-httplib ${httplib_SOURCE_DIR}/LICENSE
     SDL3 ${sdl3_SOURCE_DIR}/LICENSE.txt

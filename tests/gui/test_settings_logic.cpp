@@ -159,11 +159,12 @@ TEST_CASE("Setup: a SatelLite file's settings are kept for new jobs; another pri
 
 TEST_CASE("About: every library built in comes with its full licence text", "[gui][settings]") {
     const auto& all = licences();
-    REQUIRE(all.size() == 11);
+    REQUIRE(all.size() == 12);
     CHECK(std::string(all[0].name) == "FruitSlicer");
     CHECK_THAT(std::string(all[0].text), ContainsSubstring("GNU AFFERO GENERAL PUBLIC LICENSE"));
     const std::pair<const char*, const char*> expect[] = {
         {"Clipper2", "Boost Software License"},
+        {"Manifold", "Apache License"},
         {"nlohmann/json", "MIT License"},
         {"cpp-httplib", "MIT License"},
         {"miniz", "Permission is hereby granted"},
