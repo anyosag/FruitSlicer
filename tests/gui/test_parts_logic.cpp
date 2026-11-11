@@ -4,6 +4,7 @@
 // edits and holes that belong to a part, and saved jobs old and new.
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <cstring>
 #include <filesystem>
 
@@ -23,6 +24,7 @@
 #include "support/SupportIO.h"
 
 using Catch::Approx;
+using Catch::Matchers::ContainsSubstring;
 using namespace gui;
 namespace fs = std::filesystem;
 
@@ -53,6 +55,30 @@ std::shared_ptr<Document> jobOf(std::vector<NewPart> parts) {
 }
 
 fruit::TriangleMesh cube(double s) { return fruit::makeBox({0, 0, 0}, {s, s, s}); }
+
+// The saved job `from` written again as `to`, with `file` in it holding `bytes`.
+void rewriteJob(const std::string& from, const std::string& to, const std::string& file,
+                const std::vector<std::uint8_t>& bytes) {
+    mz_zip_archive in{};
+    REQUIRE(mz_zip_reader_init_file(&in, from.c_str(), 0));
+    fs::remove(to);
+    mz_zip_archive out{};
+    REQUIRE(mz_zip_writer_init_file(&out, to.c_str(), 0));
+    for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&in); ++i) {
+        char name[256] = {};
+        mz_zip_reader_get_filename(&in, i, name, sizeof name);
+        if (file == name) continue;
+        size_t n = 0;
+        void* data = mz_zip_reader_extract_to_heap(&in, i, &n, 0);
+        REQUIRE(data);
+        REQUIRE(mz_zip_writer_add_mem(&out, name, data, n, MZ_DEFAULT_COMPRESSION));
+        mz_free(data);
+    }
+    REQUIRE(mz_zip_writer_add_mem(&out, file.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION));
+    REQUIRE(mz_zip_writer_finalize_archive(&out));
+    REQUIRE(mz_zip_writer_end(&out));
+    mz_zip_reader_end(&in);
+}
 
 }  // namespace
 
@@ -628,4 +654,30 @@ TEST_CASE("Parts: after an undo the placed mesh is made again, at the earlier re
     CHECK(m2 != m0);  // the earlier revision, another mesh
     CHECK(m2 != m1);
     CHECK(m2->bbox().center().x == Approx(m0->bbox().center().x));
+}
+
+TEST_CASE("Jobs: a saved part with no triangles is refused as damaged, not opened a part short", "[gui][parts][jobs]") {
+    // A mesh file in the job as FruitSlicer writes them, but with no vertices and no faces.
+    std::vector<std::uint8_t> empty(16, 0);
+    const char magic[8] = {'F', 'S', 'M', 'E', 'S', 'H', '1', 0};
+    std::memcpy(empty.data(), magic, 8);
+
+    const auto two = jobOf({partOf(cube(10), "a"), partOf(cube(6), "b", {30, 0})});
+    const std::string job = (dir() / "empty part.fruitjob").string();
+    saveJob(job, *two);
+    for (const std::string file : {"part-2.bin", "part-1.bin"}) {
+        const std::string bad = (dir() / ("empty " + file + ".fruitjob")).string();
+        rewriteJob(job, bad, file, empty);
+        CHECK_THROWS_WITH(openJob(bad, kPrinter, fruit::JobControl::none()), ContainsSubstring("damaged"));
+    }
+    // One part, and that one empty: no job with no part either.
+    const auto one = jobOf({partOf(cube(10), "a")});
+    const std::string single = (dir() / "empty model.fruitjob").string();
+    saveJob(single, *one);
+    const std::string bad = (dir() / "empty model.bin.fruitjob").string();
+    rewriteJob(single, bad, "model.bin", empty);
+    CHECK_THROWS_WITH(openJob(bad, kPrinter, fruit::JobControl::none()), ContainsSubstring("damaged"));
+    // The jobs as written still open.
+    CHECK(openJob(job, kPrinter, fruit::JobControl::none()).doc->partCount() == 2);
+    CHECK(openJob(single, kPrinter, fruit::JobControl::none()).doc->partCount() == 1);
 }

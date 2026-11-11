@@ -399,6 +399,8 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         s.part.name = name.empty() ? partName(s.part.path, {}) : std::move(name);
         const std::string file = model.value("file", "model.bin");
         s.part.model = makePartModel(modelFrom(zip.read(file.c_str(), true), model));
+        // A job keeps no part without triangles (Document::editParts drops it).
+        if (s.part.model->model.mesh.empty()) throw std::runtime_error("the model in the job is damaged");
         s.part.placement = placementFrom(placement);
         return s;
     };
@@ -419,6 +421,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     for (const Saved& s : saved) parts.push_back(s.part);
     doc->replaceParts(std::move(parts));
     doc->clearHistory();
+    if (doc->partCount() != saved.size()) throw std::runtime_error("the model in the job is damaged");
     for (std::size_t i = 0; i < saved.size(); ++i) orientFrom(saved[i].orient, doc->orientOf(doc->parts()[i].id()));
     if (const int sel = j.value("selected", 0); sel >= 0 && sel < static_cast<int>(doc->partCount()))
         doc->select(doc->parts()[static_cast<std::size_t>(sel)].id());
