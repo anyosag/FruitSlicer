@@ -109,8 +109,7 @@ public:
     struct RelinkDialog {
         bool open = false;
         std::shared_ptr<Document> doc;  // opened, not yet shown
-        std::string model_path;         // where the model was
-        int part = 0;                   // whose model it is (an id)
+        std::string model_path;         // where the model was (every part from that file is relinked)
         bool find = false;              // "Find the file" picked
     };
     RelinkDialog& relinkDialog() { return relink_; }

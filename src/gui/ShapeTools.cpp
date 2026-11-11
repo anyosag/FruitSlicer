@@ -222,7 +222,7 @@ std::vector<int> cutIntoParts(PartsEdit& e, const Part& old, const ShapeOutcome&
         boxes.push_back(footprintOf(piece.model->model.mesh, p));
         const std::string name = pieceName(old.name(), piece.suffix, names);
         names.push_back(name);
-        ids.push_back(e.add(NewPart{name, old.path(), piece.model, p}));
+        ids.push_back(e.add(NewPart{name, "", piece.model, p}));  // made in the app: no file of its own
     }
     e.selected = ids.front();
     return ids;
@@ -376,6 +376,7 @@ void relabelPart(PartsEdit& e, int id, const ShapeOutcome& out) {
     if (!s) return;
     s->placement = placeInPlace(out.pieces.front(), s->placement);
     s->model = out.pieces.front().model;
+    s->path.clear();  // not the file's mesh any more: finding that file again must not bring it back
 }
 
 // ---- Combine ----
@@ -476,7 +477,7 @@ int combineIntoPart(PartsEdit& e, const Part& a, const Part& b, const ShapeOutco
     const fruit::Placement p = placeInPlace(piece, base);
     e.remove(a.id());
     e.remove(b.id());
-    const int id = e.add(NewPart{pieceName(a.name(), "", names), a.path(), piece.model, p});
+    const int id = e.add(NewPart{pieceName(a.name(), "", names), "", piece.model, p});  // made in the app
     e.selected = id;
     return id;
 }

@@ -16,6 +16,7 @@
 #include "JobFile.h"
 #include "Layers.h"
 #include "Navigation.h"
+#include "PartsTools.h"
 #include "Supports.h"
 #include "geometry/Polygon.h"
 #include "mesh/ModelLoad.h"
@@ -680,4 +681,84 @@ TEST_CASE("Jobs: a saved part with no triangles is refused as damaged, not opene
     // The jobs as written still open.
     CHECK(openJob(job, kPrinter, fruit::JobControl::none()).doc->partCount() == 2);
     CHECK(openJob(single, kPrinter, fruit::JobControl::none()).doc->partCount() == 1);
+}
+
+TEST_CASE("Jobs: finding a moved file relinks every part from it; parts made in the app keep what was made",
+          "[gui][parts][jobs]") {
+    // A file with two shells, placed as loaded; a copy of it; and another copy split into its shells.
+    const fs::path file = dir() / "relink two.stl";
+    fruit::TriangleMesh m = cube(10);
+    m.append(fruit::makeBox({30, 0, 0}, {42, 12, 8}));
+    fruit::writeStl(file.string(), m);
+    const auto doc = loadDocument(file.string(), kPrinter, fruit::JobControl::none());
+    const int a = doc->selectedId();
+    fruit::Placement p = doc->placement();
+    p.offset = {0, 60};
+    const int copy = doc->addPart(NewPart{"copy", file.string(), doc->findPart(a)->shared(), p});
+    p.offset = {0, -60};
+    const int b = doc->addPart(NewPart{"split me", file.string(), doc->findPart(a)->shared(), p});
+    REQUIRE(doc->editParts([&](PartsEdit& e) { splitPart(*doc, e, b); }));
+    REQUIRE(doc->partCount() == 4);
+    int made = 0;
+    for (const Part& part : doc->parts()) {
+        if (part.id() == a || part.id() == copy) {
+            CHECK(part.path() == file.string());
+        } else {
+            CHECK(part.path().empty());  // made in the app: no file of its own
+            ++made;
+        }
+    }
+    CHECK(made == 2);
+
+    // Saved, then the file moved: the job asks where it is.
+    const std::string job = (dir() / "relink two.fruitjob").string();
+    saveJob(job, *doc);
+    const fs::path moved = dir() / "relink two moved.stl";
+    fs::remove(moved);
+    fs::rename(file, moved);
+    OpenedJob o = openJob(job, kPrinter, fruit::JobControl::none());
+    CHECK(o.model_missing);
+    CHECK(o.model_path == file.string());
+    std::vector<std::uint64_t> pieces;  // the split parts' meshes, as the job keeps them
+    for (const Part& part : o.doc->parts())
+        if (part.path().empty()) pieces.push_back(meshHash(part.mesh()));
+    REQUIRE(pieces.size() == 2);
+
+    // Found where it went, as it was: both parts from it take the new place, and nothing else changes.
+    int rev = o.doc->revision();
+    CHECK(relinkParts(*o.doc, file.string(), moved.string(), fruit::loadModel(moved.string())) == 0);
+    CHECK(o.doc->revision() == rev);  // supports made for it still fit
+    int linked = 0;
+    for (const Part& part : o.doc->parts()) linked += part.path() == moved.string();
+    CHECK(linked == 2);
+    CHECK(changesSince(*o.doc->saved, o.doc->stamp()) == std::vector<std::string>{"found the model in its new place"});
+
+    // Found, but it changed since: the parts from it take the new mesh (one for both); the pieces keep theirs.
+    const fs::path changed = dir() / "relink two changed.stl";
+    fruit::writeStl(changed.string(), cube(14));
+    o = openJob(job, kPrinter, fruit::JobControl::none());
+    rev = o.doc->revision();
+    CHECK(relinkParts(*o.doc, file.string(), changed.string(), fruit::loadModel(changed.string())) == 2);
+    CHECK(o.doc->revision() != rev);  // their supports are out of date
+    std::vector<std::uint64_t> kept;
+    std::vector<const PartModel*> models;
+    for (const Part& part : o.doc->parts()) {
+        if (part.path().empty()) {
+            kept.push_back(meshHash(part.mesh()));
+        } else {
+            CHECK(part.path() == changed.string());
+            CHECK(part.mesh().volume() == Approx(14 * 14 * 14).epsilon(1e-9));
+            models.push_back(part.shared().get());
+        }
+    }
+    CHECK(kept == pieces);
+    REQUIRE(models.size() == 2);
+    CHECK(models[0] == models[1]);
+
+    // With only the pieces left, nothing is asked: they have no file to find.
+    doc->removePart(a);
+    doc->removePart(copy);
+    const std::string only = (dir() / "relink pieces.fruitjob").string();
+    saveJob(only, *doc);
+    CHECK_FALSE(openJob(only, kPrinter, fruit::JobControl::none()).model_missing);
 }

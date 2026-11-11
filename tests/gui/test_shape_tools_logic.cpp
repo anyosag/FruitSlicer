@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "Document.h"
+#include "JobFile.h"
 #include "ShapeTools.h"
 #include "mesh/ModelLoad.h"
 #include "mesh/Primitives.h"
@@ -89,6 +90,9 @@ TEST_CASE("Cut: both pieces, volumes add up, each stands at the lift, and the cu
     CHECK(bottom.box().min.z == Approx(doc->placement().lift()).margin(1e-9));
     CHECK(top.box().min.z == Approx(doc->placement().lift()).margin(1e-9));
     CHECK(top.box().size().z == Approx(25).margin(1e-6));
+    // Made in the app: neither piece is the file's mesh, so neither keeps its path (relinking must not undo the cut).
+    CHECK(bottom.path().empty());
+    CHECK(top.path().empty());
     // The bottom piece stays where it was; the top goes beside it, with room.
     CHECK(bottom.box().min.x == Approx(before.min.x).margin(1e-9));
     CHECK(bottom.box().min.y == Approx(before.min.y).margin(1e-9));
@@ -267,6 +271,10 @@ TEST_CASE("Label: raised text adds volume, engraved removes it, and the part sta
     const double v = doc->part().placed().volume();
     const fruit::BBox3 before = doc->part().box();
 
+    const std::string file = doc->part().path();
+    REQUIRE_FALSE(file.empty());
+    doc->saved = doc->stamp();
+
     const ShapeOutcome raised = labelOnTop(doc->part(), "AB", false);
     REQUIRE(raised.ok);
     REQUIRE(raised.pieces.size() == 1);
@@ -274,6 +282,10 @@ TEST_CASE("Label: raised text adds volume, engraved removes it, and the part sta
     REQUIRE(doc->editParts([&](PartsEdit& e) { relabelPart(e, id, raised); }));
     CHECK(doc->partCount() == 1);
     CHECK(doc->selectedId() == id);  // the same part, its mesh changed
+    // No longer the file's mesh: it keeps no path, so finding the file again can't bring back the unlabelled one,
+    // and that is not told as finding the model somewhere else.
+    CHECK(doc->part().path().empty());
+    for (const std::string& c : changesSince(*doc->saved, doc->stamp())) CHECK(c != "found the model in its new place");
     CHECK(doc->part().placed().volume() > v + 1);
     CHECK(closed(doc->part().placed()));
     const fruit::BBox3 after = doc->part().box();
@@ -284,6 +296,7 @@ TEST_CASE("Label: raised text adds volume, engraved removes it, and the part sta
     CHECK(after.min.z == Approx(before.min.z).margin(1e-9));
     doc->undo();
     CHECK(doc->part().placed().volume() == Approx(v).epsilon(1e-9));
+    CHECK(doc->part().path() == file);  // undo brings back the file's mesh, and with it its path
 
     const ShapeOutcome cut = labelOnTop(doc->part(), "AB", true);
     REQUIRE(cut.ok);
@@ -424,6 +437,7 @@ TEST_CASE("Combine: join, subtract and overlap give one part with the right volu
         REQUIRE(doc->partCount() == 1);
         CHECK(doc->selectedId() == id);
         CHECK(doc->part().name() == "comb_a");
+        CHECK(doc->part().path().empty());  // made in the app, from A (a file) and B
         CHECK(doc->part().placed().volume() == Approx(c.volume).epsilon(1e-6));
         CHECK(closed(doc->part().placed()));
         CHECK(doc->part().box().min.z == Approx(doc->placement().lift()).margin(1e-9));

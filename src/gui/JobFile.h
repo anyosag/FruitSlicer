@@ -39,6 +39,13 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
 // same triangles as the job's copy.
 std::uint64_t meshHash(const fruit::TriangleMesh& m);
 
+// The model file `was` found again at `now`, holding `found` (as loaded).
+// Every part from that file (copies too) takes the new place, as one edit;
+// one whose mesh is not the file's now (the file changed since) takes
+// `found`, and with it the job's supports go out of date. Parts made in the
+// app have no file, so they keep their mesh. Returns how many took `found`.
+int relinkParts(Document& doc, const std::string& was, const std::string& now, fruit::LoadedModel found);
+
 // What changed since the last save, in words ("generated supports", ...).
 std::vector<std::string> changesSince(const JobStamp& saved, const JobStamp& now);
 

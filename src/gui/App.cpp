@@ -271,7 +271,6 @@ void App::openJobFile(const std::string& path) {
                 relink_.open = true;
                 relink_.doc = out->doc;
                 relink_.model_path = out->model_path;
-                relink_.part = out->part;
                 return;
             }
             installJob(out->doc);
@@ -342,22 +341,14 @@ void App::relinkOpen() {
 void App::relinkTo(const std::string& model_path) {
     if (!relink_.doc) return;
     auto d = relink_.doc;
-    const int id = relink_.part;
+    const std::string was = relink_.model_path;
     relink_ = RelinkDialog{};
     try {
-        fruit::LoadedModel m = fruit::loadModel(model_path);
-        const Part* part = d->findPart(id);
-        const bool changed = part && meshHash(m.mesh) != meshHash(part->mesh());
-        // Changed since: the job uses the new file, and its supports go out of date.
-        auto model = changed ? makePartModel(std::move(m)) : nullptr;
-        d->editParts([&](PartsEdit& e) {
-            if (PartState* s = e.find(id)) {
-                s->path = model_path;
-                if (model) s->model = model;
-            }
-        });
+        // Every part from that file; one it changed under takes the new file, and its supports go out of date.
+        // Parts made in the app have no file, and keep what was made.
+        const int changed = relinkParts(*d, was, model_path, fruit::loadModel(model_path));
         d->clearHistory();  // undo can't go back to the old file
-        if (changed) log::info("relinked to a changed model: " + model_path);
+        if (changed > 0) log::info("relinked to a changed model: " + model_path);
     } catch (const std::exception& e) {
         showError("Couldn't read that model", std::string(e.what()) + " The job keeps its own copy.");
     }

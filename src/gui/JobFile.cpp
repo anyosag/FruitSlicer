@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 
 #include <miniz.h>
@@ -426,9 +427,10 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     if (const int sel = j.value("selected", 0); sel >= 0 && sel < static_cast<int>(doc->partCount()))
         doc->select(doc->parts()[static_cast<std::size_t>(sel)].id());
     doc->low_points = fruit::countLowPoints(doc->placed(), doc->placement().on_plate);
-    // The first part whose file has gone, to ask where it is now.
+    // The first part whose file has gone, to ask where it is now. A part made
+    // in the app (cut, split, merged, labelled) has no file to look for.
     for (const Part& part : doc->parts())
-        if (part.path().empty() || !fs::exists(part.path())) {
+        if (!part.path().empty() && !fs::exists(part.path())) {
             out.model_missing = true;
             out.model_path = part.path();
             out.part = part.id();
@@ -515,6 +517,27 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     return out;
 }
 
+int relinkParts(Document& doc, const std::string& was, const std::string& now, fruit::LoadedModel found) {
+    if (was.empty()) return 0;
+    const std::uint64_t hash = meshHash(found.mesh);
+    std::shared_ptr<const PartModel> model;            // the file's mesh now: one for every part that takes it
+    std::map<const PartModel*, bool> same;              // copies share their mesh: hashed once
+    int changed = 0;
+    doc.editParts([&](PartsEdit& e) {
+        for (PartState& s : e.parts()) {
+            if (s.path != was || !s.model) continue;
+            s.path = now;
+            const auto it = same.try_emplace(s.model.get(), false);
+            if (it.second) it.first->second = meshHash(s.model->model.mesh) == hash;
+            if (it.first->second) continue;
+            if (!model) model = makePartModel(std::move(found));
+            s.model = model;
+            ++changed;
+        }
+    });
+    return changed;
+}
+
 std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     std::vector<std::string> out;
     if (a.parts != b.parts) {
@@ -526,7 +549,11 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     } else {
         if (a.revision != b.revision)
             out.push_back(b.parts.size() > 1 ? "moved, turned or resized parts" : "moved, turned or resized the model");
-        if (a.model_paths != b.model_paths) out.push_back("found the model in its new place");
+        // A path that went ("" now) is a part made in the app, told above as a change to it.
+        bool found = false;
+        for (std::size_t i = 0; i < a.model_paths.size() && i < b.model_paths.size(); ++i)
+            found = found || (a.model_paths[i] != b.model_paths[i] && !b.model_paths[i].empty());
+        if (found) out.push_back("found the model in its new place");
     }
     if (a.parts == b.parts && (a.orient_settings != b.orient_settings || a.orient_decided != b.orient_decided))
         out.push_back("changed how it stands");

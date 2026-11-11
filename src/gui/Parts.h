@@ -94,7 +94,8 @@ std::shared_ptr<const PartModel> makePartModel(fruit::LoadedModel m);
 struct PartState {
     int id = -1;                             // stable in the job; given by the job
     std::string name;                        // shown in the Parts list
-    std::string path;                        // the file it came from ("" when made in the app)
+    std::string path;                        // the file it came from ("" when made in the app: cut, split,
+                                             // merged, labelled... relinking that file leaves it alone)
     std::shared_ptr<const PartModel> model;  // its mesh
     fruit::Placement placement;              // where it sits (the lift is the job's)
 };

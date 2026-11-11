@@ -256,8 +256,7 @@ ToolReport splitPart(const Document& doc, PartsEdit& e, int part_id) {
         n2.name = base + " " + std::to_string(i + 1);
         if (std::find(names.begin(), names.end(), n2.name) != names.end()) n2.name = numberedName(n2.name, names);
         names.push_back(n2.name);
-        n2.path = src->path();
-        n2.model = makePartModel(fruit::prepareModel(std::move(pieces[i]), false));
+        n2.model = makePartModel(fruit::prepareModel(std::move(pieces[i]), false));  // no file: made in the app
         n2.placement = src->placement();
         if (!b.empty()) n2.placement.offset = {b.center().x, b.center().y};
         const int id = e.add(std::move(n2));
@@ -318,10 +317,10 @@ ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>&
     int shells_before = 0;
     for (const Part* p : chosen) shells_before += shellsOf(*p);
     const std::string name = chosen.front()->name();
-    const std::string path = chosen.front()->path();
     const fruit::Placement place = inPlace(joined, chosen.front()->placement());
     for (const Part* p : chosen) e.remove(p->id());
-    const int id = e.add(NewPart{name, path, makePartModel(fruit::prepareModel(std::move(joined), false)), place});
+    // Made in the app: it has no file of its own (finding one part's file again must not bring that back).
+    const int id = e.add(NewPart{name, "", makePartModel(fruit::prepareModel(std::move(joined), false)), place});
     e.selected = id;
     r.changed = true;
     r.done = r.wanted;
