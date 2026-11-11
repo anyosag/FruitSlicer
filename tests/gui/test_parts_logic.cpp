@@ -606,3 +606,26 @@ TEST_CASE("Parts: what each place needs looks at every part", "[gui][parts]") {
     CHECK(markFor(*doc, Step::Model) == Mark::Problem);
     CHECK(mainButton(doc.get()).enabled == false);
 }
+
+TEST_CASE("Parts: after an undo the placed mesh is made again, at the earlier revision", "[gui][parts]") {
+    // The pick tree points into the placed mesh. It was once kept by the job's revision alone: an undo
+    // brings back an earlier revision, but not the mesh object that tree was made over (an undo step
+    // keeps no meshes it can make again), so a click after an undo could read freed memory. It is now
+    // kept by the mesh itself, which is the same object while nothing changes and another after.
+    const auto doc = jobOf({partOf(cube(10), "a")});
+    const auto m0 = doc->placedShared();
+    CHECK(doc->placedShared() == m0);
+    CHECK(&doc->placed() == m0.get());
+    const int r0 = doc->revision();
+    fruit::Placement p = doc->placement();
+    p.offset = {20, 0};
+    doc->edit(p);
+    const auto m1 = doc->placedShared();
+    CHECK(m1 != m0);
+    doc->undo();
+    CHECK(doc->revision() == r0);
+    const auto m2 = doc->placedShared();
+    CHECK(m2 != m0);  // the earlier revision, another mesh
+    CHECK(m2 != m1);
+    CHECK(m2->bbox().center().x == Approx(m0->bbox().center().x));
+}

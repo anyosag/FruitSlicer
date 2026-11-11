@@ -83,10 +83,12 @@ void App::removePart(int id) {
 }
 
 const fruit::AabbTree& App::pickTree() {
-    if (!pick_tree_ || pick_doc_ != doc_.get() || pick_revision_ != doc_->revision()) {
-        pick_tree_ = std::make_shared<fruit::AabbTree>(doc_->placed());
-        pick_doc_ = doc_.get();
-        pick_revision_ = doc_->revision();
+    // Keyed by the placed mesh itself, held here. The tree points into it: after an undo the job's
+    // revision is an earlier one again, but the mesh the tree was made over may have been freed.
+    std::shared_ptr<const fruit::TriangleMesh> mesh = doc_->placedShared();
+    if (!pick_tree_ || pick_mesh_ != mesh) {
+        pick_tree_ = std::make_shared<fruit::AabbTree>(*mesh);
+        pick_mesh_ = std::move(mesh);
     }
     return *pick_tree_;
 }

@@ -533,8 +533,7 @@ private:
     void runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,
                   std::function<bool(const ShapeOutcome&)> install, Tool tool);
     std::shared_ptr<fruit::AabbTree> pick_tree_;
-    const void* pick_doc_ = nullptr;
-    int pick_revision_ = -1;
+    std::shared_ptr<const fruit::TriangleMesh> pick_mesh_;  // what it was made over, kept while it is used
     const fruit::AabbTree& pickTree();  // over the job's placed mesh, made again when it changes
     std::vector<std::vector<TipEdit>> tip_undo_, tip_redo_;  // edit lists, while editing
     // Puts in a new edit list (undoable) and rebuilds the tips; `select`

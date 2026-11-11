@@ -177,6 +177,11 @@ public:
     // (printer coordinates), and its outline (kept up to date while
     // dragging). The mesh is made when first asked for.
     const fruit::TriangleMesh& placed() const;
+    // The same mesh, shared: for a cache that must tell when it is another one (the pick tree).
+    std::shared_ptr<const fruit::TriangleMesh> placedShared() const {
+        placed();
+        return placed_;
+    }
     const fruit::BBox3& placedBox() const { return box_; }
     // The part (an index into parts()) a face of placed() belongs to.
     int partOfFace(std::size_t face) const;
