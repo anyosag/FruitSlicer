@@ -6,6 +6,13 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 #include <filesystem>
+#include <string>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
+#endif
 
 #include "Document.h"
 #include "Layers.h"
@@ -20,8 +27,10 @@ using namespace gui;
 
 namespace {
 
+// A folder of this test process's own: ctest runs the cases side by side,
+// and a shared box.stl could be read while another case rewrites it.
 std::filesystem::path tmp(const char* name) {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_print_tests";
+    const auto dir = std::filesystem::temp_directory_path() / ("fruit_print_tests_" + std::to_string(getpid()));
     std::filesystem::create_directories(dir);
     return dir / name;
 }
@@ -272,4 +281,38 @@ TEST_CASE("Height correction: a sample at another layer height gets it in its ow
     CHECK(r.check.layers == 103);
     CHECK(r.check.checksums_ok);
     CHECK(r.volume_matches);
+}
+
+TEST_CASE("Height correction: changing it cuts the layers again, not the supports", "[gui][print][correction]") {
+    const auto doc = boxOnPlate(0.10);
+    auto sup = std::make_shared<SupportResult>();
+    sup->choices = doc->supports.choices;
+    sup->edits = doc->supports.edits;
+    doc->supports.result = sup;
+    doc->supports.result_revision = doc->revision();
+    doc->supports.result_settings = doc->supportSettings();
+    doc->layers.result = std::make_shared<const LayerResult>(sliceLayers(*doc, {}, 0.0, fruit::JobControl::none()));
+    doc->layers.for_supports = doc->supports.result;
+    REQUIRE(doc->layersFresh());
+    doc->saved = doc->stamp();
+    const int rev = doc->revision();
+
+    fruit::Placement p = doc->placement();
+    p.height_correction = 0.15;
+    doc->edit(p);
+    CHECK(doc->revision() == rev);  // the supports are still up to date
+    CHECK(doc->supports.fresh(doc->revision(), doc->supportSettings()));
+    CHECK_FALSE(doc->layersFresh());  // 3 layers now, the layers were cut with 2
+    CHECK(doc->unsaved());
+
+    doc->undo();
+    CHECK(doc->placement().height_correction == Approx(0.10));
+    CHECK(doc->layersFresh());
+    CHECK_FALSE(doc->unsaved());
+
+    // Anything else about how it sits still puts the supports out of date.
+    p = doc->placement();
+    p.offset = {5, 0};
+    doc->edit(p);
+    CHECK(doc->revision() != rev);
 }

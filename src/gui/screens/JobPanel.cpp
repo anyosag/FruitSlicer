@@ -179,7 +179,7 @@ void jobSection(App& app, Document* doc) {
             const double k = part.placement().scale;
             model_ml += part.check().volume_ml * k * k * k;
         }
-        if (doc->layers.fresh(doc->supports.result)) resin = strf("%.1f ml with supports", doc->layers.result->resin_ml);
+        if (doc->layersFresh()) resin = strf("%.1f ml with supports", doc->layers.result->resin_ml);
         else if (doc->supports.result && doc->supports.fresh(doc->revision(), doc->supportSettings()))
             resin = strf("%.1f ml + %.1f ml of supports", model_ml, doc->supports.result->support_ml);
         else resin = strf("%.1f ml for the model", model_ml);

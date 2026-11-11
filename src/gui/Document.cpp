@@ -77,20 +77,24 @@ void Document::changed() {
     face_start_.clear();
 }
 
-void Document::setPlacement(std::size_t i, const fruit::Placement& p) {
+bool Document::setPlacement(std::size_t i, const fruit::Placement& p) {
     Part& part = parts_[i];
+    fruit::Placement same = p;
+    same.height_correction = part.placement().height_correction;
+    const bool shape = !(same == part.placement());  // more than the height correction changed
     const bool lift = !sameLift(p, part.placement());
     part.s_.placement = p;
     part.update(printer);
-    part.revision_ = ++last_revision_;
+    if (shape) part.revision_ = ++last_revision_;
     if (lift)  // the lift is the job's
         for (std::size_t j = 0; j < parts_.size(); ++j) {
             if (j == i) continue;
             takeLift(parts_[j].s_.placement, p);
             parts_[j].update(printer);
-            parts_[j].revision_ = ++last_revision_;
+            if (shape) parts_[j].revision_ = ++last_revision_;
         }
     changed();
+    return shape;
 }
 
 void Document::prepare() const {
@@ -218,8 +222,7 @@ int Document::orientSettings() const {
 
 void Document::place(const fruit::Placement& p) {
     if (parts_.empty()) return;
-    setPlacement(static_cast<std::size_t>(selected_), p);
-    revision_ = ++last_revision_;
+    if (setPlacement(static_cast<std::size_t>(selected_), p)) revision_ = ++last_revision_;
     prepare();
 }
 
@@ -258,8 +261,7 @@ void Document::beginDrag() {
 
 void Document::preview(const fruit::Placement& p) {
     if (!dragging() || p == placement()) return;
-    setPlacement(static_cast<std::size_t>(selected_), p);
-    revision_ = ++last_revision_;
+    if (setPlacement(static_cast<std::size_t>(selected_), p)) revision_ = ++last_revision_;
 }
 
 namespace {
@@ -405,6 +407,11 @@ int newGeometryId() {
     return next_id++;
 }
 
+bool Document::layersFresh() const {
+    const int base = parts_.empty() ? 0 : placement().heightCorrectionLayers(kLayerHeight);
+    return layers.fresh(supports.result, static_cast<std::size_t>(base));
+}
+
 JobStamp Document::stamp() const {
     JobStamp s;
     for (const Part& p : parts_) {
@@ -413,6 +420,7 @@ JobStamp Document::stamp() const {
         s.orient_decided.push_back(orientOf(p.id()).decided);
     }
     s.revision = revision_;
+    s.height_correction = parts_.empty() ? 0.0 : placement().height_correction;
     s.orient_settings = orientSettings();
     s.supports = supports.result.get();
     s.choices = supports.choices;

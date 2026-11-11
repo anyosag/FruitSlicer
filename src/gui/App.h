@@ -623,6 +623,7 @@ private:
     std::vector<fruit::TriangleMesh> tip_meshes_;      // one per tip kind
     int scene_key_ = 0;
     std::shared_ptr<const SupportResult> sliced_for_;  // last slicing started (it may have been cancelled)
+    int sliced_base_ = -1;                             // its height correction, in layers
     unsigned layer_tex_ = 0;
     LayerImage layer_image_;
     std::shared_ptr<const LayerResult> layer_tex_result_;

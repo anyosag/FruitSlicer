@@ -225,7 +225,7 @@ void App::remember(const Document& d) {
     r.path = d.job_path;
     r.name = d.name;
     const auto& s = d.supports;
-    r.state = d.layers.fresh(s.result) ? "layers cut" : s.fresh(d.revision(), d.supportSettings()) ? "supports ready"
+    r.state = d.layersFresh() ? "layers cut" : s.fresh(d.revision(), d.supportSettings()) ? "supports ready"
                                                                                                     : "placed";
     if (opts_.deterministic) {
         r.when = "today";
@@ -623,11 +623,14 @@ void App::maintain() {
     // The Collisions check (several parts) gives way: the work below cancels it, and it starts again after.
     const auto busy = [this] { return jobs_.busy() && !checkingCollisions(); };
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
-        // Cut the layers for the current supports, once per supports result.
+        // Cut the layers for the current supports, once per supports result
+        // and height correction.
         const auto& sup = doc_->supports.result;
-        if (sup && !doc_->layers.fresh(sup) && sliced_for_ != sup &&
+        const int base = doc_->placement().heightCorrectionLayers(kLayerHeight);
+        if (sup && !doc_->layersFresh() && (sliced_for_ != sup || sliced_base_ != base) &&
             doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) {
             sliced_for_ = sup;
+            sliced_base_ = base;
             auto snap = std::make_shared<const Document>(*doc_);
             auto out = std::make_shared<LayerResult>();
             const double raft = doc_->placement().on_plate ? 0.0 : sup->tree.raft_top;
@@ -2811,7 +2814,7 @@ void App::keys() {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) advanced_open_ = false;
         return;
     }
-    if (screen_ == Screen::Job && inLayersMode(step_) && doc_ && doc_->layers.fresh(doc_->supports.result)) {
+    if (screen_ == Screen::Job && inLayersMode(step_) && doc_ && doc_->layersFresh()) {
         const int now = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(doc_->layers.result->biggest);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setLayer(now + 1);
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setLayer(now - 1);

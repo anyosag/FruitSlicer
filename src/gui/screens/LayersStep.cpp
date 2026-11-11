@@ -248,7 +248,7 @@ void layersMode(App& app, Document& doc, ImVec2 size) {
         return;
     }
     const bool cutting = app.jobs().busy() && app.jobs().progress().name == "Cutting layers";
-    if (cutting || !doc.layers.fresh(doc.supports.result)) {
+    if (cutting || !doc.layersFresh()) {
         if (cutting) slicingCard(app, ImVec2(ImGui::GetContentRegionAvail().x, size.y));
         else {
             beginPanel("layers_wait", ImVec2(0, size.y), col::App, ImVec2(24, 24));

@@ -407,7 +407,7 @@ void statusBar(App& app) {
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(all ? "Every option fits the plate" : "An option does not fit the plate however it is turned", fonts().regular,
              size::Body, col::TextSecondary);
-    } else if (doc && inLayersMode(app.step()) && doc->layers.fresh(doc->supports.result)) {
+    } else if (doc && inLayersMode(app.step()) && doc->layersFresh()) {
         const LayerResult& lr = *doc->layers.result;
         const bool fits = fitsPlate(app.printer(), lr.bounds);  // as Before you save checks it
         const ImVec2 wp = ImGui::GetWindowPos();

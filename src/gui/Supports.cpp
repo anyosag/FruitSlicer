@@ -1218,11 +1218,7 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
                         v.floating.empty() ? "" : fmt("%.0f islands above the first layer have nothing under them",
                                                       static_cast<double>(v.floating.size()))});
     if (p.on_plate)
-        r.checks.push_back({true, "Stands on the plate",
-                            p.heightCorrectionLayers(0.05) > 0
-                                ? fmt("No raft: the model's flat side is its first layer, with %.2f mm added for the squash",
-                                      p.heightCorrectionAdded(0.05))
-                                : std::string("No raft: the model's flat side is its first layer")});
+        r.checks.push_back({true, "Stands on the plate", "No raft: the model's flat side is its first layer"});
     else
         r.checks.push_back({v.first_layer_islands <= 1, "Raft comes off in one piece",
                             v.first_layer_islands <= 1 ? ""

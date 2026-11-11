@@ -17,7 +17,7 @@ Need needFor(const Document& d, Step s) {
             if (!d.fits()) return Need::Fit;
             if (!d.supports.result) return Need::Supports;
             if (!d.supports.fresh(d.revision(), d.supportSettings())) return Need::FreshSupports;
-            if (s == Step::Print && !d.layers.fresh(d.supports.result)) return Need::Layers;
+            if (s == Step::Print && !d.layersFresh()) return Need::Layers;
             return Need::Nothing;
         }
     }
@@ -30,7 +30,7 @@ Mark markFor(const Document& d, Step s) {
         case Step::Model: return d.fits() ? Mark::None : Mark::Problem;
         case Step::Orient: return d.orientDecided() ? Mark::Done : Mark::None;
         case Step::Supports: return fresh ? Mark::Done : Mark::None;
-        case Step::Layers: return fresh && d.layers.fresh(d.supports.result) ? Mark::Done : Mark::None;
+        case Step::Layers: return fresh && d.layersFresh() ? Mark::Done : Mark::None;
         case Step::Print:
             return fresh && d.print.saved && d.layers.result && d.print.saved_from == d.layers.result ? Mark::Done
                                                                                                       : Mark::None;
@@ -65,7 +65,7 @@ MainButton mainButton(const Document* d) {
     const bool fits = d->fits();
     if (!d->supports.result) return {MainAction::MakeSupports, fits};
     if (!d->supports.fresh(d->revision(), d->supportSettings())) return {MainAction::RemakeSupports, fits};
-    if (d->layers.fresh(d->supports.result)) return {MainAction::ShowLayers, true};
+    if (d->layersFresh()) return {MainAction::ShowLayers, true};
     return {MainAction::Slice, true};
 }
 
