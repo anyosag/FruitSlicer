@@ -213,7 +213,8 @@ void collisionsLine(App& app, const Document& d) {
         return;
     }
     checkLine("collisions", Tick::Ok, "No parts overlap or touch",
-              strf("%d pairs checked: none is closer than %g mm.", r->pairs_checked, r->min_gap));
+              r->pairs_checked == 1 ? strf("Checked where they are now: they are %g mm or more apart.", r->min_gap)
+                                    : strf("%d pairs checked: none is closer than %g mm.", r->pairs_checked, r->min_gap));
 }
 
 void checksTab(App& app, Document* doc) {

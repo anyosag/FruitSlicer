@@ -185,19 +185,19 @@ void cutPanel(App& app, Document& doc) {
         ImGui::PopID();
     }
     ImGui::Dummy(ImVec2(0, 2));
-    const char* help = c.axis == CutAxis::Z   ? "A flat cut at a height above the plate."
+    const char* help = c.axis == CutAxis::Z   ? "A flat cut, level with the plate: below it, and above it."
                        : c.axis == CutAxis::X ? "An upright cut at a place along X: left of it, and right of it."
                                               : "An upright cut at a place along Y: in front of it, and behind it.";
     text(help, fonts().regular, size::Help, col::TextMuted, true);
     ImGui::Dummy(ImVec2(0, 8));
 
     const CutRange r = cutRange(part, c.axis);
-    text(c.axis == CutAxis::Z ? "Height from the plate (mm)" : c.axis == CutAxis::X ? "Position along X (mm)" : "Position along Y (mm)",
+    text(c.axis == CutAxis::Z ? "Height (mm)" : c.axis == CutAxis::X ? "Position along X (mm)" : "Position along Y (mm)",
          fonts().semibold, size::Body, col::Text);
     ImGui::Dummy(ImVec2(0, 2));
     if (positionRow(&c.position, r.lo, r.hi)) s.note.clear();
     if (c.axis == CutAxis::Z)
-        text(strf("Measured from where it stands, not from the raft. This part is %.1f mm tall.", r.hi - r.lo).c_str(),
+        text(strf("Up from the part's lowest point, not from the plate or the raft. This part is %.1f mm tall.", r.hi - r.lo).c_str(),
              fonts().regular, size::Help, col::TextMuted, true);
     else
         text(strf("From the plate's centre. This part spans %.1f to %.1f mm.", r.lo, r.hi).c_str(), fonts().regular,
@@ -216,7 +216,8 @@ void cutPanel(App& app, Document& doc) {
     if (choiceRow("keep_above", (up + " only").c_str(), c.keep == CutKeep::Above)) c.keep = CutKeep::Above;
     if (choiceRow("keep_below", (down + " only").c_str(), c.keep == CutKeep::Below)) c.keep = CutKeep::Below;
     ImGui::Dummy(ImVec2(0, 4));
-    text(c.keep == CutKeep::Both ? "The pieces are laid out beside each other, each with room for its raft."
+    text(c.keep == CutKeep::Both ? strf("The %s piece stays where it is; the other goes beside the parts, with room for its raft.",
+                                        cutSideWord(c.axis, false)).c_str()
                                  : "The other side is thrown away. Undo brings it back.",
          fonts().regular, size::Help, col::TextMuted, true);
     ImGui::Dummy(ImVec2(0, 4));
