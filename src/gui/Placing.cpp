@@ -126,6 +126,70 @@ fruit::Placement mirroredAlong(const fruit::Placement& p, int axis) {
     return q;
 }
 
+fruit::Vec3 printerDirection(const fruit::Placement& p, const fruit::Vec3& model_dir) {
+    return fruit::normalized(fruit::placementRotation(p).applyLinear(model_dir));
+}
+
+fruit::Placement laidFaceDown(const fruit::Placement& p, const fruit::Vec3& normal) {
+    const fruit::Vec3 w = printerDirection(p, normal);
+    const fruit::Vec3 down{0, 0, -1};
+    const double c = std::clamp(fruit::dot(w, down), -1.0, 1.0);
+    // Q turns w to down by the shortest way: about w x down, by the angle between them.
+    fruit::Vec3 axis = fruit::cross(w, down);
+    const double s = fruit::norm(axis);
+    const double ang = std::atan2(s, c);
+    if (s < 1e-12) {
+        if (c > 0) return p;  // already down
+        axis = {1, 0, 0};     // straight up: any horizontal axis will do
+    } else {
+        axis = axis * (1.0 / s);
+    }
+    // Rodrigues: Q = cI + sin(a) [axis]x + (1 - c) axis axis^T, with c = cos(a).
+    const double ca = std::cos(ang), sa = std::sin(ang);
+    fruit::Transform q;
+    const double u[3] = {axis.x, axis.y, axis.z};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) q.m[i][j] = (i == j ? ca : 0.0) + (1 - ca) * u[i] * u[j];
+    q.m[0][1] -= sa * u[2];
+    q.m[1][0] += sa * u[2];
+    q.m[0][2] += sa * u[1];
+    q.m[2][0] -= sa * u[1];
+    q.m[1][2] -= sa * u[0];
+    q.m[2][1] += sa * u[0];
+    const fruit::Transform r = fruit::Transform::rotationXYZ(p.rotation_deg.x, p.rotation_deg.y, p.rotation_deg.z);
+    fruit::Placement out = p;
+    out.rotation_deg = eulerNear(r.then(q), p.rotation_deg);
+    return out;
+}
+
+std::string faceDirectionName(const fruit::Vec3& dir) {
+    const fruit::Vec3 d = fruit::normalized(dir);
+    const double k = std::cos(20.0 * std::numbers::pi / 180.0);
+    if (d.z <= -k) return "Bottom";
+    if (d.z >= k) return "Top";
+    if (d.y <= -k) return "Front";
+    if (d.y >= k) return "Back";
+    if (d.x <= -k) return "Left side";
+    if (d.x >= k) return "Right side";
+    return "Slanted face";
+}
+
+std::vector<std::string> faceNames(const std::vector<fruit::Vec3>& dirs) {
+    std::vector<std::string> names;
+    for (const fruit::Vec3& d : dirs) names.push_back(faceDirectionName(d));
+    std::vector<std::string> out = names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (std::count(names.begin(), names.end(), names[i]) < 2) continue;
+        const auto n = std::count(names.begin(), names.begin() + static_cast<std::ptrdiff_t>(i) + 1, names[i]);
+        out[i] = names[i] + " " + std::to_string(n);
+    }
+    return out;
+}
+
+bool facesDown(const fruit::Vec3& dir) {
+    return fruit::normalized(dir).z <= -std::cos(0.5 * std::numbers::pi / 180.0);
+}
+
 fruit::Placement turnedQuarter(const fruit::TriangleMesh& model, const fruit::Placement& p,
                                const fruit::PrinterProfile& printer) {
     fruit::Placement q = p;

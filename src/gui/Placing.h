@@ -7,6 +7,8 @@
 // dialog's choice gives. Plain functions, so the tests can check them.
 
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "geometry/Transform.h"
 #include "mesh/ModelCheck.h"
@@ -45,6 +47,23 @@ fruit::Vec3 eulerXYZ(const fruit::Transform& r);
 // follows most closely) with the rotation changed to match, so Rotate
 // goes on turning it the way the view shows.
 fruit::Placement mirroredAlong(const fruit::Placement& p, int axis);
+
+// `p` turned by the shortest turn that takes the direction `normal` (a model
+// direction: a flat face's outward normal) to straight down, through the
+// mirror and rotation `p` has now. Its middle (offset) and lift stay, so
+// the model ends with that face on the plate (placementTransform puts the
+// lowest point at the lift). The rotation fields show the new turn.
+fruit::Placement laidFaceDown(const fruit::Placement& p, const fruit::Vec3& normal);
+// Where a model direction points on the plate, with `p`'s mirror and turn.
+fruit::Vec3 printerDirection(const fruit::Placement& p, const fruit::Vec3& model_dir);
+// What to call a face that points `dir` (printer directions): Bottom, Top,
+// Front, Back, Left side, Right side, or Slanted face (not within 20° of one).
+std::string faceDirectionName(const fruit::Vec3& dir);
+// The same for several faces, numbered when two or more share a name
+// ("Slanted face 1", "Slanted face 2").
+std::vector<std::string> faceNames(const std::vector<fruit::Vec3>& dirs);
+// Whether a face pointing `dir` already lies on the plate (down, within 0.5°).
+bool facesDown(const fruit::Vec3& dir);
 
 // `p` turned a quarter about the vertical, then slid back onto the plate if
 // the turn put it over the edge.

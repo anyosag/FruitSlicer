@@ -123,6 +123,13 @@ int Document::partOfFace(std::size_t face) const {
     return static_cast<int>(it - face_start_.begin()) - 1;
 }
 
+std::size_t Document::faceStart(int part_index) const {
+    placed();
+    return part_index >= 0 && static_cast<std::size_t>(part_index) < face_start_.size()
+               ? face_start_[static_cast<std::size_t>(part_index)]
+               : 0;
+}
+
 int Document::partNear(const fruit::Vec3& at) const {
     if (parts_.empty()) return -1;
     if (parts_.size() == 1) return parts_[0].id();

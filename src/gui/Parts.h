@@ -63,6 +63,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <mutex>
 #include <memory>
 #include <optional>
 #include <string>
@@ -71,6 +72,7 @@
 
 #include "geometry/Polygon.h"
 #include "geometry/Transform.h"
+#include "mesh/FlatFaces.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
 #include "mesh/Placement.h"
@@ -85,6 +87,13 @@ struct PartModel {
     fruit::LoadedModel model;  // the mesh, and what the repair did to it
     fruit::MeshCheck check;    // what the check found
     int geometry_id = 0;       // unique: the 3D view uploads each one once
+    // The flat faces it can rest on, found the first time they are asked for
+    // and kept (the mesh never changes). In the mesh's own coordinates.
+    const fruit::FlatFaces& flatFaces() const;
+
+private:
+    mutable std::once_flag flat_once_;
+    mutable fruit::FlatFaces flat_;
 };
 
 // A model checked, with a new geometry id.
@@ -119,6 +128,7 @@ public:
     const fruit::TriangleMesh& mesh() const { return s_.model->model.mesh; }  // its own coordinates
     const fruit::MeshCheck& check() const { return s_.model->check; }
     int geometryId() const { return s_.model->geometry_id; }
+    const fruit::FlatFaces& flatFaces() const { return s_.model->flatFaces(); }  // the faces it can rest on (model coordinates)
     const fruit::Placement& placement() const { return s_.placement; }
     // Names this part's mesh and placement: a new number for every change to
     // either, the same again when undo goes back. Numbers are never shared

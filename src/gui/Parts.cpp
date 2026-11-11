@@ -19,6 +19,11 @@ std::shared_ptr<const PartModel> makePartModel(fruit::LoadedModel m) {
     return p;
 }
 
+const fruit::FlatFaces& PartModel::flatFaces() const {
+    std::call_once(flat_once_, [this] { flat_ = fruit::findFlatFaces(model.mesh); });
+    return flat_;
+}
+
 void Part::update(const fruit::PrinterProfile& printer) {
     const fruit::TriangleMesh& m = mesh();
     transform_ = fruit::placementTransform(m, s_.placement);

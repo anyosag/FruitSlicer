@@ -185,6 +185,9 @@ public:
     const fruit::BBox3& placedBox() const { return box_; }
     // The part (an index into parts()) a face of placed() belongs to.
     int partOfFace(std::size_t face) const;
+    // Where that part's faces begin in placed(): a face there is its mesh's
+    // face `face - faceStart(part)`.
+    std::size_t faceStart(int part_index) const;
     // The part (an id) whose surface is nearest a point (printer
     // coordinates): the one a tip or a hole there is on.
     int partNear(const fruit::Vec3& at) const;
