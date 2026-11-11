@@ -83,6 +83,12 @@ void App::finishCollisions() {
     jobs_.wait();
 }
 
+void App::settleCollisions() {
+    if (jobs_.busy() && !checkingCollisions()) return;  // other work: a script waits for that itself
+    startCollisionCheck();
+    if (checkingCollisions()) jobs_.wait();
+}
+
 void App::selectCollision(int part) {
     selectPart(part);
     // Ask for it in view: nothing else to do, the selected part is drawn lit.

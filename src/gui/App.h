@@ -189,6 +189,7 @@ public:
     bool checkingCollisions() const;
     double& collisionGap() { return collision_gap_; }
     void finishCollisions();          // scripts and tests: starts the check if it is due and waits for it
+    void settleCollisions();          // the same, only when no other work is running (a script's shot)
     void selectCollision(int part);   // from the Collisions tab: selects the part, shows it
     // The handles in the 3D view (Model, and Orient's settings): a drag is
     // previewed as it goes and is one undo step when it ends.

@@ -872,6 +872,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             for (int i = 0, n = step["frames"].get<int>(); i < n; ++i) render();
         } else if (step.contains("shot")) {
             const std::string name = step["shot"].get<std::string>();
+            // The Collisions check the app starts by itself with several parts
+            // is let finish, so the picture doesn't depend on how fast it was.
+            app.settleCollisions();
             // Render until the picture stops changing (layout settles over a
             // frame or two), at most 12 frames.
             std::vector<uint8_t> prev = render(), cur;
