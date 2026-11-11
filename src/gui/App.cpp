@@ -279,6 +279,7 @@ void App::openJobFile(const std::string& path) {
 
 void App::installJob(std::shared_ptr<Document> d) {
     doc_ = std::move(d);
+    forgetJobTools();
     checking_.reset();
     advanced_ = doc_->supports.choices.advanced;
     applyPrinterSetup();
@@ -380,6 +381,7 @@ void App::placeChecked() {
     adding_part_ = false;
     checking_->place(healthPlacement());
     doc_ = std::move(checking_);
+    forgetJobTools();
     checking_.reset();
     doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
     applyResin(*doc_, newJobResin());  // its print settings and measured values

@@ -762,3 +762,18 @@ TEST_CASE("Jobs: finding a moved file relinks every part from it; parts made in 
     saveJob(only, *doc);
     CHECK_FALSE(openJob(only, kPrinter, fruit::JobControl::none()).model_missing);
 }
+
+TEST_CASE("Parts: what was kept for a job is never taken for another job's", "[gui][parts]") {
+    // Two jobs with as many parts end at the same revision, and the second may sit where the first was:
+    // neither tells them apart, sameJob does.
+    auto first = jobOf({partOf(cube(10), "a"), partOf(cube(10), "b", {30, 0})});
+    const std::weak_ptr<const Document> seen = first;
+    CHECK(sameJob(seen, first));
+    const int rev = first->revision();
+    first.reset();
+    const auto second = jobOf({partOf(cube(10), "a"), partOf(cube(10), "b", {30, 0})});
+    CHECK(second->revision() == rev);
+    CHECK_FALSE(sameJob(seen, second));
+    CHECK_FALSE(sameJob(std::weak_ptr<const Document>{}, second));
+    CHECK_FALSE(sameJob(seen, nullptr));
+}

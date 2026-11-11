@@ -268,6 +268,13 @@ private:
 // A new value for Document::geometry_id.
 int newGeometryId();
 
+// Whether `seen` was taken from `job` (what a tool or a check kept is for this
+// job). Never true for another job, even one that came to sit at the same
+// address after the first was closed: its address and revision can repeat.
+inline bool sameJob(const std::weak_ptr<const Document>& seen, const std::shared_ptr<const Document>& job) {
+    return job && !seen.owner_before(job) && !job.owner_before(seen);
+}
+
 // Reads, checks and places a model file (worker thread): a job with that
 // one part.
 std::shared_ptr<Document> loadDocument(const std::string& path, const fruit::PrinterProfile& printer,

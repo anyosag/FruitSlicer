@@ -201,7 +201,7 @@ struct ShapeState {
     Tool note_tool = Tool::None;
     int note_revision = -1;    // the job's revision when it was written: an edit or an undo since hides it
     bool running = false;      // one of them is working in the background
-    const void* doc = nullptr; // the job these are for: another job starts them again
+    std::weak_ptr<const Document> doc;  // the job these are for: another job starts them again (sameJob)
     std::string job;           // its name (the job runner's)
 };
 

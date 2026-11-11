@@ -7,6 +7,7 @@
 //
 // Every function says plainly in its report what it did and what it did not.
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -58,7 +59,7 @@ struct PartsToolState {
     ToolReport last;           // the last thing a tool did
     int last_tool = 0;         // which tool made it (a Tool value)
     int last_revision = -1;    // the job's revision just after it: the report shows until it changes
-    const void* last_doc = nullptr;
+    std::weak_ptr<const Document> last_doc;  // the job it was for (sameJob: revisions repeat across jobs)
 };
 
 }  // namespace gui

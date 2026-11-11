@@ -21,7 +21,7 @@ void runTool(App& app, Document& doc, Tool which, const std::function<ToolReport
     PartsToolState& st = app.partsTools();
     st.last = report;
     st.last_tool = static_cast<int>(which);
-    st.last_doc = &doc;
+    st.last_doc = app.document();
     st.last_revision = doc.revision();
     log::info(report.message);
 }
@@ -70,7 +70,7 @@ void App::mergeParts(bool fuse) {
 }
 
 const CollisionReport* App::collisions() const {
-    if (!doc_ || doc_->partCount() < 2 || !collision_report_ || collision_doc_ != doc_.get() ||
+    if (!doc_ || doc_->partCount() < 2 || !collision_report_ || !sameJob(collision_doc_, doc_) ||
         collision_report_->revision != doc_->revision() || collision_report_->min_gap != collision_gap_)
         return nullptr;
     return collision_report_.get();
@@ -94,14 +94,26 @@ void App::selectCollision(int part) {
     // Ask for it in view: nothing else to do, the selected part is drawn lit.
 }
 
+void App::forgetJobTools() {
+    // Part ids start again at 0 in every job, and revisions repeat: nothing here may carry over.
+    collision_report_.reset();
+    collision_doc_.reset();
+    collision_tried_ = -1;
+    collision_tried_doc_.reset();
+    parts_tools_.merge_off.clear();
+    parts_tools_.last = ToolReport{};
+    parts_tools_.last_doc.reset();
+    shape();  // the shape tools' settings and note start again too
+}
+
 void App::startCollisionCheck() {
     if (!doc_ || doc_->partCount() < 2 || screen_ != Screen::Job) return;
     const int rev = doc_->revision();
     if (collisions()) return;
-    if (collision_tried_ == rev && collision_tried_doc_ == doc_.get() && collision_tried_gap_ == collision_gap_) return;
+    if (collision_tried_ == rev && sameJob(collision_tried_doc_, doc_) && collision_tried_gap_ == collision_gap_) return;
     if (jobs_.busy() && !checkingCollisions()) return;  // the work running now comes first
     collision_tried_ = rev;
-    collision_tried_doc_ = doc_.get();
+    collision_tried_doc_ = doc_;
     collision_tried_gap_ = collision_gap_;
     const int generation = ++collision_generation_;
     auto snap = std::make_shared<const Document>(*doc_);
@@ -125,7 +137,7 @@ void App::startCollisionCheck() {
                 return;
             }
             collision_report_ = std::make_shared<const CollisionReport>(std::move(*out));
-            collision_doc_ = d.get();
+            collision_doc_ = d;
             log::info("collisions: " + std::to_string(collision_report_->problems.size()) + " pairs to look at");
         });
 }

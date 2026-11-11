@@ -74,11 +74,11 @@ void App::runShape(const std::string& job, std::function<ShapeOutcome(const frui
 }
 
 ShapeState& App::shape() {
-    if (shape_.doc != doc_.get()) {
+    if (!sameJob(shape_.doc, doc_)) {
         const bool running = shape_.running;  // work started for the job left is still to finish
         shape_ = ShapeState{};
         shape_.running = running;
-        shape_.doc = doc_.get();
+        shape_.doc = doc_;
     }
     return shape_;
 }

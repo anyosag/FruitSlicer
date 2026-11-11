@@ -521,13 +521,14 @@ private:
     MeasureState measure_;
     PartsToolState parts_tools_;
     std::shared_ptr<const CollisionReport> collision_report_;
-    const void* collision_doc_ = nullptr;  // the job it is for
-    int collision_tried_ = -1;             // the revision whose check was started
-    const void* collision_tried_doc_ = nullptr;
+    std::weak_ptr<const Document> collision_doc_;  // the job it is for (sameJob: an address can repeat)
+    int collision_tried_ = -1;                     // the revision whose check was started
+    std::weak_ptr<const Document> collision_tried_doc_;
     double collision_tried_gap_ = 0;
     double collision_gap_ = kMinPartGap;
     int collision_generation_ = 0;
     void startCollisionCheck();
+    void forgetJobTools();  // another job is open: what the tools kept was for the one before
     ShapeState shape_;
     void runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,
                   std::function<bool(const ShapeOutcome&)> install, Tool tool);

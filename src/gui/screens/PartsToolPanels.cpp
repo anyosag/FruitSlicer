@@ -37,7 +37,7 @@ bool numberRow(const char* label, const char* id, double* v, const char* unit, d
 // What the last tool did, while the job is as it left it.
 void reportCard(App& app, const Document& doc, Tool t) {
     const PartsToolState& st = app.partsTools();
-    if (st.last_doc != &doc || st.last_revision != doc.revision() || st.last_tool != static_cast<int>(t) ||
+    if (!sameJob(st.last_doc, app.document()) || st.last_revision != doc.revision() || st.last_tool != static_cast<int>(t) ||
         st.last.message.empty())
         return;
     ImGui::Dummy(ImVec2(0, 6));
