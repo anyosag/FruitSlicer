@@ -18,14 +18,41 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
         run: command -v ninja || brew install ninja  # leaves a self-hosted Mac's Homebrew alone
+      - name: Set up the compiler cache (Linux)
+        if: runner.os == 'Linux'
+        id: ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ matrix.os }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-${{ matrix.os }}-
+      - name: Point ccache at it (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" ccache --zero-stats
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          ${{ runner.os == 'Linux' && '-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' || '' }}
       - name: Build
         run: cmake --build build -j
+      - name: Save the compiler cache (Linux)
+        # Saved straight after the build, so a run whose screenshots differ keeps it too.
+        if: always() && runner.os == 'Linux' && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ matrix.os }}-${{ github.sha }}
+      - name: How much the compiler cache saved (Linux)
+        if: runner.os == 'Linux'
+        run: ccache --show-stats
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 4
       - name: Smoke test CLI
@@ -40,7 +67,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install Ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache
+      - name: Set up the compiler cache
+        id: ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-
+      - name: Point ccache at it
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" ccache --zero-stats
       - name: Allow TSan's memory layout
         # Recent kernels randomise mmap addresses more than TSan supports.
         run: sudo sysctl vm.mmap_rnd_bits=28
@@ -48,8 +88,18 @@ jobs:
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build -j
+      - name: Save the compiler cache
+        # Saved straight after the build, so a run whose screenshots differ keeps it too.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+      - name: How much the compiler cache saved
+        run: ccache --show-stats
       - name: Test
         env:
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
@@ -70,14 +120,36 @@ jobs:
           build-essential cmake ninja-build git ca-certificates pkgconf
           libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev
           libxfixes-dev libxtst-dev libxkbcommon-dev libgl-dev libegl-dev
-          libgl1-mesa-dri libglx-mesa0 xvfb xauth python3-pil
+          libgl1-mesa-dri libglx-mesa0 xvfb xauth python3-pil ccache
       - uses: actions/checkout@v5
+      - name: Set up the compiler cache
+        id: ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-
+      - name: Point ccache at it
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" ccache --zero-stats
       - name: Renderer version
         run: dpkg-query -W libgl1-mesa-dri mesa-libgallium
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build -j --target fruitslicer_app fruit_gui_tests
+      - name: Save the compiler cache
+        # Saved straight after the build, so a run whose screenshots differ keeps it too.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+      - name: How much the compiler cache saved
+        run: ccache --show-stats
       - name: App logic tests
         run: ./build/tests/fruit_gui_tests
       - name: Self-test
