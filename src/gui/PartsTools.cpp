@@ -313,6 +313,10 @@ ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>&
         }
     }
     const int pieces = fruit::ops::countPieces(joined);
+    // Fusing joins every shell that meets another (overlapping or touching) into one; a part may have
+    // several shells of its own, so fewer pieces than all the parts' shells is what tells it happened.
+    int shells_before = 0;
+    for (const Part* p : chosen) shells_before += shellsOf(*p);
     const std::string name = chosen.front()->name();
     const std::string path = chosen.front()->path();
     const fruit::Placement place = inPlace(joined, chosen.front()->placement());
@@ -323,9 +327,9 @@ ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>&
     r.done = r.wanted;
     if (!fuse) {
         r.message = "Joined " + std::to_string(r.wanted) + " parts as one part, " + name + ". The shells are as they were.";
-    } else if (pieces >= r.wanted) {
-        r.message = "Joined " + std::to_string(r.wanted) + " parts as one part. None of them overlapped, so nothing was fused: "
-                    "it still has " + std::to_string(pieces) + " shells.";
+    } else if (pieces >= shells_before) {
+        r.message = "Joined " + std::to_string(r.wanted) + " parts as one part. None of them overlapped or touched, so "
+                    "nothing was fused: it still has " + std::to_string(pieces) + " shells.";
     } else {
         r.message = "Fused " + std::to_string(r.wanted) + " parts into one part, " + name + ". It has " +
                     std::to_string(pieces) + (pieces == 1 ? " shell." : " shells.");

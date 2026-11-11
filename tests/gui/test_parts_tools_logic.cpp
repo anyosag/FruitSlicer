@@ -260,6 +260,28 @@ TEST_CASE("Merge: Fuse where they overlap makes one solid", "[gui][parts-tools]"
     CHECK(doc->part().box().min.z == Approx(doc->placement().lift()));
 }
 
+TEST_CASE("Merge: Fuse says it fused when a part with a loose bit of its own overlaps another", "[gui][parts-tools]") {
+    // a has two shells (its outline from x -22.5 to 22.5, the first box -22.5 to -12.5); b overlaps that first box
+    // by 7.5 mm. Fused: that box and b are one shell, a's other box another, so two shells for two parts.
+    const auto doc = jobOf({partOf(twoShells(), "a", {0, 0}), partOf(box(10, 10, 10), "b", {-15, -1})});
+    REQUIRE(shellsOf(doc->parts()[0]) == 2);
+    std::vector<int> ids = {doc->parts()[0].id(), doc->parts()[1].id()};
+    ToolReport rep;
+    REQUIRE(doc->editParts([&](PartsEdit& e) { rep = mergeParts(*doc, e, ids, true); }));
+    REQUIRE(doc->partCount() == 1);
+    CHECK(shellsOf(doc->part()) == 2);
+    CHECK(doc->part().mesh().volume() == Approx(1000 + 15 * 12 * 8 + 1000 - 750).epsilon(1e-6));
+    CHECK_THAT(rep.message, ContainsSubstring("Fused 2 parts"));
+    CHECK_THAT(rep.message, !ContainsSubstring("nothing was fused"));
+
+    // The same part far from b: nothing meets, and it says so with all three shells.
+    const auto apart = jobOf({partOf(twoShells(), "a", {0, 0}), partOf(box(10, 10, 10), "b", {0, 60})});
+    ids = {apart->parts()[0].id(), apart->parts()[1].id()};
+    REQUIRE(apart->editParts([&](PartsEdit& e) { rep = mergeParts(*apart, e, ids, true); }));
+    CHECK_THAT(rep.message, ContainsSubstring("nothing was fused"));
+    CHECK_THAT(rep.message, ContainsSubstring("3 shells"));
+}
+
 TEST_CASE("Merge: fusing parts that do not overlap says nothing was fused; an open mesh stops it", "[gui][parts-tools]") {
     const auto apart = jobOf({partOf(box(10, 10, 10), "a", {-30, 0}), partOf(box(10, 10, 10), "b", {30, 0})});
     std::vector<int> ids = {apart->parts()[0].id(), apart->parts()[1].id()};
