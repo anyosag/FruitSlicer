@@ -16,7 +16,7 @@
     {"undo": 1}, {"shot": "g2_undone"},
     {"remove_part": 3},
     {"select_part": 2}, {"tool": "rotate"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "g2_rotate_second"},
-    {"tool": "hollow"}, {"wait": "jobs"}, {"shot": "g2_hollow"},
+    {"tool": "hollow"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "g2_hollow"},
     {"hollow": "apply"}, {"wait": "jobs"},
     {"supports": "now"}, {"wait": "jobs"}, {"shot": "g2_supports"},
     {"edit_tips": true}, {"view": "below"}, {"tip_tool": "add"},

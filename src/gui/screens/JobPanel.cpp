@@ -413,7 +413,7 @@ void mainArea(App& app, Document* doc) {
         if (linkButton("Cancel")) app.jobs().cancel();
         return;
     }
-    const bool busy = app.jobs().busy();
+    const bool busy = app.jobs().busy() && !app.checkingCollisions();  // the check gives way to it
     if (!mb.enabled || (busy && doc)) {
         // Greyed: what it would do, and (in the note above) why not yet.
         const ImVec2 p = ImGui::GetCursorScreenPos();

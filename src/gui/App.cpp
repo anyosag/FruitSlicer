@@ -627,8 +627,9 @@ void App::clearSides() {
 void App::maintain() {
     if (placing() && !handlesShown()) endPlacing();  // its handles went (a search finished, another screen)
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
-    startCollisionCheck();  // with several parts: do they overlap?
-    if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !jobs_.busy()) {
+    // The Collisions check (several parts) gives way: the work below cancels it, and it starts again after.
+    const auto busy = [this] { return jobs_.busy() && !checkingCollisions(); };
+    if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result.
         const auto& sup = doc_->supports.result;
         if (sup && !doc_->layers.fresh(sup) && sliced_for_ != sup &&
@@ -664,10 +665,10 @@ void App::maintain() {
         }
         return;
     }
-    if (!doc_ || screen_ != Screen::Job || step_ != Step::Orient || jobs_.busy()) return;
+    if (!doc_ || screen_ != Screen::Job || step_ != Step::Orient || busy()) return;
     if (orient_view_ == OrientView::Hollow) {
         planHollowPreview();
-        if (jobs_.busy()) return;
+        if (busy()) return;
     }
     // How the selected part sits (part revisions are never shared between parts).
     OrientState& o = doc_->orient();
@@ -773,7 +774,7 @@ void App::planHollowPreview() {
     if (hs.planFresh(rev)) return;
     if (hollow_tried_revision_ == rev && hollow_tried_choices_ == hs.choices && hollow_tried_manual_ == hs.manual)
         return;  // being made, or it failed
-    if (jobs_.busy() && !planningHollow()) return;
+    if (jobs_.busy() && !planningHollow() && !checkingCollisions()) return;
     hollow_tried_revision_ = rev;
     hollow_tried_choices_ = hs.choices;
     hollow_tried_manual_ = hs.manual;
@@ -2696,7 +2697,8 @@ void App::keys() {
     }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     // ⌘↩: the Job panel's main button (Make supports, Slice…).
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job && !jobs_.busy()) {
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job &&
+        (!jobs_.busy() || checkingCollisions())) {
         const MainButton mb = mainButton(doc_.get());
         if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
             supportsNow();
@@ -2793,6 +2795,7 @@ void App::keys() {
 
 void App::frame() {
     maintain();
+    if (!placing()) startCollisionCheck();  // with several parts: do they overlap? (after the work above)
     // Scripted captures keep the drive list they set up: the machine's own
     // drives would change the pictures.
     if (screen_ == Screen::Job && step_ == Step::Print && !opts_.deterministic) {
