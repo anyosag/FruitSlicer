@@ -880,6 +880,40 @@ void App::setSupportChoices(const SupportChoices& c) {
     if (doc_) doc_->supports.choices = c;
 }
 
+namespace {
+fruit::Placement withLift(fruit::Placement p, double mm) {
+    p.elevation = std::clamp(std::round(mm), 1.0, 10.0);
+    return p;
+}
+}  // namespace
+
+void App::setLift(double mm) {
+    if (doc_) doc_->edit(withLift(doc_->placement(), mm));
+}
+
+void App::beginLift() {
+    if (doc_) doc_->beginDrag();
+}
+
+void App::previewLift(double mm) {
+    if (doc_ && doc_->dragging()) doc_->preview(withLift(doc_->placement(), mm));
+}
+
+void App::endLift() {
+    if (doc_ && doc_->dragging()) doc_->endDrag();
+}
+
+void App::resetQuickSupport() {
+    if (!doc_) return;
+    SupportChoices c = doc_->supports.choices;
+    resetQuick(c);
+    setSupportChoices(c);
+    fruit::Placement p = doc_->placement();
+    p.on_plate = false;
+    p.elevation = fruit::Placement{}.elevation;
+    doc_->edit(p);
+}
+
 void App::setAdvanced(const std::string& key, double value) {
     if (!doc_) return;
     SupportChoices c = doc_->supports.choices;
@@ -895,6 +929,9 @@ void App::setAdvanced(const std::string& key, double value) {
                 SupportChoices none;
                 none.resin = c.resin;
                 none.profile = c.profile;
+                none.hold = c.hold;  // the quick sliders' values are part of what the row reads as
+                none.amount = c.amount;
+                none.sturdy = c.sturdy;
                 const double own = f.get(supportConfig(doc_->placement(), none), treeConfig(none));
                 if (std::abs(v - own) < 1e-9) c.advanced.erase(key);
                 else c.advanced[key] = v;
