@@ -176,6 +176,16 @@ public:
     // partsTools().last.
     PartsToolState& partsTools() { return parts_tools_; }
     void duplicateParts();            // copies of the selected part, partsTools().copies of them
+    void duplicateParts(int n);       // n copies of the selected part
+    // The menu for one part, from a double-click or right-click on it in the
+    // Parts list or the view: Duplicate, More copies…, Remove. It opens at
+    // (x, y) on screen; the view's overlay takes the request and draws it.
+    void openPartMenu(int id, float x, float y);
+    int takePartMenu();                  // the part a menu was asked for (-1: none), once
+    int partMenuPart() const { return part_menu_part_; }
+    float partMenuX() const { return part_menu_x_; }
+    float partMenuY() const { return part_menu_y_; }
+    void duplicateOnce(int id);          // the menu's Duplicate: one copy of part `id`, beside it
     void arrangeAll();                // every part, partsTools().arrange_gap apart
     void splitSelected();             // the selected part into its shells
     void mergeParts(bool fuse);       // the parts not left out (partsTools().merge_off), joined or fused
@@ -520,6 +530,8 @@ private:
     int dragging_tip_ = -1;
     MeasureState measure_;
     PartsToolState parts_tools_;
+    int part_menu_request_ = -1, part_menu_part_ = -1;
+    float part_menu_x_ = 0, part_menu_y_ = 0;
     std::shared_ptr<const CollisionReport> collision_report_;
     std::weak_ptr<const Document> collision_doc_;  // the job it is for (sameJob: an address can repeat)
     int collision_tried_ = -1;                     // the revision whose check was started

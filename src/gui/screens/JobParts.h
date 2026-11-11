@@ -67,6 +67,9 @@ void partsList(App& app, Document* doc);
 // The 3D view's part of it: a click on a part selects it, when there are
 // several and no tool takes the click (PartsList.cpp).
 void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size);
+// A part's menu (Duplicate, More copies…, Remove), when one was asked for:
+// drawn over the view, opened where the double-click or right-click was.
+void partMenu(App& app, Document& doc);
 // A tool's title, with the selected part's name (cut short) when there are
 // several and the tool acts on that one: "Move · bracket 2".
 std::string toolTitleFor(const Document& doc, const char* title, bool on_part);

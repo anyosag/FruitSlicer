@@ -615,6 +615,7 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
             case Step::Print: break;
         }
         partsPick(app, d, origin, size);
+        partMenu(app, d);
     }
     viewCube(app, origin, size);
     topPill(app, doc, origin, size);

@@ -34,10 +34,35 @@ void runTool(App& app, Document& doc, Tool which, const std::function<ToolReport
 
 }  // namespace
 
-void App::duplicateParts() {
-    if (!doc_) return;
-    const int n = parts_tools_.copies;
+void App::duplicateParts() { duplicateParts(parts_tools_.copies); }
+
+void App::duplicateParts(int n) {
+    if (!doc_ || n < 1) return;
     runTool(*this, *doc_, Tool::Duplicate, [n](const Document& d, PartsEdit& e) { return duplicatePart(d, e, n, kPartGap); });
+}
+
+void App::openPartMenu(int id, float x, float y) {
+    if (!doc_ || !doc_->findPart(id)) return;
+    selectPart(id);  // what the menu does, it does to this part
+    part_menu_request_ = id;
+    part_menu_x_ = x;
+    part_menu_y_ = y;
+}
+
+int App::takePartMenu() {
+    const int id = part_menu_request_;
+    part_menu_request_ = -1;
+    if (id >= 0) part_menu_part_ = id;
+    return id;
+}
+
+void App::duplicateOnce(int id) {
+    part_menu_part_ = -1;  // done with the menu: it closes
+    if (!doc_ || !doc_->findPart(id) || placing()) return;
+    selectPart(id);
+    duplicateParts(1);
+    // No room beside it: the Duplicate tool says so, and offers more room through Arrange.
+    if (parts_tools_.last.done < 1) openTool(Tool::Duplicate);
 }
 
 void App::arrangeAll() {

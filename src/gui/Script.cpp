@@ -403,6 +403,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const std::string a = step["mirror"].get<std::string>();
             if (a != "x" && a != "y" && a != "z") throw std::runtime_error("unknown mirror axis " + a);
             app.mirrorModel(a == "x" ? 0 : a == "y" ? 1 : 2);
+        } else if (step.contains("part_menu") || step.contains("part_menu_duplicate")) {
+            // {"part_menu": n} opens part n's menu (1-based) where a double-click on its row would, at
+            // "at": [x, y] (default beside the Job panel's Parts list at 1440 x 900);
+            // {"part_menu_duplicate": n} is that menu's Duplicate.
+            const bool dup = step.contains("part_menu_duplicate");
+            const int n = (dup ? step["part_menu_duplicate"] : step["part_menu"]).get<int>();
+            if (!app.document() || n < 1 || n > static_cast<int>(app.document()->partCount()))
+                throw std::runtime_error("no part " + std::to_string(n));
+            const int id = app.document()->parts()[static_cast<std::size_t>(n - 1)].id();
+            if (dup) app.duplicateOnce(id);
+            else if (step.contains("at")) app.openPartMenu(id, step["at"][0].get<float>(), step["at"][1].get<float>());
+            else app.openPartMenu(id, 850, 236);
         } else if (step.contains("duplicate")) {
             app.partsTools().copies = std::clamp(step["duplicate"].get<int>(), 1, kMaxCopies);
             app.duplicateParts();

@@ -37,7 +37,8 @@ void applyFix(App& app, const Part& part) {
     else app.scaleToFit();
 }
 
-// One part on the plate: a click selects it; the cross (with several) removes it.
+// One part on the plate: a click selects it; a double-click or a right-click
+// opens its menu (Duplicate…); the cross (with several) removes it.
 void partRow(App& app, const Document& doc, const Part& part) {
     ImGui::PushID(part.id());
     const float w = ImGui::GetContentRegionAvail().x;
@@ -47,7 +48,9 @@ void partRow(App& app, const Document& doc, const Part& part) {
     const float cross_w = several ? 28 : 0;
     const bool clicked = ImGui::InvisibleButton("select", ImVec2(w - cross_w, kRowH));
     const bool hovered = ImGui::IsItemHovered();
-    if (several) tooltip(selected ? "Selected: the tools act on it" : "Select it: the tools act on the selected part");
+    tooltip(several ? (selected ? "Selected: the tools act on it. Double-click for its menu (Duplicate…)."
+                                : "Select it: the tools act on the selected part. Double-click for its menu.")
+                    : "Double-click for its menu: Duplicate, more copies.");
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (selected || hovered) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + kRowH), selected ? col::Active : col::Card, 10);
     if (selected && several) dl->AddRect(p, ImVec2(p.x + w, p.y + kRowH), col::BorderStrong, 10);
@@ -61,6 +64,10 @@ void partRow(App& app, const Document& doc, const Part& part) {
     dl->AddText(ImVec2(p.x + 40, p.y + 24), col::TextMuted, dims(part.fit().size).c_str());
     ImGui::PopFont();
     if (clicked) app.selectPart(part.id());
+    if (hovered && (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+        const ImVec2 m = ImGui::GetIO().MousePos;
+        app.openPartMenu(part.id(), m.x, m.y);
+    }
     if (several) {
         ImGui::SetCursorScreenPos(ImVec2(p.x + w - 26, p.y + (kRowH - 22) / 2));
         const ImVec2 q = ImGui::GetCursorScreenPos();
@@ -178,7 +185,7 @@ std::string toolTitleFor(const Document& doc, const char* title, bool on_part) {
 }
 
 void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
-    if (doc.partCount() < 2 || app.editingTips() || app.placing() || app.hoverHandle() != Handle::None) return;
+    if (doc.parts().empty() || app.editingTips() || app.placing() || app.hoverHandle() != Handle::None) return;
     // Not while a click there puts a hole in.
     if (app.step() == Step::Orient && app.orientView() == OrientView::Hollow && !doc.hollow.choices.auto_holes) return;
     if (app.step() == Step::Orient && app.orientView() == OrientView::Results) return;
@@ -191,13 +198,56 @@ void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     const ImVec2 m = io.MousePos;
     const bool inside = m.x >= origin.x && m.y >= origin.y && m.x < origin.x + size.x && m.y < origin.y + size.y &&
                         ImGui::IsWindowHovered();  // not over a panel floating on the view
-    if (!inside || !ImGui::IsMouseReleased(ImGuiMouseButton_Left) || io.MouseDragMaxDistanceSqr[0] >= 9 ||
-        ImGui::IsAnyItemHovered())
-        return;
+    if (!inside || ImGui::IsAnyItemHovered()) return;
+    // A click (not a drag, which turns the view) selects; a double-click, or
+    // a right-click (not a drag, which moves the view), opens the part's menu.
+    const bool click = ImGui::IsMouseReleased(ImGuiMouseButton_Left) && io.MouseDragMaxDistanceSqr[0] < 9;
+    const bool menu = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ||
+                      (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[1] < 9);
+    if (!menu && !(click && doc.partCount() > 1)) return;
     const float nx = 2 * (m.x - origin.x) / size.x - 1, ny = 1 - 2 * (m.y - origin.y) / size.y;
     V3 o, d;
     app.camera().ray(nx, ny, size.x / std::max(1.0f, size.y), &o, &d);
-    if (const int id = app.pickPart({o.x, o.y, o.z}, {d.x, d.y, d.z}); id >= 0) app.selectPart(id);
+    const int id = app.pickPart({o.x, o.y, o.z}, {d.x, d.y, d.z});
+    if (id < 0) return;
+    if (menu) app.openPartMenu(id, m.x, m.y);
+    else app.selectPart(id);
+}
+
+void partMenu(App& app, Document& doc) {
+    if (app.takePartMenu() >= 0) {
+        ImGui::SetNextWindowPos(ImVec2(app.partMenuX(), app.partMenuY()));
+        ImGui::OpenPopup("##part_menu");
+    }
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, col::Panel);
+    ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10);
+    if (ImGui::BeginPopup("##part_menu")) {
+        const Part* part = doc.findPart(app.partMenuPart());
+        if (!part) {
+            ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 220);
+            text(part->name().c_str(), fonts().semibold, size::Help, col::TextMuted);
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(220, 2));
+            const int id = part->id();
+            if (ImGui::Selectable("Duplicate")) app.duplicateOnce(id);
+            tooltip("One copy beside it, clear of the other parts");
+            if (ImGui::Selectable("More copies…")) {
+                app.selectPart(id);
+                app.openTool(Tool::Duplicate);
+            }
+            ImGui::Separator();
+            if (ImGui::Selectable("Remove", false, doc.partCount() > 1 ? 0 : ImGuiSelectableFlags_Disabled))
+                app.removePart(id);
+            tooltip(doc.partCount() > 1 ? "Undo puts it back" : "A job keeps at least one part");
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 }
 
 }  // namespace gui::screens::parts

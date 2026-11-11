@@ -27,6 +27,7 @@
 //   {"step": "model" | "orient" | "supports" | "layers" | "print"} (any place, any time) {"layer": n (1-based)} {"show_below": bool}
 //   {"mirror": "x" | "y" | "z"} the selected part (left to right, front to back, top to bottom)
 //   {"duplicate": n} n copies of the selected part {"arrange": gap_mm} every part laid out (gap optional)
+//   {"part_menu": n} part n's menu (double-click, right-click) open {"part_menu_duplicate": n} its Duplicate
 //   {"split": true} the selected part into its shells {"merge_pick": [n, ...]} (1-based) only these are joined next
 //   {"merge_parts": "join" | "fuse"} {"collisions": "wait" | gap_mm} wait for the check, or set its least gap
 //   {"measure": [[x, y, z], [x, y, z]]} clicks, in mm on the plate, each put on the surface along the line to the

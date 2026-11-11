@@ -1,0 +1,11 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "job"},
+    {"open": "@demo-bar"}, {"wait": "jobs"}, {"health": "full"}, {"health": "place"}, {"wait": "jobs"},
+    {"part_menu": 1}, {"frames": 2}, {"shot": "g2_part_menu_one"},
+    {"part_menu_duplicate": 1}, {"frames": 2}, {"collisions": "wait"}, {"shot": "g2_part_menu_duplicated"},
+    {"part_menu": 2}, {"frames": 2}, {"shot": "g2_part_menu_two"}
+  ]
+}
