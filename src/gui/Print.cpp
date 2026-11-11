@@ -74,8 +74,15 @@ PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_
     p.layer_height = fruit::gooLayerHeight(p.setup.header);
     const double job_h = layers.layers ? layers.layers->layer_height : kLayerHeight;
     p.reslice = std::abs(p.layer_height - job_h) > 1e-6;
-    p.height = layers.top;
-    p.layers = static_cast<std::size_t>(std::ceil(layers.top / p.layer_height - 1e-9));
+    // The height correction is whole layers of the print file's height.
+    const int base = doc.placement().heightCorrectionLayers(p.layer_height);
+    p.base_layers = static_cast<std::size_t>(base);
+    const double extra = base * p.layer_height - layers.base_layers * job_h;
+    p.height = layers.top + extra;
+    p.layers = static_cast<std::size_t>(std::ceil(p.height / p.layer_height - 1e-9));
+    fruit::BBox3 b = layers.bounds;
+    b.max.z += extra;
+    p.fits = fitsPlate(doc.printer, b);
     p.resin_ml = layers.resin_ml;
     fruit::GooExportOptions o;
     o.resin_density = p.density = resinDensity(s);
@@ -98,6 +105,8 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
     fruit::GooExportOptions o;
     o.sync_to_device = removable;
     o.resin_density = plan.density;
+    // On the plate: the height correction's layers, at the print file's height.
+    const int base = doc.placement().heightCorrectionLayers(fruit::gooLayerHeight(plan.setup.header));
     if (plan.reslice && layers.hollow) {
         // The same again at the sample's layer height: the model hollowed
         // or filled as before, with the same holes, and the supports.
@@ -105,12 +114,15 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
         HollowChoices c = layers.hollow->choices;
         c.auto_holes = false;
         const HollowPlan again = planHollow(doc, c, layers.hollow->holes, h, ctl.sub(0.0, 0.3));
-        const fruit::LayerStack print =
+        fruit::LayerStack print =
             fruit::unionLayers(*again.layers, fruit::sliceModel(supports, h, nullptr, 0, ctl.sub(0.3, 0.4)));
+        fruit::addBaseLayers(print, base);
         r.written = fruit::exportGooLayers(print, &all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.4, 0.85));
     } else if (plan.reslice) {
         // The sample's exposures are for its layer height: cut the layers again.
-        r.written = fruit::exportGoo(all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.0, 0.85));
+        fruit::LayerStack print = fruit::sliceModel(all, fruit::gooLayerHeight(plan.setup.header), nullptr, 0, ctl.sub(0.0, 0.4));
+        fruit::addBaseLayers(print, base);
+        r.written = fruit::exportGooLayers(print, &all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.4, 0.85));
     } else {
         r.written = fruit::exportGooLayers(*layers.layers, &all, plan.setup.header, plan.setup.grid, o, path,
                                            ctl.sub(0.0, 0.85));

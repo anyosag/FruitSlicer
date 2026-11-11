@@ -367,7 +367,7 @@ TEST_CASE("Parts: two parts slice into layers that hold both", "[gui][parts][slo
     const LayerResult r = sliceLayers(*doc, fruit::TriangleMesh{}, 0.0, fruit::JobControl::none());
     REQUIRE(r.layers);
     const fruit::LayerStack& ls = *r.layers;
-    CHECK(r.top == Approx(10).margin(0.06));
+    CHECK(r.top == Approx(10.1).margin(0.06));  // 10 mm and the usual 0.10 mm height correction
     const std::size_t low = ls.layerAt(2.5), high = ls.layerAt(7.5);
     CHECK(fruit::area(ls.slices[low]) == Approx(300).epsilon(0.01));  // both
     CHECK(fruit::area(ls.slices[high]) == Approx(100).epsilon(0.01));  // the cube alone
@@ -536,7 +536,12 @@ TEST_CASE("Jobs: a job saved before parts (version 2) still opens the same", "[g
         mz_zip_reader_end(&z);
         CHECK(k["version"] == 2);
         CHECK_FALSE(k.contains("parts"));
-        CHECK(k["placement"] == j["placement"]);
+        // Written now with the height correction (older FruitSlicers ignore it); the rest is as it was.
+        REQUIRE(k["placement"].contains("height_correction"));
+        CHECK(k["placement"]["height_correction"] == 0.1);
+        json placement = k["placement"];
+        placement.erase("height_correction");
+        CHECK(placement == j["placement"]);
         CHECK(k["orient"] == j["orient"]);
         CHECK(k["supports"]["edits"] == j["supports"]["edits"]);
         CHECK(k["hollow"]["holes"] == j["hollow"]["holes"]);

@@ -128,7 +128,7 @@ TEST_CASE("Print: a bar flat on the plate with tips just above it fits the plate
     CHECK(sup.size_with_supports.z == Approx(10.0).margin(1e-6));
     const LayerResult lr = sliceLayers(*doc, sup.mesh, 0.0, fruit::JobControl::none(), sup.hollow);
     CHECK(lr.bounds.min.z >= -1e-9);
-    CHECK(lr.bounds.size().z == Approx(10.0).margin(1e-6));
+    CHECK(lr.bounds.size().z == Approx(10.1).margin(1e-6));  // 10 mm and 0.10 mm of height correction
     CHECK(fitsPlate(doc->printer, lr.bounds));
     CHECK(planPrint(*doc, lr, 0.0, PrintSettings{}).fits);
 }
@@ -155,4 +155,121 @@ TEST_CASE("Print: cancelling while the file is read back leaves no file", "[gui]
     CHECK_THROWS_AS(savePrint(*doc, lr, {}, p, path, false, *ctl), fruit::Cancelled);
     CHECK(verifying);
     CHECK_FALSE(std::filesystem::exists(path));
+}
+
+namespace {
+
+std::shared_ptr<Document> boxOnPlate(double correction) {
+    const auto doc = box();
+    fruit::Placement p = doc->placement();
+    p.on_plate = true;
+    p.height_correction = correction;
+    doc->edit(p);
+    return doc;
+}
+
+PrintSettings typed() {
+    PrintSettings s;
+    s.exposure = 2.5;
+    s.bottom_exposure = 30;
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("Height correction: an on-plate job has n more layers, a raft job does not", "[gui][print][correction]") {
+    const std::size_t flat = sliceLayers(*boxOnPlate(0.0), {}, 0.0, fruit::JobControl::none()).layers->size();
+    CHECK(flat == 60);  // 3 mm at 0.05 mm
+    const auto doc = boxOnPlate(0.10);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    CHECK(lr.layers->size() == 62);
+    CHECK(lr.base_layers == 2);
+    CHECK(lr.top == Approx(3.1));
+    CHECK(lr.area.front() == Approx(80.0).margin(0.5));  // the first layer, copied
+    CHECK(lr.area[2] == Approx(80.0).margin(0.5));
+    CHECK(lr.resin_ml == Approx(0.248).margin(0.002));
+    CHECK(lr.bounds.max.z == Approx(3.1));
+    CHECK(lr.raft_layers == 0);
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, typed());
+    REQUIRE(plan.ready);
+    CHECK(plan.layers == 62);
+    CHECK(plan.height == Approx(3.1));
+    // 0.15 mm is 3 layers; the placed model is the same height either way.
+    const auto doc3 = boxOnPlate(0.15);
+    CHECK(sliceLayers(*doc3, {}, 0.0, fruit::JobControl::none()).layers->size() == 63);
+    CHECK(doc3->placed().bbox().max.z == Approx(3.0));
+    // A raft job (the box lifted 5 mm) is not corrected, whatever the setting.
+    const auto lifted = box();
+    fruit::Placement p = lifted->placement();
+    p.height_correction = 0.3;
+    lifted->edit(p);
+    const LayerResult raft = sliceLayers(*lifted, {}, 1.0, fruit::JobControl::none());
+    CHECK(raft.layers->size() == 160);
+    CHECK(raft.base_layers == 0);
+    CHECK(raft.raft_layers == 20);
+}
+
+TEST_CASE("Height correction: a taller print still has to fit the build height", "[gui][print][correction]") {
+    const auto doc = boxOnPlate(0.10);
+    LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    CHECK(planPrint(*doc, lr, 0.0, typed()).fits);
+    lr.bounds.max.z = doc->printer.build_z + 0.01;
+    CHECK_FALSE(planPrint(*doc, lr, 0.0, typed()).fits);
+    const fruit::PlateFit f = fruit::checkFit(doc->part().mesh(), doc->placement(), doc->printer);
+    CHECK(f.top == Approx(3.1));
+    // A model 0.05 mm short of the build height fits as it is, but not with 0.10 mm added under it.
+    const fruit::TriangleMesh tall = fruit::makeBox({0, 0, 0}, {10, 8, doc->printer.build_z - 0.05});
+    fruit::Placement p = doc->placement();
+    CHECK_FALSE(fruit::checkFit(tall, p, doc->printer).fits);
+    p.height_correction = 0;
+    CHECK(fruit::checkFit(tall, p, doc->printer).fits);
+}
+
+TEST_CASE("Height correction: the saved print file has the extra layers", "[gui][print][correction]") {
+    const auto doc = boxOnPlate(0.10);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    const PrintPlan p = planPrint(*doc, lr, 0.0, typed());
+    REQUIRE(p.ready);
+    const auto path = tmp("correct_box.goo").string();
+    const SaveResult r = savePrint(*doc, lr, {}, p, path, false, fruit::JobControl::none());
+    CHECK(r.written.layers == 62);
+    CHECK(r.check.layers == 62);
+    CHECK(r.check.checksums_ok);
+    CHECK(r.volume_matches);
+    CHECK(r.good);
+    CHECK(r.check.volume_mm3 == Approx(248.0).epsilon(0.02));  // 10 × 8 × 3.1 mm
+    const fruit::GooFileInfo back = fruit::readGoo(path);
+    REQUIRE(back.layers.size() == 62);
+    CHECK(back.rle[0] == back.rle[1]);
+    CHECK(back.rle[1] == back.rle[2]);
+
+    // Corrected by 0: the print is the model's own layers.
+    const auto none = boxOnPlate(0.0);
+    const LayerResult lr0 = sliceLayers(*none, {}, 0.0, fruit::JobControl::none());
+    const PrintPlan p0 = planPrint(*none, lr0, 0.0, typed());
+    const auto path0 = tmp("uncorrected_box.goo").string();
+    const SaveResult r0 = savePrint(*none, lr0, {}, p0, path0, false, fruit::JobControl::none());
+    CHECK(r0.written.layers == 60);
+    CHECK(r0.check.volume_mm3 == Approx(240.0).epsilon(0.02));
+}
+
+TEST_CASE("Height correction: a sample at another layer height gets it in its own layers", "[gui][print][correction]") {
+    const auto doc = boxOnPlate(0.10);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s;
+    s.sample_path = sample003();
+    s.sample = loadSample(s.sample_path);
+    const PrintPlan p = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(p.ready);
+    REQUIRE(p.reslice);
+    // 3 mm at 0.03 mm is 100 layers, and 0.10 mm is 3 layers of 0.03 mm (0.09 mm).
+    CHECK(p.base_layers == 3);
+    CHECK(p.layers == 103);
+    CHECK(p.height == Approx(3.09));
+    const auto path = tmp("correct_box_003.goo").string();
+    const SaveResult r = savePrint(*doc, lr, {}, p, path, false, fruit::JobControl::none());
+    CHECK(r.written.layers == 103);
+    CHECK(r.check.layers == 103);
+    CHECK(r.check.checksums_ok);
+    CHECK(r.volume_matches);
 }

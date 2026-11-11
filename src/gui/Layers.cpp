@@ -40,6 +40,13 @@ LayerResult sliceLayers(const Document& doc, const fruit::TriangleMesh& supports
     } else {
         ls = std::make_shared<fruit::LayerStack>(fruit::sliceModel(all, kLayerHeight, nullptr, 0, ctl.sub(0.0, 0.8)));
     }
+    // Standing on the plate: the printer squashes the first layers, so the print
+    // gets a few more of them under the model (the model itself is unchanged).
+    if (const int n = doc.placement().heightCorrectionLayers(kLayerHeight); n > 0 && ls->size()) {
+        fruit::addBaseLayers(*ls, n);
+        r.base_layers = static_cast<std::size_t>(n);
+        r.bounds.max.z += n * kLayerHeight;
+    }
     r.area.reserve(ls->size());
     for (const auto& s : ls->slices) r.area.push_back(std::max(0.0, fruit::area(s)));
     for (double a : r.area) r.resin_ml += a * ls->layer_height / 1000.0;

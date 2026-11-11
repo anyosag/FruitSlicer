@@ -182,7 +182,8 @@ fruit::LoadedModel modelFrom(const std::vector<std::uint8_t>& bytes, const json&
 }
 
 json placementJson(const fruit::Placement& p) {
-    json j = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation}, {"on_plate", p.on_plate}};
+    json j = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation}, {"on_plate", p.on_plate},
+               {"height_correction", p.height_correction}};
     if (p.mirrored()) j["mirror"] = {p.mirror_x, p.mirror_y, p.mirror_z};
     if (!p.centred()) j["offset"] = {p.offset.x, p.offset.y};
     return j;
@@ -194,6 +195,8 @@ fruit::Placement placementFrom(const json& pj) {
     p.rotation_deg = vecFrom(pj.at("rotation"));
     p.elevation = pj.value("elevation", 5.0);
     p.on_plate = pj.value("on_plate", false);
+    p.height_correction = std::clamp(pj.value("height_correction", fruit::Placement{}.height_correction), 0.0,
+                                     fruit::kMaxHeightCorrection);  // older jobs: the usual 0.10
     if (pj.contains("mirror") && pj["mirror"].is_array() && pj["mirror"].size() == 3) {  // older jobs: not mirrored
         auto flag = [&](int i) { return pj["mirror"][i].is_boolean() && pj["mirror"][i].get<bool>(); };
         p.mirror_x = flag(0), p.mirror_y = flag(1), p.mirror_z = flag(2);

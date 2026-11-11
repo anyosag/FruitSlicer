@@ -28,6 +28,12 @@ struct LayerStack {
 LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats = nullptr,
                       unsigned threads = 0, const JobControl& ctl = JobControl::none());
 
+// Puts `n` copies of layer 0 in front, so every layer moves up `n` layers
+// (a print that stands on the plate prints taller by `n` layers, to make up
+// for the squashed first layers). `sample_z` is kept as each layer's
+// mid-height. Does nothing for n <= 0 or an empty stack.
+void addBaseLayers(LayerStack& ls, int n);
+
 // Both stacks' layers together, as tall as the taller (a hollowed model's
 // layers with its supports'). Throws std::invalid_argument when the layer
 // heights differ.

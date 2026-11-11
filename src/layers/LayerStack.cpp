@@ -30,6 +30,15 @@ LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats*
     return ls;
 }
 
+void addBaseLayers(LayerStack& ls, int n) {
+    if (n <= 0 || ls.slices.empty()) return;
+    const auto k = static_cast<size_t>(n);
+    const Paths first = ls.slices.front();
+    ls.slices.insert(ls.slices.begin(), k, first);
+    ls.sample_z.assign(ls.slices.size(), 0.0);
+    for (size_t i = 0; i < ls.sample_z.size(); ++i) ls.sample_z[i] = (static_cast<double>(i) + 0.5) * ls.layer_height;
+}
+
 LayerStack unionLayers(const LayerStack& a, const LayerStack& b, unsigned threads) {
     if (a.size() && b.size() && std::abs(a.layer_height - b.layer_height) > 1e-9)
         throw std::invalid_argument("layers of different heights can't be put together");

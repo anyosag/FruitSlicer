@@ -903,6 +903,21 @@ void App::endLift() {
     if (doc_ && doc_->dragging()) doc_->endDrag();
 }
 
+namespace {
+fruit::Placement withHeightCorrection(fruit::Placement p, double mm) {
+    p.height_correction = std::clamp(std::round(mm * 100) / 100, 0.0, fruit::kMaxHeightCorrection);
+    return p;
+}
+}  // namespace
+
+void App::setHeightCorrection(double mm) {
+    if (doc_) doc_->edit(withHeightCorrection(doc_->placement(), mm));
+}
+
+void App::previewHeightCorrection(double mm) {
+    if (doc_ && doc_->dragging()) doc_->preview(withHeightCorrection(doc_->placement(), mm));
+}
+
 void App::resetQuickSupport() {
     if (!doc_) return;
     SupportChoices c = doc_->supports.choices;
@@ -911,6 +926,7 @@ void App::resetQuickSupport() {
     fruit::Placement p = doc_->placement();
     p.on_plate = false;
     p.elevation = fruit::Placement{}.elevation;
+    p.height_correction = fruit::Placement{}.height_correction;
     doc_->edit(p);
 }
 

@@ -687,6 +687,8 @@ struct GooCli {
     int bottom_layers = -1, transition_layers = -1, aa = 1;
     bool flip_x = false, flip_y = false;
     unsigned threads = 0;
+    bool on_plate = false;              // the model stands on the plate: add the height correction
+    double height_correction = 0.10;    // mm, used with on_plate
 };
 
 int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
@@ -721,7 +723,22 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     GooExportOptions eo;
     eo.aa_levels = o.aa;
     eo.threads = o.threads;
-    const GooExportResult res = exportGoo(mesh, h, grid, eo, o.out);
+    GooExportResult res;
+    if (o.on_plate) {
+        // Standing on the plate: the printer squashes the first layers, so
+        // copies of the first layer go under the model (whole layers).
+        Placement pl;
+        pl.on_plate = true;
+        pl.height_correction = o.height_correction;
+        const double lh = gooLayerHeight(h);
+        const int base = pl.heightCorrectionLayers(lh);
+        LayerStack layers = sliceModel(mesh, lh, nullptr, o.threads);
+        addBaseLayers(layers, base);
+        res = exportGooLayers(layers, &mesh, h, grid, eo, o.out);
+        r["height_correction"] = {{"mm", base * lh}, {"layers", base}};
+    } else {
+        res = exportGoo(mesh, h, grid, eo, o.out);
+    }
     r["output"] = o.out;
     r["layers"] = res.layers;
     r["bytes"] = res.bytes;
@@ -986,6 +1003,11 @@ int main(int argc, char** argv) {
         ->check(CLI::ExistingFile);
     goo->add_flag("--flip-x", gcli.flip_x, "Flip the image in X relative to the default orientation");
     goo->add_flag("--flip-y", gcli.flip_y, "Flip the image in Y relative to the default orientation");
+    goo->add_flag("--on-plate", gcli.on_plate, "The model stands on the build plate (no raft): add the height correction");
+    goo->add_option("--height-correction", gcli.height_correction,
+                    "With --on-plate: height added under the model for the squashed first layers (mm, as whole layers; "
+                    "0.10 is typical, not measured on your printer)")
+        ->check(CLI::Range(0.0, kMaxHeightCorrection));
     goo->add_option("--threads", gcli.threads, "Worker threads (0 = all cores)");
 
     bool goo_decode = false;
