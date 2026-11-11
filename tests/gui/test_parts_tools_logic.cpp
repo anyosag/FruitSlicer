@@ -380,3 +380,38 @@ TEST_CASE("Collisions: can be cancelled", "[gui][collisions]") {
     ctl.cancel();
     CHECK_THROWS_AS(checkCollisions(*doc, 2.0, ctl), fruit::Cancelled);
 }
+
+TEST_CASE("Merge: Fuse in two halves (the app's background job) gives what fusing at once does", "[gui][parts-tools]") {
+    const auto doc = jobOf({partOf(box(10, 10, 10), "a", {0, 0}), partOf(box(10, 10, 10), "b", {5, 0})});
+    const std::vector<int> ids = {doc->parts()[0].id(), doc->parts()[1].id()};
+    std::vector<std::pair<std::string, fruit::TriangleMesh>> meshes;
+    for (const Part& p : doc->parts()) meshes.emplace_back(p.name(), p.placed());
+
+    // Cancelled before it starts: nothing comes back.
+    const fruit::JobControl stopped;
+    stopped.cancel();
+    CHECK_THROWS_AS(fuseMeshes(meshes, stopped), fruit::Cancelled);
+
+    FuseResult f = fuseMeshes(meshes, fruit::JobControl::none());
+    REQUIRE(f.ok);
+    ToolReport rep;
+    REQUIRE(doc->editParts([&](PartsEdit& e) { rep = mergeFused(*doc, e, ids, std::move(f.mesh)); }));
+    REQUIRE(doc->partCount() == 1);
+    CHECK_THAT(rep.message, ContainsSubstring("Fused 2 parts"));
+    CHECK(doc->part().mesh().volume() == Approx(1500).epsilon(1e-6));
+    CHECK(doc->part().box().min.z == Approx(doc->placement().lift()));
+
+    // A part removed while it worked: nothing is applied, and it says so.
+    const auto two = jobOf({partOf(box(10, 10, 10), "a", {0, 0}), partOf(box(10, 10, 10), "b", {5, 0})});
+    std::vector<int> gone = {two->parts()[0].id(), two->parts()[1].id() + 100};
+    CHECK_FALSE(two->editParts([&](PartsEdit& e) { rep = mergeFused(*two, e, gone, fruit::TriangleMesh{}); }));
+    CHECK_THAT(rep.message, ContainsSubstring("changed while they were being fused"));
+    CHECK(two->partCount() == 2);
+
+    // An open mesh stops it with the reason, as before.
+    fruit::TriangleMesh open = box(10, 10, 10);
+    open.faces.pop_back();
+    const FuseResult bad = fuseMeshes({{"a", open}, {"b", meshes[1].second}}, fruit::JobControl::none());
+    CHECK_FALSE(bad.ok);
+    CHECK_THAT(bad.message, ContainsSubstring("Can't fuse: a"));
+}

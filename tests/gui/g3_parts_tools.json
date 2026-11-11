@@ -26,7 +26,7 @@
     {"split": true}, {"view": "angled"}, {"collisions": "wait"}, {"shot": "g3_split_done"},
     {"close_tool": true}, {"job_tab": "collisions"}, {"shot": "g3_collisions_pieces"},
     {"tool": "merge"}, {"merge_pick": [1, 2]}, {"shot": "g3_merge_fuse_panel"},
-    {"merge_parts": "fuse"}, {"collisions": "wait"}, {"shot": "g3_merge_fused"},
+    {"merge_parts": "fuse"}, {"wait": "jobs"}, {"collisions": "wait"}, {"shot": "g3_merge_fused"},
     {"undo": 1}, {"collisions": "wait"}, {"shot": "g3_merge_undone"}
   ]
 }

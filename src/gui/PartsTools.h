@@ -9,10 +9,12 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Document.h"
 #include "Parts.h"
+#include "core/JobControl.h"
 
 namespace gui {
 
@@ -47,6 +49,20 @@ ToolReport splitPart(const Document& doc, PartsEdit& e, int part_id);
 // they become one solid (Manifold's union); needs closed meshes.
 ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>& ids, bool fuse);
 
+// Fuse in two halves, so the app can do the slow one in the background.
+// fuseMeshes: Manifold's union of placed meshes (each with its part's name,
+// for the message), checking `ctl` between parts; ok false with the reason
+// in plain words when a mesh isn't closed or the union fails. mergeFused:
+// the parts `ids` become one part holding `fused` (what fuseMeshes made).
+struct FuseResult {
+    bool ok = false;
+    std::string message;
+    fruit::TriangleMesh mesh;
+};
+FuseResult fuseMeshes(const std::vector<std::pair<std::string, fruit::TriangleMesh>>& meshes,
+                      const fruit::JobControl& ctl);
+ToolReport mergeFused(const Document& doc, PartsEdit& e, const std::vector<int>& ids, fruit::TriangleMesh fused);
+
 // A name for a copy or a piece: `base` without a trailing " 2", then " 2",
 // " 3"... until it is not in `taken`.
 std::string numberedName(const std::string& base, const std::vector<std::string>& taken);
@@ -60,6 +76,7 @@ struct PartsToolState {
     int last_tool = 0;         // which tool made it (a Tool value)
     int last_revision = -1;    // the job's revision just after it: the report shows until it changes
     std::weak_ptr<const Document> last_doc;  // the job it was for (sameJob: revisions repeat across jobs)
+    bool fusing = false;       // Merge's Fuse is working in the background
 };
 
 }  // namespace gui

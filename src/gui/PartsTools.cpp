@@ -271,46 +271,19 @@ ToolReport splitPart(const Document& doc, PartsEdit& e, int part_id) {
     return r;
 }
 
-ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>& ids, bool fuse) {
-    ToolReport r;
+namespace {
+
+std::vector<const Part*> partsIn(const Document& doc, const std::vector<int>& ids) {
     std::vector<const Part*> chosen;
     for (const Part& p : doc.parts())
         if (std::find(ids.begin(), ids.end(), p.id()) != ids.end()) chosen.push_back(&p);
-    r.wanted = static_cast<int>(chosen.size());
-    if (chosen.size() < 2) {
-        r.message = "Pick at least two parts.";
-        return r;
-    }
-    fruit::TriangleMesh joined;
-    std::string note;
-    if (!fuse) {
-        for (const Part* p : chosen) joined.append(p->placed());
-    } else {
-        fruit::ops::Solid sum;
-        bool first = true;
-        for (const Part* p : chosen) {
-            fruit::ops::Solid s(p->placed());
-            if (!s.valid()) {
-                r.message = "Can't fuse: " + p->name() + " " + s.message() + ". Join as one part works with any mesh.";
-                return r;
-            }
-            if (first) {
-                sum = s;
-                first = false;
-            } else {
-                sum = fruit::ops::unite(sum, s);
-                if (!sum.valid()) {
-                    r.message = "Can't fuse " + p->name() + " with the others: " + sum.message();
-                    return r;
-                }
-            }
-        }
-        joined = sum.toMesh();
-        if (joined.faces.empty()) {
-            r.message = "Fusing left nothing.";
-            return r;
-        }
-    }
+    return chosen;
+}
+
+// The parts `chosen` become one part holding `joined` (their meshes appended,
+// or fused): Merge's edit, after the joining.
+ToolReport joinAsOne(const Document& doc, PartsEdit& e, const std::vector<const Part*>& chosen,
+                     fruit::TriangleMesh joined, bool fuse, ToolReport r) {
     const int pieces = fruit::ops::countPieces(joined);
     // Fusing joins every shell that meets another (overlapping or touching) into one; a part may have
     // several shells of its own, so fewer pieces than all the parts' shells is what tells it happened.
@@ -340,6 +313,76 @@ ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>&
     }
     if (hand_made > 0) r.message += " Tips and drain holes you placed by hand are not kept.";
     return r;
+}
+
+}  // namespace
+
+FuseResult fuseMeshes(const std::vector<std::pair<std::string, fruit::TriangleMesh>>& meshes,
+                      const fruit::JobControl& ctl) {
+    FuseResult r;
+    fruit::ops::Solid sum;
+    bool first = true;
+    for (const auto& [name, mesh] : meshes) {
+        ctl.check();
+        fruit::ops::Solid s(mesh);
+        if (!s.valid()) {
+            r.message = "Can't fuse: " + name + " " + s.message() + ". Join as one part works with any mesh.";
+            return r;
+        }
+        if (first) {
+            sum = s;
+            first = false;
+        } else {
+            sum = fruit::ops::unite(sum, s);
+            if (!sum.valid()) {
+                r.message = "Can't fuse " + name + " with the others: " + sum.message();
+                return r;
+            }
+        }
+    }
+    ctl.check();
+    r.mesh = sum.toMesh();
+    if (r.mesh.faces.empty()) {
+        r.message = "Fusing left nothing.";
+        return r;
+    }
+    r.ok = true;
+    return r;
+}
+
+ToolReport mergeParts(const Document& doc, PartsEdit& e, const std::vector<int>& ids, bool fuse) {
+    ToolReport r;
+    const std::vector<const Part*> chosen = partsIn(doc, ids);
+    r.wanted = static_cast<int>(chosen.size());
+    if (chosen.size() < 2) {
+        r.message = "Pick at least two parts.";
+        return r;
+    }
+    fruit::TriangleMesh joined;
+    if (!fuse) {
+        for (const Part* p : chosen) joined.append(p->placed());
+    } else {
+        std::vector<std::pair<std::string, fruit::TriangleMesh>> meshes;
+        for (const Part* p : chosen) meshes.emplace_back(p->name(), p->placed());
+        FuseResult f = fuseMeshes(meshes, fruit::JobControl::none());
+        if (!f.ok) {
+            r.message = f.message;
+            return r;
+        }
+        joined = std::move(f.mesh);
+    }
+    return joinAsOne(doc, e, chosen, std::move(joined), fuse, r);
+}
+
+ToolReport mergeFused(const Document& doc, PartsEdit& e, const std::vector<int>& ids, fruit::TriangleMesh fused) {
+    ToolReport r;
+    const std::vector<const Part*> chosen = partsIn(doc, ids);
+    r.wanted = static_cast<int>(chosen.size());
+    if (chosen.size() != ids.size() || chosen.size() < 2) {
+        r.message = "The parts changed while they were being fused, so nothing was changed. Try it again.";
+        return r;
+    }
+    return joinAsOne(doc, e, chosen, std::move(fused), true, r);
 }
 
 }  // namespace gui

@@ -3,6 +3,7 @@
 // The app's commands for the parts tools (Duplicate, Arrange, Split, Merge)
 // and the Collisions check that runs in the background.
 #include <algorithm>
+#include <exception>
 
 #include "App.h"
 #include "Log.h"
@@ -11,6 +12,16 @@ namespace gui {
 
 namespace {
 
+// Keeps what a tool reported, for its panel, until the job changes.
+void keepReport(App& app, Document& doc, Tool which, const ToolReport& report) {
+    PartsToolState& st = app.partsTools();
+    st.last = report;
+    st.last_tool = static_cast<int>(which);
+    st.last_doc = app.document();
+    st.last_revision = doc.revision();
+    log::info(report.message);
+}
+
 // Runs a tool as one edit of the parts and keeps what it reported.
 void runTool(App& app, Document& doc, Tool which, const std::function<ToolReport(const Document&, PartsEdit&)>& tool) {
     ToolReport report;
@@ -18,12 +29,7 @@ void runTool(App& app, Document& doc, Tool which, const std::function<ToolReport
     // not needed, editParts hands over a working copy of the parts only.
     const bool changed = app.editParts([&](PartsEdit& e) { report = tool(doc, e); });
     report.changed = changed;
-    PartsToolState& st = app.partsTools();
-    st.last = report;
-    st.last_tool = static_cast<int>(which);
-    st.last_doc = app.document();
-    st.last_revision = doc.revision();
-    log::info(report.message);
+    keepReport(app, doc, which, report);
 }
 
 }  // namespace
@@ -63,10 +69,53 @@ void App::mergePick(int id, bool on) {
 }
 
 void App::mergeParts(bool fuse) {
-    if (!doc_ || doc_->partCount() < 2) return;
+    if (!doc_ || doc_->partCount() < 2 || parts_tools_.fusing) return;
     const std::vector<int> ids = mergeChosen();
-    runTool(*this, *doc_, Tool::Merge, [&ids, fuse](const Document& d, PartsEdit& e) { return gui::mergeParts(d, e, ids, fuse); });
-    parts_tools_.merge_off.clear();
+    if (!fuse) {
+        runTool(*this, *doc_, Tool::Merge, [&ids](const Document& d, PartsEdit& e) { return gui::mergeParts(d, e, ids, false); });
+        parts_tools_.merge_off.clear();
+        return;
+    }
+    // Fusing big parts takes a while: Manifold works on copies in the
+    // background (with the job runner's progress and Cancel), and the result
+    // goes in as one edit when it's done, unless the job changed meanwhile.
+    auto meshes = std::make_shared<std::vector<std::pair<std::string, fruit::TriangleMesh>>>();
+    for (const Part& p : doc_->parts())
+        if (std::find(ids.begin(), ids.end(), p.id()) != ids.end()) meshes->emplace_back(p.name(), p.placed());
+    if (meshes->size() < 2) return;
+    auto out = std::make_shared<FuseResult>();
+    const int revision = doc_->revision();
+    std::weak_ptr<Document> target = doc_;
+    parts_tools_.fusing = true;
+    jobs_.start(
+        "Fusing parts", [meshes, out](const fruit::JobControl& ctl) { *out = fuseMeshes(*meshes, ctl); },
+        [this, target, revision, out, ids](std::exception_ptr err) {
+            parts_tools_.fusing = false;
+            const auto d = target.lock();
+            if (!d || d != doc_) return;  // the job was closed
+            ToolReport r;
+            r.wanted = static_cast<int>(ids.size());
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                    r.message = "Cancelled. Nothing was changed.";
+                } catch (const std::exception& e) {
+                    r.message = std::string("It didn't work: ") + e.what();
+                }
+            } else if (!out->ok) {
+                r.message = out->message;
+            } else if (d->revision() != revision) {
+                r.message = "The job changed while this was working, so nothing was fused. Try it again.";
+            } else {
+                runTool(*this, *d, Tool::Merge, [&ids, out](const Document& doc, PartsEdit& e) {
+                    return mergeFused(doc, e, ids, std::move(out->mesh));
+                });
+                parts_tools_.merge_off.clear();
+                return;
+            }
+            keepReport(*this, *d, Tool::Merge, r);
+        });
 }
 
 const CollisionReport* App::collisions() const {

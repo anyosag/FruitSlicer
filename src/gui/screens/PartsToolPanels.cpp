@@ -47,7 +47,7 @@ void reportCard(App& app, const Document& doc, Tool t) {
     endCard();
 }
 
-bool busyNow(App& app) { return app.placing(); }
+bool busyNow(App& app) { return app.placing() || app.partsTools().fusing; }
 
 // A greyed button with the reason under it.
 void greyed(const char* label, const std::string& why) {
