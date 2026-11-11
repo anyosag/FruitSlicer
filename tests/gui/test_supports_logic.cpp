@@ -166,7 +166,7 @@ TEST_CASE("Advanced settings: unique keys, ranges that hold the values in use, a
             CHECK(f.get(supportConfig(p, c), treeConfig(c)) == Approx(f.hi));
         }
     }
-    CHECK(rows == 29);  // as on the canvas board "Supports · advanced"
+    CHECK(rows == 31);  // as on the canvas board "Supports · advanced"
     // The usual tip size lives in the choices themselves.
     SupportChoices big;
     big.usual_tip = 3;

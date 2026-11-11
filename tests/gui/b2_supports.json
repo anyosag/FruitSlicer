@@ -7,6 +7,7 @@
     {"supports": "generate"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "b2_supports_result"},
     {"supports_view": "why"}, {"select_tip": 0}, {"shot": "b2_supports_why"},
     {"supports_view": "supports"}, {"problems": true}, {"shot": "b2_supports_problems"},
-    {"problems": false}, {"rotate": [0, 0, 30]}, {"shot": "b2_supports_stale"}
+    {"problems": false}, {"rotate": [0, 0, 30]}, {"shot": "b2_supports_stale"},
+    {"raft_type": "full"}, {"supports": "generate"}, {"wait": "jobs"}, {"view": "below"}, {"shot": "b2_supports_full_raft"}
   ]
 }

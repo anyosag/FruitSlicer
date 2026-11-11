@@ -499,7 +499,8 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     }
     tc.merge_pillars = !o.no_merge;
     if (o.raft == "none") tc.raft = RaftStyle::None;
-    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads or none");
+    else if (o.raft == "full") tc.raft = RaftStyle::Full;
+    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads, full or none");
     // The raft must cover the long-exposure layers at this layer height.
     const double min_raft = minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h);
     const SupportTree tree = buildSupportTree(mesh, pts, tc, min_raft);
@@ -939,7 +940,7 @@ int main(int argc, char** argv) {
     support->add_option("--points", sopts.points_in, "Use these points (e.g. edited) instead of generating");
     support->add_option("-o,--output", sopts.out, "Output STL: model + supports");
     support->add_option("--supports-only", sopts.supports_only, "Also write the supports alone");
-    support->add_option("--raft", sopts.raft, "pads (default) or none");
+    support->add_option("--raft", sopts.raft, "pads (default), full or none");
     support->add_option("--report", sopts.report, "Report JSON");
     support->add_option("--preview", sopts.preview, "Preview PNG (from below)");
     support->add_flag("--no-validate", sopts.no_validate, "Skip the floating-island check");

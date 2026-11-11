@@ -105,10 +105,40 @@ void onThePlate(App& app, Document& doc) {
     ImGui::SameLine(0, 10);
     ImGui::BeginGroup();
     text("Raft", fonts().semibold, size::Body, col::Text);
-    text(raft ? "A 1 mm raft under the supports, which comes off in one piece. Best for most models."
-              : "Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips.",
-         fonts().regular, size::Help, col::TextSecondary, true);
+    // The raft's real thickness: the built one when the supports are up to date, else what the settings will give.
+    const SupportState& made = doc.supports;
+    const double thick =
+        made.result && made.result->choices == made.choices && made.result->tree.raft_top > 0
+            ? made.result->tree.raft_top
+            : std::max(treeConfig(made.choices).raft_thickness,
+                       fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight));
+    const std::string raftText =
+        raft ? strf("A %g mm raft under the supports, which comes off in one piece. Best for most models.",
+                    std::round(thick * 100) / 100)
+             : "Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips.";
+    text(raftText.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::EndGroup();
+    if (raft) {
+        // The kind of raft: a pad under each support, or one solid base.
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::Indent(28);
+        ImGui::PushID("raft_type");
+        const bool full = made.choices.full_raft;
+        bool pick = full;
+        if (segmentButton("Pads", !full)) pick = false;
+        ImGui::SameLine(0, 4);
+        if (segmentButton("Full", full)) pick = true;
+        ImGui::PopID();
+        if (pick != full) {
+            SupportChoices c = made.choices;
+            c.full_raft = pick;
+            app.setSupportChoices(c);
+        }
+        text(full ? "One solid base with a sloped edge for the scraper. Holds small and thin parts best."
+                  : "Small pads joined by bars. Uses the least resin.",
+             fonts().regular, size::Help, col::TextSecondary, true);
+        ImGui::Unindent(28);
+    }
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::BeginDisabled(!raft);
     const int now = static_cast<int>(std::lround(p.elevation));

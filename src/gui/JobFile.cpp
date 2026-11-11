@@ -292,6 +292,7 @@ void saveJob(const std::string& path, const Document& doc) {
     // defaults is saved as it always was.
     if (c.hold != kHoldDefault || c.amount != kAmountDefault || c.sturdy != kSturdyDefault)
         sup["choices"]["quick"] = {{"hold", c.hold}, {"amount", c.amount}, {"sturdy", c.sturdy}};
+    if (c.full_raft) sup["choices"]["full_raft"] = true;  // only when on, so older jobs save as they did
     if (c.hinge) sup["choices"]["hinge"] = fruit::hingeName(*c.hinge);
     // The resin's name and a copy of its measured values: the job keeps them.
     if (!c.resin.empty()) sup["choices"]["resin"] = c.resin;
@@ -458,6 +459,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.usual_tip = cj.value("usual_tip", 2);
     c.density = cj.value("density", 1.0);
     c.merge = cj.value("merge", true);
+    c.full_raft = cj.value("full_raft", false);
     c.advanced = cj.value("advanced", std::map<std::string, double>{});
     if (cj.contains("quick") && cj["quick"].is_object()) {  // jobs from before the sliders have none
         const json& q = cj["quick"];

@@ -21,13 +21,16 @@
 
 #include "core/JobControl.h"
 #include "mesh/AabbTree.h"
+#include "geometry/Polygon.h"
 #include "mesh/TriangleMesh.h"
 #include "support/SupportGeometry.h"
 #include "support/SupportPoint.h"
 
 namespace fruit {
 
-enum class RaftStyle { Pads, None };
+// Pads: a small pad under each trunk, joined by bars. Full: one solid slab
+// under all the trunks with a sloped edge. None: no raft.
+enum class RaftStyle { Pads, None, Full };
 
 struct TreeConfig {
     double max_head_tilt_deg = 45.0;
@@ -54,6 +57,8 @@ struct TreeConfig {
     double base_height = 1.0;
     double pad_brim = 0.8;
     double link_width = 1.2;          // raft link bar width
+    double full_raft_margin = 1.0;    // Full: the slab reaches this far past each pad's brim
+    double full_raft_gap = 10.0;      // Full: gaps up to this wide between pads are filled in
     // Measured (tip diameter, penetration) pairs from a resin profile; empty =
     // 0.5 × diameter clamped to [0.08, 0.2] mm.
     std::vector<std::pair<double, double>> penetration_table;
@@ -107,6 +112,13 @@ struct SupportTree {
     }
 
     TriangleMesh mesh(const TreeConfig& cfg) const;
+
+    // The Full raft's outline at height `inset` mm up its sloped edge (0 = on
+    // the plate): the footprint of the pads, closed over gaps and pulled in
+    // by `inset`. Empty for other raft styles.
+    Paths fullRaftOutline(const TreeConfig& cfg, double inset = 0) const;
+    // How far the sloped edge pulls in by the top of the slab.
+    double fullRaftInset(const TreeConfig& cfg) const;
 };
 
 // How deep a tip of diameter `tip_d` sinks into the part: the nearest

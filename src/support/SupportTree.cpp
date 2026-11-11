@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "mesh/Primitives.h"
+#include "ops/MeshOps.h"
 
 namespace fruit {
 
@@ -470,6 +471,42 @@ void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& point
     for (size_t i = 0; i < points.size(); ++i) (has_head[i] ? built : dropped).push_back(points[i]);
 }
 
+double SupportTree::fullRaftInset(const TreeConfig& cfg) const {
+    // 45°: as far in as the slab is thick, but never past the brim and margin,
+    // so each trunk's foot stays on the top.
+    return std::max(0.0, std::min(raft_top, cfg.pad_brim + cfg.full_raft_margin));
+}
+
+Paths SupportTree::fullRaftOutline(const TreeConfig& cfg, double inset) const {
+    if (cfg.raft != RaftStyle::Full) return {};
+    const double r = cfg.base_diameter / 2 + cfg.pad_brim + cfg.full_raft_margin;
+    const int n = std::max(16, cfg.quality.segments(r));
+    Paths discs;
+    for (const Pillar& P : pillars) {
+        if (P.on_model || P.merged) continue;
+        Path d;
+        for (int i = 0; i < n; ++i) {
+            const double a = 2 * M_PI * i / n;
+            d.push_back(toPoint({P.xy.x + r * std::cos(a), P.xy.y + r * std::sin(a)}));
+        }
+        discs.push_back(std::move(d));
+    }
+    if (discs.empty()) return {};
+    Paths u = unionNonZero(discs);
+    // Closing: fill gaps narrower than full_raft_gap, so the slab follows the
+    // supports' footprint instead of spanning empty plate.
+    if (cfg.full_raft_gap > 0) u = offset(offset(u, cfg.full_raft_gap / 2), -cfg.full_raft_gap / 2);
+    // Closing and simplifying can leave a hair-thin spur of no area: drop
+    // anything too small to be a pad (it would print as a loose piece).
+    auto tidy = [](Paths p) {
+        p.erase(std::remove_if(p.begin(), p.end(), [](const Path& q) { return std::abs(area(q)) < 0.5; }), p.end());
+        return p;
+    };
+    u = tidy(simplify(u, 0.02));
+    if (inset > 0) u = tidy(simplify(offset(u, -inset), 0.02));
+    return u;
+}
+
 TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;
@@ -499,7 +536,7 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
             appendPinhead(m, P.anchor_contact, {0, 0, 1}, a, q);
         } else {
             appendBaseCone(m, bottom, P.diameter, cfg.base_diameter, std::max(0.0, raft_top - 0.1), q);
-            if (cfg.raft == RaftStyle::Pads) {
+            if (cfg.raft == RaftStyle::Pads) {  // (Full has one slab for all, below)
                 const double r = cfg.base_diameter / 2 + cfg.pad_brim;
                 appendFrustum(m, {P.xy.x, P.xy.y, 0}, r, {P.xy.x, P.xy.y, raft_top}, std::max(0.5, r - 0.4),
                               q.segments(r));
@@ -510,6 +547,33 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     for (const Rod& r : branches) {
         appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
         appendSphere(m, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+    }
+    if (cfg.raft == RaftStyle::Full && raft_top > 0) {
+        // One slab, built as stacked prisms of the outline, each pulled in a
+        // little more than the one below: a ~45° edge for the scraper. They
+        // overlap the cones and links; the slicer fills overlaps as a union.
+        const double inset = fullRaftInset(cfg);
+        const int steps = std::max(1, static_cast<int>(std::ceil(raft_top / 0.2 - 1e-9)));
+        const double h = raft_top / steps;
+        for (int k = 0; k < steps; ++k) {
+            const double z0 = k * h;
+            const Paths outline = fullRaftOutline(cfg, inset * z0 / raft_top);
+            for (const ExPolygon& ex : toExPolygons(outline)) {
+                std::vector<std::vector<Vec2>> polys;
+                auto add = [&](const Path& p) {
+                    std::vector<Vec2> v;
+                    for (const Point64& q : p) v.push_back(toVec(q));
+                    polys.push_back(std::move(v));
+                };
+                add(ex.contour);
+                for (const Path& hole : ex.holes) add(hole);
+                const ops::Solid prism = ops::extrude(polys, h);
+                if (!prism.valid() || prism.empty()) continue;
+                TriangleMesh pm = prism.toMesh();
+                for (Vec3& v : pm.vertices) v.z += z0;
+                m.append(pm);
+            }
+        }
     }
     // Raft links: flat bars from the plate up, so the raft's first layers are
     // already one piece.

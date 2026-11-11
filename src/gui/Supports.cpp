@@ -40,6 +40,7 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     applyResinValues(c.profile, cfg, tc);
     cfg.default_tip = nearestTipClass(cfg, quickTipClass(c));
     tc.merge_pillars = c.merge;
+    if (c.full_raft && tc.raft == fruit::RaftStyle::Pads) tc.raft = fruit::RaftStyle::Full;  // none stays none
     if (const double k = quickCapacityScale(c.hold); k != 1.0) {
         // Scales the table or the reference value, as the advanced page's row does.
         if (cfg.capacity.table.empty()) cfg.capacity.reference_capacity *= k;
@@ -276,6 +277,22 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  .help = [](const X& x) {
                      return strf("At least as thick as your bottom and transition layers: %d × %.2f = %.2f mm.",
                                  x.raft_layers, x.raft_layer_height, x.raft_layers * x.raft_layer_height);
+                 }});
+    v.push_back({.group = "Raft", .label = "Full raft edge", .kind = K::Number, .source = S::Default,
+                 .fields = {{"full_raft_margin", "", "mm past", 0, 5, 1,
+                             [](const C&, const T& t) { return t.full_raft_margin; },
+                             [](C&, T& t, double x) { t.full_raft_margin = x; }}},
+                 .help = [](const X&) {
+                     return std::string("Full raft only: how far the raft reaches past the pads at the outer "
+                                        "supports. The edge also slopes in going up, so a scraper can slide under.");
+                 }});
+    v.push_back({.group = "Raft", .label = "Full raft gaps", .kind = K::Number, .source = S::Default,
+                 .fields = {{"full_raft_gap", "", "mm wide", 0, 30, 1,
+                             [](const C&, const T& t) { return t.full_raft_gap; },
+                             [](C&, T& t, double x) { t.full_raft_gap = x; }}},
+                 .help = [](const X&) {
+                     return std::string("Full raft only: gaps this narrow between supports are filled in. Supports "
+                                        "farther apart than this get their own raft, joined by flat bars.");
                  }});
     v.push_back({.group = "Raft", .label = "Pads", .kind = K::Number, .source = S::Default,
                  .fields = {{"pad_diameter", "", "mm base", 1, 8, 1,

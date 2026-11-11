@@ -9,6 +9,7 @@ add_executable(fruit_tests
   test_calibration.cpp
   test_points.cpp
   test_tree.cpp
+  test_full_raft.cpp
   test_orient.cpp
   test_fit.cpp
   test_safety.cpp

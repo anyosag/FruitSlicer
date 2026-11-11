@@ -47,7 +47,7 @@
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
-//   {"quick": {"hold": 1-5, "amount": 1-5, "sturdy": 1-5}} (the quick support sliders) {"raft": bool} {"lift": 1-10 mm} {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
+//   {"quick": {"hold": 1-5, "amount": 1-5, "sturdy": 1-5}} (the quick support sliders) {"raft": bool} {"raft_type": "pads" | "full"} {"lift": 1-10 mm} {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
 //   {"supports_view": "supports" | "tips" | "why"} {"select_tip": index} {"problems": bool}
 //   {"advanced": "open" | "close" | "reset" | "apply"} {"setting": [key, value]} (keys: advancedSettings())
 //   {"exposures": [normal_s, bottom_s]} {"sample": path | "@demo-sample"} (a 0.03 mm print file)

@@ -310,3 +310,39 @@ TEST_CASE("Quick support: the stops plan and the far ends still make supports", 
     CHECK(run(at(1, 3, 2)).tips > 0);
     CHECK(run(at(5, 3, 2)).tips > 0);
 }
+
+TEST_CASE("Full raft: the choice reaches the engine, is saved with the job and makes supports out of date",
+          "[gui][supports][jobs]") {
+    SupportChoices c;
+    CHECK(treeConfig(c).raft == fruit::RaftStyle::Pads);  // pads stay the default
+    c.full_raft = true;
+    CHECK(treeConfig(c).raft == fruit::RaftStyle::Full);
+    CHECK_FALSE(c == SupportChoices{});  // differs from what the supports were made with
+    fruit::Placement flat;
+    flat.on_plate = true;  // no raft at all, whatever the choice
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    fruit::SupportChoices ch;
+    ch.on_plate = true;
+    fruit::resolveSettings(nullptr, ch, cfg, &tc);
+    CHECK(tc.raft == fruit::RaftStyle::None);
+    // The edge and gap rows set the engine's values.
+    c.advanced["full_raft_margin"] = 2.0;
+    c.advanced["full_raft_gap"] = 6.0;
+    CHECK(treeConfig(c).full_raft_margin == Approx(2.0));
+    CHECK(treeConfig(c).full_raft_gap == Approx(6.0));
+
+    const fs::path dir = fs::temp_directory_path() / "fruit_full_raft_tests";
+    fs::create_directories(dir);
+    const auto doc = bracket("full_raft_bracket.stl");
+    const auto pads = (dir / "pads.fruitjob").string();
+    saveJob(pads, *doc);
+    CHECK_FALSE(openJob(pads, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none())
+                    .doc->supports.choices.full_raft);
+    doc->supports.choices.full_raft = true;
+    const auto full = (dir / "full.fruitjob").string();
+    saveJob(full, *doc);
+    const OpenedJob o = openJob(full, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(o.doc->supports.choices.full_raft);
+    CHECK(o.doc->supports.choices == doc->supports.choices);
+}

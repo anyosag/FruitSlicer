@@ -39,6 +39,7 @@ inline constexpr int kHoldDefault = 3, kAmountDefault = 3, kSturdyDefault = 2;
 struct SupportChoices {
     int usual_tip = 2;     // tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm: the resin's usual tip
     double density = 1.0;  // 1 = normal spacing; up to 2 = closer together (old jobs; the Amount slider adds to it)
+    bool full_raft = false;  // one solid raft under all the supports, instead of a pad under each
     bool merge = true;     // neighbouring supports join into trunks (old jobs; Sturdiness can turn it off too)
     // The quick support sliders' stops (see applyQuick).
     int hold = kHoldDefault, amount = kAmountDefault, sturdy = kSturdyDefault;
