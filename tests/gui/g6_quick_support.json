@@ -10,6 +10,7 @@
     {"quick": {"hold": 1, "amount": 4, "sturdy": 1}},
     {"supports": "generate"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "g6_made"},
     {"quick": {"hold": 3, "amount": 5}}, {"shot": "g6_out_of_date"},
-    {"raft": false}, {"supports": "generate"}, {"wait": "jobs"}, {"scroll_panel": "end"}, {"frames": 6}, {"shot": "g6_raft_off"}
+    {"raft": false}, {"supports": "generate"}, {"wait": "jobs"}, {"scroll_panel": "end"}, {"frames": 6}, {"shot": "g6_raft_off"},
+    {"height_correction": 0.15}, {"scroll_panel": "end"}, {"frames": 6}, {"shot": "g6_height_correction"}
   ]
 }

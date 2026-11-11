@@ -557,6 +557,8 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.resetQuickSupport();
         } else if (step.contains("raft")) {
             app.setOnPlate(!step["raft"].get<bool>());
+        } else if (step.contains("height_correction")) {
+            app.setHeightCorrection(step["height_correction"].get<double>());
         } else if (step.contains("lift")) {
             app.setLift(step["lift"].get<double>());
         } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {

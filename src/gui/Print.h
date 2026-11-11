@@ -68,6 +68,7 @@ struct PrintPlan {
     double layer_height = 0;   // of the print file (the sample's, when there is one)
     bool reslice = false;      // differs from the job's layers: saving cuts them again
     std::size_t layers = 0;
+    std::size_t base_layers = 0;  // of those, copies of the first layer (height correction)
     double height = 0;         // mm
     double resin_ml = 0, resin_g = 0;
     double density = 1.15;     // g/ml, for the weight (written in the file too)

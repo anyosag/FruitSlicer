@@ -16,12 +16,13 @@ namespace gui {
 namespace {
 
 bool sameLift(const fruit::Placement& a, const fruit::Placement& b) {
-    return a.elevation == b.elevation && a.on_plate == b.on_plate;
+    return a.elevation == b.elevation && a.on_plate == b.on_plate && a.height_correction == b.height_correction;
 }
 
 void takeLift(fruit::Placement& p, const fruit::Placement& from) {
     p.elevation = from.elevation;
     p.on_plate = from.on_plate;
+    p.height_correction = from.height_correction;
 }
 
 }  // namespace

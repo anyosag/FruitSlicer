@@ -27,10 +27,11 @@ struct LayerResult {
     std::shared_ptr<const HollowPlan> hollow;         // the model's layers came from this, when not null
     std::vector<double> area;        // lit area per layer, mm²
     std::size_t raft_layers = 0;     // layers up to the raft's top
+    std::size_t base_layers = 0;     // copies of the first layer added in front (height correction, on the plate)
     std::size_t biggest = 0;         // the biggest layer above the raft
     double resin_ml = 0;             // Σ area × layer height
     double top = 0;                  // top of the last layer, mm
-    fruit::BBox3 bounds;             // model and supports, printer coordinates
+    fruit::BBox3 bounds;             // model and supports, printer coordinates; as tall as the print (with the base layers)
     fruit::HollowReport hollows;     // suction cups and resin traps
     std::vector<std::size_t> marks;  // layers worth a look: where hollows start, the biggest layer
     double seconds = 0;

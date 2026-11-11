@@ -93,6 +93,37 @@ void quickSlider(App& app, const SupportChoices& choices, QuickSlider which) {
     ImGui::PopID();
 }
 
+// With no raft: the height added under the model (a job-wide placement
+// choice), in 0.05 mm steps like the layers.
+void heightCorrection(App& app, const fruit::Placement& p) {
+    constexpr double kStep = 0.05;
+    const int now = static_cast<int>(std::lround(p.height_correction / kStep));
+    const int layers = p.heightCorrectionLayers(kStep);
+    const bool differs = std::abs(p.height_correction - fruit::Placement{}.height_correction) > 1e-9;
+    const float y = ImGui::GetCursorPosY();
+    text("Height correction", fonts().semibold, size::Body, col::Text);
+    rightText(strf("%.2f mm", now * kStep).c_str(), fonts().semibold, size::Help, differs ? col::Accent : col::TextSecondary, y);
+    int v = now;
+    bool begin = false, end = false;
+    if (stopSlider("##height_correction", &v, 0, 10, &begin, &end) || begin) {
+        if (begin) app.beginLift();
+        app.previewHeightCorrection(v * kStep);
+    }
+    if (end) app.endLift();
+    const float ey = ImGui::GetCursorPosY();
+    text("0 mm", fonts().regular, size::Label, col::TextMuted);
+    rightText("0.50 mm", fonts().regular, size::Label, col::TextMuted, ey);
+    text(layers > 0
+             ? strf("Adds %.2f mm (%d %s) under the model, because the printer squashes the first layers. 0.10 mm is a "
+                    "typical value, not measured on your printer: print a test block, measure it, and set yours.",
+                    layers * kStep, layers, layers == 1 ? "layer" : "layers")
+                   .c_str()
+             : "Adds nothing under the model. The printer squashes the first layers, so a model standing on the plate "
+               "may print short. 0.10 mm is a typical value, not measured on your printer: print a test block, "
+               "measure it, and set yours.",
+         fonts().regular, size::Help, col::TextSecondary, true);
+}
+
 // The raft and its lift: a job-wide placement choice (every part).
 void onThePlate(App& app, Document& doc) {
     const fruit::Placement& p = doc.placement();
@@ -110,6 +141,10 @@ void onThePlate(App& app, Document& doc) {
          fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::EndGroup();
     ImGui::Dummy(ImVec2(0, 4));
+    if (!raft) {
+        heightCorrection(app, p);
+        return;
+    }
     ImGui::BeginDisabled(!raft);
     const int now = static_cast<int>(std::lround(p.elevation));
     const bool differs = raft && std::abs(p.elevation - fruit::Placement{}.elevation) > 1e-9;

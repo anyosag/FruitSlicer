@@ -20,15 +20,29 @@ struct Placement {
     bool mirror_x = false, mirror_y = false, mirror_z = false;  // along the model's own axes, before the rest
     double elevation = 5.0;  // lift above the plate (raft + supports underneath)
     bool on_plate = false;   // flat on the plate: no lift, no raft
+    // Height added under a model that stands on the plate (no raft), mm: the
+    // printer squashes its first layers, so the part would print short.
+    // Used only when on_plate; added as whole layers (heightCorrectionLayers).
+    double height_correction = 0.10;
     Vec2 offset{0, 0};       // where on the plate, from its centre (+X right, +Y back)
 
     bool mirrored() const { return mirror_x || mirror_y || mirror_z; }
     // A mirror image of the file (an odd number of flips), not just turned.
     bool mirrorImage() const { return ((mirror_x ? 1 : 0) + (mirror_y ? 1 : 0) + (mirror_z ? 1 : 0)) % 2 == 1; }
     double lift() const { return on_plate ? 0.0 : elevation; }
+    // Layers of `layer_height` added under the model: 0 with a raft.
+    int heightCorrectionLayers(double layer_height) const;
+    // Their thickness, mm (the correction rounded to whole layers).
+    double heightCorrectionAdded(double layer_height) const { return heightCorrectionLayers(layer_height) * layer_height; }
+    // How far the model's lowest point is raised in the print: the lift with a
+    // raft, the height correction's layers (at the job's 0.05 mm) without one.
+    double heightUnder() const { return on_plate ? heightCorrectionAdded(0.05) : elevation; }
     bool centred() const { return offset.x == 0 && offset.y == 0; }
     bool operator==(const Placement&) const = default;
 };
+
+// Largest height correction the app offers, mm.
+inline constexpr double kMaxHeightCorrection = 0.5;
 
 // The mirror along the model's own axes in `p` (a mirror turns the way round
 // a triangle's corners go: apply it with TriangleMesh::transform).

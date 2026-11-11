@@ -6,6 +6,8 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <filesystem>
 #include <fstream>
+#include <miniz.h>
+#include <nlohmann/json.hpp>
 
 #include "Document.h"
 #include "Hollows.h"
@@ -253,4 +255,48 @@ TEST_CASE("Jobs: the hollows come back, and the supports made for the drilled mo
     const auto changes = changesSince(*e.saved, e.stamp());
     REQUIRE(changes.size() == 1);
     CHECK_THAT(changes[0], ContainsSubstring("hollows"));
+}
+
+TEST_CASE("Jobs: the height correction is saved with the job, and older jobs get the usual one", "[gui][jobs]") {
+    const auto doc = bracketAt(dir() / "correction.stl");
+    CHECK(doc->placement().height_correction == Approx(0.10));
+    fruit::Placement p = doc->placement();
+    p.on_plate = true;
+    p.height_correction = 0.15;
+    doc->edit(p);
+    const auto job = (dir() / "correction.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(o.doc->placement().on_plate);
+    CHECK(o.doc->placement().height_correction == Approx(0.15));
+    // A job saved before it existed has no such field: rewrite the file without it.
+    mz_zip_archive in{};
+    REQUIRE(mz_zip_reader_init_file(&in, job.c_str(), 0));
+    std::vector<std::pair<std::string, std::string>> files;
+    for (mz_uint k = 0; k < mz_zip_reader_get_num_files(&in); ++k) {
+        char name[256];
+        mz_zip_reader_get_filename(&in, k, name, sizeof name);
+        std::size_t n = 0;
+        void* data = mz_zip_reader_extract_to_heap(&in, k, &n, 0);
+        REQUIRE(data);
+        files.emplace_back(name, std::string(static_cast<const char*>(data), n));
+        mz_free(data);
+    }
+    mz_zip_reader_end(&in);
+    const auto older = (dir() / "correction_old.fruitjob").string();
+    mz_zip_archive out{};
+    REQUIRE(mz_zip_writer_init_file(&out, older.c_str(), 0));
+    for (auto& [name, bytes] : files) {
+        if (name == "job.json") {
+            auto j = nlohmann::json::parse(bytes);
+            j.at("placement").erase("height_correction");
+            bytes = j.dump();
+        }
+        REQUIRE(mz_zip_writer_add_mem(&out, name.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION));
+    }
+    REQUIRE(mz_zip_writer_finalize_archive(&out));
+    mz_zip_writer_end(&out);
+    const OpenedJob q = openJob(older, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(q.doc->placement().on_plate);
+    CHECK(q.doc->placement().height_correction == Approx(0.10));
 }

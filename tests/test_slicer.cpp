@@ -5,6 +5,7 @@
 
 #include "calibration/Coupons.h"
 #include "layers/LayerStack.h"
+#include "mesh/Placement.h"
 #include "mesh/Primitives.h"
 #include "slice/MeshSlicer.h"
 
@@ -83,4 +84,48 @@ TEST_CASE("overlap coupon reference slices are solid", "[slice][coupon]") {
     // Below the plate: 9 shafts of Ø1 mm.
     const Paths shafts = sliceMeshAt(c.mesh, 2.5);
     CHECK(toExPolygons(shafts).size() == 9);
+}
+
+TEST_CASE("addBaseLayers puts copies of layer 0 in front", "[slice][layers]") {
+    LayerStack ls = sliceModel(makeBox({-5, -3, 0}, {5, 3, 1}), 0.05);  // 20 layers
+    REQUIRE(ls.size() == 20);
+    const Paths first = ls.slices.front();
+    const double area0 = area(first);
+    addBaseLayers(ls, 2);
+    REQUIRE(ls.size() == 22);
+    REQUIRE(ls.sample_z.size() == 22);
+    for (size_t i = 0; i < 3; ++i) CHECK(area(ls.slices[i]) == Approx(area0));
+    for (size_t i = 0; i < ls.size(); ++i) CHECK(ls.sample_z[i] == Approx((static_cast<double>(i) + 0.5) * 0.05));
+    CHECK(ls.layerTop(ls.size() - 1) == Approx(1.1));
+    // Nothing to add, or nothing to copy.
+    addBaseLayers(ls, 0);
+    addBaseLayers(ls, -3);
+    CHECK(ls.size() == 22);
+    LayerStack none;
+    addBaseLayers(none, 2);
+    CHECK(none.size() == 0);
+    // Layer 0 is what is copied, not a later layer: a box on a wider foot.
+    TriangleMesh foot = makeBox({-5, -5, 0}, {5, 5, 0.1});
+    foot.append(makeBox({-2, -2, 0.1}, {2, 2, 1}));
+    LayerStack f = sliceModel(foot, 0.05);
+    addBaseLayers(f, 3);
+    CHECK(area(f.slices[0]) == Approx(100));
+    CHECK(area(f.slices[2]) == Approx(100));
+    CHECK(area(f.slices[3 + 5]) == Approx(16));
+}
+
+TEST_CASE("the height correction is whole layers, and only on the plate", "[placement]") {
+    Placement p;
+    CHECK(p.height_correction == Approx(0.10));
+    CHECK(p.heightCorrectionLayers(0.05) == 0);  // with a raft: none
+    p.on_plate = true;
+    CHECK(p.heightCorrectionLayers(0.05) == 2);
+    CHECK(p.heightCorrectionLayers(0.03) == 3);
+    CHECK(p.heightCorrectionAdded(0.05) == Approx(0.10));
+    p.height_correction = 0.15;
+    CHECK(p.heightCorrectionLayers(0.05) == 3);
+    p.height_correction = 0;
+    CHECK(p.heightCorrectionLayers(0.05) == 0);
+    p.height_correction = 5;  // past the largest: held to 0.5 mm
+    CHECK(p.heightCorrectionLayers(0.05) == 10);
 }
