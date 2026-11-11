@@ -274,6 +274,22 @@ public:
     // Supports.
     void generateSupports();
     void setSupportChoices(const SupportChoices& c);
+    // Quick support: the lift (1 to 10 mm, the job's) is a placement edit like
+    // the raft's (setOnPlate); dragging its slider is one undo step.
+    void setLift(double mm);
+    void beginLift();
+    void previewLift(double mm);
+    void endLift();
+    void resetQuickSupport();  // sliders, raft and lift back to the resin's
+    // Scripts: scrolls the open tool's panel to its end or start over the next few frames.
+    void scrollToolPanel(bool to_end) { panel_scroll_end_ = to_end, panel_scroll_frames_ = 4; }
+    // The scroll still asked for (to_end says which way); counts a frame off.
+    bool takePanelScroll(bool* to_end) {
+        if (panel_scroll_frames_ <= 0) return false;
+        --panel_scroll_frames_;
+        *to_end = panel_scroll_end_;
+        return true;
+    }
     void selectTip(int index);
     void setSupportsView(SupportsView v) { supports_view_ = v; }
     SupportsView supportsView() const { return supports_view_; }
@@ -535,6 +551,8 @@ private:
     SupportsView supports_view_ = SupportsView::Supports;
     bool problems_open_ = false;
     bool advanced_open_ = false;
+    bool panel_scroll_end_ = false;
+    int panel_scroll_frames_ = 0;
     HandleDrag handle_drag_;
     Handle hover_handle_ = Handle::None;
     bool mouse_spent_ = false;

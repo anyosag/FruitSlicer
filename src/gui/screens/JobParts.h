@@ -77,6 +77,7 @@ std::string toolTitleFor(const Document& doc, const char* title, bool on_part);
 // Supports: the tool's panel, the checks and problems (in the Job panel),
 // the view's marks, and the pill choosing what the view shows.
 void supportsPanel(App& app, Document& doc);
+void supportsFooter(App& app, Document& doc);  // Edit tips by hand and Advanced settings
 void supportChecks(App& app, Document& doc);
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 void supportsViewPill(App& app, Document& doc);

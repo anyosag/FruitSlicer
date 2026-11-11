@@ -530,6 +530,23 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 if (what != "generate") throw std::runtime_error("unknown supports step " + what);
                 app.generateSupports();
             }
+        } else if (step.contains("quick")) {
+            // {"quick": {"hold": 1-5, "amount": 1-5, "sturdy": 1-5}}: the quick support sliders' stops
+            if (!app.document()) throw std::runtime_error("quick: no model open");
+            SupportChoices c = app.document()->supports.choices;
+            const auto& q = step["quick"];
+            if (q.contains("hold")) c.hold = std::clamp(q["hold"].get<int>(), 1, kQuickStops);
+            if (q.contains("amount")) c.amount = std::clamp(q["amount"].get<int>(), 1, kQuickStops);
+            if (q.contains("sturdy")) c.sturdy = std::clamp(q["sturdy"].get<int>(), 1, kQuickStops);
+            app.setSupportChoices(c);
+        } else if (step.contains("scroll_panel")) {
+            app.scrollToolPanel(step["scroll_panel"].get<std::string>() == "end");
+        } else if (step.contains("quick_reset")) {
+            app.resetQuickSupport();
+        } else if (step.contains("raft")) {
+            app.setOnPlate(!step["raft"].get<bool>());
+        } else if (step.contains("lift")) {
+            app.setLift(step["lift"].get<double>());
         } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
             SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
             if (step.contains("tip_size")) {
