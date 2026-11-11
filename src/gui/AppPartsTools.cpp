@@ -79,12 +79,14 @@ const CollisionReport* App::collisions() const {
 bool App::checkingCollisions() const { return jobs_.busy() && jobs_.progress().name == "Checking the parts"; }
 
 void App::finishCollisions() {
+    if (!jobs_.busy()) jobs_.wait();  // a check set aside for other work may still be stopping
     startCollisionCheck();
     jobs_.wait();
 }
 
 void App::settleCollisions() {
     if (jobs_.busy() && !checkingCollisions()) return;  // other work: a script waits for that itself
+    if (!jobs_.busy()) jobs_.wait();  // a check set aside for other work may still be stopping
     startCollisionCheck();
     if (checkingCollisions()) jobs_.wait();
 }
@@ -112,6 +114,7 @@ void App::startCollisionCheck() {
     if (collisions()) return;
     if (collision_tried_ == rev && sameJob(collision_tried_doc_, doc_) && collision_tried_gap_ == collision_gap_) return;
     if (jobs_.busy() && !checkingCollisions()) return;  // the work running now comes first
+    if (jobs_.stopping()) return;  // one set aside is still stopping: one at a time in the background
     collision_tried_ = rev;
     collision_tried_doc_ = doc_;
     collision_tried_gap_ = collision_gap_;
@@ -120,7 +123,8 @@ void App::startCollisionCheck() {
     auto out = std::make_shared<CollisionReport>();
     const double gap = collision_gap_;
     std::weak_ptr<Document> target = doc_;
-    jobs_.start(
+    // It gives way: other work started now doesn't wait for the pair it is on (Manifold can't stop part way).
+    jobs_.startGivingWay(
         "Checking the parts",
         [snap, out, gap](const fruit::JobControl& ctl) { *out = checkCollisions(*snap, gap, ctl); },
         [this, target, out, generation](std::exception_ptr err) {

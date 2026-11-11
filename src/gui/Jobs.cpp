@@ -20,29 +20,50 @@ struct JobRunner::Job {
     std::string stage;
     double fraction = 0;
     std::atomic<long long> last_wake_ms{0};
+    bool gives_way = false;  // the next start() sets it aside rather than waiting for it
 };
 
 JobRunner::JobRunner(std::function<void()> wake) : wake_(std::move(wake)) {}
 
 JobRunner::~JobRunner() {
-    std::shared_ptr<Job> cur;
+    std::vector<std::shared_ptr<Job>> all;
     {
         std::lock_guard<std::mutex> lock(mu_);
-        cur = current_;
+        all = aside_;
+        if (current_) all.push_back(current_);
     }
-    if (cur) {
-        cur->ctl.cancel();
-        if (cur->thread.joinable()) cur->thread.join();
-    }
+    for (const auto& j : all) j->ctl.cancel();
+    for (const auto& j : all)
+        if (j->thread.joinable()) j->thread.join();
     joinFinished();
 }
 
 void JobRunner::start(std::string name, std::function<void(const fruit::JobControl&)> work, Done done) {
+    launch(std::move(name), std::move(work), std::move(done), false);
+}
+
+void JobRunner::startGivingWay(std::string name, std::function<void(const fruit::JobControl&)> work, Done done) {
+    launch(std::move(name), std::move(work), std::move(done), true);
+}
+
+void JobRunner::launch(std::string name, std::function<void(const fruit::JobControl&)> work, Done done, bool gives_way) {
+    {
+        // Work that gives way stops by itself, beside the new job: waiting for it would hold up the UI until
+        // the step it is in ends, which may be a long one that can't be stopped.
+        std::lock_guard<std::mutex> lock(mu_);
+        if (current_ && current_->gives_way) {
+            current_->ctl.cancel();
+            log::info("job set aside: " + current_->name);
+            aside_.push_back(std::move(current_));
+            current_.reset();
+        }
+    }
     cancel();
-    wait();
+    waitCurrent();
     auto job = std::make_shared<Job>();
     job->name = std::move(name);
     job->done = std::move(done);
+    job->gives_way = gives_way;
     Job* raw = job.get();
     auto wake = wake_;
     job->ctl = fruit::JobControl([raw, wake](std::string_view stage, double f) {
@@ -84,6 +105,11 @@ bool JobRunner::busy() const {
     return current_ != nullptr;
 }
 
+bool JobRunner::stopping() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return !aside_.empty();
+}
+
 JobProgress JobRunner::progress() const {
     JobProgress p;
     std::lock_guard<std::mutex> lock(mu_);
@@ -102,17 +128,34 @@ void JobRunner::joinFinished() {
 }
 
 void JobRunner::poll() {
-    std::shared_ptr<Job> done;
+    std::vector<std::shared_ptr<Job>> done;
     {
         std::lock_guard<std::mutex> lock(mu_);
+        // Work set aside first: it was started before the current job.
+        for (auto it = aside_.begin(); it != aside_.end();) {
+            if ((*it)->finished) {
+                done.push_back(std::move(*it));
+                it = aside_.erase(it);
+            } else {
+                ++it;
+            }
+        }
         if (current_ && current_->finished) {
-            done = current_;
+            done.push_back(current_);
             current_.reset();
         }
     }
-    if (!done) return;
+    for (const auto& job : done) deliver(job);
+}
+
+void JobRunner::deliver(const std::shared_ptr<Job>& done) {
     if (done->thread.joinable()) done->thread.join();
-    platform::endBusy();
+    bool idle = false;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        idle = !current_ && aside_.empty();
+    }
+    if (idle) platform::endBusy();  // nothing else is running
     if (done->error) {
         try {
             std::rethrow_exception(done->error);
@@ -129,12 +172,25 @@ void JobRunner::poll() {
     if (done->done) done->done(done->error);
 }
 
-void JobRunner::wait() {
+void JobRunner::waitCurrent() {
     for (;;) {
         std::shared_ptr<Job> cur;
         {
             std::lock_guard<std::mutex> lock(mu_);
             cur = current_;
+        }
+        if (!cur) return;
+        if (cur->thread.joinable()) cur->thread.join();
+        poll();
+    }
+}
+
+void JobRunner::wait() {
+    for (;;) {
+        std::shared_ptr<Job> cur;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            cur = current_ ? current_ : aside_.empty() ? nullptr : aside_.front();
         }
         if (!cur) return;
         if (cur->thread.joinable()) cur->thread.join();
