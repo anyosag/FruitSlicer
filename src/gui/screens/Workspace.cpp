@@ -352,7 +352,7 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     // view allows), then a footer that stays in sight: the button that
     // applies it (Hollow, Cut, Label, Combine, Duplicate, Arrange, Merge, Split).
     const bool shape = t == Tool::Label || t == Tool::Combine || t == Tool::Cut;  // Cut, Label, Combine
-    const bool footer = t == Tool::Hollow || shape || partsToolFooterHeight(t) > 0;
+    const bool footer = t == Tool::Hollow || t == Tool::Supports || shape || partsToolFooterHeight(t) > 0;
     beginFloat("panel", pos, kToolPanelW);
     const bool on_part =
         t == Tool::Move || t == Tool::Rotate || t == Tool::Scale || t == Tool::Repair || t == Tool::Mirror ||
@@ -384,12 +384,14 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
         case Tool::Cut: cutPanel(app, doc); break;
         case Tool::None: break;
     }
+    if (bool to_end = false; app.takePanelScroll(&to_end)) ImGui::SetScrollY(to_end ? ImGui::GetScrollMaxY() : 0);
     ImGui::EndChild();
     if (footer) {
         const float y0 = ImGui::GetCursorPosY();
         ImGui::Dummy(ImVec2(0, 2));
         if (shape) shapeApplyArea(app, doc, t);
         else if (t == Tool::Hollow) hollowApplyArea(app, doc);
+        else if (t == Tool::Supports) supportsFooter(app, doc);
         else partsToolFooter(app, doc, t);
         kept->SetFloat(footer_key, ImGui::GetCursorPosY() - y0 + 8);
     }

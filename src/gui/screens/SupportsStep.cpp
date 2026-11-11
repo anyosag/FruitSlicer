@@ -23,166 +23,183 @@ namespace {
 
 bool running(App& app) { return app.jobs().busy() && app.jobs().progress().name == "Generating supports"; }
 
-// A card choosing the usual tip size.
-bool tipCard(const char* id, const char* size, const char* note, bool selected, float w) {
+// The word for a slider's stop, on the right of its label: accent when it is not the resin's.
+void rightText(const char* s, ImFont* f, float size, ImU32 c, float y) {
+    ImGui::PushFont(f, size);
+    const float w = ImGui::CalcTextSize(s).x;
+    ImGui::PopFont();
+    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x - w, y));
+    text(s, f, size, c);
+}
+
+// A slider with a stop at each whole number from `lo` to `hi`: a thin track, a
+// round grip and a dot for each stop. True when it moved. `activated` and
+// `released` tell when a drag starts and ends. Left and Right move it a stop
+// while it has the focus.
+bool stopSlider(const char* id, int* v, int lo, int hi, bool* activated = nullptr, bool* released = nullptr) {
+    const float w = ImGui::GetContentRegionAvail().x, h = 22, r = 9;
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const ImVec2 sz(w, 62);
-    const bool clicked = ImGui::InvisibleButton(id, sz);
-    const bool hovered = ImGui::IsItemHovered();
+    ImGui::InvisibleButton(id, ImVec2(w, h));
+    const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
+    if (activated) *activated = ImGui::IsItemActivated();
+    if (released) *released = ImGui::IsItemDeactivated();
+    const int n = hi - lo + 1;
+    const float x0 = p.x + r, x1 = p.x + w - r;
+    int next = *v;
+    if (active) {
+        const float t = (ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, x1 - x0);
+        next = std::clamp(lo + static_cast<int>(std::lround(t * (n - 1))), lo, hi);
+    }
+    if (ImGui::IsItemFocused() || hovered) {
+        if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) next = std::max(lo, *v - 1);
+        if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) next = std::min(hi, *v + 1);
+    }
+    const bool moved = next != *v;
+    *v = next;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 q(p.x + sz.x, p.y + sz.y);
-    dl->AddRectFilled(p, q, selected ? IM_COL32(0x2A, 0x1E, 0x14, 255) : (hovered ? col::Active : col::Input), 8);
-    dl->AddRect(p, q, selected ? col::Accent : col::BorderStrong, 8, selected ? 1.5f : 1.0f);
-    dl->AddCircleFilled(ImVec2(p.x + w / 2, p.y + 14), 4.5f, selected ? col::Accent : col::Text);
-    auto centred = [&](const char* s, ImFont* f, float size, ImU32 c, float y) {
-        ImGui::PushFont(f, size);
-        const ImVec2 ts = ImGui::CalcTextSize(s);
-        dl->AddText(ImVec2(p.x + (w - ts.x) / 2, p.y + y), c, s);
-        ImGui::PopFont();
-    };
-    centred(size, fonts().semibold, size::Body, col::Text, 24);
-    centred(note, fonts().regular, size::Label, col::TextMuted, 42);
+    const float cy = p.y + h / 2;
+    dl->AddRectFilled(ImVec2(p.x, cy - 2), ImVec2(p.x + w, cy + 2), IM_COL32(0x2E, 0x34, 0x3E, 255), 2);
+    const float gx = x0 + (x1 - x0) * (n > 1 ? static_cast<float>(*v - lo) / (n - 1) : 0.0f);
+    dl->AddCircleFilled(ImVec2(gx, cy), r, hovered || active ? col::AccentHover : col::Accent, 24);
+    dl->AddCircle(ImVec2(gx, cy), r - 1.5f, col::Panel, 24, 3);
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    return clicked;
+    // The dots, under the track.
+    for (int i = 0; i < n; ++i) {
+        const float x = x0 + (x1 - x0) * (n > 1 ? static_cast<float>(i) / (n - 1) : 0.0f);
+        dl->AddCircleFilled(ImVec2(x, p.y + h + 3), 2, IM_COL32(0x4A, 0x51, 0x60, 255));
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    return moved;
 }
 
-void statCard(const char* id, const std::string& big, const char* what, const std::string& detail, float w) {
-    beginCard(id, ImVec2(w, 104), 12, col::Panel, col::Border);
-    text(big.c_str(), fonts().bold, size::DialogTitle, col::Text);
-    text(what, fonts().regular, size::Body, col::TextSecondary);
-    text(detail.c_str(), fonts().regular, size::Help, col::TextMuted, true);
-    endCard();
+// One quick support slider: label and word, the slider, the end words and a
+// caption of what the stop sets.
+void quickSlider(App& app, const SupportChoices& choices, QuickSlider which) {
+    const QuickInfo q = quickInfo(which, choices);
+    ImGui::PushID(q.label);
+    const float y = ImGui::GetCursorPosY();
+    text(q.label, fonts().semibold, size::Body, col::Text);
+    rightText(q.word.c_str(), fonts().semibold, size::Help, q.stop == q.normal ? col::TextSecondary : col::Accent, y);
+    int v = q.stop;
+    if (stopSlider("##stop", &v, 1, kQuickStops)) {
+        SupportChoices c = choices;
+        quickStop(c, which) = v;
+        app.setSupportChoices(c);
+    }
+    const float ey = ImGui::GetCursorPosY();
+    text(q.left, fonts().regular, size::Label, col::TextMuted);
+    rightText(q.right, fonts().regular, size::Label, col::TextMuted, ey);
+    text(q.caption.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    ImGui::PopID();
 }
 
-void choicesPanel(App& app, Document& doc) {
-    SupportChoices c = doc.supports.choices;
-    bool changed = false;
-    groupLabel("Usual tip size");
-    const float w = ImGui::GetContentRegionAvail().x, cw = (w - 12) / 3;
-    struct T {
-        int cls;
-        const char* size;
-        const char* note;
-    };
-    const T tips[] = {{1, "0.3 mm", "smaller marks"}, {2, "0.4 mm", "default"}, {3, "0.6 mm", "holds more"}};
-    for (int i = 0; i < 3; ++i) {
-        if (tipCard(tips[i].size, tips[i].size, tips[i].note, c.usual_tip == tips[i].cls, cw)) {
-            c.usual_tip = tips[i].cls;
-            changed = true;
-        }
-        if (i < 2) ImGui::SameLine(0, 6);
-    }
-    const fruit::SupportConfig cfg = supportConfig(doc.placement(), c);
-    const double d = cfg.tip_classes[static_cast<std::size_t>(c.usual_tip)].diameter;
-    text(strf("Each tip size holds a set area: %.1f mm holds %.1f mm² of layer. FruitSlicer still uses bigger or "
-              "smaller tips where they're needed.",
-              d, cfg.capacity.capacity(d))
-             .c_str(),
-         fonts().regular, size::Body, col::TextSecondary, true);
-    ImGui::Dummy(ImVec2(0, 6));
-    {
-        const float y = ImGui::GetCursorPosY();
-        text("Tip spacing", fonts().semibold, size::Body, col::Text);
-        const char* label = c.density <= 1.05 ? "Normal" : (c.density < 1.55 ? "A little closer" : "Closer together");
-        ImGui::PushFont(fonts().regular, size::Body);
-        const float lw = ImGui::CalcTextSize(label).x;
-        ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - lw, y));
-        text(label, fonts().regular, size::Body, col::TextSecondary);
-    }
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col::Active);
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col::Active);
-    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 14);
-    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 7);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 3));
-    ImGui::SetNextItemWidth(w);
-    float dens = static_cast<float>(c.density);
-    if (ImGui::SliderFloat("##spacing", &dens, 1.0f, 2.0f, "", ImGuiSliderFlags_AlwaysClamp)) {
-        c.density = std::round(dens * 20) / 20;
-        changed = true;
-    }
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(3);
-    {
-        const float y = ImGui::GetCursorPosY();
-        text("Normal", fonts().regular, size::Help, col::TextMuted);
-        ImGui::PushFont(fonts().regular, size::Help);
-        const float lw = ImGui::CalcTextSize("Closer together").x;
-        ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - lw, y));
-        text("Closer together", fonts().regular, size::Help, col::TextMuted);
-    }
-    ImGui::Dummy(ImVec2(0, 6));
-    if (radioCard("merge", "Merge into trunks",
-                  "Neighbouring supports join, so fewer stand on the raft and they come off in groups.", c.merge)) {
-        c.merge = !c.merge;
-        changed = true;
-    }
-    ImGui::Dummy(ImVec2(0, 2));
+// The raft and its lift: a job-wide placement choice (every part).
+void onThePlate(App& app, Document& doc) {
     const fruit::Placement& p = doc.placement();
-    const std::string raft = p.on_plate ? "Flat on the plate, no raft" : strf("Raft, %.0f mm lift", p.lift());
-    {
-        // A link to where it is set, not a choice here.
-        const ImVec2 q = ImGui::GetCursorScreenPos();
-        const ImVec2 sz(w, 54);
-        const bool clicked = ImGui::InvisibleButton("raft", sz);
-        const bool hovered = ImGui::IsItemHovered();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(q, ImVec2(q.x + sz.x, q.y + sz.y), hovered ? col::Card : col::Panel, 10);
-        dl->AddRect(q, ImVec2(q.x + sz.x, q.y + sz.y), col::Border, 10);
-        ImGui::PushFont(fonts().semibold, size::Body);
-        dl->AddText(ImVec2(q.x + 12, q.y + 10), col::Text, raft.c_str());
-        ImGui::PopFont();
-        ImGui::PushFont(fonts().regular, size::Help);
-        dl->AddText(ImVec2(q.x + 12, q.y + 30), col::TextMuted, "Set with On plate");
-        ImGui::PopFont();
-        ImGui::PushFont(fonts().semibold, size::Section);
-        dl->AddText(ImVec2(q.x + sz.x - 20, q.y + 17), col::TextMuted, "›");
-        ImGui::PopFont();
-        if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        if (clicked) app.openTool(Tool::OnPlate);
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, 2));
+    groupLabel("On the plate");
+    ImGui::Dummy(ImVec2(0, 2));
+    bool raft = !p.on_plate;
+    if (ImGui::Checkbox("##raft", &raft)) app.setOnPlate(!raft);
+    ImGui::SameLine(0, 10);
+    ImGui::BeginGroup();
+    text("Raft", fonts().semibold, size::Body, col::Text);
+    text(raft ? "A 1 mm raft under the supports, which comes off in one piece. Best for most models."
+              : "Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips.",
+         fonts().regular, size::Help, col::TextSecondary, true);
+    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::BeginDisabled(!raft);
+    const int now = static_cast<int>(std::lround(p.elevation));
+    const bool differs = raft && std::abs(p.elevation - fruit::Placement{}.elevation) > 1e-9;
+    const float y = ImGui::GetCursorPosY();
+    text("Lift height", fonts().semibold, size::Body, col::Text);
+    rightText(raft ? strf("%d mm", now).c_str() : "None", fonts().semibold, size::Help,
+              differs ? col::Accent : col::TextSecondary, y);
+    int v = now;
+    bool begin = false, end = false;
+    if (stopSlider("##lift", &v, 1, 10, &begin, &end) || begin) {
+        if (begin) app.beginLift();
+        app.previewLift(v);
     }
-    if (changed) app.setSupportChoices(c);
+    if (end) app.endLift();
+    const float ey = ImGui::GetCursorPosY();
+    text("1 mm", fonts().regular, size::Label, col::TextMuted);
+    rightText("10 mm", fonts().regular, size::Label, col::TextMuted, ey);
+    text(raft ? strf("%d mm between the raft and the model's lowest point. Higher is easier to snap off; lower uses "
+                     "less resin.",
+                     now)
+                    .c_str()
+              : "No lift: the model stands on the plate.",
+         fonts().regular, size::Help, col::TextSecondary, true);
+    ImGui::EndDisabled();
 }
 
-void resultPanel(App& app, Document& doc) {
-    const SupportResult& r = *doc.supports.result;
-    const float w = ImGui::GetContentRegionAvail().x, cw = (w - 8) / 2;
-    statCard("tips", thousands(r.tips), "tips",
-             strf("%zu island · %zu extra hold", r.island_tips, r.extra_hold), cw);
-    ImGui::SameLine(0, 8);
-    statCard("trunks", thousands(r.trunks), "trunks on the raft", strf("from %zu pillars", r.pillars), cw);
-    statCard("braces", thousands(r.braces), "braces", "none in the snap-off zone below the tips", cw);
-    ImGui::SameLine(0, 8);
-    statCard("resin", strf("%.1f ml", r.support_ml), "support resin", "at most", cw);
-    ImGui::Dummy(ImVec2(0, 6));
-    text("Tip sizes used", fonts().semibold, size::Body, col::Text);
-    float x = 0;
-    for (std::size_t i = 0; i < r.tip_sizes.size(); ++i) {
-        const std::string label = strf("%.1f mm × %zu", r.tip_sizes[i].first, r.tip_sizes[i].second);
-        ImGui::PushFont(fonts().medium, size::Body);
-        const float lw = ImGui::CalcTextSize(label.c_str()).x + 26;
-        ImGui::PopFont();
-        if (i > 0 && x + lw <= w) ImGui::SameLine(0, 8);
-        else x = 0;
-        x += lw + 8;
-        chip(label.c_str(), label.c_str(), 0, col::Text, col::Panel, col::BorderStrong);
+// Under the controls: nothing made, what was made, or that it is out of date.
+void statusArea(App& app, Document& doc) {
+    const SupportState& s = doc.supports;
+    if (!s.result) {
+        beginCard("nothing", ImVec2(0, 0), 10, col::Card, col::Border);
+        text("Nothing made yet. Make supports uses these settings.", fonts().regular, size::Help,
+             col::TextSecondary, true);
+        endCard();
+        return;
     }
+    if (!s.fresh(doc.revision(), doc.supportSettings()) && !running(app)) {
+        beginCard("stale", ImVec2(0, 0), 10, col::WarnBg, col::WarnBorder);
+        text("Supports are out of date", fonts().semibold, size::Body, col::Text);
+        text(s.result->choices == s.choices ? "The model or the picked sides changed after they were made."
+                                            : "The settings changed after they were made.",
+             fonts().regular, size::Help, col::TextSecondary, true);
+        endCard();
+        return;
+    }
+    const SupportResult& r = *s.result;
+    beginCard("made", ImVec2(0, 0), 10, col::Card, col::Border);
+    const float w = ImGui::GetContentRegionAvail().x / 3;
+    auto stat = [&](const std::string& big, const char* what, int i) {
+        if (i > 0) ImGui::SameLine(w * i);
+        ImGui::BeginGroup();
+        text(big.c_str(), fonts().bold, size::DialogTitle - 2, col::Text);
+        text(what, fonts().regular, size::Label, col::TextMuted);
+        ImGui::EndGroup();
+    };
+    stat(thousands(r.tips), "tips", 0);
+    stat(thousands(r.trunks), "trunks", 1);
+    stat(strf("%.1f ml", r.support_ml), "support resin", 2);
+    endCard();
     (void)app;
+}
+
+void controlsPanel(App& app, Document& doc) {
+    const SupportChoices c = doc.supports.choices;
+    const fruit::Placement& p = doc.placement();
+    const bool differs = quickChanged(c) || p.on_plate || std::abs(p.elevation - fruit::Placement{}.elevation) > 1e-9;
+    {
+        const float y = ImGui::GetCursorPosY();
+        groupLabel("Quick support");
+        if (differs) {
+            ImGui::PushFont(fonts().semibold, size::Body);
+            const float lw = ImGui::CalcTextSize("Reset to the resin's values").x;
+            ImGui::PopFont();
+            ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x - lw, y - 2));
+            if (linkButton("Reset to the resin's values")) app.resetQuickSupport();
+        }
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    for (const QuickSlider q : {QuickSlider::Hold, QuickSlider::Amount, QuickSlider::Sturdiness}) {
+        // Each slider reads the choices as they are now, so a move earlier in the frame shows.
+        quickSlider(app, doc.supports.choices, q);
+        ImGui::Dummy(ImVec2(0, 4));
+    }
+    onThePlate(app, doc);
 }
 
 }  // namespace
 
 void supportsPanel(App& app, Document& doc) {
-    const bool have = doc.supports.result != nullptr;
-    if (have && !running(app)) {
-        if (linkButton("Remake supports")) app.generateSupports();
-        ImGui::Dummy(ImVec2(0, 2));
-        resultPanel(app, doc);
-    } else {
-        choicesPanel(app, doc);
-    }
+    controlsPanel(app, doc);
     // The tip picked in the view, and why it is there.
     const SupportState& s = doc.supports;
     if (s.result && !running(app) && s.selected_tip >= 0 &&
@@ -201,13 +218,20 @@ void supportsPanel(App& app, Document& doc) {
         ImGui::Dummy(ImVec2(0, 4));
         text("Click a tip in the view to see why it is there.", fonts().regular, size::Body, col::TextSecondary, true);
     }
-    ImGui::Dummy(ImVec2(0, 8));
+}
+
+// Pinned under the panel's body: always in sight, however far it scrolls.
+void supportsFooter(App& app, Document& doc) {
+    const bool have = doc.supports.result != nullptr;
+    ImGui::Dummy(ImVec2(0, 2));
+    statusArea(app, doc);
+    ImGui::Dummy(ImVec2(0, 6));
     if (have) {
         const bool fresh = doc.supports.fresh(doc.revision(), doc.supportSettings());
-        if (secondaryButton("Edit tips by hand", ImVec2(-1, 38), fresh && !running(app))) app.editTips(true);
+        if (secondaryButton("Edit tips by hand", ImVec2(-1, 34), fresh && !running(app))) app.editTips(true);
         if (!fresh) tooltip("Remake the supports first.");
+        ImGui::Dummy(ImVec2(0, 2));
     }
-    ImGui::Dummy(ImVec2(0, 4));
     if (linkButton("Advanced settings")) app.showAdvanced(true);
     std::size_t changed = 0;
     for (const AdvancedSetting& a : advancedSettings()) changed += advancedChanged(a, doc.supports.choices);
