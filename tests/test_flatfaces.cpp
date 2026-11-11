@@ -54,6 +54,16 @@ TEST_CASE("Flat faces: a face with something standing out past its plane is left
     for (const FlatFace& f : ff.faces)
         if (f.normal.z < -0.99) bottom = true;
     CHECK(bottom);
+    // It is kept with the faces it can't rest on, and its triangles point to it there.
+    int other = -1;
+    for (std::size_t i = 0; i < ff.others.size(); ++i)
+        if (ff.others[i].normal.z > 0.99 && ff.others[i].centroid.z == Approx(5).margin(1e-6)) other = static_cast<int>(i);
+    REQUIRE(other >= 0);
+    CHECK(ff.others[static_cast<std::size_t>(other)].area == Approx(30 * 10).margin(1e-6));  // the foot box's whole top, under the upright too
+    for (const int32_t t : ff.others[static_cast<std::size_t>(other)].faces) {
+        CHECK(ff.otherOf(static_cast<std::size_t>(t)) == other);
+        CHECK(ff.regionOf(static_cast<std::size_t>(t)) == -1);
+    }
 }
 
 TEST_CASE("Flat faces: slivers are ignored", "[flat]") {

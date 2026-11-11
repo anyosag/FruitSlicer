@@ -204,16 +204,16 @@ void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     const bool click = ImGui::IsMouseReleased(ImGuiMouseButton_Left) && io.MouseDragMaxDistanceSqr[0] < 9;
     const bool menu = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) ||
                       (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[1] < 9);
-    // With On plate open, a click on one of the selected part's flat faces lays it on the plate.
+    // With On plate open, a click anywhere on the selected part turns that surface to face the plate.
     const bool lays = click && app.step() == Step::Model && app.toolPanelOpen() && app.tool() == Tool::OnPlate;
     if (!menu && !lays && !(click && doc.partCount() > 1)) return;
     const float nx = 2 * (m.x - origin.x) / size.x - 1, ny = 1 - 2 * (m.y - origin.y) / size.y;
     V3 o, d;
     app.camera().ray(nx, ny, size.x / std::max(1.0f, size.y), &o, &d);
     if (lays && !menu) {
-        const int face = app.pickRestingFace({o.x, o.y, o.z}, {d.x, d.y, d.z});
-        if (face >= 0) {
-            app.layFace(face);
+        const SurfacePick s = app.surfaceUnder({o.x, o.y, o.z}, {d.x, d.y, d.z});
+        if (s.kind != SurfacePick::Kind::None) {
+            app.laySurface(s);
             return;
         }
         if (doc.partCount() < 2) return;

@@ -8,6 +8,10 @@
     {"lay_face": 3}, {"frames": 2}, {"shot": "g5_laid_back"},
     {"undo": 1}, {"frames": 2}, {"shot": "g5_undone"},
     {"hover_face": 4}, {"shot": "g5_hover_top"}, {"hover_face": 0},
+    {"hover_point": [5, -3.2, 13]}, {"frames": 1}, {"shot": "g5_pick_curved"},
+    {"hover_point": [12, -7, 9.2]}, {"frames": 1}, {"shot": "g5_pick_flat"}, {"hover_point": false},
+    {"lay_point": [5, -3.2, 13]}, {"frames": 2}, {"shot": "g5_turned_curved"},
+    {"undo": 1}, {"frames": 2},
     {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
     {"tool": "on_plate"}, {"tool": "on_plate"}, {"frames": 2}, {"shot": "g5_two_parts"},
     {"lay_face": 2}, {"frames": 2}, {"shot": "g5_two_parts_laid"}

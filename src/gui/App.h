@@ -15,6 +15,7 @@
 #include "Document.h"
 #include "Calibration.h"
 #include "JobFile.h"
+#include "LayFace.h"
 #include "Jobs.h"
 #include "Measure.h"
 #include "PartsTools.h"
@@ -158,17 +159,28 @@ public:
     // LayFace.h) lies on the plate; one undoable edit. False when there is no such face or it is
     // already there.
     bool layFace(int region);
+    // On plate, as Select Base in other slicers: any surface of the selected part (a flat face or a
+    // spot on a curved one) turned to face the plate; one undoable edit. False when it already does.
+    bool laySurface(const SurfacePick& s);
     // The note after laying one ("Laid the back face..."), only until the next edit or undo.
     struct LaidNote {
         std::string name;
+        SurfacePick::Kind kind = SurfacePick::Kind::Resting;
         int part = -1, revision = -1;
     };
     const LaidNote* laidNote() const;
+    // The selected part's surface under a ray (printer coordinates); kind None when it misses.
+    SurfacePick surfaceUnder(const fruit::Vec3& origin, const fruit::Vec3& dir);
+    // The selected part's surface nearest a point (printer coordinates): scripts.
+    SurfacePick surfaceNear(const fruit::Vec3& at);
     // The flat face of the selected part under a ray (printer coordinates), or -1.
     int pickRestingFace(const fruit::Vec3& origin, const fruit::Vec3& dir);
     // A face lit as if the mouse were on it (scripts, for shots); -1 for none.
     void setHoverFace(int region) { hover_face_ = region; }
     int hoverFace() const { return hover_face_; }
+    // Or the surface nearest a point (printer coordinates), lit the same way.
+    void setHoverPoint(std::optional<fruit::Vec3> at) { hover_point_ = at; }
+    const std::optional<fruit::Vec3>& hoverPoint() const { return hover_point_; }
     void scaleToFit();
     void undo();
     void redo();
@@ -564,6 +576,7 @@ private:
     MeasureState measure_;
     LaidNote laid_note_;
     int hover_face_ = -1;
+    std::optional<fruit::Vec3> hover_point_;
     PartsToolState parts_tools_;
     int part_menu_request_ = -1, part_menu_part_ = -1;
     float part_menu_x_ = 0, part_menu_y_ = 0;

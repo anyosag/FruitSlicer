@@ -369,6 +369,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (!app.layFace(n - 1)) throw std::runtime_error("lay_face: no flat face " + std::to_string(n) + " to lay down");
         } else if (step.contains("hover_face")) {
             app.setHoverFace(step["hover_face"].get<int>() - 1);  // lit as if the mouse were on it; 0 puts it out
+        } else if (step.contains("hover_point")) {
+            // {"hover_point": [x, y, z]}: the selected part's surface nearest that point (printer mm) lit as
+            // if the mouse were on it; {"hover_point": false} puts it out.
+            const auto& v = step["hover_point"];
+            if (v.is_array()) app.setHoverPoint(fruit::Vec3{v[0].get<double>(), v[1].get<double>(), v[2].get<double>()});
+            else app.setHoverPoint(std::nullopt);
+        } else if (step.contains("lay_point")) {
+            // {"lay_point": [x, y, z]}: On plate's click on the selected part's surface nearest that point.
+            const auto& v = step["lay_point"];
+            const SurfacePick s = app.surfaceNear({v[0].get<double>(), v[1].get<double>(), v[2].get<double>()});
+            if (s.kind == SurfacePick::Kind::None) throw std::runtime_error("lay_point: no surface of the selected part there");
+            app.laySurface(s);
         } else if (step.contains("sits")) {
             app.setOnPlate(step["sits"].get<std::string>() == "flat");
         } else if (step.contains("fit")) {

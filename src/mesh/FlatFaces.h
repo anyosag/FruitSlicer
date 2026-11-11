@@ -31,9 +31,16 @@ struct FlatFace {
 struct FlatFaces {
     std::vector<FlatFace> faces;           // the ones the model can rest on, largest first
     std::vector<int32_t> face_region;      // per triangle of the mesh: its index in `faces`, or -1
+    // Flat patches it can't rest on (some of the model reaches beyond their plane), largest first.
+    std::vector<FlatFace> others;
+    std::vector<int32_t> other_region;     // per triangle: its index in `others`, or -1
     // The patch a triangle belongs to (an index into `faces`), or -1.
     int regionOf(std::size_t triangle) const {
         return triangle < face_region.size() ? face_region[triangle] : -1;
+    }
+    // The flat patch it can't rest on that a triangle belongs to (an index into `others`), or -1.
+    int otherOf(std::size_t triangle) const {
+        return triangle < other_region.size() ? other_region[triangle] : -1;
     }
 };
 

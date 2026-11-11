@@ -41,6 +41,7 @@ FlatFaces findFlatFaces(const TriangleMesh& mesh, const FlatFaceOptions& o) {
     FlatFaces out;
     const std::size_t nf = mesh.faces.size();
     out.face_region.assign(nf, -1);
+    out.other_region.assign(nf, -1);
     if (nf == 0) return out;
 
     std::vector<Vec3> normal(nf);
@@ -136,7 +137,12 @@ FlatFaces findFlatFaces(const TriangleMesh& mesh, const FlatFaceOptions& o) {
                 rests = false;
                 break;
             }
-        if (!rests) continue;
+        if (!rests) {
+            const int32_t index = static_cast<int32_t>(out.others.size());
+            for (const int32_t f : p.face.faces) out.other_region[static_cast<std::size_t>(f)] = index;
+            out.others.push_back(std::move(p.face));
+            continue;
+        }
         const int32_t index = static_cast<int32_t>(out.faces.size());
         for (const int32_t f : p.face.faces) out.face_region[static_cast<std::size_t>(f)] = index;
         out.faces.push_back(std::move(p.face));

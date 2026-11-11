@@ -9,6 +9,7 @@
 
 #include "Document.h"
 #include "JobFile.h"
+#include "LayFace.h"
 #include "Placing.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
@@ -140,4 +141,74 @@ TEST_CASE("Lay face: faces are named by where they point, and numbered when name
     CHECK(n[2] == "Back 2");
     CHECK(n[3] == "Top");
     CHECK(n[4] == "Slanted face 2");
+}
+
+TEST_CASE("On plate: any surface can be picked: a resting face, another flat face, a curved spot", "[gui][lay-face]") {
+    // An L (the foot's top is flat but can't be rested on) with a ball on the end of the foot.
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 10, 5});
+    m.append(fruit::makeBox({0, 0, 5}, {10, 10, 30}));
+    m.append(fruit::makeSphere({30, 5, 8}, 4, 48));
+    const auto doc = docFor(m, "l_and_ball.stl");
+    REQUIRE(doc);
+    const Part& part = doc->part();
+    const fruit::FlatFaces& ff = part.flatFaces();
+    const fruit::Transform& tf = part.transform();
+
+    // The bottom: a face it rests on, facing the plate already.
+    int bottom = -1;
+    for (std::size_t i = 0; i < ff.faces.size(); ++i)
+        if (ff.faces[i].normal.z < -0.99) bottom = static_cast<int>(i);
+    REQUIRE(bottom >= 0);
+    const fruit::FlatFace& b = ff.faces[static_cast<std::size_t>(bottom)];
+    const SurfacePick on = surfaceAt(part, b.faces.front(), tf.apply(b.centroid));
+    CHECK(on.kind == SurfacePick::Kind::Resting);
+    CHECK(on.region == bottom);
+    CHECK(on.facing_down);
+    CHECK(on.name == "Bottom");
+
+    // The foot's top: flat, but the upright rises past it.
+    int top = -1;
+    for (std::size_t i = 0; i < ff.others.size(); ++i)
+        if (ff.others[i].normal.z > 0.99 && ff.others[i].centroid.z == Approx(5).margin(1e-6)) top = static_cast<int>(i);
+    REQUIRE(top >= 0);
+    const fruit::FlatFace& t = ff.others[static_cast<std::size_t>(top)];
+    const SurfacePick foot = surfaceAt(part, t.faces.front(), tf.apply(t.centroid));
+    CHECK(foot.kind == SurfacePick::Kind::Flat);
+    CHECK(foot.name == "Top");
+    CHECK(foot.area == Approx(30 * 10).margin(1e-6));
+    CHECK_FALSE(foot.facing_down);
+
+    // A triangle of the ball: curved, its own normal.
+    int ball = -1;
+    for (std::size_t i = 0; i < part.mesh().faces.size(); ++i)
+        if (ff.regionOf(i) < 0 && ff.otherOf(i) < 0) {
+            ball = static_cast<int>(i);
+            break;
+        }
+    REQUIRE(ball >= 0);
+    const SurfacePick spot = surfaceAt(part, ball, {0, 0, 0});
+    CHECK(spot.kind == SurfacePick::Kind::Curved);
+    const fruit::Vec3 n = part.mesh().faceNormal(static_cast<std::size_t>(ball));
+    CHECK(spot.normal.x == Approx(n.x));
+    CHECK(spot.normal.y == Approx(n.y));
+    CHECK(spot.normal.z == Approx(n.z));
+
+    // Turning that spot to the plate points it straight down; the model keeps its volume and sits at the lift.
+    const double volume = doc->placed().volume();
+    doc->edit(laidFaceDown(doc->placement(), spot.normal));
+    const fruit::Vec3 w = printerDirection(doc->placement(), spot.normal);
+    CHECK(w.x == Approx(0).margin(1e-6));
+    CHECK(w.y == Approx(0).margin(1e-6));
+    CHECK(w.z == Approx(-1).margin(1e-9));
+    CHECK(doc->placed().volume() == Approx(volume).epsilon(1e-9));
+    CHECK(doc->part().box().min.z == Approx(doc->placement().lift()).margin(1e-6));
+    // So is the foot's top, which then faces the plate but doesn't touch it: the upright reaches lower.
+    doc->edit(laidFaceDown(doc->placement(), t.normal));
+    CHECK(printerDirection(doc->placement(), t.normal).z == Approx(-1).margin(1e-9));
+    double lo, hi;
+    faceHeights(*doc, t, &lo, &hi);
+    CHECK(lo > doc->placement().lift() + 1);
+    doc->undo();
+    doc->undo();
+    CHECK(printerDirection(doc->placement(), b.normal).z == Approx(-1).margin(1e-9));
 }
