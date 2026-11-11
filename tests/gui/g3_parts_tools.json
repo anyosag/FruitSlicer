@@ -9,7 +9,7 @@
     {"close_tool": true}, {"job_tab": "collisions"}, {"shot": "g3_collisions_one_part"},
     {"tool": "duplicate"}, {"shot": "g3_duplicate_panel"},
     {"duplicate": 3}, {"view": "top"}, {"collisions": "wait"}, {"shot": "g3_duplicate_done"},
-    {"duplicate": 40}, {"collisions": "wait"}, {"shot": "g3_duplicate_not_all_fit"},
+    {"duplicate": 40}, {"view": "top"}, {"collisions": "wait"}, {"shot": "g3_duplicate_not_all_fit"},
     {"undo": 1}, {"collisions": "wait"}, {"shot": "g3_duplicate_undone"},
     {"close_tool": true},
     {"select_part": 2}, {"move": [-5, 5]}, {"select_part": 3}, {"move": [0, 8]},

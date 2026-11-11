@@ -79,7 +79,7 @@ void arrangePanel(App& app, Document& doc) {
          fonts().regular, size::Help, col::TextMuted, true);
     if (doc.partCount() < 2) {
         ImGui::Dummy(ImVec2(0, 6));
-        text("There is one part: nothing to lay out. Move or Add a part first.", fonts().regular, size::Body,
+        text("There is one part: nothing to lay out. Add another with Add a part, in the Job panel.", fonts().regular, size::Body,
              col::TextSecondary, true);
     }
     reportCard(app, doc, Tool::Arrange);
@@ -170,7 +170,7 @@ void partsToolFooter(App& app, Document& doc, Tool t) {
         }
         case Tool::Arrange: {
             if (doc.partCount() < 2) {
-                greyed("Arrange", "There is one part: nothing to lay out.");
+                greyed("Arrange", "Needs two parts.");
             } else if (primaryButton(strf("Arrange %zu parts", doc.partCount()).c_str(), ImVec2(-1, 38), !working)) {
                 app.arrangeAll();
             }
@@ -178,7 +178,7 @@ void partsToolFooter(App& app, Document& doc, Tool t) {
         }
         case Tool::Split: {
             const int n = shellsOf(doc.part());
-            if (n < 2) greyed("Split", "It is one shell: there is nothing to split.");
+            if (n < 2) greyed("Split", "Needs two shells or more.");
             else if (n > kMaxPieces) greyed("Split", strf("It has %d shells: too many to make into parts.", n));
             else if (primaryButton(strf("Split into %d parts", n).c_str(), ImVec2(-1, 38), !working)) app.splitSelected();
             break;
@@ -186,7 +186,7 @@ void partsToolFooter(App& app, Document& doc, Tool t) {
         case Tool::Merge: {
             const std::size_t n = app.mergeChosen().size();
             if (doc.partCount() < 2) {
-                greyed("Join as one part", "There is one part: nothing to join.");
+                greyed("Join as one part", "Needs two parts.");
             } else if (n < 2) {
                 primaryButton("Join as one part", ImVec2(-1, 38), false);
                 secondaryButton("Fuse where they overlap", ImVec2(-1, 38), false);
