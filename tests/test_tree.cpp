@@ -183,3 +183,32 @@ TEST_CASE("a dropped tip whose spot other tips still hold is not counted", "[tre
     // Nothing dropped: nothing to check.
     CHECK_FALSE(checkDroppedTips(b.model, cfg, b.points, {}).any());
 }
+
+TEST_CASE("on the plate, tips just above it stand on it and nothing reaches below it", "[tree]") {
+    // A block flat on the plate with ledges sticking out low on one side,
+    // like stubs on a bar: their undersides 1 and 2 mm up are closer to the
+    // plate than a head and its joint are long, and one 0.15 mm up is
+    // closer than its tip is wide.
+    TriangleMesh m = makeBox({0, 0, 0}, {30, 6, 8});
+    m.append(makeBox({2, -5, 1}, {7, 0.5, 4}));
+    m.append(makeBox({12, -5, 2}, {17, 0.5, 4}));
+    m.append(makeBox({22, -5, 0.15}, {27, 0.5, 4}));
+    placeOnPlate(m, {0, 0, 0}, 0.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    cfg.on_plate = true;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    TreeConfig tc;
+    tc.raft = RaftStyle::None;
+    const SupportTree t = buildSupportTree(m, pts, tc, 0.0);
+    REQUIRE_FALSE(t.heads.empty());
+    std::size_t low = 0;
+    for (const auto& h : t.heads) low += h.contact.z < 2.5;
+    REQUIRE(low > 0);  // tips under the ledges
+    CHECK(t.dropped_points == 0);
+    const TriangleMesh s = t.mesh(tc);
+    CHECK(s.bbox().min.z >= -1e-9);
+    // Held from the plate up: nothing floats.
+    const ValidationReport v = validateSupported(m, s, cfg.layer_height, cfg.link_grow);
+    CHECK(v.floating.empty());
+}

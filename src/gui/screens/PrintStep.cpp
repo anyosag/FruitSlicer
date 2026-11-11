@@ -63,12 +63,21 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
     }
     ImGui::Dummy(ImVec2(0, 4));
     const std::size_t islands = sup.validation.floating.size();
+    // When saving cuts the layers again at the file's height, those are not
+    // the layers checked here.
+    const std::string checked =
+        ready && plan->reslice
+            ? strf("Checked on all %s layers at %.2f mm with the supports; not on the %s layers at %.2f mm that "
+                   "saving cuts",
+                   thousands(lr.layers->size()).c_str(), lr.layers->layer_height, thousands(plan->layers).c_str(),
+                   plan->layer_height)
+            : strf("Checked on all %s layers with the supports", thousands(lr.layers->size()).c_str());
     verdictRow("mid-air", islands ? Verdict::Error : Verdict::Ok,
                islands ? "Parts start in mid-air" : "No part starts in mid-air",
                islands ? strf("%zu %s nothing under them. Add tips with the Supports tool.", islands,
                               islands == 1 ? "island has" : "islands have")
                              .c_str()
-                       : strf("Checked on all %s layers with the supports", thousands(lr.layers->size()).c_str()).c_str());
+                       : checked.c_str());
     const fruit::PrinterProfile& pr = app.printer();
     verdictRow("fits", fits ? Verdict::Ok : Verdict::Error, fits ? "Fits the plate" : "Reaches past the plate",
                (dims(lr.bounds.size()) + strf(" with supports, of %.2f × %.2f × %.0f", pr.build_x, pr.build_y, pr.build_z))

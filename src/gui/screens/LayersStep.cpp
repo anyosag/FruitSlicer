@@ -37,6 +37,13 @@ void layerColumn(App& app, Document& doc, float h) {
     double v = at + 1;
     if (numberField("layer", &v, kColumnW - 32, "%g", 1, n)) app.setLayer(static_cast<int>(v) - 1);
     text(("of " + thousands(static_cast<std::size_t>(n))).c_str(), fonts().regular, size::Body, col::TextSecondary);
+    if (const auto plan = app.printPlan(); plan && plan->ready && plan->reslice) {
+        // The print file's layers are another height: say which these are.
+        text(strf("At %.2f mm. Saving cuts %s layers at %.2f mm.", r.layers->layer_height,
+                  thousands(plan->layers).c_str(), plan->layer_height)
+                 .c_str(),
+             fonts().regular, size::Help, col::TextMuted, true);
+    }
     ImGui::Dummy(ImVec2(0, 4));
     // Tall slider, layer 1 at the bottom, with marks for layers worth a look.
     const float sh = std::max(80.0f, ImGui::GetContentRegionAvail().y - 46);

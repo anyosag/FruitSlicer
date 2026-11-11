@@ -23,6 +23,39 @@ double penetrationFor(double tip_d, const TreeConfig& cfg) {
     return best->second;
 }
 
+// The lowest point of a head as appendPinhead draws it: the tip ball or the
+// joint ball at the junction.
+double headBottom(const Head& h) {
+    const Vec3 d = normalized(h.dir);
+    const double r_tip = h.spec.tip_diameter / 2, r_back = h.spec.shaft_diameter / 2;
+    const Vec3 front = h.contact + d * (r_tip - h.spec.penetration);
+    return std::min(front.z - r_tip, h.junction.z - r_back);
+}
+
+// A head that stands on the plate (Head::on_plate), along its own
+// direction: the tip ball, kept above the plate, then the cone down to where
+// its slanted end just meets the plate, and an upright foot under that end.
+// Draws it into `m` when given; returns the foot's middle, on the plate.
+Vec3 plateHead(const Head& h, TriangleMesh* m, const GeometryQuality& q) {
+    const Vec3 d = normalized(h.dir);  // heads point down, within the tilt limit
+    const double down = std::max(-d.z, 1e-6), slant = std::sqrt(std::max(0.0, 1 - down * down));
+    const double r_tip = h.spec.tip_diameter / 2, r_back = h.spec.shaft_diameter / 2;
+    Vec3 front = h.contact + d * (r_tip - h.spec.penetration);
+    if (front.z < r_tip) front = front - d * ((r_tip - front.z) / down);  // deeper into the part, not the plate
+    if (m) appendSphere(*m, front, r_tip, q.segments(r_tip));
+    Vec3 end = front;
+    double r_end = r_tip;
+    const double end_z = r_back * slant;  // the slanted end's lowest edge on the plate
+    if (front.z > end_z) {
+        end = front + d * ((front.z - end_z) / down);
+        r_end = r_back;
+        if (m) appendFrustum(*m, front, r_tip, end, r_back, q.segments(r_back));
+    }
+    const Vec3 foot{end.x, end.y, 0};
+    if (m && end.z > 1e-9) appendFrustum(*m, foot, r_end, end, r_end, q.segments(r_end));
+    return foot;
+}
+
 class Builder {
 public:
     Builder(const TriangleMesh& m, const TreeConfig& c, double min_raft)
@@ -372,6 +405,14 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
         h.point = pi;
         const int hi = static_cast<int>(out_.heads.size());
         out_.heads.push_back(h);
+        if (headBottom(h) < 0) {
+            // Its head alone would reach through the plate, let alone a
+            // pillar under it: it stands on the plate.
+            Head& ph = out_.heads.back();
+            ph.on_plate = true;
+            ph.junction = plateHead(ph, nullptr, cfg_.quality);
+            continue;
+        }
         if (attachToPillar(hi)) continue;
         if (drop_ok) {
             newPillar(hi, false);
@@ -432,7 +473,12 @@ void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& point
 TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;
-    for (const Head& h : heads) appendPinhead(m, h.contact, h.dir, h.spec, q);
+    for (const Head& h : heads) {
+        if (h.on_plate)
+            plateHead(h, &m, q);
+        else
+            appendPinhead(m, h.contact, h.dir, h.spec, q);
+    }
     for (const Rod& r : bridges) {
         appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
         appendSphere(m, r.b, r.diameter / 2, q.segments(r.diameter / 2));
