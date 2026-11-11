@@ -202,11 +202,12 @@ void axisGizmo(App& app, ImVec2 origin, ImVec2 size) {
 // supports in the way it stands beside the corner, tied to the model and the
 // plate by dashed lines. When the label would run under a panel or off the
 // view, it goes to the next bottom corner along; it stays above Supports'
-// banner.
+// banner. With several parts it marks the selected one: the lift is the
+// job's, and the box round every part can have empty corners.
 void liftMarker(App& app, const Document& doc, const M4& vp, ImVec2 origin, ImVec2 size) {
     const double lift = doc.placement().lift();
-    if (lift <= 0) return;
-    const fruit::BBox3 b = doc.placedBox();
+    if (lift <= 0 || doc.parts().empty()) return;
+    const fruit::BBox3 b = doc.part().box();
     const V3 eye = app.camera().eye();
     const float cx = static_cast<float>((b.min.x + b.max.x) / 2), cy = static_cast<float>((b.min.y + b.max.y) / 2);
     const float z = static_cast<float>(lift);
