@@ -10,6 +10,7 @@ add_library(fruit_core
   mesh/Primitives.cpp
   mesh/AabbTree.cpp
   mesh/MeshAnalysis.cpp
+  mesh/FlatFaces.cpp
   mesh/MeshRepair.cpp
   mesh/Placement.cpp
   mesh/ModelLoad.cpp
