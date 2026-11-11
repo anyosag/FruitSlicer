@@ -409,13 +409,15 @@ void statusBar(App& app) {
              size::Body, col::TextSecondary);
     } else if (doc && inLayersMode(app.step()) && doc->layers.fresh(doc->supports.result)) {
         const LayerResult& lr = *doc->layers.result;
+        const bool fits = fitsPlate(app.printer(), lr.bounds);  // as Before you save checks it
         const ImVec2 wp = ImGui::GetWindowPos();
-        dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, col::Ok);
+        dl->AddCircleFilled(ImVec2(wp.x + x + 4, wp.y + cy), 3.5f, fits ? col::Ok : col::Error);
         x += 14;
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
-        text(("Fits the plate · " + dims(lr.bounds.size()) + " with supports").c_str(), fonts().regular, size::Body,
-             col::TextSecondary);
-        problems = static_cast<int>(lr.cups() + lr.traps());
+        text(((fits ? "Fits the plate · " : "Reaches past the plate · ") + dims(lr.bounds.size()) + " with supports")
+                 .c_str(),
+             fonts().regular, size::Body, col::TextSecondary);
+        problems = static_cast<int>(lr.cups() + lr.traps()) + (fits ? 0 : 1);
         totals = strf("%s layers · %.1f ml of resin", thousands(lr.layers->size()).c_str(), lr.resin_ml);
         {
             const auto plan = app.printPlan();

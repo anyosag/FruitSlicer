@@ -13,7 +13,8 @@
 // surface). Pillars taller than 15 mm are cross-braced, but never within the
 // flex zone below the heads, so tips bend and snap at the part (Formlabs'
 // light-touch idea). The raft is one pad per pillar joined by bars, so the
-// whole support comes off in one piece.
+// whole support comes off in one piece. A tip nearer the plate than a head
+// is long stands on the plate on its head alone: nothing reaches below z = 0.
 
 #include <string>
 #include <vector>
@@ -63,6 +64,10 @@ struct Head {
     int point = -1;
     Vec3 contact, dir, junction;
     PinheadSpec spec;
+    // So close to the plate that a head and pillar would reach through it:
+    // the head's cone runs down to the plate and stands on it, with no
+    // pillar. `junction` is then the middle of its foot on the plate.
+    bool on_plate = false;
 };
 
 struct Pillar {

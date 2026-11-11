@@ -10,6 +10,7 @@
 #include "Document.h"
 #include "Layers.h"
 #include "Print.h"
+#include "Supports.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
 
@@ -107,6 +108,29 @@ TEST_CASE("Print: a 0.03 mm sample cuts the layers again at its height", "[gui][
     CHECK(r.volume_matches);
     // A raft thinner than the bottom layers is flagged.
     CHECK_FALSE(planPrint(*doc, lr, 0.2, s).raft_thick_enough);
+}
+
+TEST_CASE("Print: a bar flat on the plate with tips just above it fits the plate", "[gui][print][slow]") {
+    // Like a dish rack's side bar: 10 mm tall, flat on the plate, with stubs
+    // out to one side whose undersides are 1 mm up. The tips under them
+    // stand on the plate, so model and supports stay inside it.
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {150, 8, 10});
+    for (int i = 0; i < 7; ++i) m.append(fruit::makeBox({5 + i * 21.0, -6, 1}, {9 + i * 21.0, 0.5, 4}));
+    const auto path = tmp("print_bar.stl");
+    fruit::writeStl(path.string(), m);
+    const auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    fruit::Placement p = doc->placement();
+    p.on_plate = true;
+    doc->edit(p);
+    const SupportResult sup = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+    REQUIRE(sup.tips > 0);
+    CHECK(sup.validation.floating.empty());
+    CHECK(sup.size_with_supports.z == Approx(10.0).margin(1e-6));
+    const LayerResult lr = sliceLayers(*doc, sup.mesh, 0.0, fruit::JobControl::none(), sup.hollow);
+    CHECK(lr.bounds.min.z >= -1e-9);
+    CHECK(lr.bounds.size().z == Approx(10.0).margin(1e-6));
+    CHECK(fitsPlate(doc->printer, lr.bounds));
+    CHECK(planPrint(*doc, lr, 0.0, PrintSettings{}).fits);
 }
 
 TEST_CASE("Print: cancelling while the file is read back leaves no file", "[gui][print]") {
