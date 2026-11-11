@@ -11,6 +11,18 @@
 
 namespace gui {
 
+namespace {
+
+// Marks what the shape tools last said with the job's revision as it is when the scope ends: an edit or an
+// undo after it hides the note (it is about the job as it was).
+struct NoteStamp {
+    ShapeState& s;
+    const std::shared_ptr<Document>& doc;
+    ~NoteStamp() { s.note_revision = doc ? doc->revision() : -1; }
+};
+
+}  // namespace
+
 void App::runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,
                    std::function<bool(const ShapeOutcome&)> install, Tool tool) {
     shape();
@@ -25,6 +37,7 @@ void App::runShape(const std::string& job, std::function<ShapeOutcome(const frui
     jobs_.start(
         job, [work = std::move(work), out](const fruit::JobControl& ctl) { *out = work(ctl); },
         [this, target, revision, out, install = std::move(install), tool](std::exception_ptr err) {
+            const NoteStamp stamp{shape_, doc_};
             shape_.running = false;
             shape_.note_tool = tool;
             shape_.note_bad = true;
@@ -75,6 +88,7 @@ void App::shapeCancel() {
 }
 
 void App::cutApply() {
+    const NoteStamp stamp{shape_, doc_};
     if (!doc_ || shape_.running || placing()) return;
     const Part& part = doc_->part();
     cutFit(shape_.cut, part);
@@ -113,6 +127,7 @@ void App::labelPick(const fruit::Vec3& on_plate, const fruit::Vec3& normal) {
 }
 
 void App::labelApply() {
+    const NoteStamp stamp{shape_, doc_};
     if (!doc_ || shape_.running || placing()) return;
     LabelSettings& ls = shape_.label;
     shape_.note_tool = Tool::Label;
@@ -146,6 +161,7 @@ void App::combinePick(int part) {
 }
 
 void App::combineApply() {
+    const NoteStamp stamp{shape_, doc_};
     if (!doc_ || shape_.running || placing()) return;
     shape_.note_tool = Tool::Combine;
     shape_.note_bad = true;

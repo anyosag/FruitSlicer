@@ -32,8 +32,8 @@ constexpr ImU32 kTagA = IM_COL32(0xFF, 0x8F, 0x3F, 255);
 constexpr ImU32 kTagB = IM_COL32(0x6C, 0xB6, 0xFF, 255);
 
 // A note (what the last attempt came to) as a card.
-void noteCard(const ShapeState& s, Tool t) {
-    if (s.note.empty() || s.note_tool != t) return;
+void noteCard(const ShapeState& s, Tool t, int revision) {
+    if (s.note.empty() || s.note_tool != t || s.note_revision != revision) return;  // not about the job as it is
     const bool bad = s.note_bad;
     beginCard("shape_note", ImVec2(0, 0), 12, bad ? col::WarnBg : col::OkBg, bad ? col::WarnBorder : col::Border);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -303,7 +303,7 @@ void combinePanel(App& app, Document& doc) {
     ShapeState& s = app.shape();
     CombineSettings& cs = s.combine;
     if (doc.partCount() < 2) {
-        beginCard("combine_one", ImVec2(0, 0), 12, col::WarnBg, col::WarnBorder);
+        beginCard("combine_one", ImVec2(0, 0), 12);
         text("Combine needs two parts. This job has one.", fonts().semibold, size::Body, col::Text, true);
         text("Add another with Add a part in the Job panel, or cut this one in two.", fonts().regular, size::Body,
              col::TextSecondary, true);
@@ -357,7 +357,7 @@ void combinePanel(App& app, Document& doc) {
 
 void shapeApplyArea(App& app, Document& doc, Tool t) {
     ShapeState& s = app.shape();
-    noteCard(s, t);
+    noteCard(s, t, doc.revision());
     if (app.shapeBusy()) {
         const JobProgress jp = app.jobs().progress();
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col::Accent);
