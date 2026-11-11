@@ -296,7 +296,7 @@ void plate(App& app) {
     const fruit::CalibrationPlate& p = app.plate();
     const std::string kind = app.plateKind();
     const Resin& resin = app.newJobResin();
-    const bool has_print = !resin.sample_path.empty() || (resin.exposure > 0 && resin.bottom_exposure > 0);
+    const bool has_print = !resin.sample_path.empty() || (resin.print.exposure > 0 && resin.print.bottom_exposure > 0);
     const bool busy = app.jobs().busy();
     header(app, plateTitle(kind), plateSubtitle(p) + " · each on its own small raft", [&](float right, float y) {
         const float gw = textWidth("Save .goo to print", fonts().bold, size::Body) + 34;

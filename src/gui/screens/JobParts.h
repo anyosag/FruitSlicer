@@ -15,6 +15,8 @@
 namespace gui {
 class App;
 class Document;
+struct AdvancedSetting;
+struct AdvancedContext;
 }  // namespace gui
 
 namespace gui::screens::parts {
@@ -95,6 +97,15 @@ void placeOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const flo
 void needCard(App& app, Document& doc, Need need, ImVec2 size);
 // The advanced settings page.
 void supportsAdvanced(App& app, Document& doc, ImVec2 size);
+// The advanced page's pieces the Resins page uses too: a row's fields, each
+// change going to `set` with the field's key; and the badge saying where a
+// value comes from.
+using AdvancedSet = std::function<void(const char* key, double value)>;
+float advancedValueWidth(const AdvancedSetting& s, const AdvancedContext& x);
+void advancedValue(const AdvancedSetting& s, const AdvancedContext& x, float row_y, const AdvancedSet& set);
+enum class SourceBadge { Default, Borrowed, Assumption, Measured, Yours, File };
+inline constexpr float kSourceBadgeW = 84;
+void sourceBadge(SourceBadge b, float w = kSourceBadgeW);
 
 // Layers mode: the layers with this print's side panel; the side panel
 // alone; the "saved" page, for the file just written.

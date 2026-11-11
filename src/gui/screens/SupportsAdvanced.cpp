@@ -30,8 +30,12 @@ struct BadgeStyle {
 
 BadgeStyle measuredBadge() { return {"Measured", col::Ok, col::OkBg, IM_COL32(0x1E, 0x5A, 0x3E, 255)}; }
 
+BadgeStyle yoursBadge() {
+    return {"Yours", col::Accent, IM_COL32(0x2A, 0x1D, 0x12, 255), IM_COL32(0x5A, 0x3A, 0x1E, 255)};
+}
+
 BadgeStyle badgeFor(Source s, bool yours) {
-    if (yours) return {"Yours", col::Accent, IM_COL32(0x2A, 0x1D, 0x12, 255), IM_COL32(0x5A, 0x3A, 0x1E, 255)};
+    if (yours) return yoursBadge();
     switch (s) {
         case Source::Borrowed:
             return {"Borrowed", IM_COL32(0x9D, 0xB7, 0xF5, 255), IM_COL32(0x1B, 0x22, 0x33, 255),
@@ -41,7 +45,7 @@ BadgeStyle badgeFor(Source s, bool yours) {
     }
 }
 
-constexpr float kBadgeW = 84, kBadgeH = 20;
+constexpr float kBadgeW = kSourceBadgeW, kBadgeH = 20;
 
 // A small pill; drawn at the cursor, `w` wide.
 void badge(const BadgeStyle& b, float w = kBadgeW) {
@@ -80,8 +84,10 @@ const char* tipLabel(int cls) {
     return names[std::clamp(cls, 0, 3)];
 }
 
+}  // namespace
+
 // The value part of a row: how wide it is, and drawing it.
-float valueWidth(const AdvancedSetting& s, const AdvancedContext& x) {
+float advancedValueWidth(const AdvancedSetting& s, const AdvancedContext& x) {
     const float field = 62, gap = 6;
     switch (s.kind) {
         case Kind::Fixed: return textWidth(s.text(x).c_str(), fonts().semibold, size::Body);
@@ -109,7 +115,7 @@ float valueWidth(const AdvancedSetting& s, const AdvancedContext& x) {
     return 0;
 }
 
-void drawValue(App& app, const AdvancedSetting& s, const AdvancedContext& x, float row_y) {
+void advancedValue(const AdvancedSetting& s, const AdvancedContext& x, float row_y, const AdvancedSet& set) {
     const float gap = 6;
     switch (s.kind) {
         case Kind::Fixed:
@@ -120,9 +126,9 @@ void drawValue(App& app, const AdvancedSetting& s, const AdvancedContext& x, flo
             const bool on = f.get(x.cfg, x.tc) > 0.5;
             ImGui::SetCursorPosY(row_y);
             ImGui::PushID(f.key);
-            if (segmentButton(s.text(x).c_str(), on)) app.setAdvanced(f.key, 1);
+            if (segmentButton(s.text(x).c_str(), on)) set(f.key, 1);
             ImGui::SameLine(0, gap);
-            if (segmentButton(s.off_text, !on)) app.setAdvanced(f.key, 0);
+            if (segmentButton(s.off_text, !on)) set(f.key, 0);
             ImGui::PopID();
             break;
         }
@@ -132,7 +138,7 @@ void drawValue(App& app, const AdvancedSetting& s, const AdvancedContext& x, flo
             ImGui::PushID(f.key);
             for (int c = static_cast<int>(f.lo); c <= static_cast<int>(f.hi); ++c) {
                 ImGui::SetCursorPosY(row_y);
-                if (segmentButton(tipLabel(c), c == now)) app.setAdvanced(f.key, c);
+                if (segmentButton(tipLabel(c), c == now)) set(f.key, c);
                 ImGui::SameLine(0, 4);
             }
             ImGui::PopID();
@@ -151,7 +157,7 @@ void drawValue(App& app, const AdvancedSetting& s, const AdvancedContext& x, flo
                 ImGui::SetCursorPosY(row_y);
                 double v = f.get(x.cfg, x.tc);
                 const std::string fmtv = strf("%%.%df", f.decimals);
-                if (numberField(f.key, &v, 62, fmtv.c_str(), f.lo, f.hi)) app.setAdvanced(f.key, v);
+                if (numberField(f.key, &v, 62, fmtv.c_str(), f.lo, f.hi)) set(f.key, v);
                 if (ImGui::IsItemHovered())
                     tooltip(strf("From %g to %g%s%s", f.lo, f.hi, *f.suffix ? " " : "", f.suffix).c_str());
                 if (*f.suffix) {
@@ -164,10 +170,23 @@ void drawValue(App& app, const AdvancedSetting& s, const AdvancedContext& x, flo
     }
 }
 
+void sourceBadge(SourceBadge b, float w) {
+    switch (b) {
+        case SourceBadge::Measured: badge(measuredBadge(), w); break;
+        case SourceBadge::Yours: badge(yoursBadge(), w); break;
+        case SourceBadge::Borrowed: badge(badgeFor(Source::Borrowed, false), w); break;
+        case SourceBadge::Assumption: badge(badgeFor(Source::Assumption, false), w); break;
+        case SourceBadge::File: badge({"File", col::TextSecondary, col::Panel, col::BorderStrong}, w); break;
+        default: badge(badgeFor(Source::Default, false), w); break;
+    }
+}
+
+namespace {
+
 void row(App& app, const AdvancedSetting& s, const AdvancedContext& x, float w, bool last) {
     ImGui::PushID(s.label);
     const float x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
-    const float vw = valueWidth(s, x);
+    const float vw = advancedValueWidth(s, x);
     const float left_w = w - vw - kBadgeW - 32;
     // Label and help, wrapped to the left part.
     ImGui::BeginGroup();
@@ -185,10 +204,12 @@ void row(App& app, const AdvancedSetting& s, const AdvancedContext& x, float w, 
     const float row_y = y0 - 4;
     ImGui::SetCursorPos(ImVec2(x0 + w - kBadgeW - 12 - vw, row_y));
     ImGui::BeginGroup();
-    drawValue(app, s, x, row_y);
+    advancedValue(s, x, row_y, [&app](const char* key, double v) { app.setAdvanced(key, v); });
     ImGui::EndGroup();
     ImGui::SetCursorPos(ImVec2(x0 + w - kBadgeW, row_y + 5));
-    badge(measuredByResin(s, x.choices) ? measuredBadge() : badgeFor(s.source, advancedChanged(s, x.choices)));
+    // Set by you: on this page, or on the resin's page (the job keeps a copy).
+    const bool yours = advancedChanged(s, x.choices) || resinChanged(s, x.choices.profile);
+    badge(measuredByResin(s, x.choices) ? measuredBadge() : badgeFor(s.source, yours));
     // Next row below whichever part is taller.
     const float bottom = std::max(text_bottom, row_y + 34);
     ImGui::SetCursorPos(ImVec2(x0, bottom + 6));
@@ -283,7 +304,7 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
             text(k.what, fonts().regular, size::Help, col::TextMuted);
             ImGui::SameLine(0, 16);
         }
-        if (c.profile.is_object()) {  // the job's resin was measured
+        if (profileState(c.profile) != "Defaults") {  // the job's resin was measured
             ImGui::SetCursorPosY(y - 2);
             badge(measuredBadge(), 76);
             ImGui::SameLine(0, 6);

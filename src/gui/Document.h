@@ -109,8 +109,7 @@ struct JobStamp {
     HollowChoices hollow;
     std::vector<fruit::DrainHole> holes;
     std::string sample_path;
-    double exposure = 0, bottom_exposure = 0;
-    int bottom_layers = -1, transition_layers = -1;
+    PrintEdits print;
     bool operator==(const JobStamp&) const = default;
 };
 

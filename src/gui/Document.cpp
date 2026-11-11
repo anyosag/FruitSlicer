@@ -420,10 +420,7 @@ JobStamp Document::stamp() const {
     s.hollow = hollow.choices;
     s.holes = hollow.manual;
     s.sample_path = print.settings.sample_path;
-    s.exposure = print.settings.exposure;
-    s.bottom_exposure = print.settings.bottom_exposure;
-    s.bottom_layers = print.settings.bottom_layers;
-    s.transition_layers = print.settings.transition_layers;
+    s.print = print.settings;
     return s;
 }
 

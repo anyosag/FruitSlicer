@@ -152,6 +152,28 @@ bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c);
 const char* measuredKey(const AdvancedSetting& s);
 // Whether the job's resin measured the row's value (and the job keeps it).
 bool measuredByResin(const AdvancedSetting& s, const SupportChoices& c);
+// A row's value as text, as the fields show it ("11.1 mm²", "1 tip ≤ 1.7 · 2 ≤ 6.0 mm").
+std::string advancedValueText(const AdvancedSetting& s, const fruit::SupportConfig& cfg, const fruit::TreeConfig& tc);
+
+// ---- A resin's own support values, set on the Resins page ----
+// Kept in the resin's profile under this key, by advanced field key, so a
+// job that copies the profile keeps them. They apply over the measured
+// values and under the quick sliders; a job's own advanced values win.
+inline constexpr const char* kResinOwnKey = "yours";
+// The settings a job on a resin with this profile starts with (its usual tip too).
+SupportChoices resinChoices(const nlohmann::json& profile);
+// Applies the resin's own values (all but the usual tip, which a job keeps in usual_tip).
+void applyResinValues(const nlohmann::json& profile, fruit::SupportConfig& cfg, fruit::TreeConfig& tc);
+// Whether the resin sets one of the row's values itself.
+bool resinChanged(const AdvancedSetting& s, const nlohmann::json& profile);
+// The profile with one of the resin's own values set (clamped to its field's
+// range). A value equal to the resin's measured one, or FruitSlicer's own, is
+// not kept: the row reads as it did before.
+nlohmann::json withResinValue(const nlohmann::json& profile, const std::string& key, double value);
+// The profile without the resin's own values for a row.
+nlohmann::json withoutResinRow(const nlohmann::json& profile, const AdvancedSetting& s);
+// The row the Resins page lists under `label` (an advanced row's label).
+const AdvancedSetting* advancedRow(const std::string& label);
 
 // A change made by hand to the tips, in its part's own coordinates so it
 // survives turning, resizing or moving that part. Between plans an edit applies on top of the

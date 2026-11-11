@@ -22,6 +22,13 @@ struct GooPrintRequest {
     // Explicit values override the sample (> 0 or >= 0 to apply).
     double exposure = 0, bottom_exposure = 0;
     int bottom_layers = -1, transition_layers = -1;
+    // These too, each for bottom and normal layers alike. > 0: the print's
+    // layer height, over the sample's; waits in s, >= 0; lift (and retract)
+    // distance in mm, > 0; light power 1-255.
+    double own_layer_height = 0;
+    double wait_before_lift = -1, wait_after_lift = -1, wait_after_retract = -1;
+    double lift_distance = -1;
+    int light_power = -1;
     // Orientation correction found with the orientation check.
     bool flip_x = false, flip_y = false;
 };
@@ -31,6 +38,11 @@ struct GooPrintSetup {
     RasterGrid grid;
     std::vector<std::string> notes;  // e.g. layer height taken from the sample
 };
+
+// The header's settings: the sample's (else the printer's own bottom and
+// transition counts and FruitSlicer's defaults), then the request's own
+// values over them. Exposures may still be missing.
+GooHeader printHeader(const PrinterProfile& printer, const GooPrintRequest& r, std::vector<std::string>* notes = nullptr);
 
 // Without a sample, bottom and transition layer counts default to the
 // printer's. Throws std::runtime_error when exposure times are missing.

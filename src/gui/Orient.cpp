@@ -35,13 +35,15 @@ const char* sideName(Side s) {
 }
 
 // The planner's settings for scoring: built-in values, then the job's
-// resin's measured ones (the same the Supports step uses).
+// resin's measured ones and its own (the same the Supports step uses).
 fruit::SupportConfig supportConfig(const fruit::Placement& p, const nlohmann::json& profile) {
     fruit::SupportConfig cfg;
     fruit::SupportChoices ch;
     ch.layer_height = kLayerHeight;
     ch.on_plate = p.on_plate;
     fruit::resolveSettings(profile.is_object() ? &profile : nullptr, ch, cfg, nullptr);
+    fruit::TreeConfig tc;
+    applyResinValues(profile, cfg, tc);
     return cfg;
 }
 

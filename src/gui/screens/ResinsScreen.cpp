@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 
 #include "App.h"
@@ -33,56 +34,188 @@ float textWidth(const char* s, ImFont* f, float sz) {
     return w;
 }
 
-// Where a value comes from, as a small badge.
-void sourceBadge(ResinValue::Source s) {
-    const char* label = s == ResinValue::Source::Measured ? "Measured" : s == ResinValue::Source::Borrowed ? "Borrowed"
-                                                                                                          : "Default";
-    const ImU32 fg = s == ResinValue::Source::Measured ? col::Ok : col::TextSecondary;
-    const ImU32 bg = s == ResinValue::Source::Measured ? col::OkBg : col::Panel;
-    const ImU32 bd = s == ResinValue::Source::Measured ? IM_COL32(0x1E, 0x5A, 0x3E, 255) : col::BorderStrong;
-    ImGui::PushFont(fonts().medium, size::Label);
-    const ImVec2 ts = ImGui::CalcTextSize(label);
+// Words on a row's control line, centred on its 30 px fields.
+void inlineWords(const char* s, ImU32 c, float row_y) {
+    ImGui::PushFont(fonts().regular, size::Body);
+    const ImVec2 ts = ImGui::CalcTextSize(s);
+    ImGui::SetCursorPosY(row_y);
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 q(p.x + ts.x + 14, p.y + 18);
-    dl->AddRectFilled(p, q, bg, 9);
-    dl->AddRect(p, q, bd, 9);
-    dl->AddText(ImVec2(p.x + 7, p.y + (18 - ts.y) / 2), fg, label);
+    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x, p.y + std::round((29 - ts.y) / 2)), c, s);
     ImGui::PopFont();
-    ImGui::Dummy(ImVec2(ts.x + 14, 18));
+    ImGui::Dummy(ImVec2(ts.x, 29));
 }
 
-float badgeWidth(ResinValue::Source s) {
-    return textWidth(s == ResinValue::Source::Measured   ? "Measured"
-                     : s == ResinValue::Source::Borrowed ? "Borrowed"
-                                                         : "Default",
-                     fonts().medium, size::Label) +
-           14;
-}
+// One value you can change: the label on the left, its fields on the right
+// and where it comes from at the far right. When the value is yours, what it
+// was underneath, with a way back; and anything not checked about it.
+struct EditRow {
+    std::string label;
+    std::string help;  // the label's tooltip
+    float value_w = 0;
+    std::function<void(float row_y)> value;
+    parts::SourceBadge badge = parts::SourceBadge::Default;
+    std::string was;   // "File: 1.5 s"; "" for no way back
+    std::string note;  // shown in warning colour
+};
 
-// A line: label on the left, value (and a badge) on the right.
-void line(const std::string& label, const std::string& value, const ResinValue::Source* source, bool first) {
+// True when the way back was clicked.
+bool editRow(const EditRow& e, bool first) {
+    using parts::kSourceBadgeW;
+    ImGui::PushID(e.label.c_str());
     const float w = ImGui::GetContentRegionAvail().x;
     if (!first) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + w, p.y), col::Border);
     }
-    ImGui::Dummy(ImVec2(w, 7));
+    ImGui::Dummy(ImVec2(w, 8));
     const float x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
-    const float bw = source ? badgeWidth(*source) + 10 : 0;
-    const float vw = textWidth(value.c_str(), fonts().semibold, size::Body);
-    ImGui::PushTextWrapPos(x0 + w - vw - bw - 16);
-    text(label.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
+    const float left_w = w - e.value_w - kSourceBadgeW - 24;
+    ImGui::SetCursorPos(ImVec2(x0, y0 + 6));
+    ImGui::PushTextWrapPos(x0 + left_w);
+    text(e.label.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::PopTextWrapPos();
-    const float bottom = ImGui::GetCursorPosY();
-    ImGui::SetCursorPos(ImVec2(x0 + w - bw - vw, y0));
-    text(value.c_str(), fonts().semibold, size::Body, col::Text);
-    if (source) {
-        ImGui::SetCursorPos(ImVec2(x0 + w - bw + 10, y0));
-        sourceBadge(*source);
+    if (!e.help.empty()) tooltip(e.help.c_str());
+    float bottom = ImGui::GetCursorPosY();
+    ImGui::SetCursorPos(ImVec2(x0 + w - kSourceBadgeW - 12 - e.value_w, y0));
+    ImGui::BeginGroup();
+    e.value(y0);
+    ImGui::EndGroup();
+    ImGui::SetCursorPos(ImVec2(x0 + w - kSourceBadgeW, y0 + 5));
+    parts::sourceBadge(e.badge);
+    bottom = std::max(bottom, y0 + 32);
+    bool back = false;
+    if (!e.was.empty()) {
+        ImGui::SetCursorPos(ImVec2(x0, bottom + 2));
+        text(e.was.c_str(), fonts().regular, size::Help, col::TextMuted);
+        ImGui::SameLine(0, 10);
+        ImGui::SetCursorPosY(bottom);
+        back = linkButton("Use it");
+        bottom = ImGui::GetCursorPosY();
     }
-    ImGui::SetCursorPos(ImVec2(x0, std::max(bottom, y0 + 18) + 2));
+    if (!e.note.empty()) {
+        ImGui::SetCursorPos(ImVec2(x0, bottom + 2));
+        ImGui::PushTextWrapPos(x0 + w - kSourceBadgeW - 12);
+        text(e.note.c_str(), fonts().regular, size::Help, col::Warn, true);
+        ImGui::PopTextWrapPos();
+        bottom = ImGui::GetCursorPosY();
+    }
+    ImGui::SetCursorPos(ImVec2(x0, bottom + 6));
     ImGui::Dummy(ImVec2(0, 0));
+    ImGui::PopID();
+    return back;
+}
+
+parts::SourceBadge badgeOf(PrintRow::Source s) {
+    switch (s) {
+        case PrintRow::Source::File: return parts::SourceBadge::File;
+        case PrintRow::Source::Yours: return parts::SourceBadge::Yours;
+        default: return parts::SourceBadge::Default;
+    }
+}
+
+// What a print field is, for its tooltip.
+std::string fieldTip(const PrintField& f) {
+    const char* what = f.key == "bottom_layers"        ? "Bottom layers"
+                       : f.key == "bottom_exposure"    ? "Bottom exposure, s"
+                       : f.key == "transition_layers"  ? "Transition layers"
+                       : f.key == "wait_before_lift"   ? "Wait before lift, s"
+                       : f.key == "wait_after_lift"    ? "Wait after lift, s"
+                       : f.key == "wait_after_retract" ? "Wait after retract, s"
+                                                       : "";
+    const std::string range = strf("from %g to %g", f.lo, f.hi);
+    return *what ? std::string(what) + ": " + range : "From " + range.substr(5);
+}
+
+// Counts and waits are short; the rest take the advanced page's width.
+float fieldWidth(const PrintField& f) {
+    const bool narrow = f.key == "bottom_layers" || f.key == "transition_layers" || f.key.rfind("wait_", 0) == 0;
+    return narrow ? 50 : 62;
+}
+
+// The print settings card's rows.
+void printCard(App& app, const Resin& r, const fruit::GooHeader* sample) {
+    const bool file = sample && !r.sample_path.empty();
+    const auto rows = printRows(r, sample, app.printer());
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const PrintRow& row = rows[i];
+        EditRow e;
+        e.label = row.label;
+        e.badge = badgeOf(row.source);
+        e.note = row.note;
+        if (row.source == PrintRow::Source::Yours && !row.base.empty())
+            e.was = (file && row.key != "density" ? "File: " : "FruitSlicer's: ") + row.base;
+        const float gap = 6;
+        for (const PrintField& f : row.fields) {
+            e.value_w += fieldWidth(f) + gap;
+            if (*f.suffix) e.value_w += textWidth(f.suffix, fonts().regular, size::Body) + gap;
+        }
+        if (!row.after.empty()) e.value_w += textWidth(row.after.c_str(), fonts().regular, size::Body) + gap;
+        e.value_w -= gap;
+        const std::string id = r.id;
+        e.value = [&app, &row, id, gap](float row_y) {
+            for (std::size_t k = 0; k < row.fields.size(); ++k) {
+                const PrintField& f = row.fields[k];
+                if (k > 0) ImGui::SameLine(0, gap);
+                ImGui::SetCursorPosY(row_y);
+                double v = f.value;
+                const char* fmt = v > 0 || f.lo <= 0 ? "%g" : "—";
+                if (numberField(f.key.c_str(), &v, fieldWidth(f), fmt, f.lo, f.hi))
+                    app.setResinPrintValue(id, f.key, v);
+                tooltip(fieldTip(f).c_str());
+                if (*f.suffix) {
+                    ImGui::SameLine(0, gap);
+                    inlineWords(f.suffix, col::TextSecondary, row_y);
+                }
+            }
+            if (!row.after.empty()) {
+                ImGui::SameLine(0, gap);
+                inlineWords(row.after.c_str(), col::TextSecondary, row_y);
+            }
+        };
+        if (editRow(e, i == 0)) app.resetResinPrintRow(r.id, row.key);
+    }
+}
+
+// The support values card's rows: the advanced page's rows, for the resin.
+void supportCard(App& app, const Resin& r) {
+    const SupportChoices c = resinChoices(r.profile);
+    const fruit::SupportConfig cfg = supportConfig(fruit::Placement{}, c);
+    const fruit::TreeConfig tc = treeConfig(c);
+    const fruit::Placement place;
+    AdvancedContext x{cfg, tc, c, place};
+    x.raft_layer_height = app.printer().layer_height;
+    bool first = true;
+    for (const char* label : kResinSupportRows) {
+        const AdvancedSetting* s = advancedRow(label);
+        if (!s) continue;
+        EditRow e;
+        e.label = s->label;
+        e.help = s->help ? s->help(x) : "";
+        e.value_w = parts::advancedValueWidth(*s, x);
+        const std::string id = r.id;
+        e.value = [&app, s, &x, id](float row_y) {
+            parts::advancedValue(*s, x, row_y,
+                                 [&app, &id](const char* key, double v) { app.setResinSupportValue(id, key, v); });
+        };
+        const bool yours = resinChanged(*s, r.profile);
+        const bool measured = measuredByResin(*s, c);
+        using B = parts::SourceBadge;
+        e.badge = yours      ? B::Yours
+                  : measured ? B::Measured
+                  : s->source == AdvancedSetting::Source::Borrowed   ? B::Borrowed
+                  : s->source == AdvancedSetting::Source::Assumption ? B::Assumption
+                                                                     : B::Default;
+        if (yours) {
+            // What the row reads as without the resin's own value.
+            const SupportChoices before = resinChoices(withoutResinRow(r.profile, *s));
+            const char* from = measuredByResin(*s, before)                  ? "Measured: "
+                               : s->source == AdvancedSetting::Source::Borrowed ? "Borrowed: "
+                                                                                : "FruitSlicer's: ";
+            e.was = from + advancedValueText(*s, supportConfig(fruit::Placement{}, before), treeConfig(before));
+        }
+        if (editRow(e, first)) app.resetResinSupportRow(r.id, s->label);
+        first = false;
+    }
 }
 
 void list(App& app) {
@@ -218,6 +351,23 @@ void resins(App& app) {
         ImGui::SetCursorPos(ImVec2(x0, y0 + 36));
         const std::string state = resinState(r) == "Defaults" ? "Defaults · not calibrated" : resinState(r);
         text((state + (for_new ? " · used for new jobs" : "")).c_str(), fonts().regular, size::Body, col::TextMuted);
+        text("Change any value below. New jobs on this resin use it; jobs already made keep the values they started "
+             "with.",
+             fonts().regular, size::Help, col::TextMuted);
+        // The open job in this resin, with other values than it has now.
+        const auto& doc = app.document();
+        if (doc && doc->supports.choices.resin == r.name) {
+            const PrintSettings now = printSettingsFor(r);
+            const bool differs = doc->supports.choices.profile != r.profile ||
+                                 doc->print.settings.sample_path != now.sample_path ||
+                                 !(static_cast<const PrintEdits&>(doc->print.settings) ==
+                                   static_cast<const PrintEdits&>(now));
+            if (differs) {
+                text("The open job started with other values.", fonts().regular, size::Help, col::Warn);
+                ImGui::SameLine(0, 8);
+                if (linkButton("Use these in it")) app.useResinForJob(r.id);
+            }
+        }
         const float after = ImGui::GetCursorPosY();
         // Right: Calibrate, Use for new jobs, Duplicate, Delete…
         float right = x0 + w;
@@ -263,12 +413,11 @@ void resins(App& app) {
         ImGui::SetCursorPos(ImVec2(x0, y0 + 30));
         std::string from = printSummary(r);
         if (sample) from += ", " + sample->software_name + " " + sample->software_version;
-        if (r.sample_path.empty() && r.exposure <= 0)
-            from = "None yet. Each job asks for a SatelLite file or exposure times in Layers, beside Save.";
+        if (r.sample_path.empty() && r.print.exposure <= 0)
+            from = "None yet. Choose a SatelLite .goo, or type the exposure times below.";
         text(from.c_str(), fonts().regular, size::Body, col::TextMuted, true);
         ImGui::Dummy(ImVec2(0, 2));
-        const auto rows = printRows(r, sample.get(), app.printer());
-        for (std::size_t i = 0; i < rows.size(); ++i) line(rows[i].first, rows[i].second, nullptr, i == 0);
+        printCard(app, r, sample.get());
     }
     endCard();
     ImGui::SameLine(0, gap);
@@ -280,8 +429,7 @@ void resins(App& app) {
                                          : "Measured on the resin test plates; the rest are FruitSlicer's own.",
              fonts().regular, size::Body, col::TextMuted, true);
         ImGui::Dummy(ImVec2(0, 2));
-        const auto values = resinSupportValues(r);
-        for (std::size_t i = 0; i < values.size(); ++i) line(values[i].label, values[i].value, &values[i].source, i == 0);
+        supportCard(app, r);
         // The job's advanced page shows these, when the open job is in this resin.
         const auto& doc = app.document();
         if (doc && doc->supports.choices.resin == r.name && doc->supports.choices.profile == r.profile) {

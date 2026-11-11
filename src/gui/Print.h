@@ -22,18 +22,38 @@ namespace gui {
 class Document;
 struct LayerResult;
 
+// Print settings of your own, over a sample's (or the printer's own and
+// FruitSlicer's defaults): each applies when set. Waits, lift and light
+// power apply to bottom and normal layers alike; "lift" sets the retract
+// distance too. A resin keeps them; a job copies them with the rest.
+struct PrintEdits {
+    double exposure = 0, bottom_exposure = 0;        // s, > 0
+    int bottom_layers = -1, transition_layers = -1;  // >= 0
+    double layer_height = 0;                         // mm, > 0: over the sample's
+    double wait_before_lift = -1, wait_after_lift = -1, wait_after_retract = -1;  // s, >= 0
+    double lift = -1;                                // mm, > 0
+    int light_power = -1;                            // 1-255
+    double density = 0;                              // g/ml, > 0: for the resin's weight
+    bool operator==(const PrintEdits&) const = default;
+    bool any() const { return !(*this == PrintEdits{}); }
+};
+
 // Where exposure and motion settings come from: a SatelLite .goo saved for
-// this printer (its settings are copied), or exposure times typed in. The
-// engine never guesses exposures.
-struct PrintSettings {
+// this printer (its settings are copied), or values typed in (the edits,
+// which override the sample's). The engine never guesses exposures.
+struct PrintSettings : PrintEdits {
     std::string sample_path;
     std::shared_ptr<const fruit::GooHeader> sample;
-    double exposure = 0, bottom_exposure = 0;  // typed, s; > 0 overrides the sample
-    int bottom_layers = -1, transition_layers = -1;
     // The image orientation fix the check confirmed (the app fills these in
     // from the printer's settings; they are not the job's).
     bool flip_x = false, flip_y = false;
 };
+
+// The engine's request for these settings; `layer_height` is the job's
+// (used without a sample or an edited one).
+fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height);
+// The resin density for the weight: the edited one, else FruitSlicer's.
+double resinDensity(const PrintEdits& e);
 
 // Reads a sample's header; throws std::runtime_error with a readable message.
 std::shared_ptr<const fruit::GooHeader> loadSample(const std::string& path);
@@ -50,6 +70,7 @@ struct PrintPlan {
     std::size_t layers = 0;
     double height = 0;         // mm
     double resin_ml = 0, resin_g = 0;
+    double density = 1.15;     // g/ml, for the weight (written in the file too)
     double print_time_s = 0;   // estimate
     double raft_needed = 0;    // bottom + transition layers' thickness
     bool raft_thick_enough = true;

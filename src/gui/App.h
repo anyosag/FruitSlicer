@@ -418,6 +418,12 @@ public:
     void importResinFile(const std::string& path);
     void duplicateResin(const std::string& id);
     void renameResin(const std::string& id, const std::string& name);
+    // A resin's own values, as the Resins page edits them (see setPrintValue
+    // and withResinValue); a row back to the file's, measured or FruitSlicer's own.
+    void setResinPrintValue(const std::string& id, const std::string& key, double value);
+    void resetResinPrintRow(const std::string& id, const std::string& row);
+    void setResinSupportValue(const std::string& id, const std::string& key, double value);
+    void resetResinSupportRow(const std::string& id, const std::string& label);
     std::string& resinToDelete() { return resin_to_delete_; }  // "Delete …?" open for this id
     void deleteResin(const std::string& id);
     void replaceResinSample(const std::string& id);     // another .goo, through a dialog

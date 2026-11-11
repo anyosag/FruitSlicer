@@ -37,6 +37,7 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     // Built-in values, then the resin's measured ones, then the quick sliders
     // (nothing at their resin stops), then the job's own choices.
     fruit::resolveSettings(c.profile.is_object() ? &c.profile : nullptr, ch, cfg, &tc);
+    applyResinValues(c.profile, cfg, tc);
     cfg.default_tip = nearestTipClass(cfg, quickTipClass(c));
     tc.merge_pillars = c.merge;
     if (const double k = quickCapacityScale(c.hold); k != 1.0) {
@@ -445,6 +446,9 @@ int standardTipClass(const fruit::SupportConfig& cfg, int cls) {
 }
 
 int usualTipFor(const nlohmann::json& profile) {
+    if (profile.is_object() && profile.contains(kResinOwnKey) && profile[kResinOwnKey].is_object() &&
+        profile[kResinOwnKey].contains(kUsualTipKey) && profile[kResinOwnKey][kUsualTipKey].is_number())
+        return std::clamp(static_cast<int>(std::lround(profile[kResinOwnKey][kUsualTipKey].get<double>())), 1, 3);
     if (!profile.is_object() || !profile.contains("default_tip_diameter") || !profile["default_tip_diameter"].is_number())
         return SupportChoices{}.usual_tip;
     const double want = profile["default_tip_diameter"].get<double>();
@@ -471,6 +475,7 @@ const char* measuredKey(const AdvancedSetting& s) {
 }
 
 bool measuredByResin(const AdvancedSetting& s, const SupportChoices& c) {
+    if (resinChanged(s, c.profile)) return false;  // the resin's own value, not the measured one
     const std::string key = measuredKey(s);
     if (key.empty() || !c.profile.is_object() || !c.profile.contains(key) || c.profile[key].is_null()) return false;
     if (key == "default_tip_diameter") {
@@ -495,6 +500,107 @@ bool advancedChanged(const AdvancedSetting& s, const SupportChoices& c) {
         }
     }
     return false;
+}
+
+std::string advancedValueText(const AdvancedSetting& s, const fruit::SupportConfig& cfg, const fruit::TreeConfig& tc) {
+    using K = AdvancedSetting::Kind;
+    const SupportChoices c;
+    const fruit::Placement p;
+    const AdvancedContext x{cfg, tc, c, p};
+    if (s.kind == K::Fixed) return s.text(x);
+    if (s.kind == K::Toggle) return s.fields[0].get(cfg, tc) > 0.5 ? s.text(x) : std::string(s.off_text);
+    if (s.kind == K::TipClass) {
+        const int cls = standardTipClass(cfg, static_cast<int>(std::lround(s.fields[0].get(cfg, tc))));
+        return strf("%g mm", standardTips()[static_cast<std::size_t>(cls)].diameter);
+    }
+    std::string out;
+    for (const AdvancedField& f : s.fields) {
+        if (!out.empty()) out += " ";
+        if (*f.prefix) out += std::string(f.prefix) + " ";
+        out += strf("%.*f", f.decimals, f.get(cfg, tc));
+        if (*f.suffix) out += (std::string(f.suffix) == "°" ? "" : " ") + std::string(f.suffix);
+    }
+    return out;
+}
+
+namespace {
+
+std::map<std::string, double> resinOwn(const nlohmann::json& profile) {
+    std::map<std::string, double> v;
+    if (!profile.is_object() || !profile.contains(kResinOwnKey) || !profile[kResinOwnKey].is_object()) return v;
+    for (auto it = profile[kResinOwnKey].begin(); it != profile[kResinOwnKey].end(); ++it)
+        if (it.value().is_number()) v[it.key()] = it.value().get<double>();
+    return v;
+}
+
+const AdvancedField* fieldFor(const std::string& key, const AdvancedSetting** row = nullptr) {
+    for (const AdvancedSetting& s : advancedSettings())
+        for (const AdvancedField& f : s.fields)
+            if (key == f.key) {
+                if (row) *row = &s;
+                return &f;
+            }
+    return nullptr;
+}
+
+// `profile` with the resin's own values `own` (null once nothing is left).
+nlohmann::json withOwn(nlohmann::json profile, const std::map<std::string, double>& own) {
+    if (!profile.is_object()) profile = nlohmann::json::object();
+    profile.erase(kResinOwnKey);
+    if (!own.empty()) profile[kResinOwnKey] = own;
+    if (profile.empty()) return nullptr;
+    return profile;
+}
+
+}  // namespace
+
+SupportChoices resinChoices(const nlohmann::json& profile) {
+    SupportChoices c;
+    c.profile = profile;
+    c.usual_tip = usualTipFor(profile);
+    return c;
+}
+
+void applyResinValues(const nlohmann::json& profile, fruit::SupportConfig& cfg, fruit::TreeConfig& tc) {
+    const auto own = resinOwn(profile);
+    if (!own.empty()) applyAdvanced(own, cfg, tc);
+}
+
+bool resinChanged(const AdvancedSetting& s, const nlohmann::json& profile) {
+    const auto own = resinOwn(profile);
+    for (const AdvancedField& f : s.fields)
+        if (own.count(f.key)) return true;
+    return false;
+}
+
+nlohmann::json withResinValue(const nlohmann::json& profile, const std::string& key, double value) {
+    const AdvancedSetting* row = nullptr;
+    const AdvancedField* f = fieldFor(key, &row);
+    if (!f || !f->set || row->kind == AdvancedSetting::Kind::Fixed)
+        throw std::invalid_argument("no support value called " + key);
+    double v = std::clamp(value, f->lo, f->hi);
+    if (row->kind != AdvancedSetting::Kind::Number || f->decimals == 0) v = std::round(v);
+    auto own = resinOwn(profile);
+    own.erase(key);
+    // What the row reads as without it: measured, or FruitSlicer's own.
+    const nlohmann::json without = withOwn(profile, own);
+    const SupportChoices c = resinChoices(without);
+    const double was = key == kUsualTipKey ? double(c.usual_tip)
+                                           : f->get(supportConfig(fruit::Placement{}, c), treeConfig(c));
+    if (std::abs(v - was) > 1e-9) own[key] = v;
+    return withOwn(profile, own);
+}
+
+nlohmann::json withoutResinRow(const nlohmann::json& profile, const AdvancedSetting& s) {
+    auto own = resinOwn(profile);
+    for (const AdvancedField& f : s.fields) own.erase(f.key);
+    return withOwn(profile, own);
+}
+
+const AdvancedSetting* advancedRow(const std::string& label) {
+    for (const AdvancedSetting& s : advancedSettings())
+        if (label == s.label) return &s;
+    return nullptr;
 }
 
 fruit::SupportConfig supportConfig(const fruit::Placement& p, const SupportChoices& c) {

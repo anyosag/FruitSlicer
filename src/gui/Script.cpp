@@ -634,6 +634,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (std::string(key) == "job_resin") app.useResinForJob(id);
             else if (std::string(key) == "resin_delete") app.resinToDelete() = id;
             else app.setNewJobResin(id);
+        } else if (step.contains("resin_print") || step.contains("resin_support")) {
+            // The selected resin's own values, by field key: {"exposure": 1.8}.
+            const bool print = step.contains("resin_print");
+            const nlohmann::json& values = step[print ? "resin_print" : "resin_support"];
+            for (auto it = values.begin(); it != values.end(); ++it) {
+                if (print) app.setResinPrintValue(app.resinSelected(), it.key(), it.value().get<double>());
+                else app.setResinSupportValue(app.resinSelected(), it.key(), it.value().get<double>());
+            }
+        } else if (step.contains("resin_print_reset")) {
+            app.resetResinPrintRow(app.resinSelected(), step["resin_print_reset"].get<std::string>());
+        } else if (step.contains("resin_support_reset")) {
+            app.resetResinSupportRow(app.resinSelected(), step["resin_support_reset"].get<std::string>());
         } else if (step.contains("resin_delete_confirm")) {
             app.deleteResin(app.resinToDelete());
         } else if (step.contains("resin_menu")) {

@@ -23,13 +23,13 @@ struct Resin {
     std::string id;    // its file's name in the resins folder, without ".json"
     std::string name;  // as shown
     // Print settings: a SatelLite file's header kept in FruitSlicer's own
-    // folder, or values typed in (> 0 to apply; layer counts -1 for the
-    // printer's own).
+    // folder, and values of your own over it (or, without one, over the
+    // printer's own and FruitSlicer's defaults). A new file clears them.
     std::string sample_path, sample_name;
-    double exposure = 0, bottom_exposure = 0;
-    int bottom_layers = -1, transition_layers = -1;
-    // Support values measured for this resin (a fitted profile); null:
-    // FruitSlicer's own starting values.
+    PrintEdits print;
+    // Support values measured for this resin (a fitted profile), and under
+    // kResinOwnKey the ones set on the Resins page; null: FruitSlicer's own
+    // starting values.
     nlohmann::json profile;
     // The test plates saved for it, by kind ("tips", "spacing", "islands").
     std::map<std::string, PlateFiles> plates;
@@ -82,16 +82,46 @@ std::string profileState(const nlohmann::json& profile);
 // A job's resin as its chip shows it: "My resin · Defaults".
 std::string resinLabel(const std::string& name, const nlohmann::json& profile);
 
-// The print settings the Resins page lists: label and value.
-std::vector<std::pair<std::string, std::string>> printRows(const Resin& r, const fruit::GooHeader* sample,
-                                                           const fruit::PrinterProfile& printer);
+// One print setting as the Resins page lists and edits it.
+struct PrintField {
+    std::string key;      // as setPrintValue takes it
+    const char* suffix;   // after the field ("s", "mm")
+    double lo, hi;        // allowed range
+    double value;         // in use; 0 for an exposure not set yet
+};
+struct PrintRow {
+    enum class Source { File, Default, Yours };
+    std::string key;      // the row, as resetPrintRow takes it
+    std::string label;
+    std::string value;    // in use, as text
+    std::string base;     // the file's value (or FruitSlicer's own), as text; "" when there is none
+    Source source = Source::Default;
+    std::string note;     // what hasn't been checked about an edited value
+    std::vector<PrintField> fields;
+    std::string after;    // words after the fields (the transition layers' exposures)
+};
+// Every print setting, in page order: layer height, bottom layers,
+// transition layers, normal exposure, waits, lift and retract, light power,
+// density. `sample` is the resin's kept header, if read.
+std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, const fruit::PrinterProfile& printer);
+// Sets one of the resin's own print values (clamped to its field's range).
+// A value equal to the file's (or FruitSlicer's own) is not kept: the row
+// reads as it did before.
+void setPrintValue(Resin& r, const fruit::GooHeader* sample, const fruit::PrinterProfile& printer,
+                   const std::string& key, double value);
+// A row's values back to the file's (or FruitSlicer's own).
+void resetPrintRow(PrintEdits& e, const std::string& row);
 
 // The support values the Resins page lists, and where each comes from.
 struct ResinValue {
-    enum class Source { Default, Borrowed, Measured };
+    enum class Source { Default, Borrowed, Measured, Yours };
     std::string label, value;
     Source source = Source::Default;
 };
+// The advanced rows the page lists, by label, in order.
+inline constexpr const char* kResinSupportRows[] = {"Usual tip size",  "How much a tip holds", "Tip reach",
+                                                    "Faces that need tips", "Spots in mid-air", "Contact depth",
+                                                    "Snap-off zone"};
 std::vector<ResinValue> resinSupportValues(const Resin& r);
 
 }  // namespace gui

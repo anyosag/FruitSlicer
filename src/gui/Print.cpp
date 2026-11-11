@@ -38,18 +38,31 @@ bool fitsPlate(const fruit::PrinterProfile& pr, const fruit::BBox3& b) {
            b.max.z <= pr.build_z + e;
 }
 
-PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_top, const PrintSettings& s) {
-    PrintPlan p;
-    p.fits = fitsPlate(doc.printer, layers.bounds);
+fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height) {
     fruit::GooPrintRequest r;
-    r.layer_height = layers.layers ? layers.layers->layer_height : kLayerHeight;
+    r.layer_height = layer_height;
     r.settings_from = s.sample.get();
     r.exposure = s.exposure;
     r.bottom_exposure = s.bottom_exposure;
     r.bottom_layers = s.bottom_layers;
     r.transition_layers = s.transition_layers;
+    r.own_layer_height = s.layer_height;
+    r.wait_before_lift = s.wait_before_lift;
+    r.wait_after_lift = s.wait_after_lift;
+    r.wait_after_retract = s.wait_after_retract;
+    r.lift_distance = s.lift;
+    r.light_power = s.light_power;
     r.flip_x = s.flip_x;
     r.flip_y = s.flip_y;
+    return r;
+}
+
+double resinDensity(const PrintEdits& e) { return e.density > 0 ? e.density : fruit::GooExportOptions{}.resin_density; }
+
+PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_top, const PrintSettings& s) {
+    PrintPlan p;
+    p.fits = fitsPlate(doc.printer, layers.bounds);
+    const fruit::GooPrintRequest r = printRequest(s, layers.layers ? layers.layers->layer_height : kLayerHeight);
     try {
         p.setup = fruit::buildGooSetup(doc.printer, r);
     } catch (const std::exception&) {
@@ -64,7 +77,8 @@ PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_
     p.height = layers.top;
     p.layers = static_cast<std::size_t>(std::ceil(layers.top / p.layer_height - 1e-9));
     p.resin_ml = layers.resin_ml;
-    const fruit::GooExportOptions o;
+    fruit::GooExportOptions o;
+    o.resin_density = p.density = resinDensity(s);
     p.resin_g = p.resin_ml * o.resin_density;
     p.print_time_s = fruit::estimatePrintSeconds(p.setup.header, static_cast<uint32_t>(p.layers), o);
     const fruit::GooHeader& h = p.setup.header;
@@ -83,6 +97,7 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
     all.append(supports);
     fruit::GooExportOptions o;
     o.sync_to_device = removable;
+    o.resin_density = plan.density;
     if (plan.reslice && layers.hollow) {
         // The same again at the sample's layer height: the model hollowed
         // or filled as before, with the same holes, and the supports.

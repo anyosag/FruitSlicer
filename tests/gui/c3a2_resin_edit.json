@@ -1,0 +1,18 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "resins"}, {"resin_new_from": "@demo-sample"},
+    {"resin_print": {"exposure": 1.8, "wait_after_retract": 3, "layer_height": 0.05, "light_power": 200, "density": 1.1}},
+    {"resin_support": {"capacity": 14, "critical_angle": 50}},
+    {"frames": 2}, {"shot": "c3a2_resin_edited"},
+    {"resin_print_reset": "light_power"}, {"resin_support_reset": "Faces that need tips"},
+    {"new_job_resin": "sample 0.03 mm"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"advanced": "open"}, {"shot": "c3a2_job_advanced"}, {"advanced": "close"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
+    {"step": "print"}, {"shot": "c3a2_job_print"},
+    {"screen": "resins"}, {"resin_print": {"exposure": 2.0}}, {"frames": 2}, {"shot": "c3a2_resin_open_job"}
+  ]
+}

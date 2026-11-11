@@ -10,6 +10,7 @@
 
 #include "formats/GooExport.h"
 #include "formats/GooFile.h"
+#include "formats/GooSetup.h"
 #include "mesh/Primitives.h"
 #include "raster/Rasterizer.h"
 
@@ -411,4 +412,47 @@ TEST_CASE("verifyGoo reads a file back from its runs and finds a damaged layer",
     CHECK(v.first_bad_layer == 39);
     CHECK_FALSE(v.error.empty());
     CHECK_THROWS(verifyGoo(tmp("no such file.goo")));
+}
+
+TEST_CASE("GOO setup: values of your own over a sample's, for bottom and normal layers alike", "[goo]") {
+    const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
+    fruit::GooPrintRequest base;
+    base.layer_height = 0.03;
+    base.exposure = 1.5;
+    base.bottom_exposure = 27.5;
+    base.bottom_layers = 6;
+    base.transition_layers = 6;
+    const fruit::GooHeader sample = fruit::buildGooSetup(pr, base).header;
+    fruit::GooPrintRequest r;
+    r.layer_height = 0.05;  // the job's: the sample's 0.03 mm wins
+    r.settings_from = &sample;
+    CHECK(fruit::printHeader(pr, r).layer_height == Approx(0.03f));
+    r.own_layer_height = 0.04;  // yours wins over the sample's
+    r.wait_before_lift = 0.5;
+    r.wait_after_lift = 1;
+    r.wait_after_retract = 3;
+    r.lift_distance = 0.08;
+    r.light_power = 200;
+    const fruit::GooPrintSetup s = fruit::buildGooSetup(pr, r);
+    const fruit::GooPrintSettings& p = s.header.print;
+    CHECK(s.header.layer_height == Approx(0.04f));
+    CHECK(s.notes.empty());
+    CHECK(p.exposure == Approx(1.5f));  // the sample's
+    CHECK(p.wait_before_lift == Approx(0.5f));
+    CHECK(p.bottom_wait_before_lift == Approx(0.5f));
+    CHECK(p.wait_after_lift == Approx(1.0f));
+    CHECK(p.bottom_wait_after_lift == Approx(1.0f));
+    CHECK(p.wait_after_retract == Approx(3.0f));
+    CHECK(p.bottom_wait_after_retract == Approx(3.0f));
+    CHECK(p.lift_distance == Approx(0.08f));
+    CHECK(p.retract_distance == Approx(0.08f));
+    CHECK(p.bottom_lift_distance == Approx(0.08f));
+    CHECK(p.bottom_retract_distance == Approx(0.08f));
+    CHECK(p.pwm == 200);
+    CHECK(p.bottom_pwm == 200);
+    // Without exposures the header is still there to show; only a print file needs them.
+    fruit::GooPrintRequest none;
+    CHECK(fruit::printHeader(pr, none).print.exposure == 0);
+    CHECK(fruit::printHeader(pr, none).print.bottom_layers == static_cast<uint32_t>(pr.bottom_layers));
+    CHECK_THROWS(fruit::buildGooSetup(pr, none));
 }

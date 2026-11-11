@@ -175,7 +175,8 @@ void printTiles(Document& doc, const PrintPlan* plan) {
     tile("time", "Print time", ready ? duration(plan->print_time_s) : "—", ready ? "estimate" : "needs exposures");
     ImGui::SameLine(0, 10);
     tile("resin", "Resin", strf("%.1f ml", doc.layers.result->resin_ml),
-         strf("%.1f g at 1.15 g/ml", doc.layers.result->resin_ml * 1.15));
+         strf("%.1f g at %g g/ml", doc.layers.result->resin_ml * resinDensity(doc.print.settings),
+              resinDensity(doc.print.settings)));
     tile("layers", "Layers", ready ? thousands(plan->layers) : thousands(doc.layers.result->layers->size()),
          strf("%.1f mm tall", doc.layers.result->top));
     ImGui::SameLine(0, 10);

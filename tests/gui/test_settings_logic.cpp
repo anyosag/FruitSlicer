@@ -132,8 +132,8 @@ TEST_CASE("Setup: a SatelLite file's settings are kept for new jobs; another pri
     CHECK(printSummary(s) == "From my sample.goo");
     // A copy that has gone leaves the job to ask; typed values pass through.
     s.sample_path = (keep / "gone.goo").string();
-    s.exposure = 2;
-    s.bottom_exposure = 30;
+    s.print.exposure = 2;
+    s.print.bottom_exposure = 30;
     p = printSettingsFor(s);
     CHECK_FALSE(p.sample);
     CHECK(p.exposure == 2);

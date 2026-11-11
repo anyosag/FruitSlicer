@@ -1327,10 +1327,8 @@ std::shared_ptr<const PrintPlan> App::printPlan() {
     s.flip_x = printer_setup_.orientation_confirmed && printer_setup_.flip_x;
     s.flip_y = printer_setup_.orientation_confirmed && printer_setup_.flip_y;
     const bool same = plan_ && plan_layers_ == lr && plan_raft_ == raft && plan_settings_.sample == s.sample &&
-                      plan_settings_.exposure == s.exposure && plan_settings_.bottom_exposure == s.bottom_exposure &&
-                      plan_settings_.bottom_layers == s.bottom_layers &&
-                      plan_settings_.transition_layers == s.transition_layers && plan_settings_.flip_x == s.flip_x &&
-                      plan_settings_.flip_y == s.flip_y;
+                      static_cast<const PrintEdits&>(plan_settings_) == static_cast<const PrintEdits&>(s) &&
+                      plan_settings_.flip_x == s.flip_x && plan_settings_.flip_y == s.flip_y;
     if (!same) {
         plan_ = std::make_shared<const PrintPlan>(planPrint(*doc_, *lr, raft, s));
         plan_layers_ = lr;
@@ -1635,9 +1633,10 @@ void App::startSetup() {
     setup_step_ = 0;
     // The print settings step shows what new jobs start with now.
     const Resin& r = newJobResin();
-    setup_typed_ = r.sample_path.empty() && r.exposure > 0;
-    typed_defaults_ = {r.exposure, r.bottom_exposure, r.bottom_layers >= 0 ? r.bottom_layers : printer_.bottom_layers,
-                       r.transition_layers >= 0 ? r.transition_layers : printer_.transition_layers};
+    const PrintEdits& e = r.print;
+    setup_typed_ = r.sample_path.empty() && e.exposure > 0;
+    typed_defaults_ = {e.exposure, e.bottom_exposure, e.bottom_layers >= 0 ? e.bottom_layers : printer_.bottom_layers,
+                       e.transition_layers >= 0 ? e.transition_layers : printer_.transition_layers};
     screen_ = Screen::Setup;
 }
 
@@ -1663,10 +1662,10 @@ void App::useTypedDefaults() {
     Resin r = newJobResin();
     r.sample_path.clear();
     r.sample_name.clear();
-    r.exposure = std::max(0.0, typed_defaults_.exposure);
-    r.bottom_exposure = std::max(0.0, typed_defaults_.bottom_exposure);
-    r.bottom_layers = typed_defaults_.bottom_layers;
-    r.transition_layers = typed_defaults_.transition_layers;
+    r.print.exposure = std::max(0.0, typed_defaults_.exposure);
+    r.print.bottom_exposure = std::max(0.0, typed_defaults_.bottom_exposure);
+    r.print.bottom_layers = typed_defaults_.bottom_layers;
+    r.print.transition_layers = typed_defaults_.transition_layers;
     storeResin(r);
 }
 
@@ -1791,6 +1790,40 @@ void App::renameResin(const std::string& id, const std::string& name) {
     storeResin(r);
 }
 
+void App::setResinPrintValue(const std::string& id, const std::string& key, double value) {
+    const Resin* from = resinById(id);
+    if (!from) return;
+    Resin r = *from;
+    const auto sample = resinSample(r);
+    setPrintValue(r, sample.get(), printer_, key, value);
+    if (!(r == *from)) storeResin(r);
+}
+
+void App::resetResinPrintRow(const std::string& id, const std::string& row) {
+    const Resin* from = resinById(id);
+    if (!from) return;
+    Resin r = *from;
+    resetPrintRow(r.print, row);
+    if (!(r == *from)) storeResin(r);
+}
+
+void App::setResinSupportValue(const std::string& id, const std::string& key, double value) {
+    const Resin* from = resinById(id);
+    if (!from) return;
+    Resin r = *from;
+    r.profile = withResinValue(r.profile, key, value);
+    if (!(r == *from)) storeResin(r);
+}
+
+void App::resetResinSupportRow(const std::string& id, const std::string& label) {
+    const Resin* from = resinById(id);
+    const AdvancedSetting* s = advancedRow(label);
+    if (!from || !s) return;
+    Resin r = *from;
+    r.profile = withoutResinRow(r.profile, *s);
+    if (!(r == *from)) storeResin(r);
+}
+
 void App::deleteResin(const std::string& which) {
     const std::string id = which;  // `which` may be resin_to_delete_ or a resin's own id
     resin_to_delete_.clear();
@@ -1816,8 +1849,10 @@ void App::replaceResinSampleFile(const std::string& id, const std::string& goo) 
         Resin r = *from;
         r.sample_path = keepHeader(goo);
         r.sample_name = std::filesystem::path(goo).filename().string();
-        r.exposure = r.bottom_exposure = 0;
-        r.bottom_layers = r.transition_layers = -1;
+        // Edits were made against the old file; the density is the resin's own.
+        PrintEdits kept;
+        kept.density = r.print.density;
+        r.print = kept;
         resin_samples_.erase(r.sample_path);  // the same name may hold another file now
         storeResin(r);
         log::info("print settings for " + r.name + " from " + goo);
@@ -1925,16 +1960,11 @@ void App::savePlateTo(const std::string& path) {
     }
     // A print file with the resin's own print settings, and the image
     // orientation fix once the check has confirmed it.
-    const PrintSettings ps = printSettingsFor(resin);
-    fruit::GooPrintRequest req;
-    req.layer_height = ps.sample ? fruit::gooLayerHeight(*ps.sample) : printer_.layer_height;
-    req.settings_from = ps.sample.get();
-    req.exposure = ps.exposure;
-    req.bottom_exposure = ps.bottom_exposure;
-    req.bottom_layers = ps.bottom_layers;
-    req.transition_layers = ps.transition_layers;
-    req.flip_x = printer_setup_.orientation_confirmed && printer_setup_.flip_x;
-    req.flip_y = printer_setup_.orientation_confirmed && printer_setup_.flip_y;
+    PrintSettings ps = printSettingsFor(resin);
+    ps.flip_x = printer_setup_.orientation_confirmed && printer_setup_.flip_x;
+    ps.flip_y = printer_setup_.orientation_confirmed && printer_setup_.flip_y;
+    const fruit::GooPrintRequest req =
+        printRequest(ps, ps.sample ? fruit::gooLayerHeight(*ps.sample) : printer_.layer_height);
     std::shared_ptr<const fruit::GooPrintSetup> setup;
     try {
         setup = std::make_shared<const fruit::GooPrintSetup>(fruit::buildGooSetup(printer_, req));
@@ -2076,8 +2106,9 @@ void App::openFit() {
     fruit::FitOptions o;
     o.resin = r.name;
     const PrintSettings ps = printSettingsFor(r);
-    o.layer_height = ps.sample ? fruit::gooLayerHeight(*ps.sample) : printer_.layer_height;
-    o.exposure_s = ps.exposure > 0 ? ps.exposure : ps.sample ? ps.sample->print.exposure : 0;
+    const fruit::GooHeader h = fruit::printHeader(printer_, printRequest(ps, printer_.layer_height));
+    o.layer_height = fruit::gooLayerHeight(h);
+    o.exposure_s = h.print.exposure;
     fit_ = std::make_shared<const FitSummary>(summarizeFit(plates, o, r));
 }
 

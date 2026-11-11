@@ -596,7 +596,7 @@ void setup(App& app) {
     step = std::clamp(step, 0, 3);
     const PrinterSetup& ps = app.printerSetup();
     const Resin& resin = app.newJobResin();
-    const bool done[4] = {step > 0, !resin.sample_path.empty() || (resin.exposure > 0 && resin.bottom_exposure > 0),
+    const bool done[4] = {step > 0, !resin.sample_path.empty() || (resin.print.exposure > 0 && resin.print.bottom_exposure > 0),
                           ps.orientation_confirmed, false};
     aside(step, done);
     ImGui::SameLine(0, 0);

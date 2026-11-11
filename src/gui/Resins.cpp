@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "Format.h"
+#include "Supports.h"
 #include "formats/GooExport.h"
 #include "support/SupportSettings.h"
 
@@ -23,18 +24,37 @@ namespace {
 std::string seconds(double s) { return strf("%g s", std::round(s * 100) / 100); }
 
 json printJson(const Resin& r) {
-    return {{"sample_path", r.sample_path},     {"sample_name", r.sample_name},
-            {"exposure", r.exposure},           {"bottom_exposure", r.bottom_exposure},
-            {"bottom_layers", r.bottom_layers}, {"transition_layers", r.transition_layers}};
+    const PrintEdits& e = r.print;
+    return {{"sample_path", r.sample_path},
+            {"sample_name", r.sample_name},
+            {"exposure", e.exposure},
+            {"bottom_exposure", e.bottom_exposure},
+            {"bottom_layers", e.bottom_layers},
+            {"transition_layers", e.transition_layers},
+            {"layer_height", e.layer_height},
+            {"wait_before_lift", e.wait_before_lift},
+            {"wait_after_lift", e.wait_after_lift},
+            {"wait_after_retract", e.wait_after_retract},
+            {"lift", e.lift},
+            {"light_power", e.light_power},
+            {"density", e.density}};
 }
 
 void readPrint(const json& p, Resin& r) {
     r.sample_path = p.value("sample_path", std::string());
     r.sample_name = p.value("sample_name", std::string());
-    r.exposure = p.value("exposure", 0.0);
-    r.bottom_exposure = p.value("bottom_exposure", 0.0);
-    r.bottom_layers = p.value("bottom_layers", -1);
-    r.transition_layers = p.value("transition_layers", -1);
+    PrintEdits& e = r.print;
+    e.exposure = p.value("exposure", 0.0);
+    e.bottom_exposure = p.value("bottom_exposure", 0.0);
+    e.bottom_layers = p.value("bottom_layers", -1);
+    e.transition_layers = p.value("transition_layers", -1);
+    e.layer_height = p.value("layer_height", 0.0);
+    e.wait_before_lift = p.value("wait_before_lift", -1.0);
+    e.wait_after_lift = p.value("wait_after_lift", -1.0);
+    e.wait_after_retract = p.value("wait_after_retract", -1.0);
+    e.lift = p.value("lift", -1.0);
+    e.light_power = p.value("light_power", -1);
+    e.density = p.value("density", 0.0);
 }
 
 bool hasMeasured(const json& p, const char* key) { return p.is_object() && p.contains(key) && !p[key].is_null(); }
@@ -200,18 +220,15 @@ PrintSettings printSettingsFor(const Resin& r) {
             // Gone or unreadable: the job starts without it.
         }
     }
-    p.exposure = r.exposure;
-    p.bottom_exposure = r.bottom_exposure;
-    p.bottom_layers = r.bottom_layers;
-    p.transition_layers = r.transition_layers;
+    static_cast<PrintEdits&>(p) = r.print;
     return p;
 }
 
 std::string printSummary(const Resin& r) {
     if (!r.sample_path.empty())
         return "From " + (r.sample_name.empty() ? fs::path(r.sample_path).filename().string() : r.sample_name);
-    if (r.exposure > 0 && r.bottom_exposure > 0)
-        return "Typed in: " + seconds(r.exposure) + ", bottom " + seconds(r.bottom_exposure);
+    if (r.print.exposure > 0 && r.print.bottom_exposure > 0)
+        return "Typed in: " + seconds(r.print.exposure) + ", bottom " + seconds(r.print.bottom_exposure);
     return "None yet: each job asks";
 }
 
@@ -269,8 +286,9 @@ std::string resinLabel(const std::string& name, const json& profile) {
 
 std::string resinSummary(const Resin& r, const fruit::GooHeader* sample) {
     std::string out;
-    if (sample) out = strf("%g mm · ", std::round(sample->layer_height * 1000) / 1000);
-    const double e = r.exposure > 0 ? r.exposure : sample ? sample->print.exposure : 0;
+    const double lh = r.print.layer_height > 0 ? r.print.layer_height : sample ? sample->layer_height : 0;
+    if (lh > 0) out = strf("%g mm · ", std::round(lh * 1000) / 1000);
+    const double e = r.print.exposure > 0 ? r.print.exposure : sample ? sample->print.exposure : 0;
     out += e > 0 ? seconds(e) : std::string("no print settings");
     const std::string state = resinState(r);
     if (state == "Defaults") return out + " · defaults";
@@ -278,77 +296,224 @@ std::string resinSummary(const Resin& r, const fruit::GooHeader* sample) {
     return out + " · " + measured + " measured";
 }
 
-std::vector<std::pair<std::string, std::string>> printRows(const Resin& r, const fruit::GooHeader* h,
-                                                           const fruit::PrinterProfile& printer) {
-    std::vector<std::pair<std::string, std::string>> rows;
-    const double density = fruit::GooExportOptions{}.resin_density;
-    if (h) {
-        const fruit::GooPrintSettings& p = h->print;
-        const double normal = r.exposure > 0 ? r.exposure : p.exposure;
-        const double bottom = r.bottom_exposure > 0 ? r.bottom_exposure : p.bottom_exposure;
-        rows.push_back({"Layer height", strf("%g mm", fruit::gooLayerHeight(*h))});
-        rows.push_back({"Bottom layers", strf("%u × %s", p.bottom_layers, seconds(bottom).c_str())});
-        if (p.transition_layers == 0)
-            rows.push_back({"Transition layers", "None"});
-        else
-            rows.push_back({"Transition layers",
-                            strf("%u, from %.2f to %.2f s", p.transition_layers,
-                                 fruit::layerDefFor(*h, p.bottom_layers).exposure,
-                                 fruit::layerDefFor(*h, p.bottom_layers + p.transition_layers - 1u).exposure)});
-        rows.push_back({"Normal exposure", seconds(normal)});
-        rows.push_back({"Waits (before lift, after lift, after retract)",
-                        strf("%g · %g · %g s", p.wait_before_lift, p.wait_after_lift, p.wait_after_retract)});
-        rows.push_back({"Lift and retract", strf("%g mm", std::round(p.lift_distance * 1000) / 1000)});
-        rows.push_back({"Light power", strf("%u of 255", p.pwm)});
-        rows.push_back({"Density, for weight", strf("%g g/ml", density)});
-        return rows;
-    }
-    if (r.exposure <= 0 && r.bottom_exposure <= 0) return rows;
-    rows.push_back({"Layer height", strf("%g mm, FruitSlicer's own", printer.layer_height)});
-    rows.push_back({"Bottom layers",
-                    r.bottom_layers >= 0 ? strf("%d × %s", r.bottom_layers, seconds(r.bottom_exposure).c_str())
-                                         : strf("%d × %s (the printer's own count)", printer.bottom_layers,
-                                                seconds(r.bottom_exposure).c_str())});
-    rows.push_back({"Transition layers", r.transition_layers >= 0
-                                             ? std::to_string(r.transition_layers)
-                                             : strf("%d (the printer's own)", printer.transition_layers)});
-    rows.push_back({"Normal exposure", seconds(r.exposure)});
-    rows.push_back({"Density, for weight", strf("%g g/ml", density)});
+namespace {
+
+// The print settings a job on `r` would start from: the file's (or the
+// printer's own and FruitSlicer's defaults), with `e` over them.
+fruit::GooHeader headerWith(const Resin& r, const PrintEdits& e, const fruit::GooHeader* sample,
+                            const fruit::PrinterProfile& printer) {
+    PrintSettings s;
+    static_cast<PrintEdits&>(s) = e;
+    std::shared_ptr<const fruit::GooHeader> keep(sample, [](const fruit::GooHeader*) {});
+    if (!r.sample_path.empty() && sample) s.sample = keep;
+    return fruit::printHeader(printer, printRequest(s, printer.layer_height));
+}
+
+struct FieldRange {
+    const char* key;
+    double lo, hi;
+    bool whole;  // a count
+};
+// Each value's range, as the page's fields allow it.
+const FieldRange kFields[] = {
+    {"layer_height", 0.01, 0.2, false},     {"bottom_layers", 0, 50, true},    {"bottom_exposure", 0.1, 600, false},
+    {"transition_layers", 0, 50, true},     {"exposure", 0.1, 600, false},     {"wait_before_lift", 0, 120, false},
+    {"wait_after_lift", 0, 120, false},     {"wait_after_retract", 0, 120, false}, {"lift", 0.01, 20, false},
+    {"light_power", 1, 255, true},          {"density", 0.5, 3, false},
+};
+
+const FieldRange* rangeOf(const std::string& key) {
+    for (const FieldRange& f : kFields)
+        if (key == f.key) return &f;
+    return nullptr;
+}
+
+PrintField field(const char* key, const char* suffix, double value) {
+    const FieldRange* f = rangeOf(key);
+    return {key, suffix, f->lo, f->hi, value};
+}
+
+// One value of a header, by field key.
+double valueOf(const fruit::GooHeader& h, double density, const std::string& key) {
+    const fruit::GooPrintSettings& p = h.print;
+    if (key == "layer_height") return fruit::gooLayerHeight(h);
+    if (key == "bottom_layers") return p.bottom_layers;
+    if (key == "bottom_exposure") return std::round(p.bottom_exposure * 1000) / 1000;
+    if (key == "transition_layers") return p.transition_layers;
+    if (key == "exposure") return std::round(p.exposure * 1000) / 1000;
+    if (key == "wait_before_lift") return std::round(p.wait_before_lift * 1000) / 1000;
+    if (key == "wait_after_lift") return std::round(p.wait_after_lift * 1000) / 1000;
+    if (key == "wait_after_retract") return std::round(p.wait_after_retract * 1000) / 1000;
+    if (key == "lift") return std::round(p.lift_distance * 1000) / 1000;
+    if (key == "light_power") return p.pwm;
+    if (key == "density") return density;
+    return 0;
+}
+
+void setEdit(PrintEdits& e, const std::string& key, double v) {
+    const int n = static_cast<int>(std::lround(v));
+    if (key == "layer_height") e.layer_height = v;
+    else if (key == "bottom_layers") e.bottom_layers = n;
+    else if (key == "bottom_exposure") e.bottom_exposure = v;
+    else if (key == "transition_layers") e.transition_layers = n;
+    else if (key == "exposure") e.exposure = v;
+    else if (key == "wait_before_lift") e.wait_before_lift = v;
+    else if (key == "wait_after_lift") e.wait_after_lift = v;
+    else if (key == "wait_after_retract") e.wait_after_retract = v;
+    else if (key == "lift") e.lift = v;
+    else if (key == "light_power") e.light_power = n;
+    else if (key == "density") e.density = v;
+}
+
+void clearEdit(PrintEdits& e, const std::string& key) {
+    const PrintEdits none;
+    if (key == "layer_height") e.layer_height = none.layer_height;
+    else if (key == "bottom_layers") e.bottom_layers = none.bottom_layers;
+    else if (key == "bottom_exposure") e.bottom_exposure = none.bottom_exposure;
+    else if (key == "transition_layers") e.transition_layers = none.transition_layers;
+    else if (key == "exposure") e.exposure = none.exposure;
+    else if (key == "wait_before_lift") e.wait_before_lift = none.wait_before_lift;
+    else if (key == "wait_after_lift") e.wait_after_lift = none.wait_after_lift;
+    else if (key == "wait_after_retract") e.wait_after_retract = none.wait_after_retract;
+    else if (key == "lift") e.lift = none.lift;
+    else if (key == "light_power") e.light_power = none.light_power;
+    else if (key == "density") e.density = none.density;
+}
+
+// The rows and the values each one holds, in page order.
+const std::vector<std::pair<const char*, std::vector<const char*>>>& rowKeys() {
+    static const std::vector<std::pair<const char*, std::vector<const char*>>> rows = {
+        {"layer_height", {"layer_height"}},
+        {"bottom", {"bottom_layers", "bottom_exposure"}},
+        {"transition", {"transition_layers"}},
+        {"exposure", {"exposure"}},
+        {"waits", {"wait_before_lift", "wait_after_lift", "wait_after_retract"}},
+        {"lift", {"lift"}},
+        {"light_power", {"light_power"}},
+        {"density", {"density"}}};
     return rows;
 }
 
-std::vector<ResinValue> resinSupportValues(const Resin& r) {
-    fruit::SupportConfig cfg;
-    fruit::TreeConfig tc;
-    fruit::SupportChoices ch;
-    ch.layer_height = 0.05;
-    const json* prof = r.profile.is_object() ? &r.profile : nullptr;
-    fruit::resolveSettings(prof, ch, cfg, &tc);
-    using S = ResinValue::Source;
-    auto from = [&](const char* key, S otherwise) { return hasMeasured(r.profile, key) ? S::Measured : otherwise; };
-    std::vector<ResinValue> v;
-    const int dt = std::clamp(cfg.default_tip, 0, static_cast<int>(cfg.tip_classes.size()) - 1);
-    v.push_back({"Usual tip size", strf("%g mm", cfg.tip_classes[static_cast<std::size_t>(dt)].diameter),
-                 from("default_tip_diameter", S::Default)});
-    v.push_back({"Hold per 0.4 mm tip", strf("%.1f mm²", cfg.capacity.capacity(0.4)), from("capacity_table", S::Borrowed)});
-    v.push_back({"Tip reach",
-                 strf("%.1f → %.1f mm", cfg.coverage.curve.front().second, cfg.coverage.curve.back().second),
-                 from("coverage_curve", S::Borrowed)});
-    v.push_back({"Faces that need tips", strf("lean > %g°", cfg.critical_angle_deg),
-                 from("critical_angle_deg", S::Borrowed)});
-    v.push_back({"Spots in mid-air", strf("1 tip ≤ %g mm", cfg.island_one_tip_length),
-                 from("island_one_tip_length", S::Borrowed)});
-    std::string depth = "½ the tip size, 0.08–0.2 mm";
-    if (!tc.penetration_table.empty()) {
-        double lo = 1e9, hi = 0;
-        for (const auto& [d, pen] : tc.penetration_table) {
-            lo = std::min(lo, pen);
-            hi = std::max(hi, pen);
-        }
-        depth = std::abs(hi - lo) < 1e-9 ? strf("%g mm", lo) : strf("%g–%g mm, by tip size", lo, hi);
+bool edited(const PrintEdits& e, const std::vector<const char*>& keys) {
+    for (const char* k : keys) {
+        PrintEdits without = e;
+        clearEdit(without, k);
+        if (!(without == e)) return true;
     }
-    v.push_back({"Contact depth", depth, from("penetration_table", S::Default)});
-    v.push_back({"Snap-off zone", strf("%.1f mm", tc.flex_zone), S::Default});
+    return false;
+}
+
+// What a row shows for header `h`.
+std::string rowText(const std::string& row, const fruit::GooHeader& h, double density) {
+    const fruit::GooPrintSettings& p = h.print;
+    auto secondsOr = [](double s) { return s > 0 ? seconds(s) : std::string("not set"); };
+    if (row == "layer_height") return strf("%g mm", fruit::gooLayerHeight(h));
+    if (row == "bottom")
+        return p.bottom_exposure > 0 ? strf("%u × %s", p.bottom_layers, seconds(p.bottom_exposure).c_str())
+                                     : strf("%u, time not set", p.bottom_layers);
+    if (row == "transition") {
+        if (p.transition_layers == 0) return "None";
+        if (p.bottom_exposure <= 0 || p.exposure <= 0) return std::to_string(p.transition_layers);
+        return strf("%u, from %.2f to %.2f s", p.transition_layers, fruit::layerDefFor(h, p.bottom_layers).exposure,
+                    fruit::layerDefFor(h, p.bottom_layers + p.transition_layers - 1u).exposure);
+    }
+    if (row == "exposure") return secondsOr(p.exposure);
+    if (row == "waits") return strf("%g · %g · %g s", p.wait_before_lift, p.wait_after_lift, p.wait_after_retract);
+    if (row == "lift") return strf("%g mm", std::round(p.lift_distance * 1000) / 1000);
+    if (row == "light_power") return strf("%u of 255", p.pwm);
+    if (row == "density") return strf("%g g/ml", density);
+    return "";
+}
+
+}  // namespace
+
+std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, const fruit::PrinterProfile& printer) {
+    const bool file = sample && !r.sample_path.empty();
+    const fruit::GooHeader h = headerWith(r, r.print, sample, printer);
+    const fruit::GooHeader base = headerWith(r, PrintEdits{}, sample, printer);
+    const double density = resinDensity(r.print), base_density = resinDensity(PrintEdits{});
+    const fruit::GooPrintSettings& p = h.print;
+    using S = PrintRow::Source;
+    std::vector<PrintRow> rows;
+    for (const auto& [key, keys] : rowKeys()) {
+        PrintRow row;
+        row.key = key;
+        row.value = rowText(key, h, density);
+        row.base = rowText(key, base, base_density);
+        row.source = edited(r.print, keys) ? S::Yours : file && row.key != "density" ? S::File : S::Default;
+        rows.push_back(std::move(row));
+    }
+    rows[0].label = "Layer height";
+    rows[0].fields = {field("layer_height", "mm", fruit::gooLayerHeight(h))};
+    rows[1].label = "Bottom layers";
+    rows[1].fields = {field("bottom_layers", "×", p.bottom_layers), field("bottom_exposure", "s", p.bottom_exposure)};
+    rows[2].label = "Transition layers";
+    rows[2].fields = {field("transition_layers", "", p.transition_layers)};
+    if (p.transition_layers > 0 && p.bottom_exposure > 0 && p.exposure > 0)
+        rows[2].after = strf("from %.2f to %.2f s", fruit::layerDefFor(h, p.bottom_layers).exposure,
+                             fruit::layerDefFor(h, p.bottom_layers + p.transition_layers - 1u).exposure);
+    rows[3].label = "Normal exposure";
+    rows[3].fields = {field("exposure", "s", p.exposure)};
+    rows[4].label = "Waits (before lift, after lift, after retract)";
+    rows[4].fields = {field("wait_before_lift", "·", p.wait_before_lift), field("wait_after_lift", "·", p.wait_after_lift),
+                      field("wait_after_retract", "s", p.wait_after_retract)};
+    rows[5].label = "Lift and retract";
+    rows[5].fields = {field("lift", "mm", valueOf(h, density, "lift"))};
+    rows[6].label = "Light power";
+    rows[6].fields = {field("light_power", "of 255", p.pwm)};
+    rows[7].label = "Density, for weight";
+    rows[7].fields = {field("density", "g/ml", density)};
+    // Exposures with no file and none typed: nothing to go back to.
+    if (!file) {
+        if (base.print.bottom_exposure <= 0) rows[1].base.clear();
+        if (base.print.exposure <= 0) rows[3].base.clear();
+    }
+    // Plain words about what an edited value hasn't been checked with.
+    const double lh = fruit::gooLayerHeight(h), base_lh = fruit::gooLayerHeight(base);
+    if (rows[0].source == S::Yours && std::abs(lh - base_lh) > 1e-6 && (file || base.print.exposure > 0))
+        rows[0].note = strf("The exposures were set for %g mm layers and haven't been checked at %g mm.", base_lh, lh);
+    if (rows[5].source == S::Yours && std::abs(p.lift_distance - base.print.lift_distance) > 1e-6)
+        rows[5].note = "Not checked on the printer: the 16K tilts its vat, and how it uses this distance hasn't been "
+                       "tested.";
+    if (rows[6].source == S::Yours && p.pwm != base.print.pwm)
+        rows[6].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
+    return rows;
+}
+
+void setPrintValue(Resin& r, const fruit::GooHeader* sample, const fruit::PrinterProfile& printer,
+                   const std::string& key, double value) {
+    const FieldRange* f = rangeOf(key);
+    if (!f) throw std::invalid_argument("no print setting called " + key);
+    double v = std::clamp(value, f->lo, f->hi);
+    if (f->whole) v = std::round(v);
+    PrintEdits without = r.print;
+    clearEdit(without, key);
+    const double base = valueOf(headerWith(r, without, sample, printer), resinDensity(without), key);
+    if (std::abs(v - base) < 1e-9) r.print = without;
+    else setEdit(r.print, key, v);
+}
+
+void resetPrintRow(PrintEdits& e, const std::string& row) {
+    for (const auto& [key, keys] : rowKeys())
+        if (row == key)
+            for (const char* k : keys) clearEdit(e, k);
+}
+
+std::vector<ResinValue> resinSupportValues(const Resin& r) {
+    // As a job on this resin starts: its measured values and its own.
+    const SupportChoices c = resinChoices(r.profile);
+    const fruit::SupportConfig cfg = supportConfig(fruit::Placement{}, c);
+    const fruit::TreeConfig tc = treeConfig(c);
+    using S = ResinValue::Source;
+    std::vector<ResinValue> v;
+    for (const char* label : kResinSupportRows) {
+        const AdvancedSetting* s = advancedRow(label);
+        if (!s) continue;
+        S source = s->source == AdvancedSetting::Source::Borrowed ? S::Borrowed : S::Default;
+        if (resinChanged(*s, r.profile)) source = S::Yours;
+        else if (measuredByResin(*s, c)) source = S::Measured;
+        v.push_back({label, advancedValueText(*s, cfg, tc), source});
+    }
     return v;
 }
 

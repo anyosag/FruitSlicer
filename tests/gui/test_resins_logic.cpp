@@ -11,11 +11,14 @@
 
 #include "Document.h"
 #include "JobFile.h"
+#include "Layers.h"
 #include "Resins.h"
 #include "Supports.h"
 #include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
+#include "formats/GooExport.h"
 #include "formats/GooSetup.h"
+#include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
 
 using Catch::Approx;
@@ -71,8 +74,17 @@ TEST_CASE("Resins: kept, read back, named and removed", "[gui][resins]") {
     Resin a;
     a.name = "My resin";
     a.id = newResinId({}, a.name);
-    a.exposure = 1.5;
-    a.bottom_exposure = 27.5;
+    a.print.exposure = 1.5;
+    a.print.bottom_exposure = 27.5;
+    // Every value of your own is kept with it.
+    a.print.layer_height = 0.04;
+    a.print.wait_before_lift = 0.5;
+    a.print.wait_after_lift = 1;
+    a.print.wait_after_retract = 3;
+    a.print.lift = 0.08;
+    a.print.light_power = 200;
+    a.print.density = 1.1;
+    a.profile = {{kResinOwnKey, {{"critical_angle", 50.0}}}};
     CHECK(a.id == "my-resin");
     saveResin(d, a);
     Resin b = a;
@@ -145,13 +157,13 @@ TEST_CASE("Resins: a fitted profile becomes a resin; other files are refused pla
     Resin own;
     own.id = "siraya";
     own.name = "Siraya";
-    own.exposure = 2;
-    own.bottom_exposure = 30;
+    own.print.exposure = 2;
+    own.print.bottom_exposure = 30;
     own.profile = r.profile;
     saveResin(lib, own);
     const Resin back = resinFromProfileFile((fs::path(lib) / "siraya.json").string(), {own});
     CHECK(back.name == "Siraya (copy)");
-    CHECK(back.exposure == 2);
+    CHECK(back.print.exposure == 2);
     CHECK(back.profile == own.profile);
     const auto bad = (dir() / "bad.json").string();
     std::ofstream(bad) << R"({"hello": 1})";
@@ -170,7 +182,7 @@ TEST_CASE("Resins: the values the page shows, and where each comes from", "[gui]
     CHECK(v[1].source == Source::Borrowed);
     CHECK(v[2].value == "3.2 → 6.0 mm");
     CHECK(v[3].value == "lean > 45°");
-    CHECK(v[4].value == "1 tip ≤ 1.7 mm");
+    CHECK(v[4].value == "1 tip ≤ 1.7 · 2 ≤ 6.5 mm");
     CHECK(v[5].source == Source::Default);
     CHECK(v[6].value == "2.0 mm");
     Resin measured;
@@ -185,6 +197,7 @@ TEST_CASE("Resins: the values the page shows, and where each comes from", "[gui]
 }
 
 TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
+    using PS = PrintRow::Source;
     const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
     fruit::GooPrintRequest req;
     req.layer_height = 0.03;
@@ -193,25 +206,43 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     req.bottom_layers = 6;
     req.transition_layers = 6;
     const fruit::GooHeader h = fruit::buildGooSetup(pr, req).header;
-    auto rows = printRows(Resin{}, &h, pr);
+    Resin from_file;
+    from_file.sample_path = "/kept/sample.goo";
+    auto rows = printRows(from_file, &h, pr);
     REQUIRE(rows.size() == 8);
-    CHECK(rows[0].second == "0.03 mm");
-    CHECK(rows[1].second == "6 × 27.5 s");
-    CHECK(rows[2].second == "6, from 23.17 to 1.50 s");
-    CHECK(rows[3].second == "1.5 s");
-    CHECK(rows[4].second == "0 · 0 · 5 s");
-    CHECK(rows[5].second == "0.05 mm");
-    CHECK(rows[6].second == "255 of 255");
-    CHECK(rows[7].second == "1.15 g/ml");
+    CHECK(rows[0].value == "0.03 mm");
+    CHECK(rows[1].value == "6 × 27.5 s");
+    CHECK(rows[2].value == "6, from 23.17 to 1.50 s");
+    CHECK(rows[2].after == "from 23.17 to 1.50 s");
+    CHECK(rows[3].value == "1.5 s");
+    CHECK(rows[4].value == "0 · 0 · 5 s");
+    CHECK(rows[5].value == "0.05 mm");
+    CHECK(rows[6].value == "255 of 255");
+    CHECK(rows[7].value == "1.15 g/ml");
+    for (std::size_t i = 0; i < 7; ++i) CHECK(rows[i].source == PS::File);
+    CHECK(rows[7].source == PS::Default);  // the file has no density
+    REQUIRE(rows[1].fields.size() == 2);
+    CHECK(rows[1].fields[0].key == "bottom_layers");
+    CHECK(rows[1].fields[1].value == Approx(27.5));
+    CHECK(rows[4].fields.size() == 3);
+    // Typed in, without a file: the printer's own counts and FruitSlicer's defaults.
     Resin typed;
-    typed.exposure = 2;
-    typed.bottom_exposure = 30;
+    typed.print.exposure = 2;
+    typed.print.bottom_exposure = 30;
     rows = printRows(typed, nullptr, pr);
-    REQUIRE(rows.size() == 5);
-    CHECK(rows[0].second == "0.05 mm, FruitSlicer's own");
-    CHECK_THAT(rows[1].second, ContainsSubstring("the printer's own count"));
-    CHECK(rows[3].second == "2 s");
-    CHECK(printRows(Resin{}, nullptr, pr).empty());
+    REQUIRE(rows.size() == 8);
+    CHECK(rows[0].value == "0.05 mm");
+    CHECK(rows[0].source == PS::Default);
+    CHECK(rows[1].value == "4 × 30 s");
+    CHECK(rows[1].source == PS::Yours);
+    CHECK(rows[1].base.empty());  // no file, so no exposure to go back to
+    CHECK(rows[3].value == "2 s");
+    CHECK(rows[4].source == PS::Default);
+    // Nothing yet: every row there to type into, the exposures not set.
+    rows = printRows(Resin{}, nullptr, pr);
+    REQUIRE(rows.size() == 8);
+    CHECK(rows[3].value == "not set");
+    CHECK(rows[3].fields[0].value == 0);
 }
 
 TEST_CASE("Resins: a job's measured values shape its supports; tip sizes go by diameter", "[gui][resins]") {
@@ -277,4 +308,189 @@ TEST_CASE("Resins: a job keeps its resin's values, and changing it is a change",
     CHECK(o.doc->supports.choices.resin == "Test resin");
     CHECK(o.doc->supports.choices.profile == doc->supports.choices.profile);
     CHECK(o.doc->supports.choices == doc->supports.choices);
+}
+
+TEST_CASE("Resins: print values you edit reach the print plan, its estimate and the file", "[gui][resins]") {
+    using PS = PrintRow::Source;
+    const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
+    // A resin from a SatelLite-like file: 0.03 mm, 1.5 s, 6 × 27.5 s bottom, waits 0 · 0 · 5 s.
+    fruit::GooPrintRequest req;
+    req.layer_height = 0.03;
+    req.exposure = 1.5;
+    req.bottom_exposure = 27.5;
+    req.bottom_layers = 6;
+    req.transition_layers = 6;
+    const fruit::GooPrintSetup ss = fruit::buildGooSetup(pr, req);
+    const auto goo = (dir() / "edit_sample.goo").string();
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 1}), ss.header, ss.grid, fruit::GooExportOptions{}, goo);
+    const auto sample = loadSample(goo);
+    Resin r;
+    r.id = "edited";
+    r.name = "Edited";
+    r.sample_path = goo;
+    setPrintValue(r, sample.get(), pr, "exposure", 1.8);
+    setPrintValue(r, sample.get(), pr, "bottom_layers", 4);
+    setPrintValue(r, sample.get(), pr, "wait_after_retract", 3);
+    setPrintValue(r, sample.get(), pr, "lift", 0.08);
+    setPrintValue(r, sample.get(), pr, "light_power", 200);
+    setPrintValue(r, sample.get(), pr, "density", 1.1);
+    setPrintValue(r, sample.get(), pr, "light_power", 300);  // clamped to 255: the file's, so not kept
+    CHECK(r.print.light_power == -1);
+    setPrintValue(r, sample.get(), pr, "light_power", 200);
+    setPrintValue(r, sample.get(), pr, "wait_before_lift", 0);  // the file's own value: not an edit
+    CHECK(r.print.wait_before_lift < 0);
+    CHECK_THROWS(setPrintValue(r, sample.get(), pr, "speed", 1));
+
+    // The page: yours, with the file's value to go back to, and what isn't checked.
+    auto rows = printRows(r, sample.get(), pr);
+    CHECK(rows[0].source == PS::File);
+    CHECK(rows[1].value == "4 × 27.5 s");
+    CHECK(rows[1].source == PS::Yours);
+    CHECK(rows[1].base == "6 × 27.5 s");
+    CHECK(rows[3].value == "1.8 s");
+    CHECK(rows[3].source == PS::Yours);
+    CHECK(rows[3].base == "1.5 s");
+    CHECK(rows[3].note.empty());
+    CHECK(rows[4].value == "0 · 0 · 3 s");
+    CHECK_THAT(rows[5].note, ContainsSubstring("hasn't been tested"));
+    CHECK_THAT(rows[6].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
+    CHECK(rows[7].value == "1.1 g/ml");
+    CHECK(rows[7].base == "1.15 g/ml");
+
+    // Kept with the resin.
+    const auto lib = (dir() / "edited_lib").string();
+    fs::remove_all(lib);
+    saveResin(lib, r);
+    const auto back = loadResins(lib);
+    REQUIRE(back.size() == 1);
+    CHECK(back[0] == r);
+
+    // A job on it plans with them: the file, the estimate and the weight.
+    const auto doc = loadDocument(
+        [] {
+            const auto stl = (dir() / "edited_box.stl").string();
+            fruit::writeStl(stl, fruit::makeBox({0, 0, 0}, {10, 8, 3}));
+            return stl;
+        }(),
+        pr, fruit::JobControl::none());
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    const PrintSettings s = printSettingsFor(r);
+    const PrintPlan p = planPrint(*doc, lr, 1.0, s);
+    REQUIRE(p.ready);
+    const fruit::GooPrintSettings& hp = p.setup.header.print;
+    CHECK(hp.exposure == Approx(1.8));
+    CHECK(hp.bottom_exposure == Approx(27.5));  // the file's
+    CHECK(hp.bottom_layers == 4);
+    CHECK(hp.transition_layers == 6);
+    CHECK(hp.wait_after_retract == Approx(3));
+    CHECK(hp.bottom_wait_after_retract == Approx(3));
+    CHECK(hp.lift_distance == Approx(0.08));
+    CHECK(hp.bottom_retract_distance == Approx(0.08));
+    CHECK(hp.pwm == 200);
+    CHECK(hp.bottom_pwm == 200);
+    CHECK(p.layer_height == Approx(0.03));
+    CHECK(p.resin_g == Approx(p.resin_ml * 1.1));
+    // The estimate: 2 s less waiting on every layer, 0.3 s more light on most.
+    PrintSettings file_only;
+    file_only.sample = sample;
+    file_only.sample_path = goo;
+    const PrintPlan q = planPrint(*doc, lr, 1.0, file_only);
+    REQUIRE(q.ready);
+    REQUIRE(q.layers == p.layers);
+    CHECK(p.print_time_s < q.print_time_s - 1.5 * static_cast<double>(p.layers));
+    CHECK(p.print_time_s == Approx(fruit::estimatePrintSeconds(p.setup.header, static_cast<uint32_t>(p.layers), {})));
+
+    // A job keeps them in its file, and an edit is a change to it.
+    const JobStamp before = doc->stamp();
+    doc->print.settings = s;
+    CHECK(changesSince(before, doc->stamp()) == std::vector<std::string>{"changed the print settings"});
+    const auto job = (dir() / "edited.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, pr, fruit::JobControl::none());
+    CHECK(static_cast<const PrintEdits&>(o.doc->print.settings) == r.print);
+
+    // An edited layer height: the file is cut at it, and the page says the exposures weren't checked there.
+    setPrintValue(r, sample.get(), pr, "layer_height", 0.05);
+    rows = printRows(r, sample.get(), pr);
+    CHECK(rows[0].value == "0.05 mm");
+    CHECK(rows[0].source == PS::Yours);
+    CHECK_THAT(rows[0].note, ContainsSubstring("set for 0.03 mm layers and haven't been checked at 0.05 mm"));
+    const PrintPlan p5 = planPrint(*doc, lr, 1.0, printSettingsFor(r));
+    REQUIRE(p5.ready);
+    CHECK(p5.layer_height == Approx(0.05));
+    CHECK_FALSE(p5.reslice);  // the job's own 0.05 mm layers
+    const auto out = (dir() / "edited.goo").string();
+    const SaveResult saved = savePrint(*doc, lr, {}, p5, out, false, fruit::JobControl::none());
+    CHECK(saved.good);
+    const fruit::GooHeader written = fruit::readGooHeader(out);
+    CHECK(written.layer_height == Approx(0.05));
+    CHECK(written.print.exposure == Approx(1.8));
+    CHECK(written.print.wait_after_retract == Approx(3));
+    CHECK(written.print.pwm == 200);
+    CHECK(written.weight == Approx(written.volume / 1000.0 * 1.1).epsilon(0.001));
+
+    // Back to the file's, a row at a time.
+    resetPrintRow(r.print, "exposure");
+    resetPrintRow(r.print, "bottom");
+    CHECK(r.print.exposure == 0);
+    CHECK(r.print.bottom_layers == -1);
+    rows = printRows(r, sample.get(), pr);
+    CHECK(rows[3].source == PS::File);
+    CHECK(rows[3].value == "1.5 s");
+    CHECK(rows[1].source == PS::File);
+}
+
+TEST_CASE("Resins: support values you set are the resin's, and a job starts with them", "[gui][resins]") {
+    Resin r;
+    r.profile = tipsProfile();
+    const nlohmann::json measured = r.profile;
+    r.profile = withResinValue(r.profile, "capacity", 14);
+    r.profile = withResinValue(r.profile, "critical_angle", 50);
+    r.profile = withResinValue(r.profile, kUsualTipKey, 1);  // 0.3 mm
+    r.profile = withResinValue(r.profile, "snap_zone", 3);
+    CHECK_THROWS(withResinValue(r.profile, "tip_reach", 1));
+    auto v = resinSupportValues(r);
+    REQUIRE(v.size() == 7);
+    CHECK(v[0].value == "0.3 mm");
+    CHECK(v[0].source == Source::Yours);
+    CHECK(v[1].value == "14.0 mm²");
+    CHECK(v[1].source == Source::Yours);
+    CHECK(v[3].value == "lean > 50°");
+    CHECK(v[3].source == Source::Yours);
+    CHECK(v[5].source == Source::Measured);  // contact depth: still the tips plate's
+    CHECK(v[6].value == "3.0 mm");
+    CHECK(resinState(r) == "Measured: tips");  // your values don't count as measured
+
+    // A job on it starts with them, and they read as yours there too.
+    SupportChoices c = resinChoices(r.profile);
+    const fruit::SupportConfig cfg = supportConfig(fruit::Placement{}, c);
+    CHECK(cfg.capacity.capacity(0.4) == Approx(14));
+    CHECK(cfg.critical_angle_deg == Approx(50));
+    CHECK(cfg.tip_classes[static_cast<std::size_t>(cfg.default_tip)].diameter == Approx(0.3));
+    CHECK(treeConfig(c).flex_zone == Approx(3));
+    CHECK(resinChanged(row("How much a tip holds"), c.profile));
+    CHECK_FALSE(advancedChanged(row("How much a tip holds"), c));  // the job's Reset all comes back here
+    CHECK_FALSE(measuredByResin(row("How much a tip holds"), c));
+    CHECK_FALSE(advancedChanged(row("Usual tip size"), c));
+    // The quick sliders work from them; a job's own value wins.
+    c.hold = 1;
+    CHECK(supportConfig(fruit::Placement{}, c).capacity.capacity(0.4) == Approx(14 * quickCapacityScale(1)));
+    c.hold = kHoldDefault;
+    c.advanced["capacity"] = 9;
+    CHECK(supportConfig(fruit::Placement{}, c).capacity.capacity(0.4) == Approx(9));
+
+    // Back to the measured value, a row at a time.
+    r.profile = withoutResinRow(r.profile, row("How much a tip holds"));
+    v = resinSupportValues(r);
+    CHECK(v[1].source == Source::Measured);
+    r.profile = withoutResinRow(r.profile, row("Usual tip size"));
+    r.profile = withoutResinRow(r.profile, row("Faces that need tips"));
+    r.profile = withoutResinRow(r.profile, row("Snap-off zone"));
+    CHECK(r.profile == measured);
+    // Without plates: only your values, gone again once you take them back;
+    // FruitSlicer's own value is not kept as yours.
+    nlohmann::json own = withResinValue(nullptr, "critical_angle", 50);
+    CHECK(profileState(own) == "Defaults");
+    CHECK(withoutResinRow(own, row("Faces that need tips")).is_null());
+    CHECK(withResinValue(nullptr, "critical_angle", 45).is_null());
 }
