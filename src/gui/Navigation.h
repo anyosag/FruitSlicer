@@ -26,12 +26,12 @@ Need needFor(const Document& d, Step s);
 enum class Mark { None, Done, Problem };
 Mark markFor(const Document& d, Step s);
 
-// The tools around the 3D view: On plate, Move, Rotate, Scale, Mirror and Measure on the rail
-// at its left, Supports, Hollow and Repair along its foot. Each opens a
-// floating panel. Rotate, Supports and Hollow open the place they belong to
-// (Orient, Supports, Orient · Hollows); the others are parts of Model.
+// The tools around the 3D view: On plate, Move, Rotate, Scale, Mirror, Duplicate, Arrange and
+// Measure on the rail at its left; Supports, Hollow (and Drain holes), Repair, Label, Combine, Cut,
+// Merge and Split along its foot. Each opens a floating panel. Rotate, Supports and Hollow open
+// the place they belong to (Orient, Supports, Orient · Hollows); the others are parts of Model.
 enum class Tool { None, OnPlate, Move, Rotate, Scale, Supports, Hollow, Repair, Mirror, Measure,
-                Duplicate, Arrange, Merge, Split, Label, Combine, Cut };
+                  Duplicate, Arrange, Merge, Split, Label, Combine, Cut };
 // Duplicate and Arrange (rail), Merge and Split (along the foot) are parts of Model too: they
 // make copies, lay the parts out, join them and split one into its shells.
 // Label, Combine and Cut (shape tools, along the view's foot) are parts of Model too: they change the selected
