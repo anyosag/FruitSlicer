@@ -24,7 +24,7 @@ struct Placement {
 
     bool mirrored() const { return mirror_x || mirror_y || mirror_z; }
     // A mirror image of the file (an odd number of flips), not just turned.
-    bool mirrorImage() const { return (mirror_x ? 1 : 0) + (mirror_y ? 1 : 0) + (mirror_z ? 1 : 0) % 2 == 1; }
+    bool mirrorImage() const { return ((mirror_x ? 1 : 0) + (mirror_y ? 1 : 0) + (mirror_z ? 1 : 0)) % 2 == 1; }
     double lift() const { return on_plate ? 0.0 : elevation; }
     bool centred() const { return offset.x == 0 && offset.y == 0; }
     bool operator==(const Placement&) const = default;

@@ -166,6 +166,10 @@ TEST_CASE("Mirror: a mirror image is told from a half turn, and Rotate goes on t
     CHECK(doc->placement().mirrorImage());
     doc->mirror(1);  // left-right and front-back: a half turn, not a mirror image
     CHECK_FALSE(doc->placement().mirrorImage());
+    doc->mirror(2);  // and top to bottom as well: a mirror image again (three flips)
+    CHECK(doc->placement().mirrorImage());
+    CHECK(fruit::mirrorTransform(doc->placement()).determinant() < 0);
+    doc->undo();
     doc->undo();
     // Turning the mirrored model a quarter about the vertical moves its footprint
     // the way it would for any model.
