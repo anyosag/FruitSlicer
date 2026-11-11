@@ -363,6 +363,12 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("rotate")) {
             const auto& r = step["rotate"];
             app.setRotation({r[0].get<double>(), r[1].get<double>(), r[2].get<double>()});
+        } else if (step.contains("lay_face")) {
+            // The n-th largest flat face (1-based) of the selected part laid on the plate.
+            const int n = step["lay_face"].get<int>();
+            if (!app.layFace(n - 1)) throw std::runtime_error("lay_face: no flat face " + std::to_string(n) + " to lay down");
+        } else if (step.contains("hover_face")) {
+            app.setHoverFace(step["hover_face"].get<int>() - 1);  // lit as if the mouse were on it; 0 puts it out
         } else if (step.contains("sits")) {
             app.setOnPlate(step["sits"].get<std::string>() == "flat");
         } else if (step.contains("fit")) {

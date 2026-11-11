@@ -69,6 +69,10 @@ set(app_sources
   Repairs.cpp
   screens/MirrorTool.cpp
   screens/MeasureTool.cpp
+  # On plate: lay a flat face on the plate
+  LayFace.cpp
+  AppLayFace.cpp
+  screens/OnPlateTool.cpp
   # Cut, Label and Combine
   ShapeTools.cpp
   AppShape.cpp

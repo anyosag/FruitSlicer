@@ -115,6 +115,10 @@ void orientResults(App& app, Document& doc, ImVec2 size);
 void mirrorPanel(App& app, Document& doc);
 void measurePanel(App& app, Document& doc);
 void measureOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// On plate: the panel's body (the part's largest flat faces, to lay one on the plate), and the
+// face under the mouse lit in the view (OnPlateTool.cpp).
+void onPlateBody(App& app, Document& doc);
+void onPlateOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 // Duplicate, Arrange, Split and Merge: each tool's panel, and the buttons
 // pinned at the foot of it (PartsToolPanels.cpp). `parts_tool_footer` is the
 // height to leave for them.

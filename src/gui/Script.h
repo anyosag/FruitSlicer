@@ -20,6 +20,8 @@
 //   {"busy": name} {"cancel_job": true}  a stand-in job that runs (its progress card shows) until cancelled
 //   {"health": "full" | "largest" | "custom" (+ "percent") | "inches" | "place" | "cancel"}
 //   {"scale": percent} {"rotate": [x, y, z]} {"sits": "raised" | "flat"} {"fit": true}
+//   {"lay_face": n} lay the selected part's n-th largest flat face (1-based) on the plate (On plate)
+//   {"hover_face": n} light that face as if the mouse were on it, 0 to put it out
 //   {"move": [x, y]} (mm from the plate's centre) {"nudge": [dx, dy]} {"centre": true} {"turn": 90}
 //   {"slide_on": true} {"drag": [handle, amount, snap]} one whole drag of a handle in the 3D view
 //     (handle: "move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z"; mm or degrees; snap as with ⇧)

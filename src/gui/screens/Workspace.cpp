@@ -47,17 +47,6 @@ bool floatTitle(const char* title) {
 
 // ---- The model's own tools: On plate, Move, Rotate's fields, Scale, Repair ----
 
-void onPlateBody(App& app, Document& doc) {
-    groupLabel("How it sits on the plate");
-    const fruit::Placement& p = doc.placement();
-    const std::string raised = strf("%.0f mm above a 1 mm raft that comes off in one piece. Best for most models.",
-                                    fruit::Placement{}.elevation);
-    if (radioCard("raised", "Raised on supports", raised.c_str(), !p.on_plate)) app.setOnPlate(false);
-    ImGui::Dummy(ImVec2(0, 2));
-    if (radioCard("flat", "Flat on the plate", "For flat-backed parts. No raft; only overhangs get tips.", p.on_plate))
-        app.setOnPlate(true);
-}
-
 // The plate seen from above, to scale, with the model's outline (red while
 // it doesn't fit) and the dashed line it must stay inside.
 void plateMap(const App& app, const Document& doc) {
@@ -268,7 +257,7 @@ void toolRail(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
                 IconFn ic;
                 const char* tip;
             };
-            const T tools[] = {{Tool::OnPlate, "on_plate", "On plate", icon::onPlate, "How it sits on the plate (P)"},
+            const T tools[] = {{Tool::OnPlate, "on_plate", "On plate", icon::onPlate, "Lay a flat face on the plate (P)"},
                                {Tool::Move, "move", "Move", icon::move, "Move it on the plate (M)"},
                                {Tool::Rotate, "rotate", "Rotate", icon::rotate, "Turn it, or find a good rotation (R)"},
                                {Tool::Scale, "scale", "Scale", icon::scale, "Change its size (S)"},
@@ -600,6 +589,7 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
             case Step::Model:
                 if (app.handlesShown()) placeOverlay(app, d, origin, size, vp);
                 if (app.toolPanelOpen() && app.tool() == Tool::Measure) measureOverlay(app, d, origin, size, vp);
+                if (app.toolPanelOpen() && app.tool() == Tool::OnPlate) onPlateOverlay(app, d, origin, size, vp);
                 if (app.toolPanelOpen() && (app.tool() == Tool::Label || app.tool() == Tool::Combine || app.tool() == Tool::Cut))
                     shapeOverlay(app, d, app.tool(), origin, size, vp);
                 break;

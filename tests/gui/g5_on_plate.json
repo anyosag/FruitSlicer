@@ -1,0 +1,15 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "on_plate"}, {"frames": 2}, {"shot": "g5_panel"},
+    {"hover_face": 3}, {"shot": "g5_hover"},
+    {"lay_face": 3}, {"frames": 2}, {"shot": "g5_laid_back"},
+    {"undo": 1}, {"frames": 2}, {"shot": "g5_undone"},
+    {"hover_face": 4}, {"shot": "g5_hover_top"}, {"hover_face": 0},
+    {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"tool": "on_plate"}, {"tool": "on_plate"}, {"frames": 2}, {"shot": "g5_two_parts"},
+    {"lay_face": 2}, {"frames": 2}, {"shot": "g5_two_parts_laid"}
+  ]
+}

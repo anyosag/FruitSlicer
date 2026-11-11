@@ -40,7 +40,7 @@ if(FRUIT_BUILD_APP)
     ${PROJECT_SOURCE_DIR}/src/gui/Fit.cpp ${PROJECT_SOURCE_DIR}/src/gui/ABTest.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/GooTools.cpp ${PROJECT_SOURCE_DIR}/src/gui/Hollows.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Repairs.cpp ${PROJECT_SOURCE_DIR}/src/gui/Placing.cpp ${PROJECT_SOURCE_DIR}/src/gui/Measure.cpp ${PROJECT_SOURCE_DIR}/src/gui/ShapeTools.cpp
-    ${PROJECT_SOURCE_DIR}/src/gui/Navigation.cpp ${PROJECT_SOURCE_DIR}/src/gui/ViewCube.cpp ${PROJECT_SOURCE_DIR}/src/gui/ToolsLayout.cpp
+    ${PROJECT_SOURCE_DIR}/src/gui/LayFace.cpp ${PROJECT_SOURCE_DIR}/src/gui/Navigation.cpp ${PROJECT_SOURCE_DIR}/src/gui/ViewCube.cpp ${PROJECT_SOURCE_DIR}/src/gui/ToolsLayout.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/view3d/Camera.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Jobs.cpp ${PROJECT_SOURCE_DIR}/src/gui/Log.cpp)
   target_include_directories(fruit_gui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/gui)

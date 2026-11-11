@@ -154,6 +154,21 @@ public:
     void turnQuarter();                        // 90° about the vertical, slid back onto the plate if need be
     void slideOntoPlate();                     // over the edge: the least move that puts it back on
     void setOnPlate(bool on_plate);
+    // On plate: the selected part turned so its `region`-th flat face (0-based, largest first: see
+    // LayFace.h) lies on the plate; one undoable edit. False when there is no such face or it is
+    // already there.
+    bool layFace(int region);
+    // The note after laying one ("Laid the back face..."), only until the next edit or undo.
+    struct LaidNote {
+        std::string name;
+        int part = -1, revision = -1;
+    };
+    const LaidNote* laidNote() const;
+    // The flat face of the selected part under a ray (printer coordinates), or -1.
+    int pickRestingFace(const fruit::Vec3& origin, const fruit::Vec3& dir);
+    // A face lit as if the mouse were on it (scripts, for shots); -1 for none.
+    void setHoverFace(int region) { hover_face_ = region; }
+    int hoverFace() const { return hover_face_; }
     void scaleToFit();
     void undo();
     void redo();
@@ -529,6 +544,8 @@ private:
     bool show_zones_ = true;
     int dragging_tip_ = -1;
     MeasureState measure_;
+    LaidNote laid_note_;
+    int hover_face_ = -1;
     PartsToolState parts_tools_;
     int part_menu_request_ = -1, part_menu_part_ = -1;
     float part_menu_x_ = 0, part_menu_y_ = 0;
