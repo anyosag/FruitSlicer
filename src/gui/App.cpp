@@ -2772,6 +2772,15 @@ void App::keys() {
             if (ImGui::IsKeyPressed(ImGuiKey_S, false)) openTool(Tool::Scale);
             if (ImGui::IsKeyPressed(ImGuiKey_T, false)) openTool(Tool::Supports);
             if (ImGui::IsKeyPressed(ImGuiKey_H, false) || ImGui::IsKeyPressed(ImGuiKey_D, false)) openTool(Tool::Hollow);
+            // The newer tools, where their first letter was free: mIrror, Arrange, measUre, Label,
+            // comBine (a boolean), Cut and merGe. Duplicate, Split and Repair have none.
+            if (ImGui::IsKeyPressed(ImGuiKey_I, false)) openTool(Tool::Mirror);
+            if (ImGui::IsKeyPressed(ImGuiKey_A, false)) openTool(Tool::Arrange);
+            if (ImGui::IsKeyPressed(ImGuiKey_U, false)) openTool(Tool::Measure);
+            if (ImGui::IsKeyPressed(ImGuiKey_L, false)) openTool(Tool::Label);
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) openTool(Tool::Combine);
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false)) openTool(Tool::Cut);
+            if (ImGui::IsKeyPressed(ImGuiKey_G, false)) openTool(Tool::Merge);
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !placing()) {
                 // Measuring, the first Esc starts again; the next closes the panel.
                 if (tool_panel_ && tool() == Tool::Measure && measureShown()) measure_.clear();

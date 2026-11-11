@@ -272,10 +272,10 @@ void toolRail(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
                                {Tool::Move, "move", "Move", icon::move, "Move it on the plate (M)"},
                                {Tool::Rotate, "rotate", "Rotate", icon::rotate, "Turn it, or find a good rotation (R)"},
                                {Tool::Scale, "scale", "Scale", icon::scale, "Change its size (S)"},
-                               {Tool::Mirror, "mirror", "Mirror", icon::mirror, "Make a mirror image of it"},
+                               {Tool::Mirror, "mirror", "Mirror", icon::mirror, "Make a mirror image of it (I)"},
                                {Tool::Duplicate, "duplicate", "Duplicate", icon::duplicate, "Make copies of it"},
-                               {Tool::Arrange, "arrange", "Arrange", icon::arrange, "Lay the parts out on the plate"},
-                               {Tool::Measure, "measure", "Measure", icon::measure, "Measure between two points on it"}};
+                               {Tool::Arrange, "arrange", "Arrange", icon::arrange, "Lay the parts out on the plate (A)"},
+                               {Tool::Measure, "measure", "Measure", icon::measure, "Measure between two points on it (U)"}};
             // As wide as the card leaves: a little less while it scrolls.
             const ImVec2 bs(ImGui::GetContentRegionAvail().x, 58);
             for (const T& t : tools) {
@@ -418,11 +418,11 @@ void modelTools(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     button("hollow", "Hollow", icon::hollow, Tool::Hollow, "Hollow it, and fix hollows that trap resin (H)");
     button("holes", "Drain holes", icon::drainHole, Tool::Hollow, "Holes that let resin drain and air in: with Hollow (D)");
     button("repair", "Repair", icon::repair, Tool::Repair, "What the mesh check found and mended");
-    button("label", "Label", icon::label, Tool::Label, "Raise or engrave text on the selected part");
+    button("label", "Label", icon::label, Tool::Label, "Raise or engrave text on the selected part (L)");
     button("combine", "Combine", icon::combine, Tool::Combine,
-           "Join two parts, subtract one from the other, or keep where they overlap");
-    button("cut", "Cut", icon::cut, Tool::Cut, "Cut the selected part with a plane");
-    button("merge", "Merge", icon::merge, Tool::Merge, "Join parts into one part");
+           "Join two parts, subtract one from the other, or keep where they overlap (B)");
+    button("cut", "Cut", icon::cut, Tool::Cut, "Cut the selected part with a plane (C)");
+    button("merge", "Merge", icon::merge, Tool::Merge, "Join parts into one part (G)");
     button("split", "Split", icon::split, Tool::Split, "Split a part into its shells");
     endFloat();
     ImGui::PopStyleVar();

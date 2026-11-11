@@ -294,7 +294,9 @@ void shortcuts(App&, bool& open) {
                                        {"Keyboard shortcuts", cmd("/")},
                                        {"The Job panel's main button", cmd("↩")}};
     const std::vector<Row> tools = {{"On plate · Move · Rotate · Scale", "P · M · R · S"},
+                                    {"Mirror · Measure", "I · U"},
                                     {"Supports · Hollow", "T · H"},
+                                    {"Label · Cut", "L · C"},
                                     {"Close the tool's panel", "Esc"}};
     const std::vector<Row> looking = {{"Turn the view", "drag"},
                                       {"Move the view", "Shift drag"},
@@ -309,7 +311,8 @@ void shortcuts(App&, bool& open) {
                                       {"Move it 10 mm", "Shift ← → ↑ ↓"},
                                       {"Let go and put it back", "Esc"}};
     const std::vector<Row> parts = {{"Add a part to the plate", cmd("O", true)},
-                                    {"Select a part: the tools act on it", "click it"}};
+                                    {"Select a part: the tools act on it", "click it"},
+                                    {"Arrange · Combine · Merge", "A · B · G"}};
     const std::vector<Row> layers = {{"Next or previous layer", "↑ · ↓"},
                                      {"Ten layers at a time", "Page Up · Page Down"},
                                      {"First or last layer", "Home · End"}};
@@ -338,10 +341,10 @@ void shortcuts(App&, bool& open) {
     };
     float left = column(kPad, y0, "Anywhere", anywhere);
     left = column(kPad, left + 14, "Tools", tools);
-    left = column(kPad, left + 14, "Placing the model (Move and Rotate)", placing);
+    left = column(kPad, left + 14, "In Layers", layers);
     const float x1 = kPad + col_w + 24;
     float right = column(x1, y0, "Looking around", looking);
-    right = column(x1, right + 14, "In Layers", layers);
+    right = column(x1, right + 14, "Placing the model (Move and Rotate)", placing);
     right = column(x1, right + 14, "Several parts", parts);
     ImGui::SetCursorPos(ImVec2(kPad, std::max(left, right)));
     ImGui::Dummy(ImVec2(0, kPad - 4));
