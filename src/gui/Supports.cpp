@@ -26,16 +26,28 @@ std::string fmt(const char* f, double a = 0, double b = 0) {
     return s;
 }
 
+int clampStop(int stop) { return std::clamp(stop, 1, kQuickStops); }
+
 void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportConfig& cfg, fruit::TreeConfig& tc) {
     fruit::SupportChoices ch;
     ch.layer_height = kLayerHeight;
     ch.on_plate = p.on_plate;
-    ch.density = c.density;
+    ch.density = c.density * quickDensity(c.amount);
     ch.hinge = c.hinge;
-    // Built-in values, then the resin's measured ones, then the job's choices.
+    // Built-in values, then the resin's measured ones, then the quick sliders
+    // (nothing at their resin stops), then the job's own choices.
     fruit::resolveSettings(c.profile.is_object() ? &c.profile : nullptr, ch, cfg, &tc);
-    cfg.default_tip = nearestTipClass(cfg, c.usual_tip);
+    cfg.default_tip = nearestTipClass(cfg, quickTipClass(c));
     tc.merge_pillars = c.merge;
+    if (const double k = quickCapacityScale(c.hold); k != 1.0) {
+        // Scales the table or the reference value, as the advanced page's row does.
+        if (cfg.capacity.table.empty()) cfg.capacity.reference_capacity *= k;
+        else
+            for (auto& [d, cap] : cfg.capacity.table) cap *= k;
+    }
+    if (const double a = quickAngleShift(c.amount); a != 0.0)
+        cfg.critical_angle_deg = std::clamp(cfg.critical_angle_deg + a, 20.0, 70.0);
+    applySturdiness(c.sturdy, tc);
     applyAdvanced(c.advanced, cfg, tc);
 }
 
@@ -119,7 +131,7 @@ std::vector<AdvancedSetting> makeAdvanced() {
     v.push_back({.group = "Where tips go", .label = "Tip reach", .kind = K::Fixed, .source = S::Borrowed,
                  .help = [](const X& x) {
                      return strf("Distance one tip covers: %.1f mm right above it, growing to %.1f mm 40 mm higher. "
-                                 "Tip spacing on the Supports panel brings tips closer.",
+                                 "The Amount slider on the Supports panel brings tips closer.",
                                  x.cfg.coverage.radius(0), x.cfg.coverage.radius(40));
                  },
                  .text = [](const X& x) {
@@ -228,7 +240,9 @@ std::vector<AdvancedSetting> makeAdvanced() {
                              [](const C&, const T& t) { return t.max_merge_distance; },
                              [](C&, T& t, double x) { t.max_merge_distance = x; }}},
                  .help = [](const X& x) {
-                     if (!x.choices.merge) return std::string("Off: merging is turned off on the Supports panel.");
+                     if (!x.tc.merge_pillars)
+                         return std::string("Off: merging is turned off by the Sturdiness slider on the Supports "
+                                            "panel. A value here still sets how far tips reach if it is turned on.");
                      return strf("Up to %d tips share one trunk, never thicker than %.1f mm.", x.tc.max_tips_per_trunk,
                                  x.tc.max_trunk_diameter);
                  }});
@@ -279,7 +293,7 @@ std::vector<AdvancedSetting> makeAdvanced() {
     v.push_back({.group = "Raft", .label = "Lift", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X&) {
                      return std::string("Gap between the plate and the lowest point of the model. Set with the "
-                                        "On plate tool.");
+                                        "Lift height slider on the Supports panel.");
                  },
                  .text = [](const X& x) {
                      return x.placement.on_plate ? std::string("on the plate") : strf("%.0f mm", x.placement.lift());
@@ -495,6 +509,179 @@ fruit::TreeConfig treeConfig(const SupportChoices& c) {
     fruit::TreeConfig tc;
     resolve(fruit::Placement{}, c, cfg, tc);
     return tc;
+}
+
+// ---- Quick support ----
+
+namespace {
+
+struct QuickWords {
+    const char* label;
+    const char* left;
+    const char* right;
+    const char* words[kQuickStops];
+    int normal;
+};
+
+const QuickWords& quickWords(QuickSlider s) {
+    static const QuickWords hold{"Hold", "Easy to snap off", "Strong", {"Gentle", "Light", "Normal", "Firm", "Strong"},
+                                 kHoldDefault};
+    static const QuickWords amount{"Amount", "Fewer tips", "More tips", {"Fewest", "Fewer", "Normal", "More", "Most"},
+                                   kAmountDefault};
+    static const QuickWords sturdy{
+        "Sturdiness", "Light", "Sturdy", {"Lightest", "Light", "Normal", "Sturdy", "Sturdiest"}, kSturdyDefault};
+    return s == QuickSlider::Hold ? hold : s == QuickSlider::Amount ? amount : sturdy;
+}
+
+}  // namespace
+
+int& quickStop(SupportChoices& c, QuickSlider s) {
+    return s == QuickSlider::Hold ? c.hold : s == QuickSlider::Amount ? c.amount : c.sturdy;
+}
+
+int quickStop(const SupportChoices& c, QuickSlider s) {
+    return clampStop(s == QuickSlider::Hold ? c.hold : s == QuickSlider::Amount ? c.amount : c.sturdy);
+}
+
+const char* quickWord(QuickSlider s, int stop) { return quickWords(s).words[clampStop(stop) - 1]; }
+
+int quickTipClass(const SupportChoices& c) {
+    // A usual tip set on the advanced page stays; otherwise one class either
+    // way from the resin's, as far as FruitSlicer's own sizes (0.2 to 0.6 mm) go.
+    if (c.usual_tip != usualTipFor(c.profile)) return c.usual_tip;
+    static const int shift[kQuickStops] = {-1, -1, 0, 1, 1};
+    return std::clamp(c.usual_tip + shift[clampStop(c.hold) - 1], 0, 3);
+}
+
+double quickCapacityScale(int hold_stop) {
+    static const double k[kQuickStops] = {1.25, 1.0, 1.0, 1.0, 0.8};
+    return k[clampStop(hold_stop) - 1];
+}
+
+double quickAngleShift(int amount_stop) {
+    static const double a[kQuickStops] = {15, 5, 0, -5, -10};
+    return a[clampStop(amount_stop) - 1];
+}
+
+double quickDensity(int amount_stop) {
+    static const double d[kQuickStops] = {1.0, 1.0, 1.0, 1.25, 1.5};
+    return d[clampStop(amount_stop) - 1];
+}
+
+void applySturdiness(int stop, fruit::TreeConfig& tc) {
+    switch (clampStop(stop)) {
+        case 1:  // single pillars, no braces
+            tc.merge_pillars = false;
+            tc.brace_min_height = 1000;
+            break;
+        case 2: break;  // the resin's, FruitSlicer's own
+        case 3:
+            tc.max_merge_distance = 10;
+            tc.brace_min_height = 10;
+            break;
+        case 4:
+            tc.max_merge_distance = 12;
+            tc.max_trunk_diameter = 2.2;
+            tc.max_tips_per_trunk = 8;
+            tc.brace_min_height = 8;
+            tc.brace_step = 5;
+            tc.brace_diameter = 0.8;
+            break;
+        default:
+            tc.max_merge_distance = 15;
+            tc.max_trunk_diameter = 2.6;
+            tc.max_tips_per_trunk = 10;
+            tc.brace_min_height = 5;
+            tc.brace_step = 4;
+            tc.brace_diameter = 1.0;
+            break;
+    }
+}
+
+bool quickChanged(const SupportChoices& c) {
+    return c.hold != kHoldDefault || c.amount != kAmountDefault || c.sturdy != kSturdyDefault || c.density != 1.0 ||
+           !c.merge;
+}
+
+void resetQuick(SupportChoices& c) {
+    c.hold = kHoldDefault;
+    c.amount = kAmountDefault;
+    c.sturdy = kSturdyDefault;
+    c.density = 1.0;
+    c.merge = true;
+}
+
+std::string quickCaption(QuickSlider s, int stop, const SupportChoices& choices) {
+    stop = clampStop(stop);
+    SupportChoices c = choices;
+    quickStop(c, s) = stop;
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    resolve(fruit::Placement{}, c, cfg, tc);
+    switch (s) {
+        case QuickSlider::Hold: {
+            const double d = cfg.tip_classes[static_cast<std::size_t>(cfg.default_tip)].diameter;
+            const bool own_tip = c.usual_tip != usualTipFor(c.profile);
+            const bool counted = !c.advanced.count("capacity");
+            const long pct = std::lround(std::abs(quickCapacityScale(stop) - 1.0) * 100);
+            std::string out = strf("%.1f mm tips", d);
+            if (own_tip) out += " (set on the Advanced page)";
+            switch (stop) {
+                case 1:
+                    out += counted ? strf(", each counted on to hold %ld%% more layer, so fewer. Snaps off clean: for "
+                                          "small, light parts.",
+                                          pct)
+                                   : ". Snaps off clean: for small, light parts.";
+                    break;
+                case 2: out += ". Smaller marks."; break;
+                case 3:
+                    out += c.profile.is_object() && c.profile.contains("default_tip_diameter")
+                               ? ", as measured for this resin."
+                               : ", FruitSlicer's usual size.";
+                    break;
+                case 4: out += ". Holds more; bigger marks."; break;
+                default:
+                    out += counted ? strf(", each counted on to hold %ld%% less layer, so more of them. For heavy "
+                                          "parts; leaves more marks.",
+                                          pct)
+                                   : ". For heavy parts; leaves more marks.";
+                    break;
+            }
+            return out;
+        }
+        case QuickSlider::Amount: {
+            const double dens = cfg.coverage.density;
+            std::string out = dens > 1.001 ? strf("Tips %.0f%% closer together", (1 - 1 / std::sqrt(dens)) * 100)
+                                           : std::string("Normal spacing");
+            const char* get = dens > 1.001 ? "them" : "tips";
+            out += stop <= 2 ? strf("; only faces leaning past %.0f° get tips.", cfg.critical_angle_deg)
+                             : strf("; faces leaning past %.0f° get %s.", cfg.critical_angle_deg, get);
+            if (stop == 1) out += " Fewest tips, the least to clean off.";
+            if (stop == 5) out += " Safest, the most to clean off.";
+            if (c.advanced.count("critical_angle")) out += " The angle is set on the Advanced page.";
+            return out;
+        }
+        case QuickSlider::Sturdiness: {
+            std::string out = tc.merge_pillars
+                                  ? strf("Pillars within %.0f mm join into trunks up to %.1f mm thick",
+                                         tc.max_merge_distance, tc.max_trunk_diameter)
+                                  : std::string("Single pillars, no trunks");
+            out += tc.brace_min_height >= 500
+                       ? std::string(", no braces.")
+                       : strf(", braces on pillars taller than %.0f mm, every %.0f mm.", tc.brace_min_height,
+                              tc.brace_step);
+            if (stop == 1) out += " Least resin, easiest to clean.";
+            if (stop == 5) out += " For tall or heavy parts.";
+            return out;
+        }
+    }
+    return "";
+}
+
+QuickInfo quickInfo(QuickSlider s, const SupportChoices& c) {
+    const QuickWords& w = quickWords(s);
+    const int stop = quickStop(c, s);
+    return QuickInfo{w.label, w.left, w.right, w.words[stop - 1], quickCaption(s, stop, c), stop, w.normal};
 }
 
 const std::vector<std::string>& supportStages() {

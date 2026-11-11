@@ -288,6 +288,10 @@ void saveJob(const std::string& path, const Document& doc) {
     const SupportChoices& c = doc.supports.choices;
     json sup = {{"choices", {{"usual_tip", c.usual_tip}, {"density", c.density}, {"merge", c.merge},
                              {"advanced", c.advanced}}}};
+    // The quick sliders only when off the resin's stops, so a job left at its
+    // defaults is saved as it always was.
+    if (c.hold != kHoldDefault || c.amount != kAmountDefault || c.sturdy != kSturdyDefault)
+        sup["choices"]["quick"] = {{"hold", c.hold}, {"amount", c.amount}, {"sturdy", c.sturdy}};
     if (c.hinge) sup["choices"]["hinge"] = fruit::hingeName(*c.hinge);
     // The resin's name and a copy of its measured values: the job keeps them.
     if (!c.resin.empty()) sup["choices"]["resin"] = c.resin;
@@ -445,6 +449,12 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.density = cj.value("density", 1.0);
     c.merge = cj.value("merge", true);
     c.advanced = cj.value("advanced", std::map<std::string, double>{});
+    if (cj.contains("quick") && cj["quick"].is_object()) {  // jobs from before the sliders have none
+        const json& q = cj["quick"];
+        c.hold = std::clamp(q.value("hold", kHoldDefault), 1, kQuickStops);
+        c.amount = std::clamp(q.value("amount", kAmountDefault), 1, kQuickStops);
+        c.sturdy = std::clamp(q.value("sturdy", kSturdyDefault), 1, kQuickStops);
+    }
     if (cj.contains("hinge") && cj["hinge"].is_string()) c.hinge = fruit::parseHinge(cj["hinge"].get<std::string>());
     c.resin = cj.value("resin", std::string());
     if (cj.contains("profile") && cj["profile"].is_object()) c.profile = cj["profile"];

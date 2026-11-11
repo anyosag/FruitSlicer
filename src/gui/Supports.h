@@ -29,11 +29,19 @@ namespace gui {
 
 class Document;
 
+// The quick support sliders have five stops each (1 to 5). The middle stop of
+// Hold and Amount, and stop 2 of Sturdiness, are FruitSlicer's own values (the
+// resin's, where it measured them): a job left there plans what it always did.
+inline constexpr int kQuickStops = 5;
+inline constexpr int kHoldDefault = 3, kAmountDefault = 3, kSturdyDefault = 2;
+
 // What the Supports step lets you choose before generating.
 struct SupportChoices {
-    int usual_tip = 2;     // tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm
-    double density = 1.0;  // 1 = normal spacing; up to 2 = closer together
-    bool merge = true;     // neighbouring supports join into trunks
+    int usual_tip = 2;     // tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm: the resin's usual tip
+    double density = 1.0;  // 1 = normal spacing; up to 2 = closer together (old jobs; the Amount slider adds to it)
+    bool merge = true;     // neighbouring supports join into trunks (old jobs; Sturdiness can turn it off too)
+    // The quick support sliders' stops (see applyQuick).
+    int hold = kHoldDefault, amount = kAmountDefault, sturdy = kSturdyDefault;
     // Values set on the advanced page, by field key (see advancedSettings());
     // every other value is FruitSlicer's own.
     std::map<std::string, double> advanced;
@@ -55,6 +63,42 @@ int nearestTipClass(const fruit::SupportConfig& cfg, int standard_class);
 // The usual tip (1 = 0.3, 2 = 0.4, 3 = 0.6 mm) a resin profile measured, or the default.
 int usualTipFor(const nlohmann::json& profile);
 int standardTipClass(const fruit::SupportConfig& cfg, int cls);
+
+// ---- Quick support: three sliders over the planner's own settings ----
+
+enum class QuickSlider { Hold, Amount, Sturdiness };
+// What one slider shows: its label, the words at its ends, the word and the
+// caption for its stop (what that stop sets, with the real values).
+struct QuickInfo {
+    const char* label;
+    const char* left;
+    const char* right;
+    std::string word;
+    std::string caption;
+    int stop = 1;
+    int normal = 1;  // the resin's stop
+};
+int& quickStop(SupportChoices& c, QuickSlider s);
+int quickStop(const SupportChoices& c, QuickSlider s);
+const char* quickWord(QuickSlider s, int stop);  // stop 1..5
+// The slider as `c` has it (stop clamped to 1..5), with the caption of that stop.
+QuickInfo quickInfo(QuickSlider s, const SupportChoices& c);
+// The caption for `stop` of slider `s`, the other sliders as `c` has them.
+std::string quickCaption(QuickSlider s, int stop, const SupportChoices& c);
+// What the sliders set. The usual tip class (0 = 0.2 ... 3 = 0.6 mm) for Hold:
+// the resin's usual tip, one class either way across the stops (a usual tip
+// set on the advanced page stays); how far to scale "how much a tip holds"
+// (Hold's ends); the lean angle's shift and the spacing for Amount.
+int quickTipClass(const SupportChoices& c);
+double quickCapacityScale(int hold_stop);
+double quickAngleShift(int amount_stop);  // degrees added to the "faces that need tips" angle
+double quickDensity(int amount_stop);     // times the job's tip spacing
+// Sets the trunk and brace values for the Sturdiness stop on `tc`.
+void applySturdiness(int stop, fruit::TreeConfig& tc);
+// Whether any slider, or the older spacing and merge choices, is off the resin's values.
+bool quickChanged(const SupportChoices& c);
+// Puts the sliders (and the older spacing and merge choices) back.
+void resetQuick(SupportChoices& c);
 
 // ---- The advanced page: every value the planner and tree builder use ----
 
