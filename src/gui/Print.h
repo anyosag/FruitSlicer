@@ -34,6 +34,9 @@ struct PrintEdits {
     double lift = -1;                                // mm, > 0
     int light_power = -1;                            // 1-255
     double density = 0;                              // g/ml, > 0: for the resin's weight
+    // mm, >= 0: added under a model standing on the plate (no raft), because
+    // the printer squashes the first layers; < 0: FruitSlicer's typical 0.10.
+    double height_correction = -1;
     bool operator==(const PrintEdits&) const = default;
     bool any() const { return !(*this == PrintEdits{}); }
 };
@@ -54,6 +57,11 @@ struct PrintSettings : PrintEdits {
 fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height);
 // The resin density for the weight: the edited one, else FruitSlicer's.
 double resinDensity(const PrintEdits& e);
+// The height correction, mm: the edited one, else FruitSlicer's typical value.
+double heightCorrection(const PrintEdits& e);
+// Whole layers of `layer_height` added under `doc`'s models for the height
+// correction of its print settings: none with a raft.
+int baseLayers(const Document& doc, double layer_height);
 
 // Reads a sample's header; throws std::runtime_error with a readable message.
 std::shared_ptr<const fruit::GooHeader> loadSample(const std::string& path);

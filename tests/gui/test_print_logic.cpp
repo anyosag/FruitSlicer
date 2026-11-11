@@ -172,8 +172,8 @@ std::shared_ptr<Document> boxOnPlate(double correction) {
     const auto doc = box();
     fruit::Placement p = doc->placement();
     p.on_plate = true;
-    p.height_correction = correction;
     doc->edit(p);
+    doc->print.settings.height_correction = correction;  // the job's print setting, from its resin
     return doc;
 }
 
@@ -209,9 +209,7 @@ TEST_CASE("Height correction: an on-plate job has n more layers, a raft job does
     CHECK(doc3->placed().bbox().max.z == Approx(3.0));
     // A raft job (the box lifted 5 mm) is not corrected, whatever the setting.
     const auto lifted = box();
-    fruit::Placement p = lifted->placement();
-    p.height_correction = 0.3;
-    lifted->edit(p);
+    lifted->print.settings.height_correction = 0.3;
     const LayerResult raft = sliceLayers(*lifted, {}, 1.0, fruit::JobControl::none());
     CHECK(raft.layers->size() == 160);
     CHECK(raft.base_layers == 0);
@@ -221,17 +219,12 @@ TEST_CASE("Height correction: an on-plate job has n more layers, a raft job does
 TEST_CASE("Height correction: a taller print still has to fit the build height", "[gui][print][correction]") {
     const auto doc = boxOnPlate(0.10);
     LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    // Its layers are the print's height: 0.10 mm more than the model.
+    CHECK(lr.bounds.max.z == Approx(3.1));
+    CHECK(fruit::checkFit(doc->part().mesh(), doc->placement(), doc->printer).top == Approx(3.0));
     CHECK(planPrint(*doc, lr, 0.0, typed()).fits);
     lr.bounds.max.z = doc->printer.build_z + 0.01;
     CHECK_FALSE(planPrint(*doc, lr, 0.0, typed()).fits);
-    const fruit::PlateFit f = fruit::checkFit(doc->part().mesh(), doc->placement(), doc->printer);
-    CHECK(f.top == Approx(3.1));
-    // A model 0.05 mm short of the build height fits as it is, but not with 0.10 mm added under it.
-    const fruit::TriangleMesh tall = fruit::makeBox({0, 0, 0}, {10, 8, doc->printer.build_z - 0.05});
-    fruit::Placement p = doc->placement();
-    CHECK_FALSE(fruit::checkFit(tall, p, doc->printer).fits);
-    p.height_correction = 0;
-    CHECK(fruit::checkFit(tall, p, doc->printer).fits);
 }
 
 TEST_CASE("Height correction: the saved print file has the extra layers", "[gui][print][correction]") {
@@ -283,7 +276,8 @@ TEST_CASE("Height correction: a sample at another layer height gets it in its ow
     CHECK(r.volume_matches);
 }
 
-TEST_CASE("Height correction: changing it cuts the layers again, not the supports", "[gui][print][correction]") {
+TEST_CASE("Height correction: a print setting; changing it cuts the layers again, not the supports",
+          "[gui][print][correction]") {
     const auto doc = boxOnPlate(0.10);
     auto sup = std::make_shared<SupportResult>();
     sup->choices = doc->supports.choices;
@@ -297,22 +291,21 @@ TEST_CASE("Height correction: changing it cuts the layers again, not the support
     doc->saved = doc->stamp();
     const int rev = doc->revision();
 
-    fruit::Placement p = doc->placement();
-    p.height_correction = 0.15;
-    doc->edit(p);
+    doc->print.settings.height_correction = 0.15;
     CHECK(doc->revision() == rev);  // the supports are still up to date
     CHECK(doc->supports.fresh(doc->revision(), doc->supportSettings()));
     CHECK_FALSE(doc->layersFresh());  // 3 layers now, the layers were cut with 2
     CHECK(doc->unsaved());
 
-    doc->undo();
-    CHECK(doc->placement().height_correction == Approx(0.10));
+    doc->print.settings.height_correction = -1;  // not set: the typical 0.10 mm, 2 layers again
+    CHECK(heightCorrection(doc->print.settings) == Approx(0.10));
     CHECK(doc->layersFresh());
-    CHECK_FALSE(doc->unsaved());
 
-    // Anything else about how it sits still puts the supports out of date.
-    p = doc->placement();
-    p.offset = {5, 0};
+    // With a raft nothing is added, so no setting puts the layers out of date.
+    fruit::Placement p = doc->placement();
+    p.on_plate = false;
     doc->edit(p);
-    CHECK(doc->revision() != rev);
+    CHECK(baseLayers(*doc, kLayerHeight) == 0);
+    doc->print.settings.height_correction = 0.4;
+    CHECK(baseLayers(*doc, kLayerHeight) == 0);
 }

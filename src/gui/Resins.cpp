@@ -37,7 +37,8 @@ json printJson(const Resin& r) {
             {"wait_after_retract", e.wait_after_retract},
             {"lift", e.lift},
             {"light_power", e.light_power},
-            {"density", e.density}};
+            {"density", e.density},
+            {"height_correction", e.height_correction}};
 }
 
 void readPrint(const json& p, Resin& r) {
@@ -55,6 +56,7 @@ void readPrint(const json& p, Resin& r) {
     e.lift = p.value("lift", -1.0);
     e.light_power = p.value("light_power", -1);
     e.density = p.value("density", 0.0);
+    e.height_correction = p.value("height_correction", -1.0);
 }
 
 bool hasMeasured(const json& p, const char* key) { return p.is_object() && p.contains(key) && !p[key].is_null(); }
@@ -320,6 +322,7 @@ const FieldRange kFields[] = {
     {"transition_layers", 0, 50, true},     {"exposure", 0.1, 600, false},     {"wait_before_lift", 0, 120, false},
     {"wait_after_lift", 0, 120, false},     {"wait_after_retract", 0, 120, false}, {"lift", 0.01, 20, false},
     {"light_power", 1, 255, true},          {"density", 0.5, 3, false},
+    {"height_correction", 0, fruit::kMaxHeightCorrection, false},
 };
 
 const FieldRange* rangeOf(const std::string& key) {
@@ -333,8 +336,8 @@ PrintField field(const char* key, const char* suffix, double value) {
     return {key, suffix, f->lo, f->hi, value};
 }
 
-// One value of a header, by field key.
-double valueOf(const fruit::GooHeader& h, double density, const std::string& key) {
+// One value of a header (or of FruitSlicer's own, not in a print file), by field key.
+double valueOf(const fruit::GooHeader& h, const PrintEdits& e, const std::string& key) {
     const fruit::GooPrintSettings& p = h.print;
     if (key == "layer_height") return fruit::gooLayerHeight(h);
     if (key == "bottom_layers") return p.bottom_layers;
@@ -346,7 +349,8 @@ double valueOf(const fruit::GooHeader& h, double density, const std::string& key
     if (key == "wait_after_retract") return std::round(p.wait_after_retract * 1000) / 1000;
     if (key == "lift") return std::round(p.lift_distance * 1000) / 1000;
     if (key == "light_power") return p.pwm;
-    if (key == "density") return density;
+    if (key == "density") return resinDensity(e);
+    if (key == "height_correction") return heightCorrection(e);
     return 0;
 }
 
@@ -363,6 +367,7 @@ void setEdit(PrintEdits& e, const std::string& key, double v) {
     else if (key == "lift") e.lift = v;
     else if (key == "light_power") e.light_power = n;
     else if (key == "density") e.density = v;
+    else if (key == "height_correction") e.height_correction = v;
 }
 
 void clearEdit(PrintEdits& e, const std::string& key) {
@@ -378,6 +383,7 @@ void clearEdit(PrintEdits& e, const std::string& key) {
     else if (key == "lift") e.lift = none.lift;
     else if (key == "light_power") e.light_power = none.light_power;
     else if (key == "density") e.density = none.density;
+    else if (key == "height_correction") e.height_correction = none.height_correction;
 }
 
 // The rows and the values each one holds, in page order.
@@ -385,6 +391,7 @@ const std::vector<std::pair<const char*, std::vector<const char*>>>& rowKeys() {
     static const std::vector<std::pair<const char*, std::vector<const char*>>> rows = {
         {"layer_height", {"layer_height"}},
         {"bottom", {"bottom_layers", "bottom_exposure"}},
+        {"height_correction", {"height_correction"}},
         {"transition", {"transition_layers"}},
         {"exposure", {"exposure"}},
         {"waits", {"wait_before_lift", "wait_after_lift", "wait_after_retract"}},
@@ -403,8 +410,9 @@ bool edited(const PrintEdits& e, const std::vector<const char*>& keys) {
     return false;
 }
 
-// What a row shows for header `h`.
-std::string rowText(const std::string& row, const fruit::GooHeader& h, double density) {
+// What a row shows for header `h` and edits `e` (the values no print file has).
+std::string rowText(const std::string& row, const fruit::GooHeader& h, const PrintEdits& e) {
+    const double density = resinDensity(e);
     const fruit::GooPrintSettings& p = h.print;
     auto secondsOr = [](double s) { return s > 0 ? seconds(s) : std::string("not set"); };
     if (row == "layer_height") return strf("%g mm", fruit::gooLayerHeight(h));
@@ -422,6 +430,7 @@ std::string rowText(const std::string& row, const fruit::GooHeader& h, double de
     if (row == "lift") return strf("%g mm", std::round(p.lift_distance * 1000) / 1000);
     if (row == "light_power") return strf("%u of 255", p.pwm);
     if (row == "density") return strf("%g g/ml", density);
+    if (row == "height_correction") return strf("%g mm", heightCorrection(e));
     return "";
 }
 
@@ -431,52 +440,59 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
     const bool file = sample && !r.sample_path.empty();
     const fruit::GooHeader h = headerWith(r, r.print, sample, printer);
     const fruit::GooHeader base = headerWith(r, PrintEdits{}, sample, printer);
-    const double density = resinDensity(r.print), base_density = resinDensity(PrintEdits{});
     const fruit::GooPrintSettings& p = h.print;
     using S = PrintRow::Source;
     std::vector<PrintRow> rows;
     for (const auto& [key, keys] : rowKeys()) {
         PrintRow row;
         row.key = key;
-        row.value = rowText(key, h, density);
-        row.base = rowText(key, base, base_density);
-        row.source = edited(r.print, keys) ? S::Yours : file && row.key != "density" ? S::File : S::Default;
+        row.value = rowText(key, h, r.print);
+        row.base = rowText(key, base, PrintEdits{});
+        // Density and the height correction are FruitSlicer's: no print file has them.
+        const bool ours = row.key == "density" || row.key == "height_correction";
+        row.source = edited(r.print, keys) ? S::Yours : file && !ours ? S::File : S::Default;
         rows.push_back(std::move(row));
     }
     rows[0].label = "Layer height";
     rows[0].fields = {field("layer_height", "mm", fruit::gooLayerHeight(h))};
     rows[1].label = "Bottom layers";
     rows[1].fields = {field("bottom_layers", "×", p.bottom_layers), field("bottom_exposure", "s", p.bottom_exposure)};
-    rows[2].label = "Transition layers";
-    rows[2].fields = {field("transition_layers", "", p.transition_layers)};
+    rows[2].label = "Height correction, with no raft";
+    rows[2].fields = {field("height_correction", "mm", heightCorrection(r.print))};
+    if (rows[2].source != S::Yours)
+        rows[2].note = "Added under a model standing on the plate, which prints short because the printer squashes "
+                       "the first layers. 0.10 mm is a typical value, not measured on your printer: print a block on "
+                       "the plate, measure how short it is, and type that.";
+    rows[3].label = "Transition layers";
+    rows[3].fields = {field("transition_layers", "", p.transition_layers)};
     if (p.transition_layers > 0 && p.bottom_exposure > 0 && p.exposure > 0)
-        rows[2].after = strf("from %.2f to %.2f s", fruit::layerDefFor(h, p.bottom_layers).exposure,
+        rows[3].after = strf("from %.2f to %.2f s", fruit::layerDefFor(h, p.bottom_layers).exposure,
                              fruit::layerDefFor(h, p.bottom_layers + p.transition_layers - 1u).exposure);
-    rows[3].label = "Normal exposure";
-    rows[3].fields = {field("exposure", "s", p.exposure)};
-    rows[4].label = "Waits (before lift, after lift, after retract)";
-    rows[4].fields = {field("wait_before_lift", "·", p.wait_before_lift), field("wait_after_lift", "·", p.wait_after_lift),
+    rows[4].label = "Normal exposure";
+    rows[4].fields = {field("exposure", "s", p.exposure)};
+    rows[5].label = "Waits (before lift, after lift, after retract)";
+    rows[5].fields = {field("wait_before_lift", "·", p.wait_before_lift), field("wait_after_lift", "·", p.wait_after_lift),
                       field("wait_after_retract", "s", p.wait_after_retract)};
-    rows[5].label = "Lift and retract";
-    rows[5].fields = {field("lift", "mm", valueOf(h, density, "lift"))};
-    rows[6].label = "Light power";
-    rows[6].fields = {field("light_power", "of 255", p.pwm)};
-    rows[7].label = "Density, for weight";
-    rows[7].fields = {field("density", "g/ml", density)};
+    rows[6].label = "Lift and retract";
+    rows[6].fields = {field("lift", "mm", valueOf(h, r.print, "lift"))};
+    rows[7].label = "Light power";
+    rows[7].fields = {field("light_power", "of 255", p.pwm)};
+    rows[8].label = "Density, for weight";
+    rows[8].fields = {field("density", "g/ml", resinDensity(r.print))};
     // Exposures with no file and none typed: nothing to go back to.
     if (!file) {
         if (base.print.bottom_exposure <= 0) rows[1].base.clear();
-        if (base.print.exposure <= 0) rows[3].base.clear();
+        if (base.print.exposure <= 0) rows[4].base.clear();
     }
     // Plain words about what an edited value hasn't been checked with.
     const double lh = fruit::gooLayerHeight(h), base_lh = fruit::gooLayerHeight(base);
     if (rows[0].source == S::Yours && std::abs(lh - base_lh) > 1e-6 && (file || base.print.exposure > 0))
         rows[0].note = strf("The exposures were set for %g mm layers and haven't been checked at %g mm.", base_lh, lh);
-    if (rows[5].source == S::Yours && std::abs(p.lift_distance - base.print.lift_distance) > 1e-6)
-        rows[5].note = "Not checked on the printer: the 16K tilts its vat, and how it uses this distance hasn't been "
+    if (rows[6].source == S::Yours && std::abs(p.lift_distance - base.print.lift_distance) > 1e-6)
+        rows[6].note = "Not checked on the printer: the 16K tilts its vat, and how it uses this distance hasn't been "
                        "tested.";
-    if (rows[6].source == S::Yours && p.pwm != base.print.pwm)
-        rows[6].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
+    if (rows[7].source == S::Yours && p.pwm != base.print.pwm)
+        rows[7].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
     return rows;
 }
 
@@ -488,7 +504,7 @@ void setPrintValue(Resin& r, const fruit::GooHeader* sample, const fruit::Printe
     if (f->whole) v = std::round(v);
     PrintEdits without = r.print;
     clearEdit(without, key);
-    const double base = valueOf(headerWith(r, without, sample, printer), resinDensity(without), key);
+    const double base = valueOf(headerWith(r, without, sample, printer), without, key);
     if (std::abs(v - base) < 1e-9) r.print = without;
     else setEdit(r.print, key, v);
 }

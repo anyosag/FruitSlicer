@@ -5,7 +5,6 @@
 
 #include "calibration/Coupons.h"
 #include "layers/LayerStack.h"
-#include "mesh/Placement.h"
 #include "mesh/Primitives.h"
 #include "slice/MeshSlicer.h"
 
@@ -114,18 +113,13 @@ TEST_CASE("addBaseLayers puts copies of layer 0 in front", "[slice][layers]") {
     CHECK(area(f.slices[3 + 5]) == Approx(16));
 }
 
-TEST_CASE("the height correction is whole layers, and only on the plate", "[placement]") {
-    Placement p;
-    CHECK(p.height_correction == Approx(0.10));
-    CHECK(p.heightCorrectionLayers(0.05) == 0);  // with a raft: none
-    p.on_plate = true;
-    CHECK(p.heightCorrectionLayers(0.05) == 2);
-    CHECK(p.heightCorrectionLayers(0.03) == 3);
-    CHECK(p.heightCorrectionAdded(0.05) == Approx(0.10));
-    p.height_correction = 0.15;
-    CHECK(p.heightCorrectionLayers(0.05) == 3);
-    p.height_correction = 0;
-    CHECK(p.heightCorrectionLayers(0.05) == 0);
-    p.height_correction = 5;  // past the largest: held to 0.5 mm
-    CHECK(p.heightCorrectionLayers(0.05) == 10);
+TEST_CASE("the height correction is whole layers of the print's height", "[slice][layers]") {
+    CHECK(kDefaultHeightCorrection == Approx(0.10));
+    CHECK(heightCorrectionLayers(0.10, 0.05) == 2);
+    CHECK(heightCorrectionLayers(0.10, 0.03) == 3);  // 0.09 mm, the nearest whole layers
+    CHECK(heightCorrectionLayers(0.15, 0.05) == 3);
+    CHECK(heightCorrectionLayers(0, 0.05) == 0);
+    CHECK(heightCorrectionLayers(-1, 0.05) == 0);
+    CHECK(heightCorrectionLayers(0.10, 0) == 0);
+    CHECK(heightCorrectionLayers(5, 0.05) == 10);  // past the largest: held to 0.5 mm
 }

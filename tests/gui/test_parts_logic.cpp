@@ -536,12 +536,7 @@ TEST_CASE("Jobs: a job saved before parts (version 2) still opens the same", "[g
         mz_zip_reader_end(&z);
         CHECK(k["version"] == 2);
         CHECK_FALSE(k.contains("parts"));
-        // Written now with the height correction (older FruitSlicers ignore it); the rest is as it was.
-        REQUIRE(k["placement"].contains("height_correction"));
-        CHECK(k["placement"]["height_correction"] == 0.1);
-        json placement = k["placement"];
-        placement.erase("height_correction");
-        CHECK(placement == j["placement"]);
+        CHECK(k["placement"] == j["placement"]);
         CHECK(k["orient"] == j["orient"]);
         CHECK(k["supports"]["edits"] == j["supports"]["edits"]);
         CHECK(k["hollow"]["holes"] == j["hollow"]["holes"]);

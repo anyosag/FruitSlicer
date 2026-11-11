@@ -39,6 +39,11 @@ void addBaseLayers(LayerStack& ls, int n) {
     for (size_t i = 0; i < ls.sample_z.size(); ++i) ls.sample_z[i] = (static_cast<double>(i) + 0.5) * ls.layer_height;
 }
 
+int heightCorrectionLayers(double correction_mm, double layer_height) {
+    if (layer_height <= 0 || !(correction_mm > 0)) return 0;
+    return static_cast<int>(std::lround(std::min(correction_mm, kMaxHeightCorrection) / layer_height));
+}
+
 LayerStack unionLayers(const LayerStack& a, const LayerStack& b, unsigned threads) {
     if (a.size() && b.size() && std::abs(a.layer_height - b.layer_height) > 1e-9)
         throw std::invalid_argument("layers of different heights can't be put together");

@@ -42,7 +42,7 @@ LayerResult sliceLayers(const Document& doc, const fruit::TriangleMesh& supports
     }
     // Standing on the plate: the printer squashes the first layers, so the print
     // gets a few more of them under the model (the model itself is unchanged).
-    if (const int n = doc.placement().heightCorrectionLayers(kLayerHeight); n > 0 && ls->size()) {
+    if (const int n = baseLayers(doc, kLayerHeight); n > 0 && ls->size()) {
         fruit::addBaseLayers(*ls, n);
         r.base_layers = static_cast<std::size_t>(n);
         r.bounds.max.z += n * kLayerHeight;

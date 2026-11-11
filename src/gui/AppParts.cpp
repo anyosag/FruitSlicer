@@ -40,7 +40,6 @@ void App::placeAddedPart() {
     // Beside the others, on the job's lift.
     p.elevation = doc_->placement().elevation;
     p.on_plate = doc_->placement().on_plate;
-    p.height_correction = doc_->placement().height_correction;
     const fruit::PlateFit f = fruit::checkFit(add->part().mesh(), p, doc_->printer);
     std::vector<fruit::BBox2> taken;
     for (const Part& part : doc_->parts()) taken.push_back(part.footprintBox());

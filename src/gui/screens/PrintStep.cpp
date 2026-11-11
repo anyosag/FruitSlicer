@@ -147,6 +147,11 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
         const fruit::GooHeader& hd = plan->setup.header;
         keyValue("Layer height", strf("%.2f mm", plan->layer_height));
         keyValue("Bottom layers", strf("%d × %.1f s", static_cast<int>(hd.print.bottom_layers), hd.print.bottom_exposure));
+        if (doc.placement().on_plate)
+            keyValue("Height correction", plan->base_layers > 0
+                                              ? strf("%d layers, %g mm", static_cast<int>(plan->base_layers),
+                                                     plan->base_layers * plan->layer_height)
+                                              : std::string("none"));
         keyValue("Normal exposure", strf("%.2f s", hd.print.exposure));
         keyValue("Transition layers", strf("%d", static_cast<int>(hd.print.transition_layers)));
         keyValue("Wait after retract", strf("%.1f s", hd.print.wait_after_retract));

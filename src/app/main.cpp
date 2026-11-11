@@ -727,11 +727,8 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     if (o.on_plate) {
         // Standing on the plate: the printer squashes the first layers, so
         // copies of the first layer go under the model (whole layers).
-        Placement pl;
-        pl.on_plate = true;
-        pl.height_correction = o.height_correction;
         const double lh = gooLayerHeight(h);
-        const int base = pl.heightCorrectionLayers(lh);
+        const int base = heightCorrectionLayers(o.height_correction, lh);
         LayerStack layers = sliceModel(mesh, lh, nullptr, o.threads);
         addBaseLayers(layers, base);
         res = exportGooLayers(layers, &mesh, h, grid, eo, o.out);

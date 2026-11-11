@@ -626,7 +626,7 @@ void App::maintain() {
         // Cut the layers for the current supports, once per supports result
         // and height correction.
         const auto& sup = doc_->supports.result;
-        const int base = doc_->placement().heightCorrectionLayers(kLayerHeight);
+        const int base = baseLayers(*doc_, kLayerHeight);
         if (sup && !doc_->layersFresh() && (sliced_for_ != sup || sliced_base_ != base) &&
             doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) {
             sliced_for_ = sup;
@@ -906,19 +906,9 @@ void App::endLift() {
     if (doc_ && doc_->dragging()) doc_->endDrag();
 }
 
-namespace {
-fruit::Placement withHeightCorrection(fruit::Placement p, double mm) {
-    p.height_correction = std::clamp(std::round(mm * 100) / 100, 0.0, fruit::kMaxHeightCorrection);
-    return p;
-}
-}  // namespace
-
 void App::setHeightCorrection(double mm) {
-    if (doc_) doc_->edit(withHeightCorrection(doc_->placement(), mm));
-}
-
-void App::previewHeightCorrection(double mm) {
-    if (doc_ && doc_->dragging()) doc_->preview(withHeightCorrection(doc_->placement(), mm));
+    // The job's own print setting (a script's; people set it with the resin).
+    if (doc_) doc_->print.settings.height_correction = std::clamp(std::round(mm * 100) / 100, 0.0, fruit::kMaxHeightCorrection);
 }
 
 void App::resetQuickSupport() {
@@ -929,7 +919,6 @@ void App::resetQuickSupport() {
     fruit::Placement p = doc_->placement();
     p.on_plate = false;
     p.elevation = fruit::Placement{}.elevation;
-    p.height_correction = fruit::Placement{}.height_correction;
     doc_->edit(p);
 }
 
@@ -1868,9 +1857,11 @@ void App::replaceResinSampleFile(const std::string& id, const std::string& goo) 
         Resin r = *from;
         r.sample_path = keepHeader(goo);
         r.sample_name = std::filesystem::path(goo).filename().string();
-        // Edits were made against the old file; the density is the resin's own.
+        // Edits were made against the old file; the density and the height
+        // correction are the resin's own.
         PrintEdits kept;
         kept.density = r.print.density;
+        kept.height_correction = r.print.height_correction;
         r.print = kept;
         resin_samples_.erase(r.sample_path);  // the same name may hold another file now
         storeResin(r);

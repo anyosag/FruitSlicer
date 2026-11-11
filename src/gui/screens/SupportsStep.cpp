@@ -93,35 +93,32 @@ void quickSlider(App& app, const SupportChoices& choices, QuickSlider which) {
     ImGui::PopID();
 }
 
-// With no raft: the height added under the model (a job-wide placement
-// choice), in 0.05 mm steps like the layers.
-void heightCorrection(App& app, const fruit::Placement& p) {
-    constexpr double kStep = 0.05;
-    const int now = static_cast<int>(std::lround(p.height_correction / kStep));
-    const int layers = p.heightCorrectionLayers(kStep);
-    const bool differs = std::abs(p.height_correction - fruit::Placement{}.height_correction) > 1e-9;
+// With no raft: the height added under the model. It is a print setting of
+// the resin (next to its bottom layers), so here it is only shown.
+void heightCorrection(App& app, const Document& doc) {
+    const PrintEdits& e = doc.print.settings;
+    const double mm = heightCorrection(e);
+    const int layers = baseLayers(doc, kLayerHeight);
     const float y = ImGui::GetCursorPosY();
     text("Height correction", fonts().semibold, size::Body, col::Text);
-    rightText(strf("%.2f mm", now * kStep).c_str(), fonts().semibold, size::Help, differs ? col::Accent : col::TextSecondary, y);
-    int v = now;
-    bool begin = false, end = false;
-    if (stopSlider("##height_correction", &v, 0, 10, &begin, &end) || begin) {
-        if (begin) app.beginLift();
-        app.previewHeightCorrection(v * kStep);
+    rightText(strf("%g mm", mm).c_str(), fonts().semibold, size::Help, col::TextSecondary, y);
+    std::string what =
+        layers > 0 ? strf("Adds %g mm (%d %s) under the model, because the printer squashes the first layers.",
+                          layers * kLayerHeight, layers, layers == 1 ? "layer" : "layers")
+                   : std::string("Adds nothing under the model, so it may print a little short: the printer squashes "
+                                 "the first layers.");
+    what += e.height_correction >= 0 ? " Your value, from the resin's print settings."
+                                     : " 0.10 mm is a typical value, not measured on your printer.";
+    text(what.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    text("It's one of the resin's print settings, next to Bottom layers.", fonts().regular, size::Help,
+         col::TextSecondary, true);
+    if (linkButton("Change it on the Resins page")) {
+        std::string id = app.newJobResin().id;
+        for (const Resin& r : app.resins())
+            if (r.name == doc.supports.choices.resin) id = r.id;
+        app.resinSelected() = id;
+        app.setScreen(Screen::Resins);
     }
-    if (end) app.endLift();
-    const float ey = ImGui::GetCursorPosY();
-    text("0 mm", fonts().regular, size::Label, col::TextMuted);
-    rightText("0.50 mm", fonts().regular, size::Label, col::TextMuted, ey);
-    text(layers > 0
-             ? strf("Adds %.2f mm (%d %s) under the model, because the printer squashes the first layers. 0.10 mm is a "
-                    "typical value, not measured on your printer: print a test block, measure it, and set yours.",
-                    layers * kStep, layers, layers == 1 ? "layer" : "layers")
-                   .c_str()
-             : "Adds nothing under the model. The printer squashes the first layers, so a model standing on the plate "
-               "may print short. 0.10 mm is a typical value, not measured on your printer: print a test block, "
-               "measure it, and set yours.",
-         fonts().regular, size::Help, col::TextSecondary, true);
 }
 
 // The raft and its lift: a job-wide placement choice (every part).
@@ -172,7 +169,7 @@ void onThePlate(App& app, Document& doc) {
     }
     ImGui::Dummy(ImVec2(0, 4));
     if (!raft) {
-        heightCorrection(app, p);
+        heightCorrection(app, doc);
         return;
     }
     ImGui::BeginDisabled(!raft);

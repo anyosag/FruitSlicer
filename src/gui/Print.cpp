@@ -59,6 +59,15 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
 
 double resinDensity(const PrintEdits& e) { return e.density > 0 ? e.density : fruit::GooExportOptions{}.resin_density; }
 
+double heightCorrection(const PrintEdits& e) {
+    return e.height_correction >= 0 ? e.height_correction : fruit::kDefaultHeightCorrection;
+}
+
+int baseLayers(const Document& doc, double layer_height) {
+    if (doc.parts().empty() || !doc.placement().on_plate) return 0;
+    return fruit::heightCorrectionLayers(heightCorrection(doc.print.settings), layer_height);
+}
+
 PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_top, const PrintSettings& s) {
     PrintPlan p;
     p.fits = fitsPlate(doc.printer, layers.bounds);
@@ -75,7 +84,7 @@ PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_
     const double job_h = layers.layers ? layers.layers->layer_height : kLayerHeight;
     p.reslice = std::abs(p.layer_height - job_h) > 1e-6;
     // The height correction is whole layers of the print file's height.
-    const int base = doc.placement().heightCorrectionLayers(p.layer_height);
+    const int base = baseLayers(doc, p.layer_height);
     p.base_layers = static_cast<std::size_t>(base);
     const double extra = base * p.layer_height - layers.base_layers * job_h;
     p.height = layers.top + extra;
@@ -106,7 +115,7 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
     o.sync_to_device = removable;
     o.resin_density = plan.density;
     // On the plate: the height correction's layers, at the print file's height.
-    const int base = doc.placement().heightCorrectionLayers(fruit::gooLayerHeight(plan.setup.header));
+    const int base = baseLayers(doc, fruit::gooLayerHeight(plan.setup.header));
     if (plan.reslice && layers.hollow) {
         // The same again at the sample's layer height: the model hollowed
         // or filled as before, with the same holes, and the supports.

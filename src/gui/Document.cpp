@@ -16,13 +16,12 @@ namespace gui {
 namespace {
 
 bool sameLift(const fruit::Placement& a, const fruit::Placement& b) {
-    return a.elevation == b.elevation && a.on_plate == b.on_plate && a.height_correction == b.height_correction;
+    return a.elevation == b.elevation && a.on_plate == b.on_plate;
 }
 
 void takeLift(fruit::Placement& p, const fruit::Placement& from) {
     p.elevation = from.elevation;
     p.on_plate = from.on_plate;
-    p.height_correction = from.height_correction;
 }
 
 }  // namespace
@@ -77,24 +76,20 @@ void Document::changed() {
     face_start_.clear();
 }
 
-bool Document::setPlacement(std::size_t i, const fruit::Placement& p) {
+void Document::setPlacement(std::size_t i, const fruit::Placement& p) {
     Part& part = parts_[i];
-    fruit::Placement same = p;
-    same.height_correction = part.placement().height_correction;
-    const bool shape = !(same == part.placement());  // more than the height correction changed
     const bool lift = !sameLift(p, part.placement());
     part.s_.placement = p;
     part.update(printer);
-    if (shape) part.revision_ = ++last_revision_;
+    part.revision_ = ++last_revision_;
     if (lift)  // the lift is the job's
         for (std::size_t j = 0; j < parts_.size(); ++j) {
             if (j == i) continue;
             takeLift(parts_[j].s_.placement, p);
             parts_[j].update(printer);
-            if (shape) parts_[j].revision_ = ++last_revision_;
+            parts_[j].revision_ = ++last_revision_;
         }
     changed();
-    return shape;
 }
 
 void Document::prepare() const {
@@ -222,7 +217,8 @@ int Document::orientSettings() const {
 
 void Document::place(const fruit::Placement& p) {
     if (parts_.empty()) return;
-    if (setPlacement(static_cast<std::size_t>(selected_), p)) revision_ = ++last_revision_;
+    setPlacement(static_cast<std::size_t>(selected_), p);
+    revision_ = ++last_revision_;
     prepare();
 }
 
@@ -261,7 +257,8 @@ void Document::beginDrag() {
 
 void Document::preview(const fruit::Placement& p) {
     if (!dragging() || p == placement()) return;
-    if (setPlacement(static_cast<std::size_t>(selected_), p)) revision_ = ++last_revision_;
+    setPlacement(static_cast<std::size_t>(selected_), p);
+    revision_ = ++last_revision_;
 }
 
 namespace {
@@ -408,8 +405,7 @@ int newGeometryId() {
 }
 
 bool Document::layersFresh() const {
-    const int base = parts_.empty() ? 0 : placement().heightCorrectionLayers(kLayerHeight);
-    return layers.fresh(supports.result, static_cast<std::size_t>(base));
+    return layers.fresh(supports.result, static_cast<std::size_t>(baseLayers(*this, kLayerHeight)));
 }
 
 JobStamp Document::stamp() const {
@@ -420,7 +416,6 @@ JobStamp Document::stamp() const {
         s.orient_decided.push_back(orientOf(p.id()).decided);
     }
     s.revision = revision_;
-    s.height_correction = parts_.empty() ? 0.0 : placement().height_correction;
     s.orient_settings = orientSettings();
     s.supports = supports.result.get();
     s.choices = supports.choices;

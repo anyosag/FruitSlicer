@@ -7,11 +7,6 @@
 
 namespace fruit {
 
-int Placement::heightCorrectionLayers(double layer_height) const {
-    if (!on_plate || layer_height <= 0 || !(height_correction > 0)) return 0;
-    return static_cast<int>(std::lround(std::min(height_correction, kMaxHeightCorrection) / layer_height));
-}
-
 Transform placeOnPlate(TriangleMesh& mesh, const Vec3& rotation_deg, double elevation) {
     Transform applied;
     if (rotation_deg.x != 0 || rotation_deg.y != 0 || rotation_deg.z != 0) {

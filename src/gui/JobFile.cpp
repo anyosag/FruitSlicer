@@ -182,8 +182,7 @@ fruit::LoadedModel modelFrom(const std::vector<std::uint8_t>& bytes, const json&
 }
 
 json placementJson(const fruit::Placement& p) {
-    json j = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation}, {"on_plate", p.on_plate},
-               {"height_correction", p.height_correction}};
+    json j = {{"scale", p.scale}, {"rotation", vec(p.rotation_deg)}, {"elevation", p.elevation}, {"on_plate", p.on_plate}};
     if (p.mirrored()) j["mirror"] = {p.mirror_x, p.mirror_y, p.mirror_z};
     if (!p.centred()) j["offset"] = {p.offset.x, p.offset.y};
     return j;
@@ -195,8 +194,6 @@ fruit::Placement placementFrom(const json& pj) {
     p.rotation_deg = vecFrom(pj.at("rotation"));
     p.elevation = pj.value("elevation", 5.0);
     p.on_plate = pj.value("on_plate", false);
-    p.height_correction = std::clamp(pj.value("height_correction", fruit::Placement{}.height_correction), 0.0,
-                                     fruit::kMaxHeightCorrection);  // older jobs: the usual 0.10
     if (pj.contains("mirror") && pj["mirror"].is_array() && pj["mirror"].size() == 3) {  // older jobs: not mirrored
         auto flag = [&](int i) { return pj["mirror"][i].is_boolean() && pj["mirror"][i].get<bool>(); };
         p.mirror_x = flag(0), p.mirror_y = flag(1), p.mirror_z = flag(2);
@@ -346,6 +343,7 @@ void saveJob(const std::string& path, const Document& doc) {
                   {"lift", s.lift},
                   {"light_power", s.light_power},
                   {"density", s.density},
+                  {"height_correction", s.height_correction},
                   {"sample_path", s.sample_path}};
 
     std::vector<std::uint8_t> sample;
@@ -507,6 +505,17 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         s.lift = prj.value("lift", -1.0);
         s.light_power = prj.value("light_power", -1);
         s.density = prj.value("density", 0.0);
+        s.height_correction = prj.value("height_correction", -1.0);
+        if (!prj.contains("height_correction")) {
+            // Saved while it sat with the placement (for a short while): one of
+            // the usual value is the same as none.
+            const json& pl = j.contains("parts") && j["parts"].is_array() && !j["parts"].empty()
+                                 ? j["parts"][0].value("placement", json::object())
+                                 : j.value("placement", json::object());
+            const double was = pl.value("height_correction", -1.0);
+            if (was >= 0 && std::abs(was - fruit::kDefaultHeightCorrection) > 1e-9)
+                s.height_correction = std::min(was, fruit::kMaxHeightCorrection);
+        }
         s.sample_path = prj.value("sample_path", "");
         if (prj.contains("sample_file")) {
             const auto bytes = zip.read("sample-header.bin", false);

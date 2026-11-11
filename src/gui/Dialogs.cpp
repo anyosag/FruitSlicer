@@ -72,7 +72,7 @@ std::string tooBig(const Document& d, const fruit::PrinterProfile& pr) {
     const fruit::PlateFit& f = d.fit();
     fruit::Placement p;
     const double m = fruit::plateMargin(p);
-    const double rx = pr.build_x - 2 * m, ry = pr.build_y - 2 * m, rz = pr.build_z - p.heightUnder();
+    const double rx = pr.build_x - 2 * m, ry = pr.build_y - 2 * m, rz = pr.build_z - p.lift();
     // Name the first limit it breaks, as the canvas does, then the turn.
     std::string s = dims(f.size) + ". ";
     if (f.size.y > ry)
@@ -193,7 +193,7 @@ void health(App& app) {
             const fruit::PlateFit at = fruit::checkFit(doc->part().mesh(), p, pr);
             const double m = fruit::plateMargin(p);
             const double sx = pr.build_x - 2 * m - at.size.x, sy = pr.build_y - 2 * m - at.size.y,
-                         sz = pr.build_z - p.heightUnder() - at.size.z;
+                         sz = pr.build_z - p.lift() - at.size.z;
             std::string spare;
             if (sy <= sx && sy <= sz) spare = strf("leaves %.1f mm of plate depth spare", sy);
             else if (sx <= sz) spare = strf("leaves %.1f mm of plate width spare", sx);

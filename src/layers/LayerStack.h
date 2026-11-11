@@ -34,6 +34,14 @@ LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats*
 // mid-height. Does nothing for n <= 0 or an empty stack.
 void addBaseLayers(LayerStack& ls, int n);
 
+// The height correction for a model standing on the plate (no raft): the
+// printer squashes the first layers, so the print gets this much more under
+// the model. A print setting of the resin, mm; FruitSlicer's typical value
+// until it is measured.
+inline constexpr double kDefaultHeightCorrection = 0.10, kMaxHeightCorrection = 0.5;
+// `correction_mm` (held to 0..kMaxHeightCorrection) in whole layers of `layer_height`.
+int heightCorrectionLayers(double correction_mm, double layer_height);
+
 // Both stacks' layers together, as tall as the taller (a hollowed model's
 // layers with its supports'). Throws std::invalid_argument when the layer
 // heights differ.

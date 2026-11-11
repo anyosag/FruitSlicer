@@ -83,7 +83,8 @@ struct LayerState {
     bool show_below = false;  // the layer below, dimmed, under this one
 
     // Cut for these supports, with `base_layers` added under a model on the
-    // plate (the height correction: it changes the layers, not the supports).
+    // plate (the height correction, a print setting: it changes the layers,
+    // not the supports).
     bool fresh(const std::shared_ptr<const SupportResult>& supports, std::size_t base_layers) const {
         return result && supports && for_supports == supports && result->base_layers == base_layers;
     }
@@ -102,7 +103,6 @@ struct JobStamp {
     std::vector<int> parts;                // the parts' ids, in order
     std::vector<std::string> model_paths;  // where each part's model file is
     int revision = -1;                     // the parts' meshes and placements
-    double height_correction = 0;          // the job's (it doesn't change the revision)
     int orient_settings = -1;              // sides people will see
     std::vector<bool> orient_decided;      // each part's
     const void* supports = nullptr;  // the supports result, by identity
@@ -142,7 +142,8 @@ public:
     std::string job_path;               // the .fruitjob it was saved to or opened from ("" if never saved)
     std::optional<JobStamp> saved;      // as it was then
     JobStamp stamp() const;
-    // The layers are cut for the current supports and height correction.
+    // The layers are cut for the current supports and the print settings'
+    // height correction.
     bool layersFresh() const;
     bool unsaved() const { return !saved || !(*saved == stamp()); }
 
@@ -258,10 +259,7 @@ private:
     void restore(Snapshot s);
     void record(Snapshot before);         // an undo step
     void changed();                       // outline, fit, the placed mesh later
-    // And the lift on every part. False when only the height correction
-    // changed: it changes the print's layers, not the parts, so nothing made
-    // for them goes out of date.
-    bool setPlacement(std::size_t i, const fruit::Placement& p);
+    void setPlacement(std::size_t i, const fruit::Placement& p);  // and the lift on every part
     void prepare() const;                 // every placed mesh made
     std::vector<Part> parts_;
     int selected_ = 0;  // index into parts_

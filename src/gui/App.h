@@ -294,8 +294,7 @@ public:
     void endLift();
     // The height correction (0 to 0.5 mm, the job's, used with no raft): the same, beginLift/endLift
     // bracket the slider's drag.
-    void setHeightCorrection(double mm);
-    void previewHeightCorrection(double mm);
+    void setHeightCorrection(double mm);  // the job's print setting
     void resetQuickSupport();  // sliders, raft and lift back to the resin's
     // Scripts: scrolls the open tool's panel to its end or start over the next few frames.
     void scrollToolPanel(bool to_end) { panel_scroll_end_ = to_end, panel_scroll_frames_ = 4; }

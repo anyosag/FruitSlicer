@@ -209,40 +209,49 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     Resin from_file;
     from_file.sample_path = "/kept/sample.goo";
     auto rows = printRows(from_file, &h, pr);
-    REQUIRE(rows.size() == 8);
+    REQUIRE(rows.size() == 9);
     CHECK(rows[0].value == "0.03 mm");
     CHECK(rows[1].value == "6 × 27.5 s");
-    CHECK(rows[2].value == "6, from 23.17 to 1.50 s");
-    CHECK(rows[2].after == "from 23.17 to 1.50 s");
-    CHECK(rows[3].value == "1.5 s");
-    CHECK(rows[4].value == "0 · 0 · 5 s");
-    CHECK(rows[5].value == "0.05 mm");
-    CHECK(rows[6].value == "255 of 255");
-    CHECK(rows[7].value == "1.15 g/ml");
-    for (std::size_t i = 0; i < 7; ++i) CHECK(rows[i].source == PS::File);
-    CHECK(rows[7].source == PS::Default);  // the file has no density
+    CHECK(rows[2].key == "height_correction");  // next to the bottom layers
+    CHECK(rows[2].value == "0.1 mm");
+    CHECK(rows[2].after.empty());
+    CHECK_THAT(rows[2].note, ContainsSubstring("typical value, not measured on your printer"));
+    CHECK(rows[3].value == "6, from 23.17 to 1.50 s");
+    CHECK(rows[3].after == "from 23.17 to 1.50 s");
+    CHECK(rows[4].value == "1.5 s");
+    CHECK(rows[5].value == "0 · 0 · 5 s");
+    CHECK(rows[6].value == "0.05 mm");
+    CHECK(rows[7].value == "255 of 255");
+    CHECK(rows[8].value == "1.15 g/ml");
+    for (std::size_t i : {0, 1, 3, 4, 5, 6, 7}) CHECK(rows[i].source == PS::File);
+    CHECK(rows[2].source == PS::Default);  // no print file has a height correction
+    CHECK(rows[8].source == PS::Default);  // or a density
     REQUIRE(rows[1].fields.size() == 2);
     CHECK(rows[1].fields[0].key == "bottom_layers");
     CHECK(rows[1].fields[1].value == Approx(27.5));
-    CHECK(rows[4].fields.size() == 3);
+    REQUIRE(rows[2].fields.size() == 1);
+    CHECK(rows[2].fields[0].key == "height_correction");
+    CHECK(rows[2].fields[0].value == Approx(0.10));
+    CHECK(rows[2].fields[0].hi == Approx(0.5));
+    CHECK(rows[5].fields.size() == 3);
     // Typed in, without a file: the printer's own counts and FruitSlicer's defaults.
     Resin typed;
     typed.print.exposure = 2;
     typed.print.bottom_exposure = 30;
     rows = printRows(typed, nullptr, pr);
-    REQUIRE(rows.size() == 8);
+    REQUIRE(rows.size() == 9);
     CHECK(rows[0].value == "0.05 mm");
     CHECK(rows[0].source == PS::Default);
     CHECK(rows[1].value == "4 × 30 s");
     CHECK(rows[1].source == PS::Yours);
     CHECK(rows[1].base.empty());  // no file, so no exposure to go back to
-    CHECK(rows[3].value == "2 s");
-    CHECK(rows[4].source == PS::Default);
+    CHECK(rows[4].value == "2 s");
+    CHECK(rows[5].source == PS::Default);
     // Nothing yet: every row there to type into, the exposures not set.
     rows = printRows(Resin{}, nullptr, pr);
-    REQUIRE(rows.size() == 8);
-    CHECK(rows[3].value == "not set");
-    CHECK(rows[3].fields[0].value == 0);
+    REQUIRE(rows.size() == 9);
+    CHECK(rows[4].value == "not set");
+    CHECK(rows[4].fields[0].value == 0);
 }
 
 TEST_CASE("Resins: a job's measured values shape its supports; tip sizes go by diameter", "[gui][resins]") {
@@ -334,6 +343,10 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     setPrintValue(r, sample.get(), pr, "lift", 0.08);
     setPrintValue(r, sample.get(), pr, "light_power", 200);
     setPrintValue(r, sample.get(), pr, "density", 1.1);
+    setPrintValue(r, sample.get(), pr, "height_correction", 0.10);  // the typical value: not an edit
+    CHECK(r.print.height_correction < 0);
+    setPrintValue(r, sample.get(), pr, "height_correction", 0.15);  // measured on the printer
+    CHECK(r.print.height_correction == Approx(0.15));
     setPrintValue(r, sample.get(), pr, "light_power", 300);  // clamped to 255: the file's, so not kept
     CHECK(r.print.light_power == -1);
     setPrintValue(r, sample.get(), pr, "light_power", 200);
@@ -347,15 +360,19 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[1].value == "4 × 27.5 s");
     CHECK(rows[1].source == PS::Yours);
     CHECK(rows[1].base == "6 × 27.5 s");
-    CHECK(rows[3].value == "1.8 s");
-    CHECK(rows[3].source == PS::Yours);
-    CHECK(rows[3].base == "1.5 s");
-    CHECK(rows[3].note.empty());
-    CHECK(rows[4].value == "0 · 0 · 3 s");
-    CHECK_THAT(rows[5].note, ContainsSubstring("hasn't been tested"));
-    CHECK_THAT(rows[6].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
-    CHECK(rows[7].value == "1.1 g/ml");
-    CHECK(rows[7].base == "1.15 g/ml");
+    CHECK(rows[2].value == "0.15 mm");
+    CHECK(rows[2].source == PS::Yours);
+    CHECK(rows[2].base == "0.1 mm");
+    CHECK(rows[2].note.empty());  // yours: nothing to say about it
+    CHECK(rows[4].value == "1.8 s");
+    CHECK(rows[4].source == PS::Yours);
+    CHECK(rows[4].base == "1.5 s");
+    CHECK(rows[4].note.empty());
+    CHECK(rows[5].value == "0 · 0 · 3 s");
+    CHECK_THAT(rows[6].note, ContainsSubstring("hasn't been tested"));
+    CHECK_THAT(rows[7].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
+    CHECK(rows[8].value == "1.1 g/ml");
+    CHECK(rows[8].base == "1.15 g/ml");
 
     // Kept with the resin.
     const auto lib = (dir() / "edited_lib").string();
@@ -432,12 +449,16 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     // Back to the file's, a row at a time.
     resetPrintRow(r.print, "exposure");
     resetPrintRow(r.print, "bottom");
+    resetPrintRow(r.print, "height_correction");
     CHECK(r.print.exposure == 0);
     CHECK(r.print.bottom_layers == -1);
+    CHECK(r.print.height_correction < 0);
     rows = printRows(r, sample.get(), pr);
-    CHECK(rows[3].source == PS::File);
-    CHECK(rows[3].value == "1.5 s");
+    CHECK(rows[4].source == PS::File);
+    CHECK(rows[4].value == "1.5 s");
     CHECK(rows[1].source == PS::File);
+    CHECK(rows[2].source == PS::Default);  // FruitSlicer's typical value again
+    CHECK(rows[2].value == "0.1 mm");
 }
 
 TEST_CASE("Resins: support values you set are the resin's, and a job starts with them", "[gui][resins]") {

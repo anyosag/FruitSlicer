@@ -56,9 +56,9 @@ PlateFit checkFit(const TriangleMesh& model, const Placement& p, const PrinterPr
     for (const Vec3& v : model.vertices) b.extend(r.applyLinear(v));
     const Vec3 unit = b.max - b.min;
     f.size = unit * p.scale;
-    f.top = f.size.z + p.heightUnder();
+    f.top = f.size.z + p.lift();
     const double m = plateMargin(p);
-    const double rx = printer.build_x - 2 * m, ry = printer.build_y - 2 * m, rz = printer.build_z - p.heightUnder();
+    const double rx = printer.build_x - 2 * m, ry = printer.build_y - 2 * m, rz = printer.build_z - p.lift();
     f.fits_centred = f.size.x <= rx && f.size.y <= ry && f.size.z <= rz;
     f.fits_turned = f.size.y <= rx && f.size.x <= ry && f.size.z <= rz;  // a quarter turn swaps the outline's sides
     f.room = {(rx - f.size.x) / 2, (ry - f.size.y) / 2};
