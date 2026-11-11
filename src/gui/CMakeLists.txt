@@ -79,6 +79,7 @@ set(app_sources
   Layers.cpp
   Log.cpp
   Navigation.cpp
+  ToolsLayout.cpp
   ViewCube.cpp
   Orient.cpp
   Parts.cpp

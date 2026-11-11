@@ -27,6 +27,13 @@ inline constexpr float kRailX = 8, kToolPanelX = 104, kToolPanelW = 300;
 inline constexpr float kToolPanelRight = kToolPanelX + kToolPanelW;  // from the view's left edge
 inline constexpr float kToolsBarH = 96;                              // the model tools, with their margin
 inline constexpr float kCubeW = 160;
+// The model tools' bar along the view's foot: where it sits and how wide its buttons are. In a narrow
+// view it tightens, and it keeps clear of the axes at the view's bottom left.
+struct ToolsBar {
+    ImVec2 pos;
+    float w = 0, button_w = 68, gap = 10;
+};
+ToolsBar toolsBarLayout(ImVec2 origin, ImVec2 size);
 
 // A structural panel: square, one background; item spacing set inside only.
 // `scroll`: it scrolls, with a bar, when what is in it is taller.

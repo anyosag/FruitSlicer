@@ -17,6 +17,7 @@
 //   {"save_job": path | "@demo"} {"unsaved": "save" | "discard" | "cancel"}
 //   {"relink": "copy" | "cancel" | path | "@demo"} {"remove": path | "@demo"} (test set-up)
 //   {"wait": "jobs"}            finish background work
+//   {"busy": name} {"cancel_job": true}  a stand-in job that runs (its progress card shows) until cancelled
 //   {"health": "full" | "largest" | "custom" (+ "percent") | "inches" | "place" | "cancel"}
 //   {"scale": percent} {"rotate": [x, y, z]} {"sits": "raised" | "flat"} {"fit": true}
 //   {"move": [x, y]} (mm from the plate's centre) {"nudge": [dx, dy]} {"centre": true} {"turn": 90}

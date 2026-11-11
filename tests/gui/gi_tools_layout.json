@@ -1,0 +1,14 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo-block"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo-hollow"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"select_part": 1}, {"tool": "cut"}, {"shot": "gi_all_tools_cut"},
+    {"busy": "Finding hollows"}, {"shot": "gi_tray_above_bar"}, {"cancel_job": true},
+    {"close_tool": true}, {"tool": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "model"}, {"tool": "move"}, {"move": [10, 0]}, {"step": "supports"},
+    {"busy": "Finding hollows"}, {"shot": "gi_tray_above_banner"}, {"cancel_job": true},
+    {"step": "model"}, {"tool": "duplicate"}, {"shot": "gi_duplicate_two_parts"}
+  ]
+}

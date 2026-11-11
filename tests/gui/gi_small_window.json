@@ -1,0 +1,12 @@
+{
+  "size": [1280, 800],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo-hollow"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"shot": "gi_small_window"},
+    {"tool": "merge"}, {"shot": "gi_small_window_merge"},
+    {"tool": "cut"}, {"shot": "gi_small_window_cut"},
+    {"busy": "Finding hollows"}, {"shot": "gi_small_window_tray"}, {"cancel_job": true}
+  ]
+}

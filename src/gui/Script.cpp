@@ -3,12 +3,14 @@
 #include "Script.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 #include "App.h"
 #include "Capture.h"
@@ -850,6 +852,19 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.combineApply();
             }
+        } else if (step.contains("busy")) {
+            // A stand-in for slow work, to see its progress card: it runs, 40% done, until {"cancel_job": true}.
+            app.jobs().start(
+                step["busy"].get<std::string>(),
+                [](const fruit::JobControl& ctl) {
+                    ctl.report("", 0.4);
+                    while (!ctl.cancelled()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    ctl.check();
+                },
+                [](std::exception_ptr) {});
+        } else if (step.contains("cancel_job")) {
+            app.jobs().cancel();
+            app.jobs().wait();
         } else if (step.contains("wait")) {
             app.jobs().wait();
         } else if (step.contains("view")) {

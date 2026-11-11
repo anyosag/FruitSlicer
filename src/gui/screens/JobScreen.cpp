@@ -270,13 +270,23 @@ void liftMarker(App& app, const Document& doc, const M4& vp, ImVec2 origin, ImVe
     ImGui::PopFont();
 }
 
-void taskTray(App& app, ImVec2 vp_max) {
+void taskTray(App& app, ImVec2 origin, ImVec2 avail) {
     const JobProgress p = app.jobs().progress();
     if (!p.running) return;
-    // The main button shows these two itself.
+    // The main button shows these two itself, and Cut, Label and Combine show theirs under their panel.
     if (p.name == "Generating supports" || p.name == "Cutting layers") return;
+    const Tool open = app.toolPanelOpen() ? app.tool() : Tool::None;
+    if (app.shapeBusy() && (open == Tool::Cut || open == Tool::Label || open == Tool::Combine)) return;
     const ImVec2 size(340, 96);
-    ImGui::SetCursorScreenPos(ImVec2(vp_max.x - size.x - 16, vp_max.y - size.y - 16));
+    ImVec2 at(origin.x + avail.x - size.x - 16, origin.y + avail.y - size.y - 16);
+    // Above the model tools when it would cover them, and above a banner there.
+    const ToolsBar bar = toolsBarLayout(origin, avail);
+    if (!app.editingTips() && at.x < bar.pos.x + bar.w + 8) at.y = bar.pos.y - 8 - size.y;
+    ImVec2 b0, b1;
+    if (const auto& d = app.document(); d && supportsBanner(app, *d, origin, avail, &b0, &b1) && at.x < b1.x &&
+                                        at.y + size.y > b0.y - 8)
+        at.y = b0.y - 8 - size.y;
+    ImGui::SetCursorScreenPos(at);
     beginCard("tray", size, 14, col::Panel, col::BorderStrong);
     text(p.name.c_str(), fonts().semibold, size::Body, col::Text);
     ImGui::Dummy(ImVec2(0, 2));
@@ -364,7 +374,7 @@ void viewport(App& app, ImVec2 size, const Overlay& overlay = {}) {
     }
     if (overlay) overlay(origin, avail, vp.m);
     if (!doc && !app.jobs().busy() && !app.checking()) dropCard(app, origin, avail);
-    taskTray(app, ImVec2(origin.x + avail.x, origin.y + avail.y));
+    taskTray(app, origin, avail);
     ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::PopStyleColor();

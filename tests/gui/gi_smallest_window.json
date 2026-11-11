@@ -1,0 +1,9 @@
+{
+  "size": [960, 600],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"shot": "gi_smallest_window"},
+    {"tool": "measure"}, {"shot": "gi_smallest_window_measure"}
+  ]
+}

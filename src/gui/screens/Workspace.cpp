@@ -16,6 +16,7 @@
 #include "Icons.h"
 #include "Repairs.h"
 #include "Theme.h"
+#include "ToolsLayout.h"
 #include "ViewCube.h"
 #include "Widgets.h"
 #include "mesh/ModelCheck.h"
@@ -236,19 +237,21 @@ void repairBody(App& app, const Document& doc) {
 
 constexpr float kRailCardW = 80;
 
+// `max_h`, when given: the tools card scrolls (a thin bar) when it would be taller.
 void railCards(const char* top_id, const std::function<void()>& top, const char* tools_id,
-               const std::function<void()>& tools, ImVec2 origin) {
+               const std::function<void()>& tools, ImVec2 origin, float max_h = 0) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 2));
     beginFloat(top_id, ImVec2(origin.x + kRailX + 8, origin.y + 16), kRailCardW, 0, ImVec2(6, 6));
     top();
     endFloat();
-    beginFloat(tools_id, ImVec2(origin.x + kRailX + 8, origin.y + 16 + 72 + 10), kRailCardW, 0, ImVec2(6, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4);
+    beginFloat(tools_id, ImVec2(origin.x + kRailX + 8, origin.y + 16 + 72 + 10), kRailCardW, max_h, ImVec2(6, 6));
     tools();
     endFloat();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 }
 
-void toolRail(App& app, Document* doc, ImVec2 origin) {
+void toolRail(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     const Tool open = doc && app.toolPanelOpen() ? app.tool() : Tool::None;
     railCards(
         "rail_open",
@@ -273,12 +276,14 @@ void toolRail(App& app, Document* doc, ImVec2 origin) {
                                {Tool::Duplicate, "duplicate", "Duplicate", icon::duplicate, "Make copies of it"},
                                {Tool::Arrange, "arrange", "Arrange", icon::arrange, "Lay the parts out on the plate"},
                                {Tool::Measure, "measure", "Measure", icon::measure, "Measure between two points on it"}};
+            // As wide as the card leaves: a little less while it scrolls.
+            const ImVec2 bs(ImGui::GetContentRegionAvail().x, 58);
             for (const T& t : tools) {
-                if (toolButton(t.id, t.label, t.ic, open == t.t, doc != nullptr)) app.openTool(t.t);
+                if (toolButton(t.id, t.label, t.ic, open == t.t, doc != nullptr, nullptr, bs)) app.openTool(t.t);
                 tooltip(doc ? t.tip : "Open a model first.");
             }
         },
-        origin);
+        origin, railMaxHeight(size.y, 16 + 72 + 10));
 }
 
 void tipRail(App& app, ImVec2 origin) {
@@ -344,7 +349,8 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     const Tool t = app.tool();
     ImGui::PushID(static_cast<int>(t));
     // The title, then what the tool shows (it scrolls when taller than the
-    // view allows), then a footer that stays in sight: Hollow's apply button.
+    // view allows), then a footer that stays in sight: the button that
+    // applies it (Hollow, Cut, Label, Combine, Duplicate, Arrange, Merge, Split).
     const bool shape = t == Tool::Label || t == Tool::Combine || t == Tool::Cut;  // Cut, Label, Combine
     const bool footer = t == Tool::Hollow || shape || partsToolFooterHeight(t) > 0;
     beginFloat("panel", pos, kToolPanelW);
@@ -352,7 +358,10 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
         t == Tool::Move || t == Tool::Rotate || t == Tool::Scale || t == Tool::Repair || t == Tool::Mirror ||
         t == Tool::Duplicate || t == Tool::Split || shape;
     if (floatTitle(toolTitleFor(doc, toolTitle(t), on_part).c_str())) app.closeToolPanel();
-    const float footer_h = shape ? 190 : std::max(96.0f, partsToolFooterHeight(t));
+    // The footer's height as it was last drawn (a guess before that), so the body leaves just that room.
+    ImGuiStorage* kept = ImGui::GetStateStorage();
+    const ImGuiID footer_key = ImGui::GetID("footer_h");
+    const float footer_h = kept->GetFloat(footer_key, shape ? 190 : std::max(96.0f, partsToolFooterHeight(t)));
     const float body_max = size.y - 32 - kToolsBarH - 32 - 36 - (footer ? footer_h : 0);
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(4000, std::max(120.0f, body_max)));
     ImGui::BeginChild("body", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
@@ -377,10 +386,12 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     }
     ImGui::EndChild();
     if (footer) {
+        const float y0 = ImGui::GetCursorPosY();
         ImGui::Dummy(ImVec2(0, 2));
         if (shape) shapeApplyArea(app, doc, t);
         else if (t == Tool::Hollow) hollowApplyArea(app, doc);
         else partsToolFooter(app, doc, t);
+        kept->SetFloat(footer_key, ImGui::GetCursorPosY() - y0 + 8);
     }
     endFloat();
     ImGui::PopID();
@@ -391,41 +402,28 @@ void toolPanel(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 void modelTools(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     if (app.editingTips()) return;
     const Tool open = doc && app.toolPanelOpen() ? app.tool() : Tool::None;
-    // Supports, Hollow, Drain holes, Repair, Label, Combine, Cut, Merge, Split
-    constexpr int kButtons = 9;
-    const float w = kButtons * 68 + (kButtons - 1) * 10 + 2 * 8 + 2;  // the card's own spacing is 10
-    const ImVec2 pos(origin.x + std::round((size.x - w) / 2), origin.y + size.y - 16 - 72);
+    const ToolsBar bar = toolsBarLayout(origin, size);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
-    beginFloat("model_tools", pos, w, 0, ImVec2(8, 6));
+    beginFloat("model_tools", bar.pos, bar.w, 0, ImVec2(8, 6));
     const bool on = doc != nullptr;
-    if (toolButton("supports", "Supports", icon::supports, open == Tool::Supports, on)) app.openTool(Tool::Supports);
-    tooltip(on ? "Make supports, or change them (T)" : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("hollow", "Hollow", icon::hollow, open == Tool::Hollow, on)) app.openTool(Tool::Hollow);
-    tooltip(on ? "Hollow it, and fix hollows that trap resin (H)" : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("holes", "Drain holes", icon::drainHole, open == Tool::Hollow, on)) app.openTool(Tool::Hollow);
-    tooltip(on ? "Holes that let resin drain and air in: with Hollow (D)" : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("repair", "Repair", icon::repair, open == Tool::Repair, on)) app.openTool(Tool::Repair);
-    tooltip(on ? "What the mesh check found and mended" : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("label", "Label", icon::label, open == Tool::Label, on)) app.openTool(Tool::Label);
-    tooltip(on ? "Raise or engrave text on the selected part" : "Open a model first.");
-    ImGui::SameLine();
-    const bool two = on && doc->partCount() > 1;
-    if (toolButton("combine", "Combine", icon::combine, open == Tool::Combine, two)) app.openTool(Tool::Combine);
-    tooltip(two ? "Join two parts, subtract one from the other, or keep where they overlap"
-                : on ? "Needs two parts: add another part first." : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("cut", "Cut", icon::cut, open == Tool::Cut, on)) app.openTool(Tool::Cut);
-    tooltip(on ? "Cut the selected part with a plane" : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("merge", "Merge", icon::merge, open == Tool::Merge, on)) app.openTool(Tool::Merge);
-    tooltip(on ? "Join parts into one part" : "Open a model first.");
-    ImGui::SameLine();
-    if (toolButton("split", "Split", icon::split, open == Tool::Split, on)) app.openTool(Tool::Split);
-    tooltip(on ? "Split a part into its shells" : "Open a model first.");
+    const ImVec2 bs(bar.button_w, 58);
+    bool first = true;
+    auto button = [&](const char* id, const char* label, IconFn ic, Tool t, const char* tip) {
+        if (!first) ImGui::SameLine(0, bar.gap);
+        first = false;
+        if (toolButton(id, label, ic, open == t, on, nullptr, bs)) app.openTool(t);
+        tooltip(on ? tip : "Open a model first.");
+    };
+    button("supports", "Supports", icon::supports, Tool::Supports, "Make supports, or change them (T)");
+    button("hollow", "Hollow", icon::hollow, Tool::Hollow, "Hollow it, and fix hollows that trap resin (H)");
+    button("holes", "Drain holes", icon::drainHole, Tool::Hollow, "Holes that let resin drain and air in: with Hollow (D)");
+    button("repair", "Repair", icon::repair, Tool::Repair, "What the mesh check found and mended");
+    button("label", "Label", icon::label, Tool::Label, "Raise or engrave text on the selected part");
+    button("combine", "Combine", icon::combine, Tool::Combine,
+           "Join two parts, subtract one from the other, or keep where they overlap");
+    button("cut", "Cut", icon::cut, Tool::Cut, "Cut the selected part with a plane");
+    button("merge", "Merge", icon::merge, Tool::Merge, "Join parts into one part");
+    button("split", "Split", icon::split, Tool::Split, "Split a part into its shells");
     endFloat();
     ImGui::PopStyleVar();
 }
@@ -584,6 +582,16 @@ void resultsSheet(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
 
 }  // namespace
 
+ToolsBar toolsBarLayout(ImVec2 origin, ImVec2 size) {
+    const ToolsBarFit f = fitToolsBar(size.x);
+    ToolsBar b;
+    b.pos = ImVec2(origin.x + f.x, origin.y + size.y - 16 - 72);
+    b.w = f.w;
+    b.button_w = f.button_w;
+    b.gap = f.gap;
+    return b;
+}
+
 void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const float* vp) {
     // The place's own marks in the view first, under the floating tools.
     if (doc) {
@@ -611,7 +619,7 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
     viewCube(app, origin, size);
     topPill(app, doc, origin, size);
     if (doc && app.editingTips()) tipRail(app, origin);
-    else toolRail(app, doc, origin);
+    else toolRail(app, doc, origin, size);
     if (doc) toolPanel(app, *doc, origin, size);
     modelTools(app, doc, origin, size);
     if (doc && app.step() == Step::Orient && app.orientView() == OrientView::Results && doc->orient().results)
