@@ -24,9 +24,10 @@ struct LayerResult;
 
 // Print settings of your own, over a sample's (or the printer's own and
 // FruitSlicer's defaults): each applies when set. Waits and light power
-// apply to bottom and normal layers alike. The lift and retract are not
-// offered: the vat tilts, and the file keeps the sample's, or SatelLite's
-// placeholder. A resin keeps them; a job copies them with the rest.
+// apply to bottom and normal layers alike (the bottom layers can have waits
+// of their own). The lift and retract are not offered: the vat tilts, and
+// the file keeps the sample's, or FruitSlicer's 0.05 mm, the placeholder
+// SatelLite writes. A resin keeps them; a job copies them with the rest.
 struct PrintEdits {
     double exposure = 0, bottom_exposure = 0;        // s, > 0
     int bottom_layers = -1, transition_layers = -1;  // >= 0

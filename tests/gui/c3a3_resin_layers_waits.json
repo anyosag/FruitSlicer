@@ -1,5 +1,5 @@
 {
-  "size": [1440, 1500],
+  "size": [1440, 1000],
   "scale": 1,
   "steps": [
     {"screen": "resins"}, {"resin_new_from": "@demo-sample"},
