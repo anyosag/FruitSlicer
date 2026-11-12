@@ -341,7 +341,6 @@ void saveJob(const std::string& path, const Document& doc) {
                   {"wait_after_retract", s.wait_after_retract},
                   {"bottom_wait_before_lift", s.bottom_wait_before_lift},
                   {"bottom_wait_after_retract", s.bottom_wait_after_retract},
-                  {"lift", s.lift},
                   {"light_power", s.light_power},
                   {"density", s.density},
                   {"height_correction", s.height_correction},
@@ -504,7 +503,6 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         s.wait_after_retract = prj.value("wait_after_retract", -1.0);
         s.bottom_wait_before_lift = prj.value("bottom_wait_before_lift", -1.0);  // older jobs: as the other layers
         s.bottom_wait_after_retract = prj.value("bottom_wait_after_retract", -1.0);
-        s.lift = prj.value("lift", -1.0);
         s.light_power = prj.value("light_power", -1);
         s.density = prj.value("density", 0.0);
         s.height_correction = prj.value("height_correction", -1.0);

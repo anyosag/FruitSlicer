@@ -80,7 +80,6 @@ TEST_CASE("Resins: kept, read back, named and removed", "[gui][resins]") {
     a.print.layer_height = 0.04;
     a.print.wait_before_lift = 0.5;
     a.print.wait_after_retract = 3;
-    a.print.lift = 0.08;
     a.print.light_power = 200;
     a.print.density = 1.1;
     a.profile = {{kResinOwnKey, {{"critical_angle", 50.0}}}};
@@ -208,7 +207,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     Resin from_file;
     from_file.sample_path = "/kept/sample.goo";
     auto rows = printRows(from_file, &h, pr);
-    REQUIRE(rows.size() == 10);
+    REQUIRE(rows.size() == 9);
     CHECK(rows[0].value == "0.03 mm");
     CHECK(rows[1].value == "6 × 27.5 s");
     CHECK(rows[2].key == "height_correction");  // next to the bottom layers
@@ -223,12 +222,11 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[6].value == "0 · 5 s");
     CHECK(rows[6].fields.size() == 2);
     CHECK(rows[6].note.empty());
-    CHECK(rows[7].value == "0.05 mm");
-    CHECK(rows[8].value == "255 of 255");
-    CHECK(rows[9].value == "1.15 g/ml");
-    for (std::size_t i : {0, 1, 3, 4, 5, 6, 7, 8}) CHECK(rows[i].source == PS::File);
+    CHECK(rows[7].value == "255 of 255");
+    CHECK(rows[8].value == "1.15 g/ml");
+    for (std::size_t i : {0, 1, 3, 4, 5, 6, 7}) CHECK(rows[i].source == PS::File);
     CHECK(rows[2].source == PS::Default);  // no print file has a height correction
-    CHECK(rows[9].source == PS::Default);  // or a density
+    CHECK(rows[8].source == PS::Default);  // or a density
     REQUIRE(rows[1].fields.size() == 2);
     CHECK(rows[1].fields[0].key == "bottom_layers");
     CHECK(rows[1].fields[1].value == Approx(27.5));
@@ -242,7 +240,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     typed.print.exposure = 2;
     typed.print.bottom_exposure = 30;
     rows = printRows(typed, nullptr, pr);
-    REQUIRE(rows.size() == 10);
+    REQUIRE(rows.size() == 9);
     CHECK(rows[0].value == "0.05 mm");
     CHECK(rows[0].source == PS::Default);
     CHECK(rows[1].value == "4 × 30 s");
@@ -252,7 +250,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[5].source == PS::Default);
     // Nothing yet: every row there to type into, the exposures not set.
     rows = printRows(Resin{}, nullptr, pr);
-    REQUIRE(rows.size() == 10);
+    REQUIRE(rows.size() == 9);
     CHECK(rows[4].value == "not set");
     CHECK(rows[4].fields[0].value == 0);
 }
@@ -343,7 +341,6 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     setPrintValue(r, sample.get(), pr, "exposure", 1.8);
     setPrintValue(r, sample.get(), pr, "bottom_layers", 4);
     setPrintValue(r, sample.get(), pr, "wait_after_retract", 3);
-    setPrintValue(r, sample.get(), pr, "lift", 0.08);
     setPrintValue(r, sample.get(), pr, "light_power", 200);
     setPrintValue(r, sample.get(), pr, "density", 1.1);
     setPrintValue(r, sample.get(), pr, "height_correction", 0.10);  // the typical value: not an edit
@@ -372,10 +369,9 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[4].base == "1.5 s");
     CHECK(rows[4].note.empty());
     CHECK(rows[5].value == "0 · 3 s");
-    CHECK_THAT(rows[7].note, ContainsSubstring("hasn't been tested"));
-    CHECK_THAT(rows[8].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
-    CHECK(rows[9].value == "1.1 g/ml");
-    CHECK(rows[9].base == "1.15 g/ml");
+    CHECK_THAT(rows[7].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
+    CHECK(rows[8].value == "1.1 g/ml");
+    CHECK(rows[8].base == "1.15 g/ml");
 
     // Kept with the resin.
     const auto lib = (dir() / "edited_lib").string();
@@ -404,8 +400,8 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(hp.transition_layers == 6);
     CHECK(hp.wait_after_retract == Approx(3));
     CHECK(hp.bottom_wait_after_retract == Approx(3));
-    CHECK(hp.lift_distance == Approx(0.08));
-    CHECK(hp.bottom_retract_distance == Approx(0.08));
+    CHECK(hp.lift_distance == Approx(sample->print.lift_distance));  // the file's, not a setting
+    CHECK(hp.bottom_retract_distance == Approx(sample->print.bottom_retract_distance));
     CHECK(hp.pwm == 200);
     CHECK(hp.bottom_pwm == 200);
     CHECK(p.layer_height == Approx(0.03));
@@ -529,7 +525,7 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     r.print.bottom_exposure = 30;
     // Nothing set: the bottom layers wait as the others do.
     auto rows = printRows(r, nullptr, pr);
-    REQUIRE(rows.size() == 10);
+    REQUIRE(rows.size() == 9);
     CHECK(rows[6].key == "bottom_waits");
     CHECK(rows[6].label == "Bottom-layer waits (before lift, after retract)");
     CHECK(rows[6].value == rows[5].value);
@@ -590,7 +586,7 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     CHECK(back[0] == r);
 }
 
-TEST_CASE("Resins: a resin file saved with adaptive layers and a light depth still loads, those keys ignored",
+TEST_CASE("Resins: a resin file saved with adaptive layers, a light depth and a lift still loads, those keys ignored",
           "[gui][resins]") {
     Resin r;
     r.id = "from-before";
@@ -612,6 +608,7 @@ TEST_CASE("Resins: a resin file saved with adaptive layers and a light depth sti
             if (v.is_object() && v.contains("exposure")) {
                 v["adaptive"] = 4;
                 v["light_depth"] = 0.2;
+                v["lift"] = 0.08;
             }
         std::ofstream(f.path()) << j.dump();
     }
@@ -620,4 +617,60 @@ TEST_CASE("Resins: a resin file saved with adaptive layers and a light depth sti
     CHECK(back[0] == r);
     CHECK(back[0].print.exposure == Approx(2.5));
     CHECK(back[0].print.bottom_wait_before_lift == Approx(1));
+    // The lift in the file made no difference to the print file's own.
+    const fruit::GooPrintRequest plain = printRequest(printSettingsFor(back[0]), 0.05);
+    CHECK(plain.lift_distance < 0);
+}
+
+TEST_CASE("Resins: there is no setting for the lift and retract; the print file keeps the sample's, or the default",
+          "[gui][resins]") {
+    const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
+    const auto doc = loadDocument(
+        [] {
+            const auto stl = (dir() / "lift_box.stl").string();
+            fruit::writeStl(stl, fruit::makeBox({0, 0, 0}, {10, 8, 3}));
+            return stl;
+        }(),
+        pr, fruit::JobControl::none());
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    // No row for it, and no key to set.
+    Resin r;
+    r.id = "lift";
+    r.name = "Lift";
+    for (const PrintRow& row : printRows(r, nullptr, pr)) CHECK(row.key != "lift");
+    CHECK_THROWS(setPrintValue(r, nullptr, pr, "lift", 0.08));
+    // A resin from a sample file whose lift and retract are 0.07 mm: its plan has those, with a typed exposure over it.
+    fruit::GooPrintRequest req;
+    req.layer_height = 0.03;
+    req.exposure = 1.5;
+    req.bottom_exposure = 27.5;
+    req.bottom_layers = 6;
+    req.transition_layers = 6;
+    req.lift_distance = 0.07;
+    const fruit::GooPrintSetup ss = fruit::buildGooSetup(pr, req);
+    const auto goo = (dir() / "lift_sample.goo").string();
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 1}), ss.header, ss.grid, fruit::GooExportOptions{}, goo);
+    const auto sample = loadSample(goo);
+    REQUIRE(sample);
+    CHECK(sample->print.lift_distance == Approx(0.07));
+    r.sample_path = goo;
+    setPrintValue(r, sample.get(), pr, "exposure", 1.8);
+    const PrintPlan p = planPrint(*doc, lr, 1.0, printSettingsFor(r));
+    REQUIRE(p.ready);
+    CHECK(p.setup.header.print.lift_distance == Approx(0.07));
+    CHECK(p.setup.header.print.bottom_lift_distance == Approx(0.07));
+    CHECK(p.setup.header.print.retract_distance == Approx(0.07));
+    CHECK(p.setup.header.print.bottom_retract_distance == Approx(0.07));
+    // A typed resin, with no sample: FruitSlicer's own 0.05 mm.
+    Resin t;
+    t.id = "typed";
+    t.name = "Typed";
+    t.print.exposure = 2.0;
+    t.print.bottom_exposure = 30;
+    const PrintPlan q = planPrint(*doc, lr, 1.0, printSettingsFor(t));
+    REQUIRE(q.ready);
+    CHECK(q.setup.header.print.lift_distance == Approx(0.05));
+    CHECK(q.setup.header.print.bottom_lift_distance == Approx(0.05));
+    CHECK(q.setup.header.print.retract_distance == Approx(0.05));
+    CHECK(q.setup.header.print.bottom_retract_distance == Approx(0.05));
 }

@@ -335,10 +335,11 @@ TEST_CASE("Jobs: the height correction is saved with the print settings; older j
     CHECK(no_waits.doc->print.settings.bottom_wait_before_lift < 0);
     CHECK(no_waits.doc->print.settings.bottom_wait_after_retract < 0);
 
-    // A job saved by a version that had adaptive layers and a light depth still opens; those two keys are ignored.
+    // A job saved by a version that had adaptive layers, a light depth and a lift still opens; those keys are ignored.
     const OpenedJob old_keys = rewritten("adaptive_keys.fruitjob", [](nlohmann::json& j) {
         j.at("print")["adaptive"] = 4;
         j.at("print")["light_depth"] = 0.2;
+        j.at("print")["lift"] = 0.08;
     });
     CHECK(old_keys.doc->print.settings.height_correction == o.doc->print.settings.height_correction);
     CHECK(old_keys.doc->print.settings == o.doc->print.settings);

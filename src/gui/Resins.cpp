@@ -36,7 +36,6 @@ json printJson(const Resin& r) {
             {"wait_after_retract", e.wait_after_retract},
             {"bottom_wait_before_lift", e.bottom_wait_before_lift},
             {"bottom_wait_after_retract", e.bottom_wait_after_retract},
-            {"lift", e.lift},
             {"light_power", e.light_power},
             {"density", e.density},
             {"height_correction", e.height_correction}};
@@ -55,7 +54,6 @@ void readPrint(const json& p, Resin& r) {
     e.wait_after_retract = p.value("wait_after_retract", -1.0);
     e.bottom_wait_before_lift = p.value("bottom_wait_before_lift", -1.0);
     e.bottom_wait_after_retract = p.value("bottom_wait_after_retract", -1.0);
-    e.lift = p.value("lift", -1.0);
     e.light_power = p.value("light_power", -1);
     e.density = p.value("density", 0.0);
     e.height_correction = p.value("height_correction", -1.0);
@@ -322,7 +320,7 @@ struct FieldRange {
 const FieldRange kFields[] = {
     {"layer_height", 0.01, 0.2, false},     {"bottom_layers", 0, 50, true},    {"bottom_exposure", 0.1, 600, false},
     {"transition_layers", 0, 50, true},     {"exposure", 0.1, 600, false},     {"wait_before_lift", 0, 120, false},
-    {"wait_after_retract", 0, 120, false},  {"lift", 0.01, 20, false},
+    {"wait_after_retract", 0, 120, false},
     {"bottom_wait_before_lift", 0, 120, false}, {"bottom_wait_after_retract", 0, 120, false},
     {"light_power", 1, 255, true},          {"density", 0.5, 3, false},
     {"height_correction", 0, fruit::kMaxHeightCorrection, false},
@@ -351,7 +349,6 @@ double valueOf(const fruit::GooHeader& h, const PrintEdits& e, const std::string
     if (key == "wait_after_retract") return std::round(p.wait_after_retract * 1000) / 1000;
     if (key == "bottom_wait_before_lift") return std::round(p.bottom_wait_before_lift * 1000) / 1000;
     if (key == "bottom_wait_after_retract") return std::round(p.bottom_wait_after_retract * 1000) / 1000;
-    if (key == "lift") return std::round(p.lift_distance * 1000) / 1000;
     if (key == "light_power") return p.pwm;
     if (key == "density") return resinDensity(e);
     if (key == "height_correction") return heightCorrection(e);
@@ -369,7 +366,6 @@ void setEdit(PrintEdits& e, const std::string& key, double v) {
     else if (key == "wait_after_retract") e.wait_after_retract = v;
     else if (key == "bottom_wait_before_lift") e.bottom_wait_before_lift = v;
     else if (key == "bottom_wait_after_retract") e.bottom_wait_after_retract = v;
-    else if (key == "lift") e.lift = v;
     else if (key == "light_power") e.light_power = n;
     else if (key == "density") e.density = v;
     else if (key == "height_correction") e.height_correction = v;
@@ -386,7 +382,6 @@ void clearEdit(PrintEdits& e, const std::string& key) {
     else if (key == "wait_after_retract") e.wait_after_retract = none.wait_after_retract;
     else if (key == "bottom_wait_before_lift") e.bottom_wait_before_lift = none.bottom_wait_before_lift;
     else if (key == "bottom_wait_after_retract") e.bottom_wait_after_retract = none.bottom_wait_after_retract;
-    else if (key == "lift") e.lift = none.lift;
     else if (key == "light_power") e.light_power = none.light_power;
     else if (key == "density") e.density = none.density;
     else if (key == "height_correction") e.height_correction = none.height_correction;
@@ -402,7 +397,6 @@ const std::vector<std::pair<const char*, std::vector<const char*>>>& rowKeys() {
         {"exposure", {"exposure"}},
         {"waits", {"wait_before_lift", "wait_after_retract"}},
         {"bottom_waits", {"bottom_wait_before_lift", "bottom_wait_after_retract"}},
-        {"lift", {"lift"}},
         {"light_power", {"light_power"}},
         {"density", {"density"}}};
     return rows;
@@ -435,7 +429,6 @@ std::string rowText(const std::string& row, const fruit::GooHeader& h, const Pri
     if (row == "exposure") return secondsOr(p.exposure);
     if (row == "waits") return strf("%g · %g s", p.wait_before_lift, p.wait_after_retract);
     if (row == "bottom_waits") return strf("%g · %g s", p.bottom_wait_before_lift, p.bottom_wait_after_retract);
-    if (row == "lift") return strf("%g mm", std::round(p.lift_distance * 1000) / 1000);
     if (row == "light_power") return strf("%u of 255", p.pwm);
     if (row == "density") return strf("%g g/ml", density);
     if (row == "height_correction") return strf("%g mm", heightCorrection(e));
@@ -492,12 +485,10 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
         resetPrintRow(without, "bottom_waits");
         rows[6].base = rowText("bottom_waits", headerWith(r, without, sample, printer), without);
     }
-    rows[7].label = "Lift and retract";
-    rows[7].fields = {field("lift", "mm", valueOf(h, r.print, "lift"))};
-    rows[8].label = "Light power";
-    rows[8].fields = {field("light_power", "of 255", p.pwm)};
-    rows[9].label = "Density, for weight";
-    rows[9].fields = {field("density", "g/ml", resinDensity(r.print))};
+    rows[7].label = "Light power";
+    rows[7].fields = {field("light_power", "of 255", p.pwm)};
+    rows[8].label = "Density, for weight";
+    rows[8].fields = {field("density", "g/ml", resinDensity(r.print))};
     // Exposures with no file and none typed: nothing to go back to.
     if (!file) {
         if (base.print.bottom_exposure <= 0) rows[1].base.clear();
@@ -507,11 +498,8 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
     const double lh = fruit::gooLayerHeight(h), base_lh = fruit::gooLayerHeight(base);
     if (rows[0].source == S::Yours && std::abs(lh - base_lh) > 1e-6 && (file || base.print.exposure > 0))
         rows[0].note = strf("The exposures were set for %g mm layers and haven't been checked at %g mm.", base_lh, lh);
-    if (rows[7].source == S::Yours && std::abs(p.lift_distance - base.print.lift_distance) > 1e-6)
-        rows[7].note = "Not checked on the printer: the 16K tilts its vat, and how it uses this distance hasn't been "
-                       "tested.";
-    if (rows[8].source == S::Yours && p.pwm != base.print.pwm)
-        rows[8].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
+    if (rows[7].source == S::Yours && p.pwm != base.print.pwm)
+        rows[7].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
     return rows;
 }
 

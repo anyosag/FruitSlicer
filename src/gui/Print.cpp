@@ -51,7 +51,6 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
     r.wait_after_retract = s.wait_after_retract;
     r.bottom_wait_before_lift = s.bottom_wait_before_lift;
     r.bottom_wait_after_retract = s.bottom_wait_after_retract;
-    r.lift_distance = s.lift;
     r.light_power = s.light_power;
     r.flip_x = s.flip_x;
     r.flip_y = s.flip_y;

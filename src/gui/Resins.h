@@ -102,7 +102,7 @@ struct PrintRow {
 };
 // Every print setting, in page order: layer height, bottom layers, height
 // correction (with no raft), transition layers, normal exposure, waits,
-// bottom-layer waits, lift and retract, light power, density. `sample` is
+// bottom-layer waits, light power, density. `sample` is
 // the resin's kept header, if read.
 std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, const fruit::PrinterProfile& printer);
 // Sets one of the resin's own print values (clamped to its field's range).

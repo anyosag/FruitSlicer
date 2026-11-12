@@ -23,9 +23,10 @@ class Document;
 struct LayerResult;
 
 // Print settings of your own, over a sample's (or the printer's own and
-// FruitSlicer's defaults): each applies when set. Waits, lift and light
-// power apply to bottom and normal layers alike; "lift" sets the retract
-// distance too. A resin keeps them; a job copies them with the rest.
+// FruitSlicer's defaults): each applies when set. Waits and light power
+// apply to bottom and normal layers alike. The lift and retract are not
+// offered: the vat tilts, and the file keeps the sample's, or SatelLite's
+// placeholder. A resin keeps them; a job copies them with the rest.
 struct PrintEdits {
     double exposure = 0, bottom_exposure = 0;        // s, > 0
     int bottom_layers = -1, transition_layers = -1;  // >= 0
@@ -36,7 +37,6 @@ struct PrintEdits {
     double wait_before_lift = -1, wait_after_retract = -1;  // s, >= 0
     // The bottom layers' own waits, s, >= 0; < 0: as the other layers.
     double bottom_wait_before_lift = -1, bottom_wait_after_retract = -1;
-    double lift = -1;                                // mm, > 0
     int light_power = -1;                            // 1-255
     double density = 0;                              // g/ml, > 0: for the resin's weight
     // mm, >= 0: added under a model standing on the plate (no raft), because
