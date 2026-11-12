@@ -28,6 +28,8 @@
 #include "mesh/ObjIO.h"
 #include "mesh/StlIO.h"
 #include "printer/PrinterProfile.h"
+#include "stability/Stability.h"
+#include "stability/StabilityReport.h"
 #include "support/PointGenerator.h"
 #include "support/OrientationSearch.h"
 #include "support/SupportIO.h"
@@ -587,6 +589,103 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     return 0;
 }
 
+struct StabilityCli {
+    std::string points_in, report, picture, raft = "pads";
+    bool no_merge = false;
+    int replays = 500;
+    double resin = -1, steepness = -1, cup_pull = -1, shape = -1;
+    unsigned threads = 0;
+};
+
+// Supports as `support` makes them, then: what each layer's pull does to the
+// print so far, and how likely each part of it is not to print.
+int cmdStability(const std::string& path, PlacementOpts place, double layer_h, PointsOpts popts, const StabilityCli& o,
+                 bool place_given) {
+    const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
+    json r;
+    json points_file;
+    if (!o.points_in.empty()) {
+        std::ifstream in(o.points_in);
+        if (!in) throw std::runtime_error("cannot open " + o.points_in);
+        points_file = json::parse(in);
+        place = placementFor(points_file, place, place_given, popts.gen.on_plate);
+        if (popts.gen.on_plate) place.elevate = 0;
+    }
+    const TriangleMesh mesh = loadPlaced(path, place, &r);
+    SupportConfig cfg;
+    cfg.layer_height = layer_h;
+    cfg.coverage.density = popts.density;
+    TreeConfig tc;
+    applySettings(popts.gen, cfg, &tc, r);
+    std::vector<SupportPoint> pts;
+    std::shared_ptr<const LayerStack> model_layers;
+    std::shared_ptr<const IslandGraph> model_parts;
+    if (!o.points_in.empty()) {
+        pts = pointsFromJson(points_file);
+        model_layers = std::make_shared<const LayerStack>(sliceModel(mesh, layer_h));
+    } else {
+        CosmeticSpec cosmetic;
+        if (!popts.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(popts.cosmetic)));
+        PointGenOptions opts;
+        opts.cosmetic = &cosmetic;
+        const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
+        pts = res.points;
+        model_layers = res.analysis.layers;
+        model_parts = res.analysis.islands;
+    }
+    tc.merge_pillars = !o.no_merge;
+    if (o.raft == "none") tc.raft = RaftStyle::None;
+    else if (o.raft == "full") tc.raft = RaftStyle::Full;
+    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads, full or none");
+    const SupportTree tree =
+        buildSupportTree(mesh, pts, tc, minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h));
+    const TriangleMesh sup = tree.mesh(tc);
+    const LayerStack sup_layers = sup.empty() ? LayerStack{} : sliceModel(sup, layer_h);
+    const LayerStack print = sup.empty() ? *model_layers : unionLayers(*model_layers, sup_layers);
+
+    StabilityInput in;
+    in.print = &print;
+    in.model = model_layers.get();
+    if (!sup.empty()) in.supports = &sup_layers;
+    in.model_graph = model_parts;
+    for (const Head& h : tree.heads) in.tips.push_back({h.contact, h.spec.tip_diameter});
+    // A support that stands on the model does so on a tip turned upside
+    // down; a stub (where no head fits) is as wide as its tip at both ends.
+    for (const Pillar& p : tree.pillars)
+        if (p.on_model) in.tips.push_back({p.anchor_contact, p.foot_tip, true});
+    for (const Rod& s : tree.stubs) in.tips.push_back({s.b, s.diameter, true});
+    StabilityConfig sc = stabilityConfig(cfg);
+    sc.replays = o.replays;
+    sc.threads = o.threads;
+    if (o.resin > 0) sc.bulk_factor = o.resin;
+    if (o.steepness > 0) sc.steepness = o.steepness;
+    if (o.cup_pull >= 0) sc.cup_pull = o.cup_pull;
+    if (o.shape >= 0) sc.shape_effect = o.shape;
+    const StabilityResult res = analyzeStability(in, sc);
+
+    r["file"] = path;
+    r["placement"] = placementJson(place, popts.gen.on_plate, layer_h);
+    r["points"] = pts.size();
+    r["heads"] = tree.heads.size();
+    r["dropped_points"] = tree.dropped_points;
+    r["stability"] = stabilityJson(res, sc);
+    if (!o.picture.empty()) {
+        int w = 0, h = 0;
+        const std::vector<std::uint8_t> rgb = stabilityPicture(res, w, h);
+        if (w > 0) writePngRgb(o.picture, w, h, rgb);
+        r["picture"] = o.picture;
+        r["picture_key"] = "Seen through from the front (left) and the side (right), plate at the bottom. Top row: "
+                           "chance of not printing. Bottom row: chance that a break starts there, listed places "
+                           "marked. Light grey supports, grey model under 1 %, yellow 1-5 %, orange 5-20 %, red "
+                           "20-50 %, dark red over 50 %.";
+    }
+    if (!o.report.empty()) std::ofstream(o.report) << r.dump(2) << "\n";
+    // On the terminal, without the per-layer list.
+    r["stability"].erase("closeness_by_layer");
+    std::cout << r.dump(2) << "\n";
+    return 0;
+}
+
 struct OrientCli {
     int directions = 64, finalists = 6, top = 3;
     std::vector<double> visible_from;  // flattened triples, model frame
@@ -973,6 +1072,32 @@ int main(int argc, char** argv) {
     support->add_flag("--no-validate", sopts.no_validate, "Skip the floating-island check");
     support->add_flag("--no-merge", sopts.no_merge, "Keep one pillar per head cluster (no branching trunks)");
 
+    StabilityCli stcli;
+    auto* stability = app.add_subcommand(
+        "stability", "Replay the print layer by layer: what each layer's pull does to it, and what is likely not to print");
+    stability->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
+    addPlacement(stability, place);
+    stability->add_option("--layer", layer_h, "Layer height the print file will use (mm)");
+    stability->add_option("--density", popts.density, "Support density (1 = default)");
+    addGenOptions(stability, popts.gen);
+    stability->add_option("--cosmetic", popts.cosmetic, "Cosmetic regions JSON");
+    stability->add_option("--points", stcli.points_in, "Use these points (e.g. edited) instead of generating");
+    stability->add_option("--raft", stcli.raft, "pads (default), full or none");
+    stability->add_flag("--no-merge", stcli.no_merge, "Keep one pillar per head cluster (no branching trunks)");
+    stability->add_option("--report", stcli.report, "Report JSON (with how close the weakest joint was, layer by layer)");
+    stability->add_option("--picture", stcli.picture, "Picture PNG: the print seen through, coloured by chance");
+    stability->add_option("--replays", stcli.replays, "Replays with strengths drawn at random (default 500)");
+    stability->add_option("--resin", stcli.resin,
+                          "The model's own resin across layers, per mm2, as a multiple of a tip contact's "
+                          "(default 1; NOT MEASURED)");
+    stability->add_option("--steepness", stcli.steepness,
+                          "How sharply 'holds' turns into 'breaks' (default 7; published 5 to 11)");
+    stability->add_option("--cup-pull", stcli.cup_pull,
+                          "Suction over a cup's opening as a multiple of the pull on resin (default 4; NOT MEASURED)");
+    stability->add_option("--shape-effect", stcli.shape,
+                          "0 (default): pull by area alone; 1: thin outlines pull less (Pan et al. 2017)");
+    stability->add_option("--threads", stcli.threads, "Worker threads (0 = all cores)");
+
     OrientCli ocli;
     auto* orient = app.add_subcommand("orient", "Search build orientations; prints the best --rotate values");
     orient->add_option("model", in_path, "STL, OBJ or 3MF file")->required()->check(CLI::ExistingFile);
@@ -1050,7 +1175,7 @@ int main(int argc, char** argv) {
         if (*repair) return cmdRepair(in_path, repair_out);
         if (*slice) return cmdSlice(in_path, place, layer_h, png_dir, png_px, every, json_out);
         if (*coupon) return cmdCoupon(coupon_kind, coupon_out, layer_h, png_dir);
-        if ((*points || *support || *abplate) && popts.gen.on_plate) place.elevate = 0;
+        if ((*points || *support || *abplate || *stability) && popts.gen.on_plate) place.elevate = 0;
         if (*abplate) return cmdABPlate(in_path, place, layer_h, popts, abcli);
         if (*points) return cmdPoints(in_path, place, layer_h, popts);
         if (*orient) return cmdOrient(in_path, place, layer_h, ocli);
@@ -1062,6 +1187,11 @@ int main(int argc, char** argv) {
             const bool place_given = support->count("--rotate") + support->count("--elevate") +
                                          support->count("--scale") > 0;
             return cmdSupport(in_path, place, layer_h, popts, sopts, place_given);
+        }
+        if (*stability) {
+            const bool place_given = stability->count("--rotate") + stability->count("--elevate") +
+                                         stability->count("--scale") > 0;
+            return cmdStability(in_path, place, layer_h, popts, stcli, place_given);
         }
         if (*render) return cmdRender(in_path, place, render_points, render_out, az, el, render_size);
         if (*calibrate) return cmdCalibrate(plate_kind, plate_out, manifest_out, csv_out, seed, replicates);

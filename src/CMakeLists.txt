@@ -39,6 +39,8 @@ add_library(fruit_core
   support/SupportValidator.cpp
   support/OrientationSearch.cpp
   support/SupportSettings.cpp
+  stability/Stability.cpp
+  stability/StabilityReport.cpp
   calibration/Coupons.cpp
   calibration/CalibrationPlates.cpp
   calibration/CalibrationFit.cpp

@@ -26,6 +26,43 @@ double perimeter(const Path& p) {
     return len;
 }
 
+AreaMoments areaMoments(const Paths& p) {
+    // Green's theorem, edge by edge, about the first point: sums of numbers
+    // of the outline's own size, not of its distance from the plate's centre.
+    const Path* first = nullptr;
+    for (const Path& path : p)
+        if (!path.empty()) { first = &path; break; }
+    AreaMoments m;
+    if (!first) return m;
+    const Vec2 o = toVec(first->front());
+    double a2 = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+    for (const Path& path : p) {
+        const size_t n = path.size();
+        if (n < 3) continue;
+        for (size_t i = 0; i < n; ++i) {
+            const Vec2 a = toVec(path[i]) - o, b = toVec(path[(i + 1) % n]) - o;
+            const double c = cross(a, b);
+            a2 += c;
+            sx += (a.x + b.x) * c;
+            sy += (a.y + b.y) * c;
+            sxx += (a.x * a.x + a.x * b.x + b.x * b.x) * c;
+            syy += (a.y * a.y + a.y * b.y + b.y * b.y) * c;
+            sxy += (a.x * b.y + 2 * a.x * a.y + 2 * b.x * b.y + b.x * a.y) * c;
+        }
+    }
+    const double area = a2 / 2;
+    if (!(std::abs(area) > 1e-14)) return m;
+    const double cx = sx / (6 * area), cy = sy / (6 * area);
+    // A clockwise outline has all its sums negated: the centre is the same, the rest turns round.
+    const double sign = area < 0 ? -1.0 : 1.0;
+    m.area = area * sign;
+    m.centroid = o + Vec2{cx, cy};
+    m.sxx = std::max(0.0, (sxx / 12 - area * cx * cx) * sign);
+    m.syy = std::max(0.0, (syy / 12 - area * cy * cy) * sign);
+    m.sxy = (sxy / 24 - area * cx * cy) * sign;
+    return m;
+}
+
 BBox2 bbox(const Path& p) {
     BBox2 b;
     for (const auto& pt : p) b.extend(toVec(pt));

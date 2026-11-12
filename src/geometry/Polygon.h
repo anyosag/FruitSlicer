@@ -62,6 +62,15 @@ using ExPolygons = std::vector<ExPolygon>;
 double area(const Path& p);   // signed, mm²
 double area(const Paths& p);  // signed sum, mm²
 double perimeter(const Path& p);  // mm
+
+// Area, centre and second moments of (already unioned, NonZero) paths: outer
+// rings counter-clockwise, holes clockwise, so holes count as holes.
+struct AreaMoments {
+    double area = 0;                   // mm²
+    Vec2 centroid;                     // mm
+    double sxx = 0, syy = 0, sxy = 0;  // ∫(x−cx)², ∫(y−cy)², ∫(x−cx)(y−cy) dA about the centre, mm⁴
+};
+AreaMoments areaMoments(const Paths& p);
 BBox2 bbox(const Path& p);
 BBox2 bbox(const Paths& p);
 
