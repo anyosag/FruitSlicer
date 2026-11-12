@@ -415,6 +415,14 @@ Each point gets:
   aside when the straight drop would brush a wall or land on a face steeper
   than 60°. That case is reported because it marks an upper surface
   (`anchor_drop` limits how far down the model may be; 0 turns it off);
+- a gap to the model everywhere but at the tip: shafts, bridges, braces and
+  feet stay 0.15 mm clear of it. A pillar's foot flares to 3 mm where it
+  stands, but only as far as the room beside the model allows, so a pillar
+  next to a wall gets a narrower foot instead of one that cuts into the wall.
+  A foot that stands on the plate itself (no raft) keeps 0.5 mm, because the
+  first layers are cured much longer and come out wider than drawn (an
+  assumption, not measured); one with no room for that anywhere is built at
+  the shaft's gap and reported ("Feet close to the model");
 - bracing between tall pillars, those on the raft with each other and those
   on the model with each other, kept out of the 2 mm flex zone below the
   heads so the tips bend and snap off at the part;

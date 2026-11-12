@@ -5,8 +5,11 @@
 //
 //   point --pinhead--> junction --(bridge ≤ 45°)--> pillar --> base cone --> raft
 //
-// Heads follow the surface normal clamped to 45° from vertical, searching
-// other directions when the head or its drop would hit the model. Up to
+// A support touches the model at its tip and nowhere else: shafts, bridges,
+// braces and feet keep a gap to it (a support that stands on the model does so
+// on a second tip). Heads follow the surface normal clamped to 45° from
+// vertical, searching other directions when the head or its drop would hit
+// the model. Up to
 // `max_heads_per_pillar` heads share a vertical pillar through 45° bridges;
 // a head with no clear drop and no reachable pillar stands on the model
 // below, however far down that is, on a reversed pinhead as wide as its own
@@ -41,6 +44,12 @@ struct TreeConfig {
     double head_length = 1.0;          // contact → junction cone length
     double flex_zone = 2.0;            // no bracing within this distance below a junction
     double clearance = 0.15;           // min distance from support to model (except at the tip)
+    // The gap a foot that stands on the plate itself keeps to the model. Wider
+    // than `clearance`, because the first layers are cured much longer and
+    // come out wider than drawn: a foot nearer than this may print joined to
+    // the model. ASSUMPTION (0.5 mm), not measured. With a raft the foot
+    // stands above those layers and keeps `clearance`.
+    double foot_clearance = 0.5;
     double max_bridge_length = 5.0;    // horizontal reach of a 45° bridge to a pillar
     int max_heads_per_pillar = 3;
     double brace_min_height = 15.0;    // brace pillars taller than this
@@ -96,6 +105,10 @@ struct Pillar {
     Vec2 xy;
     double top = 0, bottom = 0;  // z range of the shaft
     double diameter = 1.0;
+    // How wide its foot is where it stands on the raft or the plate: the
+    // tree's base_diameter where there is room, less beside the model, so the
+    // foot keeps its gap as the shaft does. 0: the tree's base_diameter.
+    double base_diameter = 0;
     std::vector<int> heads;
     int bridges = 0;
     bool on_model = false;       // stands on the model (anchor) instead of the raft

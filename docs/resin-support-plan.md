@@ -257,6 +257,19 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   up but adds nothing to what holds the print on the raft. The plan still
   counts it while placing tips; after the tree, `layersShortOfRaftHold` joins
   what each one ties and reports the layers the raft's own tips can't hold.
+- **Feet cut into the model (2026-11-12, from a print file of the user's).**
+  A pillar's shaft was tested against the model, its foot was not: the foot
+  flares to 3 mm at the bottom, so a pillar within 1.65 mm of a wall had its
+  foot inside the wall. On two parts laid flat on the plate (rings with
+  mounting tabs), every pillar beside a tab was fused to it over the first
+  millimetre, by up to 1.0 mm. The shaft test itself used four rays, which a
+  wall can pass between: one shaft stood 0.02 mm from a wall. Now the shaft
+  is measured along its length, and the foot is as wide as the room allows
+  (`Pillar::base_diameter`, `TreeConfig::foot_clearance`). On those parts the
+  nearest foot is 0.50 mm from the model and no tip is lost.
+  Not changed: a tip so low that its head stands on the plate itself is still
+  within 0.2 to 0.5 mm of the model below its tip, which may join on in the
+  first layers.
 - **A column where no head fits (2026-11-12).** F-01's island (inside the
   lid's threaded bore, 0.5 mm above another face) could not take a head in any
   direction, so the lid always had one part starting in mid-air. A straight

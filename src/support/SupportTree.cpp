@@ -79,7 +79,11 @@ private:
         }
         return true;
     }
-    bool dropClear(const Vec3& from, double r) const {
+    // A shaft of radius `r` straight down from `from` keeps its gap to the
+    // model all the way to where its foot starts. Rays first (cheap, and they
+    // see anything under the shaft down to the raft), then the distance along
+    // the shaft itself: four rays miss a wall that passes between them.
+    bool shaftClear(const Vec3& from, double r) const {
         const double bottom = out_.raft_top;
         if (from.z <= bottom) return true;
         if (tree_.anyHit(from, {0, 0, -1}, from.z - bottom)) return false;
@@ -89,7 +93,30 @@ private:
             const Vec3 o = from + Vec3{std::cos(a) * rr, std::sin(a) * rr, 0};
             if (tree_.anyHit(o, {0, 0, -1}, from.z - bottom)) return false;
         }
-        return true;
+        const Vec3 foot_top{from.x, from.y, bottom + cfg_.base_height};
+        return from.z <= foot_top.z || segmentClear(from, foot_top, r);
+    }
+    // The gap a pillar's foot keeps to the model.
+    double footGap() const {
+        return cfg_.raft == RaftStyle::None ? std::max(cfg_.clearance, cfg_.foot_clearance) : cfg_.clearance;
+    }
+    // The widest foot (its diameter where it stands) a pillar of shaft radius
+    // `r` can have at `xy` and keep that gap: the tree's base_diameter where
+    // there is room, less beside the model, under 2r where not even a straight
+    // foot fits. The foot is a cone from that width up to the shaft's.
+    double footRoom(const Vec2& xy, double r) const {
+        const double z0 = out_.raft_top, h = cfg_.base_height, gap = footGap();
+        double d = cfg_.base_diameter;
+        for (double z = z0; z < z0 + h - 1e-9; z += 0.1) {
+            const double t = (z - z0) / h;
+            const double room = tree_.closest({xy.x, xy.y, z}).distance - gap;  // the radius allowed at this height
+            d = std::min(d, 2 * (room - r * t) / (1 - t));
+        }
+        return std::max(0.0, d);
+    }
+    // A pillar can stand under `from`: its shaft is clear and a foot fits.
+    bool dropClear(const Vec3& from, double r) const {
+        return shaftClear(from, r) && footRoom(from.xy(), r) >= 2 * r - 1e-9;
     }
     bool headClear(const Vec3& contact, const Vec3& dir, const PinheadSpec& s) const {
         // Rays along the cone surface, starting just outside the part: they
@@ -236,7 +263,7 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
             if (!headClear(p.pos, d, si)) continue;
             const Vec3 front = p.pos + d * (si.tip_diameter / 2 - si.penetration);
             const Vec3 j = front + d * (si.tip_diameter / 2 + si.head_length + si.shaft_diameter / 2);
-            if (dropClear(j, si.shaft_diameter / 2)) {
+            if (shaftClear(j, si.shaft_diameter / 2)) {
                 h = Head{-1, p.pos, d, j, si};
                 drop_ok = true;
                 return true;
@@ -453,6 +480,7 @@ void Builder::mergePillars() {
         C.top = bm.z;
         C.bottom = out_.raft_top + cfg_.base_height;
         C.diameter = std::min(cfg_.max_trunk_diameter, std::hypot(A.diameter, B.diameter));
+        C.base_diameter = std::max(C.diameter, std::min(cfg_.base_diameter, footRoom(C.xy, C.diameter / 2)));
         C.tips = A.tips + B.tips;
         out_.pillars.push_back(C);
     }
@@ -519,12 +547,16 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
             continue;
         }
         if (attachToPillar(hi)) continue;
-        if (drop_ok) {
+        // Straight down, on a foot as wide as the room beside the model allows.
+        const double shaft_r = h.spec.shaft_diameter / 2;
+        const double room = drop_ok ? footRoom(h.junction.xy(), shaft_r) : 0;
+        if (drop_ok && room >= 2 * shaft_r - 1e-9) {
             newPillar(hi, false);
+            out_.pillars.back().base_diameter = std::min(cfg_.base_diameter, room);
             continue;
         }
         Vec3 route_end;
-        if (groundRoute(h.junction, h.spec.shaft_diameter / 2, cfg_.max_route_length, route_end)) {
+        if (groundRoute(h.junction, shaft_r, cfg_.max_route_length, route_end)) {
             // Diagonal bridge to a new pillar standing where the drop is clear.
             out_.bridges.push_back({h.junction, route_end, h.spec.shaft_diameter});
             Pillar P;
@@ -532,9 +564,22 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
             P.top = route_end.z;
             P.bottom = out_.raft_top + cfg_.base_height;
             P.diameter = h.spec.shaft_diameter;
+            P.base_diameter = std::min(cfg_.base_diameter, footRoom(P.xy, shaft_r));
             P.heads.push_back(hi);
             P.bridges = 1;
             out_.pillars.push_back(P);
+            continue;
+        }
+        if (drop_ok) {
+            // Its shaft is clear but nowhere in reach has room for a foot (the
+            // model is right beside it down at the plate): a straight foot, at
+            // the shaft's own gap, and it is reported.
+            newPillar(hi, false);
+            out_.pillars.back().base_diameter = h.spec.shaft_diameter;
+            std::ostringstream m;
+            m << "support's foot stands " << room / 2 + footGap() - shaft_r << " mm or less from the model on the "
+              << "plate; the first layers cure wider than drawn, so it may stick to the model there";
+            warn("foot_near_model", m.str(), {h.junction.x, h.junction.y, out_.raft_top});
             continue;
         }
         // Stand on the model below: straight down, or on the nearest spot a
@@ -665,7 +710,8 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
             a.shaft_diameter = P.diameter;
             appendPinhead(m, P.anchor_contact, {0, 0, 1}, a, q);
         } else {
-            appendBaseCone(m, bottom, P.diameter, cfg.base_diameter, std::max(0.0, raft_top - 0.1), q);
+            const double base = P.base_diameter > 0 ? std::max(P.base_diameter, P.diameter) : cfg.base_diameter;
+            appendBaseCone(m, bottom, P.diameter, base, std::max(0.0, raft_top - 0.1), q);
             if (cfg.raft == RaftStyle::Pads) {  // (Full has one slab for all, below)
                 const double r = cfg.base_diameter / 2 + cfg.pad_brim;
                 appendFrustum(m, {P.xy.x, P.xy.y, 0}, r, {P.xy.x, P.xy.y, raft_top}, std::max(0.5, r - 0.4),

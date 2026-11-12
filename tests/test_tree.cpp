@@ -153,7 +153,96 @@ double shaftGap(const AabbTree& tree, const Pillar& P) {
     return gap - P.diameter / 2;
 }
 
+// How near the model a pillar's foot comes, beyond its own surface: the cone
+// from its width where it stands up to the shaft's.
+double footGapOf(const AabbTree& tree, const Pillar& P, const TreeConfig& tc, double raft_top) {
+    const double base = P.base_diameter > 0 ? std::max(P.base_diameter, P.diameter) : tc.base_diameter;
+    double gap = 1e9;
+    for (double z = raft_top + 0.01; z < raft_top + tc.base_height; z += 0.05) {
+        const double t = (z - raft_top) / tc.base_height;
+        gap = std::min(gap, tree.closest({P.xy.x, P.xy.y, z}).distance - (base / 2 + (P.diameter / 2 - base / 2) * t));
+    }
+    return gap;
+}
+
 }  // namespace
+
+TEST_CASE("on the plate, a support's foot keeps clear of the model beside it", "[tree]") {
+    // A block standing on the plate with two shelves 3 mm up, like mounting
+    // tabs: one sticks out 6 mm, the other only 1.6 mm, so the supports under
+    // it stand right beside the block's wall.
+    TriangleMesh m = makeBox({0, 0, 0}, {30, 8, 10});
+    m.append(makeBox({8, -6, 3}, {22, 0.5, 6}));
+    m.append(makeBox({8, 7.5, 3}, {22, 9.6, 6}));
+    placeOnPlate(m, {0, 0, 0}, 0.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    cfg.on_plate = true;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    TreeConfig tc;
+    tc.raft = RaftStyle::None;
+    const SupportTree t = buildSupportTree(m, pts, tc, 0.0);
+    REQUIRE(t.trunks() > 0);
+    CHECK(t.dropped_points == 0);
+    const AabbTree tree(m);
+    std::size_t reported = 0, narrowed = 0, full = 0;
+    for (const auto& w : t.warnings) reported += w.code == "foot_near_model";
+    for (const auto& P : t.pillars) {
+        if (P.on_model || P.merged) continue;
+        // The shaft keeps the gap, and so does the foot: never into the model.
+        CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
+        const double gap = footGapOf(tree, P, tc, t.raft_top);
+        CHECK(gap >= tc.clearance - 1e-6);
+        // On the plate the foot keeps the wider gap, unless it is one of the
+        // reported ones with no room anywhere.
+        if (reported == 0) CHECK(gap >= tc.foot_clearance - 1e-6);
+        REQUIRE(P.base_diameter > 0);
+        CHECK(P.base_diameter >= P.diameter - 1e-9);
+        CHECK(P.base_diameter <= tc.base_diameter + 1e-9);
+        narrowed += P.base_diameter < tc.base_diameter - 1e-6;
+        full += P.base_diameter > tc.base_diameter - 1e-6;
+    }
+    // Beside the wall the feet are narrower; out under the shelf's far edge
+    // they have their full width.
+    CHECK(narrowed > 0);
+    CHECK(full > 0);
+    // Model and supports together: nothing floats, and the model's own
+    // outline is not grown by a foot (the two only meet at the tips).
+    CHECK(validateSupported(m, t.mesh(tc), cfg.layer_height, cfg.link_grow).floating.empty());
+}
+
+TEST_CASE("with a low lift, a foot on the raft keeps the gap to a low part of the model", "[tree]") {
+    // A step 1.5 mm above the plate with a shelf above it: supports under the
+    // shelf stand beside the step, whose bottom is level with their feet.
+    TriangleMesh m = makeBox({0, 0, 0}, {30, 8, 12});
+    m.append(makeBox({8, -6, 5}, {22, 0.5, 8}));
+    placeOnPlate(m, {0, 0, 0}, 1.5);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    TreeConfig tc;
+    const SupportTree t = buildSupportTree(m, pts, tc, PrinterProfile::saturn4Ultra16k().minRaftThickness());
+    REQUIRE(t.trunks() > 0);
+    const AabbTree tree(m);
+    for (const auto& P : t.pillars) {
+        if (P.on_model || P.merged) continue;
+        CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
+        CHECK(footGapOf(tree, P, tc, t.raft_top) >= tc.clearance - 1e-6);
+    }
+}
+
+TEST_CASE("a pillar's shaft keeps its gap to a thin wall beside it", "[tree]") {
+    // A plate with a thin fin hanging under it: a wall that four rays around
+    // a shaft can pass on either side of.
+    TriangleMesh m = makeBox({0, 0, 10}, {30, 30, 12});
+    m.append(makeBox({14.8, 0, 2}, {15.2, 30, 10.2}));
+    const Built b = build(m);
+    CHECK(b.tree.dropped_points == 0);
+    const AabbTree tree(b.model);
+    TreeConfig tc;
+    for (const auto& P : b.tree.pillars)
+        if (!P.on_model) CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
+}
 
 TEST_CASE("a ceiling the raft can't be reached from is held from the model below", "[tree]") {
     // Inside the cap the floor is 26 mm under the ceiling: every tip there

@@ -370,6 +370,9 @@ const Known kKnown[] = {
      "There was no room for a support head here, so the tip was left out."},
     {"anchor_on_model", SupportProblem::Level::Review, "Supports standing on the model",
      "Where nothing reached the raft, a support stands on the model instead. It leaves a mark there."},
+    {"foot_near_model", SupportProblem::Level::Review, "Feet close to the model",
+     "A support stands on the plate less than half a millimetre from the model. The first layers cure wider than "
+     "drawn, so its foot may stick to the model there. Turning or moving the part, or a raft, gives it room."},
     {"capacity_deficit", SupportProblem::Level::Review, "Layers short of hold",
      "Some layers are bigger than their tips can hold while they print. Turning the part a little, or one more "
      "tip, usually fixes it."},
