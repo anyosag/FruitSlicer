@@ -13,7 +13,6 @@
     {"advanced": "open"}, {"shot": "c3a2_job_advanced"}, {"advanced": "close"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
     {"step": "print"}, {"shot": "c3a2_job_print"},
-    {"screen": "resins"}, {"resin_print": {"exposure": 2.0}}, {"frames": 2}, {"shot": "c3a2_resin_open_job"},
-    {"resin_print": {"adaptive": 0.2}}, {"frames": 2}, {"shot": "c3a2_resin_adaptive"}
+    {"screen": "resins"}, {"resin_print": {"exposure": 2.0}}, {"frames": 2}, {"shot": "c3a2_resin_open_job"}
   ]
 }

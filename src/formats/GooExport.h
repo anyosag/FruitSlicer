@@ -5,13 +5,10 @@
 // slice every layer, rasterize with exact anti-aliasing, run-length encode
 // in parallel, write in order.
 
-#include <cstddef>
 #include <string>
-#include <vector>
 
 #include "core/JobControl.h"
 #include "formats/GooFile.h"
-#include "layers/AdaptiveLayers.h"
 #include "layers/LayerStack.h"
 #include "mesh/TriangleMesh.h"
 #include "raster/Rasterizer.h"
@@ -30,9 +27,7 @@ struct GooExportOptions {
 };
 
 struct GooExportResult {
-    uint32_t layers = 0;            // in the file
-    uint32_t thin_layers = 0;       // before any were merged (= layers when none were)
-    uint32_t merged_layers = 0;     // of `layers`, those made of more than one thin layer
+    uint32_t layers = 0;
     double volume_mm3 = 0;          // from rasterized coverage
     uint32_t print_time_s = 0;
     uint64_t bytes = 0;
@@ -52,44 +47,6 @@ GooExportResult exportGoo(const TriangleMesh& mesh, GooHeader header, const Rast
 GooExportResult exportGooLayers(const LayerStack& layers, const TriangleMesh* preview, GooHeader header,
                                 const RasterGrid& grid, const GooExportOptions& o, const std::string& path,
                                 const JobControl& ctl = JobControl::none());
-
-// Adaptive layers (see layers/AdaptiveLayers.h) for exportGooAdaptive.
-struct AdaptiveSettings {
-    int multiplier = 1;             // thickest layer in thin layers; 1: no merging
-    double light_depth = 0.10;      // mm, for the longer exposures
-    std::size_t protected_layers = 0;  // never merged: the height correction's layers (bottom and transition ones always are)
-};
-
-// What exportGooAdaptive will write, planned without rasterizing anything:
-// the groups of thin layers and each file layer's definition. The file and the
-// estimate before it is written both come from this.
-struct AdaptiveFilePlan {
-    std::vector<LayerGroup> groups;
-    std::vector<GooLayerDef> defs;  // one per group (empty when nothing merges: the equal-layers file)
-    uint32_t layers = 0;            // in the file
-    uint32_t thin_layers = 0;
-    uint32_t merged_layers = 0;
-    uint32_t print_time_s = 0;
-    bool merges() const { return merged_layers > 0; }
-};
-
-// Plans the file of `thin_layers` equal thin layers (the header's height)
-// with `model`'s outline (the model alone) deciding where they merge.
-AdaptiveFilePlan planAdaptiveFile(std::size_t thin_layers, const LayerStack& model, const GooHeader& header,
-                                  const GooExportOptions& o, const AdaptiveSettings& a,
-                                  const JobControl& ctl = JobControl::none());
-
-// Writes `full` (model and supports together, equal thin layers) with
-// neighbouring thin layers merged where `model`'s outline (the model alone)
-// doesn't change: per-layer z and exposure, advance_mode set. When nothing
-// merges, the file is what exportGooLayers writes. Reports stage "rasterize".
-GooExportResult exportGooAdaptive(const LayerStack& full, const LayerStack& model, const TriangleMesh* preview,
-                                  GooHeader header, const RasterGrid& grid, const GooExportOptions& o,
-                                  const AdaptiveSettings& a, const std::string& path,
-                                  const JobControl& ctl = JobControl::none());
-
-// The same for a file's own layers: each one's exposure and waits, plus the tilt motion.
-double estimatePrintSeconds(const std::vector<GooLayerDef>& layers, const GooExportOptions& o);
 
 // Print time the printer will take for `layers` layers with `h`'s settings:
 // each layer's exposure and waits, plus the tilt motion per layer.

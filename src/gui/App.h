@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "Document.h"
-#include "FileLayers.h"
 #include "Calibration.h"
 #include "JobFile.h"
 #include "LayFace.h"
@@ -364,26 +363,13 @@ public:
     void useSample(const std::string& path);
     void setExposures(double normal_s, double bottom_s);  // typed; 0 keeps the sample's
     std::shared_ptr<const PrintPlan> printPlan();         // for the current layers and settings
-    // With adaptive layers on: what saving will write, once worked out in the
-    // background (`numbers`), or that it is being worked out or could not be.
-    struct AdaptiveView {
-        const PrintEstimate* numbers = nullptr;
-        bool working = false, failed = false;
-    };
-    AdaptiveView adaptiveView();  // all false when adaptive layers are off or there is nothing to plan
-    // The adaptive view of the Layers step: adaptive layers on, worked out for these layers and
-    // settings, and some layers merged. Then the print file's own layers (`file_layers`) are shown
-    // instead of the 0.05 mm ones; null in every other case.
-    const PrintEstimate* fileLayersView();
-    // The file layer shown in that view (and the 0.05 mm layer at its height): 0-based.
-    LayerPick shownFile(const PrintEstimate& view);
     std::string printBlocker();                           // what stops saving, in a few words ("" if nothing)
     void savePrint();                                     // asks where (and once about orientation)
     void savePrintAfterAsking();                          // "Save anyway" in the orientation question
     void savePrintTo(const std::string& path, const std::string& drive, bool to_send = false);
     void ejectDrive();                         // the drive the print file was saved to
     void ejectDrive(const std::string& path);  // any drive of drives(), by where it is mounted
-    bool canEject() const;                     // nothing is being written (background estimates give way)
+    bool canEject() const;                     // nothing is being written (the collisions check gives way)
     void revealSaved();   // the saved file in Finder
     void dismissSaved();  // leave the "saved" page for the Print step
     void exportStl(bool supports_only);
@@ -526,10 +512,6 @@ public:
     std::shared_ptr<const fruit::GooCompareResult> gooComparison() const { return goo_comparison_; }
     // Layers.
     void setLayer(int index);  // 0-based; clamped
-    // In the adaptive view: shows a file layer (0-based; clamped), or the one at a height (mm); the
-    // 0.05 mm layer at its mid-height becomes the current one too.
-    void setFileLayer(int index);
-    void setFileLayerAtHeight(double z);
     void setShowBelow(bool show);
     // The current layer drawn for an area of `max_w` × `max_h` pixels, as a
     // texture (0 while there is none); `image` describes it.
@@ -655,23 +637,9 @@ private:
     int scene_key_ = 0;
     std::shared_ptr<const SupportResult> sliced_for_;  // last slicing started (it may have been cancelled)
     int sliced_base_ = -1;                             // its height correction, in layers
-    // The adaptive estimate last started: for these layers and settings
-    // (once per combination, as with the cut above; one that failed or was cancelled is not started again).
-    struct EstimateKey {
-        std::shared_ptr<const LayerResult> layers;
-        PrintEdits edits;
-        std::string sample_path;
-        bool operator==(const EstimateKey&) const = default;
-    };
-    std::optional<EstimateKey> estimate_started_;
-    std::optional<EstimateKey> estimate_last_;  // the combination the tries below count for
-    int estimate_tries_ = 0;
-    bool estimate_failed_ = false;
-    bool startEstimate();  // starts it when one is wanted and nothing is busy
     unsigned layer_tex_ = 0;
     LayerImage layer_image_;
     std::shared_ptr<const LayerResult> layer_tex_result_;
-    std::shared_ptr<const fruit::LayerStack> layer_tex_stack_;  // the layers the picture is from (the file's or the job's)
     int layer_tex_index_ = -1, layer_tex_w_ = 0, layer_tex_h_ = 0;
     bool layer_tex_below_ = false;
     std::vector<platform::Volume> drives_;

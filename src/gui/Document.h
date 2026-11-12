@@ -80,9 +80,6 @@ struct LayerState {
     std::shared_ptr<const LayerResult> result;
     std::shared_ptr<const SupportResult> for_supports;  // the supports it was cut with
     int current = -1;         // layer shown (0-based); -1 = the biggest
-    // With adaptive layers worked out, the layers shown are the print file's own: the file layer
-    // last chosen (0-based; -1: none), kept at the same height as `current` (see shownFileLayer).
-    int file_layer = -1;
     bool show_below = false;  // the layer below, dimmed, under this one
     double scroll_carry = 0;  // trackpad scrolling over the chart that has not yet made a whole layer
 
@@ -94,26 +91,9 @@ struct LayerState {
     }
 };
 
-// What saving would write with adaptive layers, worked out in the background
-// for these cut layers and these print settings (see estimatePrint).
-struct AdaptiveEstimate {
-    std::shared_ptr<const LayerResult> from;  // the layers it was worked out for
-    PrintEdits edits;
-    std::string sample_path;
-    PrintEstimate numbers;
-};
-
 // The Print step: the print file's settings and the last save.
 struct PrintState {
     PrintSettings settings;
-    std::shared_ptr<const AdaptiveEstimate> estimate;  // the latest, which may be out of date
-    // The estimate when it is for these layers and the settings as they are now.
-    const PrintEstimate* estimateFor(const std::shared_ptr<const LayerResult>& layers) const {
-        return estimate && layers && estimate->from == layers && estimate->edits == settings &&
-                       estimate->sample_path == settings.sample_path
-                   ? &estimate->numbers
-                   : nullptr;
-    }
     std::shared_ptr<const SaveResult> saved;   // the last file written and checked
     std::shared_ptr<const LayerResult> saved_from;  // the layers it was written from
     std::string drive;                          // where it went when on a removable drive ("" otherwise)

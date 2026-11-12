@@ -17,7 +17,6 @@ add_library(fruit_core
   mesh/ModelCheck.cpp
   slice/MeshSlicer.cpp
   layers/LayerStack.cpp
-  layers/AdaptiveLayers.cpp
   layers/IslandGraph.cpp
   layers/HollowAnalysis.cpp
   layers/Hollow.cpp

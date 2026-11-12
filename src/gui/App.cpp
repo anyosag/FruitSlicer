@@ -38,11 +38,6 @@
 namespace gui {
 
 namespace {
-// The background job that works out what adaptive layers will save.
-const char* const kEstimateJob = "Working out adaptive layers";
-}  // namespace
-
-namespace {
 std::string settingsFile() { return (std::filesystem::path(platform::dataDir()) / "settings.json").string(); }
 std::string preferencesFile() { return (std::filesystem::path(platform::dataDir()) / "preferences.json").string(); }
 }  // namespace
@@ -652,7 +647,6 @@ void App::maintain() {
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
     // The Collisions check (several parts) gives way: the work below cancels it, and it starts again after.
     const auto busy = [this] { return jobs_.busy() && !checkingCollisions(); };
-    if (doc_ && screen_ == Screen::Job && inLayersMode(step_) && !busy() && startEstimate()) return;
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result
         // and height correction.
@@ -686,7 +680,6 @@ void App::maintain() {
                     d->layers.result = std::make_shared<const LayerResult>(std::move(*out));
                     d->layers.for_supports = sup;
                     d->layers.current = -1;
-                    d->layers.file_layer = -1;
                     log::info("layers: " + std::to_string(d->layers.result->layers->size()) + " in " +
                               std::to_string(d->layers.result->seconds) + " s");
                 });
@@ -1378,92 +1371,6 @@ std::shared_ptr<const PrintPlan> App::printPlan() {
     return plan_;
 }
 
-App::AdaptiveView App::adaptiveView() {
-    AdaptiveView v;
-    if (!doc_ || !doc_->layersFresh()) return v;
-    const auto plan = printPlan();
-    if (!plan || !plan->ready || plan->adaptive <= 1) return v;
-    v.numbers = doc_->print.estimateFor(doc_->layers.result);
-    if (!v.numbers) {
-        const EstimateKey key{doc_->layers.result, doc_->print.settings, doc_->print.settings.sample_path};
-        v.failed = estimate_failed_ && estimate_started_ && *estimate_started_ == key;
-        v.working = !v.failed;
-    }
-    return v;
-}
-
-const PrintEstimate* App::fileLayersView() {
-    const AdaptiveView v = adaptiveView();
-    const PrintEstimate* e = v.numbers;
-    if (!e || e->merged_layers == 0 || !e->file_stack || e->file_layers.empty() || e->file_layers.size() != e->layers)
-        return nullptr;
-    return e;
-}
-
-LayerPick App::shownFile(const PrintEstimate& view) {
-    const LayerResult& r = *doc_->layers.result;
-    const int job = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(r.biggest);
-    return shownFileLayer(view.file_layers, doc_->layers.file_layer, job, r.layers->layer_height,
-                          static_cast<int>(r.layers->size()));
-}
-
-bool App::startEstimate() {
-    const AdaptiveView view = adaptiveView();
-    if (!view.working) return false;
-    EstimateKey key{doc_->layers.result, doc_->print.settings, doc_->print.settings.sample_path};
-    if (estimate_started_ && *estimate_started_ == key) return false;  // once per combination
-    const auto sup = doc_->supports.result;
-    if (!sup) return false;
-    // Not while the saved page shows: the numbers there are the file's own, and
-    // nothing should be busy when the drive is to be ejected.
-    if (doc_->print.saved && doc_->print.saved_from == doc_->layers.result) return false;
-    if (!estimate_last_ || !(*estimate_last_ == key)) {
-        estimate_last_ = key;
-        estimate_tries_ = 0;
-    }
-    ++estimate_tries_;
-    estimate_started_ = key;
-    estimate_failed_ = false;
-    const auto plan = printPlan();
-    auto snap = std::make_shared<const Document>(*doc_);
-    auto out = std::make_shared<PrintEstimate>();
-    std::weak_ptr<Document> target = doc_;
-    jobs_.start(
-        kEstimateJob,
-        [snap, sup, plan, key, out](const fruit::JobControl& ctl) {
-            *out = estimatePrint(*snap, *key.layers, sup->mesh, *plan, ctl);
-        },
-        [this, target, key, out](std::exception_ptr err) {
-            const auto d = target.lock();
-            if (!d) return;
-            if (err) {
-                try {
-                    std::rethrow_exception(err);
-                } catch (const fruit::Cancelled&) {
-                    // Another job took over (a save, say): it starts again when nothing is busy. After
-                    // a few tries it is left alone (it would loop if something stopped it every time),
-                    // and the Print step says the merging is not known.
-                    if (estimate_tries_ < 3) estimate_started_.reset();
-                    else estimate_failed_ = true;
-                } catch (const std::exception& e) {
-                    // Not tried again for these settings; the Print step says so.
-                    estimate_failed_ = true;
-                    log::info(std::string("adaptive layers: could not be worked out: ") + e.what());
-                }
-                return;
-            }
-            auto e = std::make_shared<AdaptiveEstimate>();
-            e->from = key.layers;
-            e->edits = key.edits;
-            e->sample_path = key.sample_path;
-            e->numbers = *out;
-            d->print.estimate = std::move(e);
-            log::info("adaptive layers: " + std::to_string(out->layers) + " of " + std::to_string(out->thin_layers) +
-                      " thin layers");
-        });
-    return true;
-}
-
 std::string App::printBlocker() {
     switch (needFor(Step::Print)) {
         case Need::Nothing: break;
@@ -1980,8 +1887,6 @@ void App::replaceResinSampleFile(const std::string& id, const std::string& goo) 
         PrintEdits kept;
         kept.density = r.print.density;
         kept.height_correction = r.print.height_correction;
-        kept.adaptive = r.print.adaptive;
-        kept.light_depth = r.print.light_depth;
         r.print = kept;
         resin_samples_.erase(r.sample_path);  // the same name may hold another file now
         storeResin(r);
@@ -2654,10 +2559,8 @@ void App::ejectDrive() {
 }
 
 bool App::canEject() const {
-    // Not while a file is being written. The background work that only works
-    // something out (the adaptive estimate, the collisions check) gives way.
-    if (!jobs_.busy()) return true;
-    return checkingCollisions() || jobs_.progress().name == kEstimateJob;
+    // Not while a file is being written; the collisions check gives way.
+    return !jobs_.busy() || checkingCollisions();
 }
 
 void App::ejectDrive(const std::string& path) {
@@ -2737,21 +2640,6 @@ void App::setLayer(int index) {
     doc_->layers.current = std::clamp(index, 0, std::max(0, n - 1));
 }
 
-void App::setFileLayer(int index) {
-    if (!doc_ || !doc_->layers.result) return;
-    const PrintEstimate* v = fileLayersView();
-    if (!v) return;
-    const LayerResult& r = *doc_->layers.result;
-    const LayerPick p = pickFileLayer(v->file_layers, index, r.layers->layer_height, static_cast<int>(r.layers->size()));
-    doc_->layers.file_layer = p.file;
-    doc_->layers.current = p.job;
-}
-
-void App::setFileLayerAtHeight(double z) {
-    const PrintEstimate* v = fileLayersView();
-    if (v) setFileLayer(fileLayerAt(v->file_layers, z));
-}
-
 void App::setShowBelow(bool show) {
     if (doc_) doc_->layers.show_below = show;
 }
@@ -2760,17 +2648,10 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     if (image) *image = nullptr;
     if (!doc_ || !doc_->layers.result) return 0;
     const auto& res = doc_->layers.result;
-    int index = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(res->biggest);
-    // With adaptive layers worked out: the print file's own layer at this height.
-    const PrintEstimate* fv = fileLayersView();
-    std::shared_ptr<const fruit::LayerStack> stack = res->layers;
-    if (fv) {
-        index = shownFile(*fv).file;
-        stack = fv->file_stack;
-    }
+    const int index = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(res->biggest);
     const bool below = doc_->layers.show_below;
-    if (layer_tex_ && layer_tex_result_ == res && layer_tex_stack_ == stack && layer_tex_index_ == index &&
-        layer_tex_below_ == below && layer_tex_w_ == max_w && layer_tex_h_ == max_h) {
+    if (layer_tex_ && layer_tex_result_ == res && layer_tex_index_ == index && layer_tex_below_ == below &&
+        layer_tex_w_ == max_w && layer_tex_h_ == max_h) {
         if (image) *image = &layer_image_;
         return layer_tex_;
     }
@@ -2778,7 +2659,7 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     fruit::BBox3 crop = res->bounds;
     crop.min = crop.min - fruit::Vec3{3, 3, 0};
     crop.max = crop.max + fruit::Vec3{3, 3, 0};
-    layer_image_ = drawLayer(*stack, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
+    layer_image_ = drawLayer(*res->layers, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
     std::vector<unsigned char> rgba(layer_image_.lit.size() * 4, 0);
     for (std::size_t i = 0; i < layer_image_.lit.size(); ++i) {
         const unsigned lit = layer_image_.lit[i];
@@ -2793,7 +2674,6 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     Renderer::freeTexture(layer_tex_);
     layer_tex_ = renderer_.uploadRgba(layer_image_.w, layer_image_.h, rgba);
     layer_tex_result_ = res;
-    layer_tex_stack_ = stack;
     layer_tex_index_ = index;
     layer_tex_below_ = below;
     layer_tex_w_ = max_w;
@@ -2961,17 +2841,6 @@ void App::keys() {
         return;
     }
     if (screen_ == Screen::Job && inLayersMode(step_) && doc_ && doc_->layersFresh()) {
-        if (const PrintEstimate* fv = fileLayersView()) {
-            // The print file's own layers.
-            const int now = shownFile(*fv).file;
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setFileLayer(now + 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setFileLayer(now - 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) setFileLayer(now + 10);
-            if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) setFileLayer(now - 10);
-            if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) setFileLayer(0);
-            if (ImGui::IsKeyPressed(ImGuiKey_End, false)) setFileLayer(1 << 30);
-            return;
-        }
         const int now = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(doc_->layers.result->biggest);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setLayer(now + 1);
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setLayer(now - 1);

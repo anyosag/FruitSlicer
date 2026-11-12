@@ -318,26 +318,28 @@ TEST_CASE("Jobs: the height correction is saved with the print settings; older j
     });
     CHECK(moved.doc->print.settings.height_correction == Approx(0.2));
 
-    // Adaptive layers and the light depth are saved too; older jobs have them off and at the typical value.
-    CHECK(o.doc->print.settings.adaptive == 1);
-    CHECK(o.doc->print.settings.light_depth < 0);
-    doc->print.settings.adaptive = 4;
-    doc->print.settings.light_depth = 0.2;
-    CHECK(o.doc->print.settings.bottom_wait_after_retract < 0);  // older jobs: as the other layers
+    // The bottom layers' own waits are saved too; older jobs have none: as the other layers.
+    CHECK(o.doc->print.settings.bottom_wait_before_lift < 0);
+    CHECK(o.doc->print.settings.bottom_wait_after_retract < 0);
     doc->print.settings.bottom_wait_before_lift = 1;
     doc->print.settings.bottom_wait_after_retract = 10;
-    const auto job2 = (dir() / "adaptive.fruitjob").string();
+    const auto job2 = (dir() / "bottom_waits.fruitjob").string();
     saveJob(job2, *doc);
-    const OpenedJob adaptive = openJob(job2, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
-    CHECK(adaptive.doc->print.settings.adaptive == 4);
-    CHECK(adaptive.doc->print.settings.light_depth == Approx(0.2));
-    CHECK(adaptive.doc->print.settings.bottom_wait_before_lift == Approx(1));
-    CHECK(adaptive.doc->print.settings.bottom_wait_after_retract == Approx(10));
-    const OpenedJob without = rewritten("adaptive_old.fruitjob", [](nlohmann::json& j) {
-        j.at("print").erase("adaptive");
-        j.at("print").erase("light_depth");
+    const OpenedJob waits = openJob(job2, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(waits.doc->print.settings.bottom_wait_before_lift == Approx(1));
+    CHECK(waits.doc->print.settings.bottom_wait_after_retract == Approx(10));
+    const OpenedJob no_waits = rewritten("bottom_waits_old.fruitjob", [](nlohmann::json& j) {
+        j.at("print").erase("bottom_wait_before_lift");
+        j.at("print").erase("bottom_wait_after_retract");
     });
-    CHECK(without.doc->print.settings.adaptive == 1);
-    CHECK(without.doc->print.settings.light_depth < 0);
-    CHECK(lightDepth(without.doc->print.settings) == Approx(0.10));
+    CHECK(no_waits.doc->print.settings.bottom_wait_before_lift < 0);
+    CHECK(no_waits.doc->print.settings.bottom_wait_after_retract < 0);
+
+    // A job saved by a version that had adaptive layers and a light depth still opens; those two keys are ignored.
+    const OpenedJob old_keys = rewritten("adaptive_keys.fruitjob", [](nlohmann::json& j) {
+        j.at("print")["adaptive"] = 4;
+        j.at("print")["light_depth"] = 0.2;
+    });
+    CHECK(old_keys.doc->print.settings.height_correction == o.doc->print.settings.height_correction);
+    CHECK(old_keys.doc->print.settings == o.doc->print.settings);
 }

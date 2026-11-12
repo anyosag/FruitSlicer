@@ -115,9 +115,6 @@ parts::SourceBadge badgeOf(PrintRow::Source s) {
 
 // What a print field is, for its tooltip.
 std::string fieldTip(const PrintField& f) {
-    if (f.key == "adaptive")
-        return "Thickest layer, mm. A value snaps to the nearest height the layer height allows; the layer height itself is off.";
-    if (f.key == "light_depth") return strf("Light depth, mm: from %g to %g", f.lo, f.hi);
     const char* what = f.key == "bottom_layers"        ? "Bottom layers"
                        : f.key == "bottom_exposure"    ? "Bottom exposure, s"
                        : f.key == "transition_layers"  ? "Transition layers"
@@ -149,8 +146,7 @@ void printCard(App& app, const Resin& r, const fruit::GooHeader* sample) {
         e.note = row.note;
         if (row.source == PrintRow::Source::Yours && !row.base.empty()) {
             // Values no print file has are FruitSlicer's own; the bottom layers go back to the other layers' waits.
-            const bool ours = row.key == "density" || row.key == "adaptive" || row.key == "light_depth" ||
-                              row.key == "height_correction";
+            const bool ours = row.key == "density" || row.key == "height_correction";
             const bool as_others = row.key == "bottom_waits" && i > 0 && rows[i - 1].key == "waits" &&
                                    rows[i - 1].value == row.base;
             e.was = (as_others ? "The other layers': " : file && !ours ? "File: " : "FruitSlicer's: ") + row.base;

@@ -14,7 +14,6 @@
 #include "formats/GooFile.h"
 #include "formats/GooSetup.h"
 #include "geometry/BBox.h"
-#include "layers/LayerStack.h"
 #include "mesh/TriangleMesh.h"
 #include "printer/PrinterProfile.h"
 
@@ -43,12 +42,6 @@ struct PrintEdits {
     // mm, >= 0: added under a model standing on the plate (no raft), because
     // the printer squashes the first layers; < 0: FruitSlicer's typical 0.10.
     double height_correction = -1;
-    // The thickest layer the print file may merge up to, as a multiple of the
-    // layer height (1: off; 2, 4, 8), so it survives a change of layer height.
-    int adaptive = 1;
-    // mm, >= 0: how deep light hardens the resin, for the exposure of thicker
-    // layers; < 0: FruitSlicer's typical 0.10.
-    double light_depth = -1;
     bool operator==(const PrintEdits&) const = default;
     bool any() const { return !(*this == PrintEdits{}); }
 };
@@ -71,11 +64,6 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
 double resinDensity(const PrintEdits& e);
 // The height correction, mm: the edited one, else FruitSlicer's typical value.
 double heightCorrection(const PrintEdits& e);
-// The light depth, mm: the edited one, else FruitSlicer's typical value.
-double lightDepth(const PrintEdits& e);
-// The thickest layer, in thin layers of `layer_height`, as the print file
-// would use it (1: no merging): the setting held to the printer's 0.2 mm.
-int adaptiveCount(const PrintEdits& e, double layer_height);
 // Whole layers of `layer_height` added under `doc`'s models for the height
 // correction of its print settings: none with a raft.
 int baseLayers(const Document& doc, double layer_height);
@@ -98,63 +86,12 @@ struct PrintPlan {
     double resin_ml = 0, resin_g = 0;
     double density = 1.15;     // g/ml, for the weight (written in the file too)
     double print_time_s = 0;   // estimate
-    int adaptive = 1;          // thickest layer in thin layers (1: no merging)
-    double light_depth = 0.10; // mm, for the exposure of thicker layers
     double raft_needed = 0;    // bottom + transition layers' thickness
     bool raft_thick_enough = true;
     bool fits = true;          // model and supports inside the build volume
 };
 
 PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_top, const PrintSettings& s);
-
-// The layers a print file is made of, before any are merged, built the one
-// way saving and the estimate both use: `print` is the model and supports,
-// `model` (only when asked for, i.e. with adaptive layers) the model alone,
-// both at the print file's layer height with the height correction's base
-// layers. Re-cuts the layers when the print file's height differs from the
-// job's (hollowing planned again). Progress: 0 to 1 of `ctl`.
-struct PrintStacks {
-    std::shared_ptr<const fruit::LayerStack> print;
-    std::shared_ptr<const fruit::LayerStack> model;
-};
-PrintStacks buildPrintStacks(const Document& doc, const LayerResult& layers, const fruit::TriangleMesh& supports,
-                             const PrintPlan& plan, bool want_model, const fruit::JobControl& ctl);
-// The adaptive layers settings a print file of `plan` is merged with.
-fruit::AdaptiveSettings adaptiveSettings(const Document& doc, const PrintPlan& plan);
-
-// What saving the print file will have in it, worked out without cutting an
-// image: the layers in the file, the thin layers they come from, how many are
-// merged, and the print time.
-// A stretch of the print whose layers all have one height.
-struct LayerBand {
-    double z0 = 0, z1 = 0;  // mm above the plate, bottom and top
-    int count = 1;          // thin layers per layer here (1: thin, 2, 4, 8)
-};
-// One layer of the print file, for looking at: where it sits, how thick it
-// is and how much of it is lit. Its image is in `PrintEstimate::file_stack`,
-// at the same index.
-struct FileLayer {
-    double z0 = 0, z1 = 0;  // mm above the plate, bottom and top
-    double thickness = 0;   // mm (z1 - z0)
-    int count = 1;          // thin layers it is made of
-    double area = 0;        // lit area, mm²
-    double mid() const { return 0.5 * (z0 + z1); }
-};
-struct PrintEstimate {
-    std::size_t layers = 0, thin_layers = 0, merged_layers = 0;
-    double print_time_s = 0;
-    double thin_height = 0;        // mm
-    std::vector<LayerBand> bands;  // bottom to top, with adaptive layers (empty without)
-    // The file's own layers, bottom to top (only when some are merged, else
-    // empty): each one's image is the union of its thin layers' full slices,
-    // as the file is written. `file_layers.size() == layers`.
-    std::vector<FileLayer> file_layers;
-    std::shared_ptr<const fruit::LayerStack> file_stack;  // their images, the same order
-};
-// Without adaptive layers, the plan's own (thin) numbers; with them, exactly
-// what savePrint writes. Cancellable; `plan` must be ready.
-PrintEstimate estimatePrint(const Document& doc, const LayerResult& layers, const fruit::TriangleMesh& supports,
-                            const PrintPlan& plan, const fruit::JobControl& ctl);
 
 struct SaveResult {
     std::string path;

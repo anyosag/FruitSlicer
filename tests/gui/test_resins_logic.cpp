@@ -208,7 +208,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     Resin from_file;
     from_file.sample_path = "/kept/sample.goo";
     auto rows = printRows(from_file, &h, pr);
-    REQUIRE(rows.size() == 12);
+    REQUIRE(rows.size() == 10);
     CHECK(rows[0].value == "0.03 mm");
     CHECK(rows[1].value == "6 × 27.5 s");
     CHECK(rows[2].key == "height_correction");  // next to the bottom layers
@@ -218,19 +218,17 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[3].value == "6, from 23.17 to 1.50 s");
     CHECK(rows[3].after == "from 23.17 to 1.50 s");
     CHECK(rows[4].value == "1.5 s");
-    CHECK(rows[7].value == "0 · 5 s");
-    CHECK(rows[8].key == "bottom_waits");  // the bottom layers' own, as the file has them
-    CHECK(rows[8].value == "0 · 5 s");
-    CHECK(rows[8].fields.size() == 2);
-    CHECK(rows[8].note.empty());
-    CHECK(rows[9].value == "0.05 mm");
-    CHECK(rows[10].value == "255 of 255");
-    CHECK(rows[11].value == "1.15 g/ml");
-    for (std::size_t i : {0, 1, 3, 4, 7, 8, 9, 10}) CHECK(rows[i].source == PS::File);
+    CHECK(rows[5].value == "0 · 5 s");
+    CHECK(rows[6].key == "bottom_waits");  // the bottom layers' own, as the file has them
+    CHECK(rows[6].value == "0 · 5 s");
+    CHECK(rows[6].fields.size() == 2);
+    CHECK(rows[6].note.empty());
+    CHECK(rows[7].value == "0.05 mm");
+    CHECK(rows[8].value == "255 of 255");
+    CHECK(rows[9].value == "1.15 g/ml");
+    for (std::size_t i : {0, 1, 3, 4, 5, 6, 7, 8}) CHECK(rows[i].source == PS::File);
     CHECK(rows[2].source == PS::Default);  // no print file has a height correction
-    CHECK(rows[11].source == PS::Default);  // or a density
-    CHECK(rows[5].source == PS::Default);   // nor the adaptive layers
-    CHECK(rows[6].source == PS::Default);   // nor the light depth
+    CHECK(rows[9].source == PS::Default);  // or a density
     REQUIRE(rows[1].fields.size() == 2);
     CHECK(rows[1].fields[0].key == "bottom_layers");
     CHECK(rows[1].fields[1].value == Approx(27.5));
@@ -238,23 +236,23 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[2].fields[0].key == "height_correction");
     CHECK(rows[2].fields[0].value == Approx(0.10));
     CHECK(rows[2].fields[0].hi == Approx(0.5));
-    CHECK(rows[7].fields.size() == 2);
+    CHECK(rows[5].fields.size() == 2);
     // Typed in, without a file: the printer's own counts and FruitSlicer's defaults.
     Resin typed;
     typed.print.exposure = 2;
     typed.print.bottom_exposure = 30;
     rows = printRows(typed, nullptr, pr);
-    REQUIRE(rows.size() == 12);
+    REQUIRE(rows.size() == 10);
     CHECK(rows[0].value == "0.05 mm");
     CHECK(rows[0].source == PS::Default);
     CHECK(rows[1].value == "4 × 30 s");
     CHECK(rows[1].source == PS::Yours);
     CHECK(rows[1].base.empty());  // no file, so no exposure to go back to
     CHECK(rows[4].value == "2 s");
-    CHECK(rows[7].source == PS::Default);
+    CHECK(rows[5].source == PS::Default);
     // Nothing yet: every row there to type into, the exposures not set.
     rows = printRows(Resin{}, nullptr, pr);
-    REQUIRE(rows.size() == 12);
+    REQUIRE(rows.size() == 10);
     CHECK(rows[4].value == "not set");
     CHECK(rows[4].fields[0].value == 0);
 }
@@ -373,11 +371,11 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[4].source == PS::Yours);
     CHECK(rows[4].base == "1.5 s");
     CHECK(rows[4].note.empty());
-    CHECK(rows[7].value == "0 · 3 s");
-    CHECK_THAT(rows[9].note, ContainsSubstring("hasn't been tested"));
-    CHECK_THAT(rows[10].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
-    CHECK(rows[11].value == "1.1 g/ml");
-    CHECK(rows[11].base == "1.15 g/ml");
+    CHECK(rows[5].value == "0 · 3 s");
+    CHECK_THAT(rows[7].note, ContainsSubstring("hasn't been tested"));
+    CHECK_THAT(rows[8].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
+    CHECK(rows[9].value == "1.1 g/ml");
+    CHECK(rows[9].base == "1.15 g/ml");
 
     // Kept with the resin.
     const auto lib = (dir() / "edited_lib").string();
@@ -521,136 +519,6 @@ TEST_CASE("Resins: support values you set are the resin's, and a job starts with
     CHECK(withResinValue(nullptr, "critical_angle", 45).is_null());
 }
 
-TEST_CASE("Resins: adaptive layers and the light depth, as rows, as edits and in the file", "[gui][resins][adaptive]") {
-    using PS = PrintRow::Source;
-    const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
-    fruit::GooPrintRequest req;
-    req.layer_height = 0.03;
-    req.exposure = 1.5;
-    req.bottom_exposure = 27.5;
-    req.bottom_layers = 6;
-    req.transition_layers = 6;
-    const fruit::GooHeader h = fruit::buildGooSetup(pr, req).header;
-    Resin r;
-    r.id = "adaptive";
-    r.name = "Adaptive";
-    r.sample_path = "/kept/sample.goo";
-    // After "Normal exposure": off, with the light depth's note while it is the typical value.
-    auto rows = printRows(r, &h, pr);
-    REQUIRE(rows.size() == 12);
-    CHECK(rows[4].key == "exposure");
-    CHECK(rows[5].key == "adaptive");
-    CHECK(rows[5].label == "Adaptive layers, up to");
-    CHECK(rows[5].value == "Off");
-    CHECK(rows[5].after == "Off");
-    CHECK(rows[5].note.empty());
-    CHECK(rows[5].source == PS::Default);
-    REQUIRE(rows[5].fields.size() == 1);
-    CHECK(rows[5].fields[0].key == "adaptive");
-    CHECK(rows[5].fields[0].value == Approx(0.03));  // the layer height itself: off
-    CHECK(rows[6].key == "light_depth");
-    CHECK(rows[6].label == "Light depth");
-    CHECK(rows[6].value == "0.1 mm");
-    CHECK(rows[6].source == PS::Default);
-    CHECK_THAT(rows[6].note, ContainsSubstring("How deep light hardens this resin"));
-    CHECK_THAT(rows[6].note, ContainsSubstring("0.10 mm is a typical value, not measured for this resin"));
-    CHECK_THAT(rows[6].note, ContainsSubstring("come apart"));
-    CHECK_THAT(rows[6].note, ContainsSubstring("small part"));
-    CHECK(rows[7].key == "waits");
-
-    // On: a typed height snaps to the nearest allowed; the words list each height with its exposure.
-    setPrintValue(r, &h, pr, "adaptive", 0.1);
-    CHECK(r.print.adaptive == 4);
-    rows = printRows(r, &h, pr);
-    CHECK(rows[5].value == "up to 0.12 mm");
-    CHECK(rows[5].after == "0.06 mm at 2.02 s · 0.12 mm at 3.69 s");  // 1.5 s × e^((h − 0.03) / 0.10)
-    CHECK(rows[5].fields[0].value == Approx(0.12));
-    CHECK(rows[5].source == PS::Yours);
-    CHECK(rows[5].base == "Off");
-    CHECK_THAT(rows[5].note, ContainsSubstring("straight"));
-    CHECK_THAT(rows[5].note, ContainsSubstring("has not been checked"));
-    CHECK_THAT(rows[5].note, ContainsSubstring("small part"));
-    setPrintValue(r, &h, pr, "adaptive", 0.2);  // not allowed at 0.03 mm: the nearest is 0.12
-    CHECK(r.print.adaptive == 4);
-    setPrintValue(r, &h, pr, "adaptive", 0.07);
-    CHECK(r.print.adaptive == 2);
-    CHECK(printRows(r, &h, pr)[5].after == "0.06 mm at 2.02 s");
-    // The exposures follow the light depth.
-    setPrintValue(r, &h, pr, "light_depth", 0.2);
-    CHECK(r.print.light_depth == Approx(0.2));
-    rows = printRows(r, &h, pr);
-    CHECK(rows[5].after == "0.06 mm at 1.74 s");
-    CHECK(rows[6].source == PS::Yours);
-    CHECK(rows[6].note.empty());
-    CHECK(rows[6].base == "0.1 mm");
-    setPrintValue(r, &h, pr, "light_depth", 5);  // held to 0.5 mm
-    CHECK(r.print.light_depth == Approx(0.5));
-    setPrintValue(r, &h, pr, "light_depth", 0.10);  // the typical value: not an edit
-    CHECK(r.print.light_depth < 0);
-    // Typing the layer height turns it off.
-    setPrintValue(r, &h, pr, "adaptive", 0.03);
-    CHECK(r.print.adaptive == 1);
-
-    // It is a multiple of the layer height: a change of layer height keeps the choice.
-    setPrintValue(r, &h, pr, "adaptive", 0.12);
-    setPrintValue(r, &h, pr, "layer_height", 0.05);
-    CHECK(r.print.adaptive == 4);
-    rows = printRows(r, &h, pr);
-    CHECK(rows[5].value == "up to 0.2 mm");
-    CHECK(rows[5].after == "0.1 mm at 2.47 s · 0.2 mm at 6.72 s");  // the same 1.5 s, now at 0.05 mm layers
-    // Resetting the rows.
-    resetPrintRow(r.print, "adaptive");
-    CHECK(r.print.adaptive == 1);
-
-    // Kept with the resin; a resin file from before has them off and at the typical value.
-    r.print.adaptive = 2;
-    r.print.light_depth = 0.15;
-    const auto lib = (dir() / "adaptive_lib").string();
-    fs::remove_all(lib);
-    saveResin(lib, r);
-    auto back = loadResins(lib);
-    REQUIRE(back.size() == 1);
-    CHECK(back[0] == r);
-    CHECK(back[0].print.adaptive == 2);
-    CHECK(back[0].print.light_depth == Approx(0.15));
-    nlohmann::json j;
-    {
-        std::ifstream in(fs::path(lib) / "adaptive.json");
-        in >> j;
-    }
-    REQUIRE(j.dump().find("adaptive") != std::string::npos);
-    const Resin plain = [&] {
-        Resin x;
-        x.id = "older";
-        x.name = "Older";
-        return x;
-    }();
-    saveResin(lib, plain);
-    for (auto& f : fs::directory_iterator(lib)) {
-        if (f.path().stem() != "older") continue;
-        nlohmann::json o;
-        {
-            std::ifstream in(f.path());
-            in >> o;
-        }
-        for (auto& [k, v] : o.items())
-            if (v.is_object()) {
-                v.erase("adaptive");
-                v.erase("light_depth");
-            }
-        std::ofstream(f.path()) << o.dump();
-    }
-    back = loadResins(lib);
-    for (const Resin& x : back)
-        if (x.id == "older") {
-            CHECK(x.print.adaptive == 1);
-            CHECK(x.print.light_depth < 0);
-        }
-    // A job on the resin starts with them.
-    CHECK(printSettingsFor(r).adaptive == 2);
-    CHECK(lightDepth(printSettingsFor(r)) == Approx(0.15));
-}
-
 TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gui][resins]") {
     using PS = PrintRow::Source;
     const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
@@ -661,29 +529,29 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     r.print.bottom_exposure = 30;
     // Nothing set: the bottom layers wait as the others do.
     auto rows = printRows(r, nullptr, pr);
-    REQUIRE(rows.size() == 12);
-    CHECK(rows[8].key == "bottom_waits");
-    CHECK(rows[8].label == "Bottom-layer waits (before lift, after retract)");
-    CHECK(rows[8].value == rows[7].value);
-    CHECK(rows[8].source == PS::Default);
-    CHECK(rows[8].note.empty());
+    REQUIRE(rows.size() == 10);
+    CHECK(rows[6].key == "bottom_waits");
+    CHECK(rows[6].label == "Bottom-layer waits (before lift, after retract)");
+    CHECK(rows[6].value == rows[5].value);
+    CHECK(rows[6].source == PS::Default);
+    CHECK(rows[6].note.empty());
     // A wait typed for every layer is the bottom layers' too.
     setPrintValue(r, nullptr, pr, "wait_after_retract", 3);
     rows = printRows(r, nullptr, pr);
-    CHECK(rows[7].value == "0 · 3 s");
-    CHECK(rows[8].value == "0 · 3 s");
-    CHECK(rows[8].source == PS::Default);
+    CHECK(rows[5].value == "0 · 3 s");
+    CHECK(rows[6].value == "0 · 3 s");
+    CHECK(rows[6].source == PS::Default);
     // Their own: 1 s after the light (before the lift) and 10 s before it (after the retract).
     setPrintValue(r, nullptr, pr, "bottom_wait_before_lift", 1);
     setPrintValue(r, nullptr, pr, "bottom_wait_after_retract", 10);
     CHECK(r.print.bottom_wait_before_lift == Approx(1));
     CHECK(r.print.bottom_wait_after_retract == Approx(10));
     rows = printRows(r, nullptr, pr);
-    CHECK(rows[7].value == "0 · 3 s");  // the other layers are as they were
-    CHECK(rows[8].value == "1 · 10 s");
-    CHECK(rows[8].source == PS::Yours);
-    CHECK(rows[8].base == "0 · 3 s");
-    CHECK_THAT(rows[8].note, ContainsSubstring("hasn't been tested"));
+    CHECK(rows[5].value == "0 · 3 s");  // the other layers are as they were
+    CHECK(rows[6].value == "1 · 10 s");
+    CHECK(rows[6].source == PS::Yours);
+    CHECK(rows[6].base == "0 · 3 s");
+    CHECK_THAT(rows[6].note, ContainsSubstring("hasn't been tested"));
 
     // In the print file: the header's bottom-layer waits, and so each layer's own.
     const PrintSettings s = printSettingsFor(r);
@@ -720,4 +588,36 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     const auto back = loadResins(lib);
     REQUIRE(back.size() == 1);
     CHECK(back[0] == r);
+}
+
+TEST_CASE("Resins: a resin file saved with adaptive layers and a light depth still loads, those keys ignored",
+          "[gui][resins]") {
+    Resin r;
+    r.id = "from-before";
+    r.name = "From before";
+    r.print.exposure = 2.5;
+    r.print.bottom_exposure = 30;
+    r.print.bottom_wait_before_lift = 1;
+    const auto lib = (dir() / "old_keys_lib").string();
+    fs::remove_all(lib);
+    saveResin(lib, r);
+    // What an older version wrote: its two extra keys in every print object.
+    for (auto& f : fs::directory_iterator(lib)) {
+        nlohmann::json j;
+        {
+            std::ifstream in(f.path());
+            in >> j;
+        }
+        for (auto& [k, v] : j.items())
+            if (v.is_object() && v.contains("exposure")) {
+                v["adaptive"] = 4;
+                v["light_depth"] = 0.2;
+            }
+        std::ofstream(f.path()) << j.dump();
+    }
+    const auto back = loadResins(lib);
+    REQUIRE(back.size() == 1);
+    CHECK(back[0] == r);
+    CHECK(back[0].print.exposure == Approx(2.5));
+    CHECK(back[0].print.bottom_wait_before_lift == Approx(1));
 }

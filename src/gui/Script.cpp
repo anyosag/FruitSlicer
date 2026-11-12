@@ -594,8 +594,6 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.selectTip(step["select_tip"].get<int>());
         } else if (step.contains("layer")) {
             app.setLayer(step["layer"].get<int>() - 1);  // 1-based, as shown
-        } else if (step.contains("file_layer")) {
-            app.setFileLayer(step["file_layer"].get<int>() - 1);  // 1-based, as shown (adaptive view only)
         } else if (step.contains("show_below")) {
             app.setShowBelow(step["show_below"].get<bool>());
         } else if (step.contains("problems")) {

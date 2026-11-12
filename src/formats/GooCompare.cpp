@@ -150,13 +150,6 @@ GooCompareResult compareGoo(const GooFileInfo& a, const GooFileInfo& b, double z
     if (a.layers.empty() || b.layers.empty()) throw std::runtime_error("goo-compare: a file has no layers");
     GooCompareResult r;
     r.header = diffHeaders(a.header, b.header);
-    // Layers of different thicknesses (adaptive layers) don't show in the header's single height.
-    auto thick = [](const GooFileInfo& f) {
-        std::string s;
-        for (const auto& [t, n] : gooThicknessCounts(f.header, f.layers)) s += (s.empty() ? "" : ", ") + str(t) + " mm x " + std::to_string(n);
-        return s;
-    };
-    if (thick(a) != thick(b)) r.header.push_back({"layers_per_thickness", thick(a), thick(b)});
     if (z < 0) z = 0.5 * std::min(a.layers.back().z, b.layers.back().z);
     r.layer_a = layerNearest(a, z);
     r.layer_b = layerNearest(b, z);

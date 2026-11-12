@@ -159,19 +159,6 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
             hd.print.bottom_wait_after_retract != hd.print.wait_after_retract)
             keyValue("Bottom-layer waits", strf("%g · %g s", hd.print.bottom_wait_before_lift,
                                                 hd.print.bottom_wait_after_retract));
-        if (plan->adaptive > 1) {
-            ImGui::Dummy(ImVec2(0, 2));
-            const App::AdaptiveView v = app.adaptiveView();
-            const char* shown = v.numbers  ? "The layer count and time shown are worked out for the saved file."
-                                : v.failed ? "The layer count and time shown are for thin layers throughout: they could "
-                                             "not be worked out for the saved file."
-                                           : "The layer count and time shown are for thin layers throughout, until they "
-                                             "are worked out for the saved file.";
-            text(strf("Layers are merged up to %g mm where the model's walls are straight. %s",
-                      plan->layer_height * plan->adaptive, shown)
-                     .c_str(),
-                 fonts().regular, size::Help, col::TextSecondary, true);
-        }
         if (plan->reslice) {
             ImGui::Dummy(ImVec2(0, 2));
             text(strf("Saving cuts the layers again at %.2f mm, the height these exposures are for.",
@@ -184,7 +171,7 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
 }
 
 // Print time, resin, layers and the file, as four tiles.
-void printTiles(App& app, Document& doc, const PrintPlan* plan) {
+void printTiles(Document& doc, const PrintPlan* plan) {
     const float cw = (ImGui::GetContentRegionAvail().x - 10) / 2;
     auto tile = [&](const char* id, const char* label, const std::string& big, const std::string& small) {
         beginCard(id, ImVec2(cw, 82), 12, col::Card, col::Border);
@@ -194,25 +181,13 @@ void printTiles(App& app, Document& doc, const PrintPlan* plan) {
         endCard();
     };
     const bool ready = plan && plan->ready;
-    // With adaptive layers: what saving will write once worked out, else the thin layers' numbers, as the most.
-    const App::AdaptiveView av = ready ? app.adaptiveView() : App::AdaptiveView{};
-    const char* upTo = av.failed ? "up to · merging not known" : "up to · working out merging";
-    const double secs = av.numbers ? av.numbers->print_time_s : ready ? plan->print_time_s : 0;
-    tile("time", "Print time", ready ? duration(secs) : "—",
-         !ready ? "needs exposures" : av.working || av.failed ? upTo : "estimate");
+    tile("time", "Print time", ready ? duration(plan->print_time_s) : "—", ready ? "estimate" : "needs exposures");
     ImGui::SameLine(0, 10);
     tile("resin", "Resin", strf("%.1f ml", doc.layers.result->resin_ml),
          strf("%.1f g at %g g/ml", doc.layers.result->resin_ml * resinDensity(doc.print.settings),
               resinDensity(doc.print.settings)));
-    const double tall = doc.layers.result->top;
-    tile("layers", "Layers",
-         av.numbers ? thousands(av.numbers->layers)
-                    : ready ? thousands(plan->layers) : thousands(doc.layers.result->layers->size()),
-         av.working || av.failed ? upTo
-         : av.numbers ? (av.numbers->merged_layers > 0
-                             ? strf("from %s thin · %.1f mm tall", thousands(av.numbers->thin_layers).c_str(), tall)
-                             : strf("none merged · %.1f mm tall", tall))
-                      : strf("%.1f mm tall", tall));
+    tile("layers", "Layers", ready ? thousands(plan->layers) : thousands(doc.layers.result->layers->size()),
+         strf("%.1f mm tall", doc.layers.result->top));
     ImGui::SameLine(0, 10);
     tile("file", "File", ".goo", ready ? strf("%.2f mm layers", plan->layer_height) : "");
 }
@@ -360,11 +335,6 @@ void savedPage(App& app, Document& doc, ImVec2 size) {
     text("The print", fonts().semibold, size::Section + 1, col::Text);
     keyValue("Print time", "about " + duration(r.written.print_time_s));
     keyValue("Resin", strf("%.1f ml", r.written.volume_mm3 / 1000.0));
-    if (r.written.merged_layers > 0)
-        keyValue("Merged layers", strf("%s thicker layers, from %s thin ones", thousands(r.written.merged_layers).c_str(),
-                                       thousands(r.written.thin_layers - (r.written.layers - r.written.merged_layers)).c_str()));
-    else if (doc.print.settings.adaptive > 1 && r.written.thin_layers > 0)
-        keyValue("Merged layers", "none: the walls changed in every layer");
     keyValue("Supports", strf("%zu tips on %zu trunks", doc.supports.result->tips, doc.supports.result->trunks));
     endCard();
     ImGui::Dummy(ImVec2(0, 14));
@@ -491,7 +461,7 @@ void printSide(App& app, Document& doc, float h) {
     const float save_h = doc.supports.result && doc.supports.result->hollow ? 270 : 222;
     ImGui::BeginChild("print_details", ImVec2(0, std::max(120.0f, ImGui::GetContentRegionAvail().y - save_h)),
                       ImGuiChildFlags_None);
-    printTiles(app, doc, plan.get());
+    printTiles(doc, plan.get());
     ImGui::Dummy(ImVec2(0, 4));
     beforeYouSave(app, doc, plan.get(), 0, 0);
     ImGui::Dummy(ImVec2(0, 4));

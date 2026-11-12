@@ -29,7 +29,6 @@
 //     (handle: "move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z"; mm or degrees; snap as with ⇧)
 //   {"undo": n} {"redo": n} {"shortcuts": true | false}
 //   {"step": "model" | "orient" | "supports" | "layers" | "print"} (any place, any time) {"layer": n (1-based)} {"show_below": bool}
-//   {"file_layer": n (1-based)} (with adaptive layers worked out: the print file's layer n, as the Layers step then numbers them)
 //   {"cube_hover": [x, y] | false} the view cube as if the pointer were at that point of it (pixels from its centre, y down)
 //   {"cube_click": [x, y]} a click there: a face's middle, an edge or a corner {"cube_drag": [dx, dy]} the cube dragged
 //   {"mirror": "x" | "y" | "z"} the selected part (left to right, front to back, top to bottom)

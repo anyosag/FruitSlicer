@@ -22,7 +22,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "core/JobControl.h"
@@ -97,12 +96,6 @@ struct GooLayerDef {
 // Per-layer definition derived from the header (bottom / transition / normal).
 GooLayerDef layerDefFor(const GooHeader& h, uint32_t index);
 
-// How thick each layer is, mm (to 0.1 µm): from the layers' own `z` when the
-// file uses per-layer values (advance_mode), else the header's layer height.
-std::vector<double> gooLayerThicknesses(const GooHeader& h, const std::vector<GooLayerDef>& layers);
-// How many layers there are of each thickness (thinnest first).
-std::vector<std::pair<double, uint32_t>> gooThicknessCounts(const GooHeader& h, const std::vector<GooLayerDef>& layers);
-
 // Run-length encoder for one layer image (row-major pixel stream).
 class GooRleEncoder {
 public:
@@ -169,7 +162,7 @@ struct GooVerifyResult {
     std::string error;
     size_t lit_values = 0;      // distinct non-zero pixel values
     size_t grey_values = 0;     // distinct values strictly between 0 and 255
-    double volume_mm3 = 0;      // each layer's lit coverage × pixel area × that layer's own thickness
+    double volume_mm3 = 0;      // lit coverage × pixel area × layer height
 };
 
 // Reports stage "verify". Throws if the file cannot be read as a .goo at all.

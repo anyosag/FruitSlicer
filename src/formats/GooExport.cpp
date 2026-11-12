@@ -10,7 +10,6 @@
 #include <stdexcept>
 
 #include "core/Parallel.h"
-#include "layers/AdaptiveLayers.h"
 #include "io/Render.h"
 
 namespace fruit {
@@ -28,35 +27,6 @@ std::string utcNow() {
     char buf[32];
     std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &tm);
     return buf;
-}
-
-// The header's fields that come from the grid, the anti-aliasing option, the
-// time and the previews.
-void prepareHeader(GooHeader& h, const RasterGrid& grid, const GooExportOptions& o, const TriangleMesh* preview) {
-    h.res_x = static_cast<uint16_t>(grid.width);
-    h.res_y = static_cast<uint16_t>(grid.height);
-    h.mirror_x = grid.mirror_x;
-    h.mirror_y = grid.mirror_y;
-    if (o.aa_levels <= 1) {  // off: pure black/white, flags as SatelLite writes them
-        h.aa_level = 0;
-        h.grey_level = 0;
-        h.grayscale_8bit = false;
-    } else {
-        h.aa_level = static_cast<uint16_t>(o.aa_levels);
-        h.grey_level = 1;
-        h.grayscale_8bit = true;
-    }
-    h.file_time = o.file_time.empty() ? utcNow() : o.file_time;
-    // Thumbnails seen from the front, slightly above.
-    RenderView view;
-    view.azimuth_deg = 20;
-    view.elevation_deg = 30;
-    const TriangleMesh empty;
-    const TriangleMesh& pm = preview ? *preview : empty;
-    view.size = kGooSmallPreview;
-    h.small_preview = toRgb565BE(renderPreviewRgb(pm, {}, view));
-    view.size = kGooBigPreview;
-    h.big_preview = toRgb565BE(renderPreviewRgb(pm, {}, view));
 }
 
 }  // namespace
@@ -93,7 +63,30 @@ GooExportResult exportGooLayers(const LayerStack& layers, const TriangleMesh* pr
         throw std::invalid_argument("layer height of the slices does not match the GOO header");
     GooExportResult res;
     h.layer_count = static_cast<uint32_t>(layers.size());
-    prepareHeader(h, grid, o, preview);
+    h.res_x = static_cast<uint16_t>(grid.width);
+    h.res_y = static_cast<uint16_t>(grid.height);
+    h.mirror_x = grid.mirror_x;
+    h.mirror_y = grid.mirror_y;
+    if (o.aa_levels <= 1) {  // off: pure black/white, flags as SatelLite writes them
+        h.aa_level = 0;
+        h.grey_level = 0;
+        h.grayscale_8bit = false;
+    } else {
+        h.aa_level = static_cast<uint16_t>(o.aa_levels);
+        h.grey_level = 1;
+        h.grayscale_8bit = true;
+    }
+    h.file_time = o.file_time.empty() ? utcNow() : o.file_time;
+    // Thumbnails seen from the front, slightly above.
+    RenderView view;
+    view.azimuth_deg = 20;
+    view.elevation_deg = 30;
+    const TriangleMesh empty;
+    const TriangleMesh& pm = preview ? *preview : empty;
+    view.size = kGooSmallPreview;
+    h.small_preview = toRgb565BE(renderPreviewRgb(pm, {}, view));
+    view.size = kGooBigPreview;
+    h.big_preview = toRgb565BE(renderPreviewRgb(pm, {}, view));
 
     GooWriter writer(path, h);
     const unsigned threads = resolveThreads(o.threads);
@@ -125,109 +118,8 @@ GooExportResult exportGooLayers(const LayerStack& layers, const TriangleMesh* pr
     }
     ctl.check();
     res.layers = h.layer_count;
-    res.thin_layers = h.layer_count;
     res.volume_mm3 = coverage * grid.px * grid.py * layer_h;
     res.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(h, h.layer_count, o));
-    h.print_time = res.print_time_s;
-    h.volume = static_cast<float>(res.volume_mm3);
-    h.weight = static_cast<float>(res.volume_mm3 / 1000.0 * o.resin_density);
-    writer.finish(h, o.sync_to_device);
-    res.bytes = std::filesystem::file_size(path);
-    res.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    return res;
-}
-
-double estimatePrintSeconds(const std::vector<GooLayerDef>& layers, const GooExportOptions& o) {
-    double t = 0;
-    for (const GooLayerDef& d : layers)
-        t += d.exposure + d.wait_before_lift + d.wait_after_lift + d.wait_after_retract + o.motion_seconds_per_layer;
-    return t;
-}
-
-AdaptiveFilePlan planAdaptiveFile(std::size_t thin_layers, const LayerStack& model, const GooHeader& header,
-                                  const GooExportOptions& o, const AdaptiveSettings& a, const JobControl& ctl) {
-    GooHeader h = header;
-    const double layer_h = gooLayerHeight(h);
-    const GooPrintSettings& p = h.print;
-    AdaptiveOptions ao;
-    ao.thin_height = layer_h;
-    ao.multiplier = a.multiplier;
-    ao.first_mergeable = std::max<std::size_t>(a.protected_layers, std::size_t{p.bottom_layers} + p.transition_layers);
-    AdaptiveFilePlan plan;
-    plan.groups = planAdaptiveLayers(model, thin_layers, ao, o.threads, ctl);
-    plan.thin_layers = static_cast<uint32_t>(thin_layers);
-    plan.merged_layers = static_cast<uint32_t>(mergedCount(plan.groups));
-    if (plan.merged_layers == 0) {  // nothing merges: the file is the equal-layers one
-        plan.layers = plan.thin_layers;
-        plan.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(h, plan.layers, o));
-        return plan;
-    }
-    plan.layers = static_cast<uint32_t>(plan.groups.size());
-    h.print.advance_mode = true;
-    plan.defs.resize(plan.groups.size());
-    for (std::size_t k = 0; k < plan.groups.size(); ++k) {
-        const LayerGroup& g = plan.groups[k];
-        plan.defs[k] = layerDefFor(h, static_cast<uint32_t>(g.first));
-        plan.defs[k].z = h.layer_height * static_cast<float>(g.first + g.count);
-        if (g.count > 1)
-            plan.defs[k].exposure = static_cast<float>(
-                adaptiveExposure(p.exposure, layer_h, static_cast<double>(g.count) * layer_h, a.light_depth));
-    }
-    plan.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(plan.defs, o));
-    return plan;
-}
-
-GooExportResult exportGooAdaptive(const LayerStack& full, const LayerStack& model, const TriangleMesh* preview,
-                                  GooHeader h, const RasterGrid& grid, const GooExportOptions& o,
-                                  const AdaptiveSettings& a, const std::string& path, const JobControl& ctl) {
-    const double layer_h = gooLayerHeight(h);
-    if (std::abs(full.layer_height - layer_h) > 1e-6)
-        throw std::invalid_argument("layer height of the slices does not match the GOO header");
-    const AdaptiveFilePlan plan = planAdaptiveFile(full.size(), model, h, o, a, ctl.sub(0, 0.1));
-    const std::vector<LayerGroup>& groups = plan.groups;
-    const std::vector<GooLayerDef>& defs = plan.defs;
-    if (!plan.merges()) return exportGooLayers(full, preview, std::move(h), grid, o, path, ctl.sub(0.1, 1));
-    const auto t0 = std::chrono::steady_clock::now();
-    GooExportResult res;
-    h.layer_count = plan.layers;
-    h.print.advance_mode = true;
-    prepareHeader(h, grid, o, preview);
-
-    GooWriter writer(path, h);
-    const unsigned threads = resolveThreads(o.threads);
-    const size_t chunk = std::max<size_t>(threads * 4, 8);
-    const double total = static_cast<double>(std::max<size_t>(groups.size(), 1));
-    double volume_px = 0;  // Σ pixel coverage × the layer's thickness
-    for (size_t base = 0; base < groups.size(); base += chunk) {
-        ctl.check();
-        const size_t end = std::min(groups.size(), base + chunk);
-        std::vector<std::vector<uint8_t>> rle(end - base);
-        std::vector<double> cov(end - base, 0);
-        parallelFor(end - base, threads, [&](size_t k) {
-            ctl.check();
-            const size_t i = base + k;
-            const Paths image = mergedSlice(full, groups[i]);
-            GooRleEncoder enc;
-            double c = 0;
-            rasterizeLayer(image, grid, o.aa_levels, [&](uint8_t v, uint32_t n) {
-                enc.add(v, n);
-                c += v / 255.0 * n;
-            });
-            rle[k] = enc.finish();
-            cov[k] = c;
-        });
-        for (size_t i = base; i < end; ++i) {
-            writer.addLayer(defs[i], rle[i - base]);
-            volume_px += cov[i - base] * static_cast<double>(groups[i].count) * layer_h;
-        }
-        ctl.report("rasterize", static_cast<double>(end) / total);
-    }
-    ctl.check();
-    res.layers = h.layer_count;
-    res.thin_layers = plan.thin_layers;
-    res.merged_layers = plan.merged_layers;
-    res.volume_mm3 = volume_px * grid.px * grid.py;
-    res.print_time_s = plan.print_time_s;
     h.print_time = res.print_time_s;
     h.volume = static_cast<float>(res.volume_mm3);
     h.weight = static_cast<float>(res.volume_mm3 / 1000.0 * o.resin_density);
