@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #include "App.h"
+#include "ViewCube.h"
 
 #include <imgui.h>
 
@@ -124,6 +125,30 @@ void App::setView(ViewPreset v) {
 }
 
 void App::fitView() { frameModel(); }
+
+void App::lookFromCube(V3 dir) {
+    const int sides = (dir.x != 0) + (dir.y != 0) + (dir.z != 0);
+    if (sides == 0) return;
+    // The front and the right faces are the Front and Side views (a little from above).
+    if (sides == 1 && dir.y < 0) {
+        setView(ViewPreset::Front);
+    } else if (sides == 1 && dir.x > 0) {
+        setView(ViewPreset::Side);
+    } else {
+        camera_.lookFrom(dir);
+        viewChanged();
+    }
+}
+
+void App::clickViewCube(float x, float y) {
+    const CubeSpot spot = cubeSpotAt(cubeFaces(camera_.view(), kCubeHalf), x, y);
+    if (spot.face >= 0) lookFromCube(spot.dir);
+}
+
+void App::dragViewCube(float dx, float dy) {
+    camera_.turn(-dx * kCubeDragDegPerPx, dy * kCubeDragDegPerPx);
+    viewChanged();
+}
 
 namespace {
 std::string recentFile() { return (std::filesystem::path(platform::dataDir()) / "recent.json").string(); }

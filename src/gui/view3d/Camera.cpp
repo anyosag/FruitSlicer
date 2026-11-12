@@ -11,9 +11,11 @@ namespace {
 constexpr float kDeg = 3.14159265358979f / 180.0f;
 }
 
-void Camera::orbit(float dx, float dy) {
-    yaw_deg_ -= dx * 0.35f;
-    pitch_deg_ = std::clamp(pitch_deg_ + dy * 0.35f, -89.0f, 89.0f);
+void Camera::orbit(float dx, float dy) { turn(-dx * 0.35f, dy * 0.35f); }
+
+void Camera::turn(float yaw_deg, float pitch_deg) {
+    yaw_deg_ += yaw_deg;
+    pitch_deg_ = std::clamp(pitch_deg_ + pitch_deg, -89.0f, 89.0f);
 }
 
 void Camera::pan(float dx, float dy, float viewport_h) {

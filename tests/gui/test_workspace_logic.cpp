@@ -147,6 +147,99 @@ TEST_CASE("View cube: a click on a face looks from that side", "[gui]") {
     CHECK(std::string(cubeLabel(CubeSide::Top)) == "Top");
 }
 
+TEST_CASE("View cube: a face's middle, its edges and its corners are spots to look from", "[gui]") {
+    // Looking from the back the cube is one square, the back face.
+    Camera cam;
+    cam.lookFrom(cubeDirection(CubeSide::Back));
+    const auto faces = cubeFaces(cam.view(), 40);
+    REQUIRE(faces.size() == 1);
+    // Its middle looks from the back.
+    CubeSpot s = cubeSpotAt(faces, 0, 0);
+    REQUIRE(s.face == 0);
+    CHECK(s.sides() == 1);
+    CHECK((s.dir.x == 0 && s.dir.y == 1 && s.dir.z == 0));
+    CHECK(cubeSpotName(s.dir) == "back");
+    // The middle's outline is the middle of the face.
+    for (int k = 0; k < 4; ++k) {
+        CHECK(std::abs(s.x[k]) == Approx(40 * kCubeEdge).margin(0.01));
+        CHECK(std::abs(s.y[k]) == Approx(40 * kCubeEdge).margin(0.01));
+    }
+    // From the back, the model's left is on the right of the screen: that edge looks from the back left.
+    s = cubeSpotAt(faces, 36, 0);
+    CHECK(s.sides() == 2);
+    CHECK((s.dir.x == -1 && s.dir.y == 1 && s.dir.z == 0));
+    CHECK(cubeSpotName(s.dir) == "back left");
+    // The corner at the top right of the screen (y grows downwards): top, back, left.
+    s = cubeSpotAt(faces, 36, -36);
+    CHECK(s.sides() == 3);
+    CHECK((s.dir.x == -1 && s.dir.y == 1 && s.dir.z == 1));
+    CHECK(cubeSpotName(s.dir) == "top back left");
+    // The edge at the bottom of the screen.
+    s = cubeSpotAt(faces, 0, 36);
+    CHECK((s.dir.x == 0 && s.dir.y == 1 && s.dir.z == -1));
+    CHECK(cubeSpotName(s.dir) == "bottom back");
+    // Just inside the middle's edge is still the middle; off the cube is nothing.
+    CHECK(cubeSpotAt(faces, 40 * kCubeEdge - 1, 0).sides() == 1);
+    CHECK(cubeSpotAt(faces, 60, 0).face == -1);
+    CHECK(cubeSpotName({0, -1, 0}) == "front");
+    CHECK(cubeSpotName({1, -1, 0}) == "front right");
+    CHECK(cubeSpotName({1, -1, 1}) == "top front right");
+    CHECK(cubeSpotName({0, 0, -1}) == "bottom");
+
+    // On the tilted cube of the start view: the front face's middle, and its corner towards the top right.
+    Camera start;
+    start.preset(ViewPreset::Angled);
+    const auto tilted = cubeFaces(start.view(), 40);
+    const CubeFace& front = tilted.back();
+    REQUIRE(front.side == CubeSide::Front);
+    const float mx = (front.x[0] + front.x[2]) / 2, my = (front.y[0] + front.y[2]) / 2;
+    s = cubeSpotAt(tilted, mx, my);
+    CHECK(s.sides() == 1);
+    CHECK((s.dir.x == 0 && s.dir.y == -1 && s.dir.z == 0));
+    // (the front face's third corner is its top right one: +X, +Z)
+    s = cubeSpotAt(tilted, mx + 0.9f * (front.x[2] - mx), my + 0.9f * (front.y[2] - my));
+    CHECK(s.sides() == 3);
+    CHECK((s.dir.x == 1 && s.dir.y == -1 && s.dir.z == 1));
+    CHECK(cubeSpotName(s.dir) == "top front right");
+}
+
+TEST_CASE("View cube: an edge or a corner looks from between its sides", "[gui]") {
+    auto seenFrom = [](V3 dir) {
+        Camera cam;
+        cam.lookFrom(dir);
+        std::set<CubeSide> seen;
+        for (const CubeFace& f : cubeFaces(cam.view(), 40)) seen.insert(f.side);
+        return seen;
+    };
+    // A corner shows its three faces, an edge its two.
+    CHECK(seenFrom({1, -1, 1}) == std::set<CubeSide>{CubeSide::Top, CubeSide::Front, CubeSide::Right});
+    CHECK(seenFrom({-1, 1, -1}) == std::set<CubeSide>{CubeSide::Bottom, CubeSide::Back, CubeSide::Left});
+    CHECK(seenFrom({1, -1, 0}) == std::set<CubeSide>{CubeSide::Front, CubeSide::Right});
+    CHECK(seenFrom({0, 1, 1}) == std::set<CubeSide>{CubeSide::Top, CubeSide::Back});
+    // From a corner the three faces face the camera equally.
+    Camera cam;
+    cam.lookFrom({1, -1, 1});
+    for (const CubeFace& f : cubeFaces(cam.view(), 40)) CHECK(f.facing == Approx(1 / std::sqrt(3.0f)).margin(0.01));
+}
+
+TEST_CASE("Camera: turning by angles is what dragging in the view does", "[gui]") {
+    Camera a, b;
+    a.orbit(40, -20);
+    b.turn(-40 * 0.35f, -20 * 0.35f);
+    CHECK(a.eye().x == Approx(b.eye().x));
+    CHECK(a.eye().y == Approx(b.eye().y));
+    CHECK(a.eye().z == Approx(b.eye().z));
+    // Held just short of straight up, and of straight down.
+    Camera up;
+    up.turn(0, 500);
+    CHECK((up.eye().z - up.target().z) / up.distance() == Approx(std::sin(89 * 3.14159265f / 180)).margin(1e-4));
+    Camera down;
+    down.turn(0, -500);
+    CHECK((down.eye().z - down.target().z) / down.distance() == Approx(-std::sin(89 * 3.14159265f / 180)).margin(1e-4));
+    // Dragging the cube by its own width (60 pixels) turns the view by about a quarter turn.
+    CHECK(60 * kCubeDragDegPerPx == Approx(90).margin(10));
+}
+
 TEST_CASE("Camera: a sideways shift moves the picture and its rays together", "[gui]") {
     Camera cam;
     cam.preset(ViewPreset::Angled);

@@ -1,0 +1,11 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "job"}, {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"view": "angled"},
+    {"cube_hover": [8.4, 16.7]}, {"shot": "h1_cube_edge_lit"},
+    {"cube_click": [8.4, -7.8]}, {"cube_hover": false}, {"shot": "h1_cube_corner_view"},
+    {"view": "angled"}, {"cube_drag": [-107.14, -17.86]}, {"cube_hover": [26, -26]}, {"shot": "h1_cube_back_corner_lit"},
+    {"cube_click": [26, -26]}, {"cube_hover": false}, {"shot": "h1_cube_back_corner_view"}
+  ]
+}

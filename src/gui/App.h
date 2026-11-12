@@ -180,6 +180,17 @@ public:
     void setHoverFace(int region) { hover_face_ = region; }
     int hoverFace() const { return hover_face_; }
     // Or the surface nearest a point (printer coordinates), lit the same way.
+    // The view cube (ViewCube.h). A click on a spot of it looks from there: a face's middle (the
+    // front and the right are the Front and Side views), an edge or a corner.
+    void lookFromCube(V3 dir);
+    // The same for a point of the cube, pixels from its centre (y down); nothing off the cube.
+    void clickViewCube(float x, float y);
+    // Dragging the cube by so many pixels turns the view.
+    void dragViewCube(float dx, float dy);
+    // A stand-in pointer over the cube (pixels from its centre, y down), for scripted pictures
+    // of what lights up under it; unset, the real pointer counts.
+    void setCubeHover(std::optional<std::pair<float, float>> at) { cube_hover_ = at; }
+    const std::optional<std::pair<float, float>>& cubeHover() const { return cube_hover_; }
     void setHoverPoint(std::optional<fruit::Vec3> at) { hover_point_ = at; }
     const std::optional<fruit::Vec3>& hoverPoint() const { return hover_point_; }
     void scaleToFit();
@@ -606,6 +617,7 @@ private:
     LaidNote laid_note_;
     int hover_face_ = -1;
     std::optional<fruit::Vec3> hover_point_;
+    std::optional<std::pair<float, float>> cube_hover_;  // a script's stand-in pointer over the view cube
     PartsToolState parts_tools_;
     int part_menu_request_ = -1, part_menu_part_ = -1;
     float part_menu_x_ = 0, part_menu_y_ = 0;

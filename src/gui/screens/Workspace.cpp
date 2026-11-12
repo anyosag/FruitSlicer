@@ -422,14 +422,28 @@ void modelTools(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
 // ---- The view cube, with Home and From below under it ----
 
 void viewCube(App& app, ImVec2 origin, ImVec2 size) {
-    const float half = 30;
+    const float half = kCubeHalf;
     const ImVec2 c(origin.x + size.x - 16 - kCubeW / 2, origin.y + 16 + 62);
     const std::vector<CubeFace> faces = cubeFaces(app.camera().view(), half);
     // A button over the cube, so a click there turns the view and nothing else.
     ImGui::SetCursorScreenPos(ImVec2(c.x - 56, c.y - 56));
     const bool clicked = ImGui::InvisibleButton("view_cube", ImVec2(112, 112));
-    const ImVec2 m = ImGui::GetIO().MousePos;
-    const int under = ImGui::IsItemHovered() ? cubeFaceAt(faces, m.x - c.x, m.y - c.y) : -1;
+    const ImGuiIO& io = ImGui::GetIO();
+    // Dragging the cube turns the view, as dragging in the view does, but faster: the cube's
+    // surface about follows the pointer. (It goes on while the button is held, off the cube too.)
+    const bool dragging = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f);
+    if (dragging) {
+        app.dragViewCube(io.MouseDelta.x, io.MouseDelta.y);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    }
+    // The spot under the pointer (or a script's stand-in for it): a face's middle, one of its
+    // edges or one of its corners.
+    const ImVec2 m = io.MousePos;
+    const bool over = ImGui::IsItemHovered() && !dragging;
+    const CubeSpot spot = app.cubeHover() ? cubeSpotAt(faces, app.cubeHover()->first, app.cubeHover()->second)
+                          : over          ? cubeSpotAt(faces, m.x - c.x, m.y - c.y)
+                                          : CubeSpot{};
+    const int under = spot.face;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (std::size_t i = 0; i < faces.size(); ++i) {
         const CubeFace& f = faces[i];
@@ -437,9 +451,13 @@ void viewCube(App& app, ImVec2 origin, ImVec2 size) {
         for (int k = 0; k < 4; ++k) pts[k] = ImVec2(c.x + f.x[k], c.y + f.y[k]);
         const float t = std::clamp(f.facing, 0.0f, 1.0f);
         const auto mix = [t](int a, int b) { return static_cast<int>(std::lround(a + (b - a) * t)); };
-        const ImU32 fill = static_cast<int>(i) == under ? IM_COL32(0x4A, 0x52, 0x62, 245)
-                                                         : IM_COL32(mix(0x22, 0x3B), mix(0x26, 0x41), mix(0x2E, 0x4D), 240);
-        dl->AddConvexPolyFilled(pts, 4, fill);
+        dl->AddConvexPolyFilled(pts, 4, IM_COL32(mix(0x22, 0x3B), mix(0x26, 0x41), mix(0x2E, 0x4D), 240));
+        if (static_cast<int>(i) == under) {
+            // What a click here looks from: lit up on the face.
+            ImVec2 sp[4];
+            for (int k = 0; k < 4; ++k) sp[k] = ImVec2(c.x + spot.x[k], c.y + spot.y[k]);
+            dl->AddConvexPolyFilled(sp, 4, IM_COL32(0x4A, 0x52, 0x62, 245));
+        }
         dl->AddPolyline(pts, 4, IM_COL32(0x4E, 0x56, 0x66, 255), 1.0f, ImDrawFlags_Closed);
         if (f.facing > 0.3f) {
             const char* label = cubeLabel(f.side);
@@ -450,20 +468,13 @@ void viewCube(App& app, ImVec2 origin, ImVec2 size) {
             ImGui::PopFont();
         }
     }
-    if (under >= 0) {
+    if (under >= 0 && over) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        tooltip((std::string("Look from the ") + cubeLabel(faces[static_cast<std::size_t>(under)].side)).c_str());
+        tooltip(("Look from the " + cubeSpotName(spot.dir) + ". Drag the cube to turn the view.").c_str());
     }
-    if (clicked && under >= 0 && ImGui::GetIO().MouseDragMaxDistanceSqr[0] < 9) {
-        const CubeSide s = faces[static_cast<std::size_t>(under)].side;
-        if (s == CubeSide::Front) app.setView(ViewPreset::Front);
-        else if (s == CubeSide::Right) app.setView(ViewPreset::Side);
-        else {
-            const V3 d = cubeDirection(s);
-            app.camera().lookFrom(d);
-            app.viewChanged();
-        }
-    }
+    // A click (not the end of a drag): a face's middle looks from that side, an edge or a
+    // corner from between its sides.
+    if (clicked && over && under >= 0 && io.MouseDragMaxDistanceSqr[0] < 9) app.lookFromCube(spot.dir);
     // Home (the start view) and From below, under the cube.
     const float y = c.y + 62;
     ImGui::SetCursorScreenPos(ImVec2(c.x - 64, y));

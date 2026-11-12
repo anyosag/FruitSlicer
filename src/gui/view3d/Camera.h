@@ -13,6 +13,9 @@ class Camera {
 public:
     // Turn by mouse movement in pixels.
     void orbit(float dx, float dy);
+    // Turn by angles: `yaw_deg` around the plate's upright axis, `pitch_deg`
+    // up over the plate (held just short of straight up or down).
+    void turn(float yaw_deg, float pitch_deg);
     // Move the view so the plate follows the cursor (`viewport_h` in pixels).
     void pan(float dx, float dy, float viewport_h);
     // Positive steps zoom in.

@@ -369,6 +369,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (!app.layFace(n - 1)) throw std::runtime_error("lay_face: no flat face " + std::to_string(n) + " to lay down");
         } else if (step.contains("hover_face")) {
             app.setHoverFace(step["hover_face"].get<int>() - 1);  // lit as if the mouse were on it; 0 puts it out
+        } else if (step.contains("cube_hover")) {
+            // {"cube_hover": [x, y]}: the view cube drawn as if the pointer were at that point of it
+            // (pixels from its centre, y down); {"cube_hover": false} takes the stand-in away.
+            const auto& v = step["cube_hover"];
+            if (v.is_array()) app.setCubeHover(std::pair<float, float>{v[0].get<float>(), v[1].get<float>()});
+            else app.setCubeHover(std::nullopt);
+        } else if (step.contains("cube_click")) {
+            // {"cube_click": [x, y]}: a click on that point of the view cube.
+            app.clickViewCube(step["cube_click"][0].get<float>(), step["cube_click"][1].get<float>());
+        } else if (step.contains("cube_drag")) {
+            // {"cube_drag": [dx, dy]}: the view cube dragged by so many pixels.
+            app.dragViewCube(step["cube_drag"][0].get<float>(), step["cube_drag"][1].get<float>());
         } else if (step.contains("hover_point")) {
             // {"hover_point": [x, y, z]}: the selected part's surface nearest that point (printer mm) lit as
             // if the mouse were on it; {"hover_point": false} puts it out.
