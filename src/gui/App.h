@@ -363,7 +363,9 @@ public:
     void savePrint();                                     // asks where (and once about orientation)
     void savePrintAfterAsking();                          // "Save anyway" in the orientation question
     void savePrintTo(const std::string& path, const std::string& drive, bool to_send = false);
-    void ejectDrive();
+    void ejectDrive();                         // the drive the print file was saved to
+    void ejectDrive(const std::string& path);  // any drive of drives(), by where it is mounted
+    bool canEject() const;                     // nothing is being written (background estimates give way)
     void revealSaved();   // the saved file in Finder
     void dismissSaved();  // leave the "saved" page for the Print step
     void exportStl(bool supports_only);

@@ -187,6 +187,14 @@ PrintEstimate estimatePrint(const Document& doc, const LayerResult& layers, cons
     e.thin_layers = f.thin_layers;
     e.merged_layers = f.merged_layers;
     e.print_time_s = f.print_time_s;
+    // Where each layer height is used, bottom to top: neighbouring layers of one height make a band.
+    e.thin_height = fruit::gooLayerHeight(plan.setup.header);
+    for (const fruit::LayerGroup& g : f.groups) {
+        const double z0 = static_cast<double>(g.first) * e.thin_height;
+        const double z1 = static_cast<double>(g.first + g.count) * e.thin_height;
+        if (!e.bands.empty() && e.bands.back().count == static_cast<int>(g.count)) e.bands.back().z1 = z1;
+        else e.bands.push_back({z0, z1, static_cast<int>(g.count)});
+    }
     return e;
 }
 

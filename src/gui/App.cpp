@@ -37,6 +37,11 @@
 namespace gui {
 
 namespace {
+// The background job that works out what adaptive layers will save.
+const char* const kEstimateJob = "Working out adaptive layers";
+}  // namespace
+
+namespace {
 std::string settingsFile() { return (std::filesystem::path(platform::dataDir()) / "settings.json").string(); }
 std::string preferencesFile() { return (std::filesystem::path(platform::dataDir()) / "preferences.json").string(); }
 }  // namespace
@@ -1368,6 +1373,9 @@ bool App::startEstimate() {
     if (estimate_started_ && *estimate_started_ == key) return false;  // once per combination
     const auto sup = doc_->supports.result;
     if (!sup) return false;
+    // Not while the saved page shows: the numbers there are the file's own, and
+    // nothing should be busy when the drive is to be ejected.
+    if (doc_->print.saved && doc_->print.saved_from == doc_->layers.result) return false;
     if (!estimate_last_ || !(*estimate_last_ == key)) {
         estimate_last_ = key;
         estimate_tries_ = 0;
@@ -1380,7 +1388,7 @@ bool App::startEstimate() {
     auto out = std::make_shared<PrintEstimate>();
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
-        "Working out adaptive layers",
+        kEstimateJob,
         [snap, sup, plan, key, out](const fruit::JobControl& ctl) {
             *out = estimatePrint(*snap, *key.layers, sup->mesh, *plan, ctl);
         },
@@ -2597,19 +2605,31 @@ unsigned App::orientationPicture(bool ours) {
 
 void App::ejectDrive() {
     if (!doc_ || doc_->print.drive.empty()) return;
-    std::string path;
     for (const auto& v : drives_)
-        if (v.name == doc_->print.drive) path = v.path;
-    if (path.empty()) return;
+        if (v.name == doc_->print.drive) {
+            ejectDrive(v.path);
+            return;
+        }
+}
+
+bool App::canEject() const {
+    // Not while a file is being written. The background work that only works
+    // something out (the adaptive estimate, the collisions check) gives way.
+    if (!jobs_.busy()) return true;
+    return checkingCollisions() || jobs_.progress().name == kEstimateJob;
+}
+
+void App::ejectDrive(const std::string& path) {
+    std::string name;
+    for (const auto& v : drives_)
+        if (v.path == path) name = v.name;
+    if (name.empty() || !canEject()) return;
     auto error = std::make_shared<std::string>();
     auto ok = std::make_shared<bool>(false);
-    std::weak_ptr<Document> target = doc_;
     jobs_.start(
-        "Ejecting " + doc_->print.drive,
+        "Ejecting " + name,
         [path, error, ok](const fruit::JobControl&) { *ok = platform::ejectVolume(path, error.get()); },
-        [this, target, error, ok](std::exception_ptr err) {
-            const auto d = target.lock();
-            if (!d) return;
+        [this, name, error, ok](std::exception_ptr err) {
             if (err) {
                 try {
                     std::rethrow_exception(err);
@@ -2618,11 +2638,11 @@ void App::ejectDrive() {
                 }
             }
             if (!*ok) {
-                showError("Couldn't eject " + d->print.drive, *error);
+                showError("Couldn't eject " + name, *error);
                 return;
             }
-            log::info("ejected " + d->print.drive);
-            d->print.drive.clear();
+            log::info("ejected " + name);
+            if (doc_ && doc_->print.drive == name) doc_->print.drive.clear();
             drives_checked_ = -1;  // read the list again
         });
 }

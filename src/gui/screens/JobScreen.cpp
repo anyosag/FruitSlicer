@@ -490,6 +490,20 @@ void statusBar(App& app) {
         tooltip("Until the check confirms which way the 16K shows images, text and left- or right-handed parts could "
                 "print mirrored. Click to run it: 5 minutes, no resin.");
     }
+    // A plugged-in drive can be ejected from here at any time, without going to the saved page.
+    for (std::size_t i = 0; i < app.drives().size(); ++i) {
+        const platform::Volume& v = app.drives()[i];
+        const bool can = app.canEject();
+        ImGui::SameLine(0, 12);
+        ImGui::SetCursorPosY(cy - 15);
+        ImGui::PushID(static_cast<int>(i));
+        if (chip("eject", ("Eject " + v.name).c_str(), 0, can ? col::TextSecondary : col::TextMuted, col::Card, col::Border) &&
+            can)
+            app.ejectDrive(v.path);
+        ImGui::PopID();
+        tooltip(can ? "Unmounts this drive so it is safe to unplug."
+                    : "A file is being written. The drive can be ejected when it is done.");
+    }
     if (!totals.empty()) {  // right end of the bar
         ImGui::PushFont(fonts().regular, size::Body);
         const float tw = ImGui::CalcTextSize(totals.c_str()).x;

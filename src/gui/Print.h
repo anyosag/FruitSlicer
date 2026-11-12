@@ -124,9 +124,16 @@ fruit::AdaptiveSettings adaptiveSettings(const Document& doc, const PrintPlan& p
 // What saving the print file will have in it, worked out without cutting an
 // image: the layers in the file, the thin layers they come from, how many are
 // merged, and the print time.
+// A stretch of the print whose layers all have one height.
+struct LayerBand {
+    double z0 = 0, z1 = 0;  // mm above the plate, bottom and top
+    int count = 1;          // thin layers per layer here (1: thin, 2, 4, 8)
+};
 struct PrintEstimate {
     std::size_t layers = 0, thin_layers = 0, merged_layers = 0;
     double print_time_s = 0;
+    double thin_height = 0;        // mm
+    std::vector<LayerBand> bands;  // bottom to top, with adaptive layers (empty without)
 };
 // Without adaptive layers, the plan's own (thin) numbers; with them, exactly
 // what savePrint writes. Cancellable; `plan` must be ready.

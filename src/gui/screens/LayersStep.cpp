@@ -28,6 +28,16 @@ int shownLayer(const Document& doc) {
     return doc.layers.current >= 0 ? doc.layers.current : static_cast<int>(r.biggest);
 }
 
+// The colour of layers `count` thin layers thick, on the slider and in its legend.
+ImU32 layerHeightColor(int count) {
+    switch (count) {
+        case 1: return IM_COL32(0x52, 0x5E, 0x70, 255);   // thin: slate
+        case 2: return IM_COL32(0x5B, 0x9B, 0xE0, 255);   // blue
+        case 4: return IM_COL32(0xA7, 0x8B, 0xFA, 255);   // violet
+        default: return IM_COL32(0x3F, 0xC7, 0xB8, 255);  // teal
+    }
+}
+
 void layerColumn(App& app, Document& doc, float h) {
     beginPanel("layer_column", ImVec2(kColumnW, h), col::Panel, ImVec2(16, 18));
     edge(true, false);
@@ -45,15 +55,46 @@ void layerColumn(App& app, Document& doc, float h) {
                  .c_str(),
              fonts().regular, size::Help, col::TextMuted, true);
     }
+    // Adaptive layers: where each layer height is used, once worked out.
+    const App::AdaptiveView adaptive = app.adaptiveView();
+    const PrintEstimate* est = adaptive.numbers;
+    const bool banded = est && est->bands.size() > 1;
+    std::vector<int> heights;  // the thin-layer counts in use, thinnest first
+    if (banded)
+        for (const LayerBand& b : est->bands)
+            if (std::find(heights.begin(), heights.end(), b.count) == heights.end()) heights.push_back(b.count);
+    std::sort(heights.begin(), heights.end());
+    if (banded)
+        text(strf("Adaptive layers: %s when saved.", thousands(est->layers).c_str()).c_str(), fonts().regular, size::Help,
+             col::TextMuted, true);
+    else if (adaptive.working)
+        text("Working out the adaptive layers.", fonts().regular, size::Help, col::TextMuted, true);
     ImGui::Dummy(ImVec2(0, 4));
     // Tall slider, layer 1 at the bottom, with marks for layers worth a look.
-    const float sh = std::max(80.0f, ImGui::GetContentRegionAvail().y - 46);
+    const float legend_lines = 1.0f + (r.hollows.components.empty() ? 0.0f : 1.0f) + static_cast<float>(heights.size());
+    const float sh = std::max(80.0f, ImGui::GetContentRegionAvail().y - std::max(46.0f, 14 + 16 * legend_lines));
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float x = p.x + (kColumnW - 32) / 2 - 12;
+    if (banded) {
+        // The track, coloured by layer height (drawn under the slider, whose own track is then clear).
+        ImDrawList* bl = ImGui::GetWindowDrawList();
+        const double top = std::max(1e-9, est->bands.back().z1);
+        auto yAt = [&](double z) {
+            return p.y + sh - 7 - (sh - 14) * static_cast<float>(std::clamp(z / top, 0.0, 1.0));
+        };
+        bl->AddRectFilled(ImVec2(x, p.y), ImVec2(x + 24, p.y + sh), col::Input, 6);
+        for (std::size_t k = 0; k < est->bands.size(); ++k) {
+            const LayerBand& b = est->bands[k];
+            // The first band reaches the track's bottom end and the last its top end.
+            const float y0 = k == 0 ? p.y + sh - 3 : yAt(b.z0);
+            const float y1 = k + 1 == est->bands.size() ? p.y + 3 : yAt(b.z1);
+            bl->AddRectFilled(ImVec2(x + 3, std::min(y1, y0 - 1)), ImVec2(x + 21, y0), layerHeightColor(b.count));
+        }
+    }
     ImGui::SetCursorScreenPos(ImVec2(x, p.y));
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
-    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col::Active);
-    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col::Active);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, banded ? IM_COL32(0, 0, 0, 0) : col::Input);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, banded ? IM_COL32(255, 255, 255, 18) : col::Active);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, banded ? IM_COL32(255, 255, 255, 18) : col::Active);
     ImGui::PushStyleColor(ImGuiCol_SliderGrab, col::Text);
     ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, col::Accent);
     ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 14);
@@ -77,6 +118,13 @@ void layerColumn(App& app, Document& doc, float h) {
     };
     legendLine(col::Accent, "biggest layer");
     if (!r.hollows.components.empty()) legendLine(IM_COL32(0xF0, 0x6B, 0x9A, 255), "cup or trap starts");
+    // The layer heights' colours, thinnest first.
+    for (const int count : heights) {
+        dl->AddRectFilled(ImVec2(p.x, ly + 3), ImVec2(p.x + 10, ly + 13), layerHeightColor(count), 2);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + 14, ly + 1));
+        text(strf("%g mm layers", count * est->thin_height).c_str(), fonts().regular, size::Label, col::TextMuted);
+        ly += 16;
+    }
     endPanel();
 }
 

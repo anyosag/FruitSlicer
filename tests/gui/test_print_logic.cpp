@@ -518,3 +518,38 @@ TEST_CASE("Adaptive estimate: the document keeps one for the same layers and set
     doc->layers.result = std::make_shared<const LayerResult>(lr);  // cut again: stale
     CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);
 }
+
+TEST_CASE("Adaptive estimate: the bands say where each layer height is used", "[gui][print][adaptive][estimate]") {
+    const auto doc = box();  // lifted 5 mm: only the model's box is above that
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s = typed();
+    s.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.ready);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    REQUIRE(e.bands.size() > 1);
+    CHECK(e.thin_height == Approx(plan.layer_height));
+    // Bottom to top with no gaps, from the plate to the top of the print.
+    CHECK(e.bands.front().z0 == Approx(0.0));
+    CHECK(e.bands.back().z1 == Approx(static_cast<double>(e.thin_layers) * e.thin_height));
+    std::size_t layers = 0;
+    bool thick = false;
+    for (std::size_t k = 0; k < e.bands.size(); ++k) {
+        const LayerBand& b = e.bands[k];
+        CHECK((b.count == 1 || b.count == 2 || b.count == 4));
+        CHECK(b.z1 > b.z0);
+        if (k > 0) {
+            CHECK(b.z0 == Approx(e.bands[k - 1].z1));
+            CHECK(b.count != e.bands[k - 1].count);  // neighbours of one height are one band
+        }
+        layers += static_cast<std::size_t>(std::lround((b.z1 - b.z0) / (b.count * e.thin_height)));
+        thick = thick || b.count == 4;
+    }
+    CHECK(layers == e.layers);
+    CHECK(thick);
+    CHECK(e.bands.front().count == 1);  // the bottom layers are never merged
+    // Without adaptive layers there are no bands.
+    PrintSettings off = typed();
+    const PrintPlan plain = planPrint(*doc, lr, 0.0, off);
+    CHECK(estimatePrint(*doc, lr, {}, plain, fruit::JobControl::none()).bands.empty());
+}
