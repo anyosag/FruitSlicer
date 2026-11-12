@@ -100,8 +100,20 @@ void layerColumn(App& app, Document& doc, float h) {
     ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 14);
     int s = at;
     if (ImGui::VSliderInt("##layers", ImVec2(24, sh), &s, 0, std::max(0, n - 1), "")) app.setLayer(s);
+    if (ImGui::IsItemHovered()) ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the slider has the wheel
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(5);
+    // Two-finger scrolling anywhere over this column moves the layer: swiping up goes up the print,
+    // as the slider's handle does (a swipe up arrives as a negative MouseWheel with natural scrolling,
+    // the Mac default).
+    if (n > 1 && ImGui::IsWindowHovered()) {
+        const double units = -static_cast<double>(ImGui::GetIO().MouseWheel);
+        if (units != 0) {
+            const LayerScrollStep step = scrollLayer(at, n, units, doc.layers.scroll_carry);
+            doc.layers.scroll_carry = step.carry;
+            if (step.layer != at) app.setLayer(step.layer);
+        }
+    }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (std::size_t m : r.marks) {
         const float y = p.y + sh - 7 - (sh - 14) * static_cast<float>(m) / static_cast<float>(std::max(1, n - 1));
