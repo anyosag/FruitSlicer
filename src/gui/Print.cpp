@@ -12,6 +12,8 @@
 #include "Document.h"
 #include "Hollows.h"
 #include "Layers.h"
+#include "core/Parallel.h"
+#include "geometry/Polygon.h"
 #include "layers/AdaptiveLayers.h"
 #include "raster/Rasterizer.h"
 #include "support/SupportSettings.h"
@@ -178,11 +180,11 @@ PrintEstimate estimatePrint(const Document& doc, const LayerResult& layers, cons
         e.print_time_s = plan.print_time_s;
         return e;
     }
-    const PrintStacks st = buildPrintStacks(doc, layers, supports, plan, true, ctl.sub(0.0, 0.7));
+    const PrintStacks st = buildPrintStacks(doc, layers, supports, plan, true, ctl.sub(0.0, 0.6));
     fruit::GooExportOptions o;
     o.resin_density = plan.density;
     const fruit::AdaptiveFilePlan f =
-        fruit::planAdaptiveFile(st.print->size(), *st.model, plan.setup.header, o, adaptiveSettings(doc, plan), ctl.sub(0.7, 1.0));
+        fruit::planAdaptiveFile(st.print->size(), *st.model, plan.setup.header, o, adaptiveSettings(doc, plan), ctl.sub(0.6, 0.8));
     e.layers = f.layers;
     e.thin_layers = f.thin_layers;
     e.merged_layers = f.merged_layers;
@@ -194,6 +196,28 @@ PrintEstimate estimatePrint(const Document& doc, const LayerResult& layers, cons
         const double z1 = static_cast<double>(g.first + g.count) * e.thin_height;
         if (!e.bands.empty() && e.bands.back().count == static_cast<int>(g.count)) e.bands.back().z1 = z1;
         else e.bands.push_back({z0, z1, static_cast<int>(g.count)});
+    }
+    if (f.merges()) {
+        // The file's layers for the Layers step, each image made the way the file is written.
+        auto stack = std::make_shared<fruit::LayerStack>();
+        stack->layer_height = e.thin_height;
+        stack->slices.resize(f.groups.size());
+        stack->sample_z.resize(f.groups.size());
+        e.file_layers.resize(f.groups.size());
+        fruit::parallelFor(f.groups.size(), 0, [&](std::size_t k) {
+            ctl.check();
+            const fruit::LayerGroup& g = f.groups[k];
+            stack->slices[k] = fruit::mergedSlice(*st.print, g);
+            FileLayer& fl = e.file_layers[k];
+            fl.z0 = static_cast<double>(g.first) * e.thin_height;
+            fl.z1 = static_cast<double>(g.first + g.count) * e.thin_height;
+            fl.thickness = fl.z1 - fl.z0;
+            fl.count = static_cast<int>(g.count);
+            fl.area = std::max(0.0, fruit::area(stack->slices[k]));
+            stack->sample_z[k] = fl.mid();
+        });
+        ctl.check();
+        e.file_stack = std::move(stack);
     }
     return e;
 }

@@ -661,6 +661,7 @@ void App::maintain() {
                     d->layers.result = std::make_shared<const LayerResult>(std::move(*out));
                     d->layers.for_supports = sup;
                     d->layers.current = -1;
+                    d->layers.file_layer = -1;
                     log::info("layers: " + std::to_string(d->layers.result->layers->size()) + " in " +
                               std::to_string(d->layers.result->seconds) + " s");
                 });
@@ -1364,6 +1365,21 @@ App::AdaptiveView App::adaptiveView() {
         v.working = !v.failed;
     }
     return v;
+}
+
+const PrintEstimate* App::fileLayersView() {
+    const AdaptiveView v = adaptiveView();
+    const PrintEstimate* e = v.numbers;
+    if (!e || e->merged_layers == 0 || !e->file_stack || e->file_layers.empty() || e->file_layers.size() != e->layers)
+        return nullptr;
+    return e;
+}
+
+LayerPick App::shownFile(const PrintEstimate& view) {
+    const LayerResult& r = *doc_->layers.result;
+    const int thin = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(r.biggest);
+    return shownFileLayer(view.file_layers, doc_->layers.file_layer, thin, r.layers->layer_height,
+                          static_cast<int>(r.layers->size()));
 }
 
 bool App::startEstimate() {
@@ -2696,6 +2712,21 @@ void App::setLayer(int index) {
     doc_->layers.current = std::clamp(index, 0, std::max(0, n - 1));
 }
 
+void App::setFileLayer(int index) {
+    if (!doc_ || !doc_->layers.result) return;
+    const PrintEstimate* v = fileLayersView();
+    if (!v) return;
+    const LayerResult& r = *doc_->layers.result;
+    const LayerPick p = pickFileLayer(v->file_layers, index, r.layers->layer_height, static_cast<int>(r.layers->size()));
+    doc_->layers.file_layer = p.file;
+    doc_->layers.current = p.thin;
+}
+
+void App::setFileLayerAtHeight(double z) {
+    const PrintEstimate* v = fileLayersView();
+    if (v) setFileLayer(fileLayerAt(v->file_layers, z));
+}
+
 void App::setShowBelow(bool show) {
     if (doc_) doc_->layers.show_below = show;
 }
@@ -2704,10 +2735,17 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     if (image) *image = nullptr;
     if (!doc_ || !doc_->layers.result) return 0;
     const auto& res = doc_->layers.result;
-    const int index = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(res->biggest);
+    int index = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(res->biggest);
+    // With adaptive layers worked out: the print file's own layer at this height.
+    const PrintEstimate* fv = fileLayersView();
+    std::shared_ptr<const fruit::LayerStack> stack = res->layers;
+    if (fv) {
+        index = shownFile(*fv).file;
+        stack = fv->file_stack;
+    }
     const bool below = doc_->layers.show_below;
-    if (layer_tex_ && layer_tex_result_ == res && layer_tex_index_ == index && layer_tex_below_ == below &&
-        layer_tex_w_ == max_w && layer_tex_h_ == max_h) {
+    if (layer_tex_ && layer_tex_result_ == res && layer_tex_stack_ == stack && layer_tex_index_ == index &&
+        layer_tex_below_ == below && layer_tex_w_ == max_w && layer_tex_h_ == max_h) {
         if (image) *image = &layer_image_;
         return layer_tex_;
     }
@@ -2715,7 +2753,7 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     fruit::BBox3 crop = res->bounds;
     crop.min = crop.min - fruit::Vec3{3, 3, 0};
     crop.max = crop.max + fruit::Vec3{3, 3, 0};
-    layer_image_ = drawLayer(*res->layers, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
+    layer_image_ = drawLayer(*stack, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
     std::vector<unsigned char> rgba(layer_image_.lit.size() * 4, 0);
     for (std::size_t i = 0; i < layer_image_.lit.size(); ++i) {
         const unsigned lit = layer_image_.lit[i];
@@ -2730,6 +2768,7 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     Renderer::freeTexture(layer_tex_);
     layer_tex_ = renderer_.uploadRgba(layer_image_.w, layer_image_.h, rgba);
     layer_tex_result_ = res;
+    layer_tex_stack_ = stack;
     layer_tex_index_ = index;
     layer_tex_below_ = below;
     layer_tex_w_ = max_w;
@@ -2897,6 +2936,17 @@ void App::keys() {
         return;
     }
     if (screen_ == Screen::Job && inLayersMode(step_) && doc_ && doc_->layersFresh()) {
+        if (const PrintEstimate* fv = fileLayersView()) {
+            // The print file's own layers.
+            const int now = shownFile(*fv).file;
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setFileLayer(now + 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setFileLayer(now - 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_PageUp)) setFileLayer(now + 10);
+            if (ImGui::IsKeyPressed(ImGuiKey_PageDown)) setFileLayer(now - 10);
+            if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) setFileLayer(0);
+            if (ImGui::IsKeyPressed(ImGuiKey_End, false)) setFileLayer(1 << 30);
+            return;
+        }
         const int now = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(doc_->layers.result->biggest);
         if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) setLayer(now + 1);
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) setLayer(now - 1);

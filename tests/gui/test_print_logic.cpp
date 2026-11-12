@@ -15,6 +15,7 @@
 #endif
 
 #include "Document.h"
+#include "FileLayers.h"
 #include "Layers.h"
 #include "Print.h"
 #include "Supports.h"
@@ -552,4 +553,208 @@ TEST_CASE("Adaptive estimate: the bands say where each layer height is used", "[
     PrintSettings off = typed();
     const PrintPlan plain = planPrint(*doc, lr, 0.0, off);
     CHECK(estimatePrint(*doc, lr, {}, plain, fruit::JobControl::none()).bands.empty());
+}
+
+// ---- The Layers step with adaptive layers: the print file's own layers ----
+
+TEST_CASE("File layers: the estimate keeps the file's layers for viewing", "[gui][print][adaptive][estimate][filelayers]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s = typed();
+    s.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.ready);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    REQUIRE(e.merged_layers > 0);
+    REQUIRE(e.file_stack);
+    CHECK(e.file_layers.size() == e.layers);
+    CHECK(e.file_stack->size() == e.layers);
+    // Contiguous from the plate to the top of the print, with the band's thickness.
+    CHECK(e.file_layers.front().z0 == Approx(0.0));
+    CHECK(e.file_layers.back().z1 == Approx(static_cast<double>(e.thin_layers) * e.thin_height));
+    bool thick = false;
+    for (std::size_t k = 0; k < e.file_layers.size(); ++k) {
+        const FileLayer& l = e.file_layers[k];
+        CHECK(l.z1 > l.z0);
+        CHECK(l.thickness == Approx(l.z1 - l.z0));
+        CHECK(l.thickness == Approx(l.count * e.thin_height));
+        if (k > 0) CHECK(l.z0 == Approx(e.file_layers[k - 1].z1));
+        const auto band = std::find_if(e.bands.begin(), e.bands.end(),
+                                       [&](const LayerBand& b) { return l.mid() > b.z0 && l.mid() < b.z1; });
+        REQUIRE(band != e.bands.end());
+        CHECK(band->count == l.count);
+        thick = thick || l.count > 1;
+    }
+    CHECK(thick);
+}
+
+TEST_CASE("File layers: a merged layer's image is the union of its thin layers', and its lit area matches",
+          "[gui][print][adaptive][estimate][filelayers]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s = typed();
+    s.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    REQUIRE(e.file_stack);
+    // The file's thin layers are the job's here (no re-slicing).
+    REQUIRE_FALSE(plan.reslice);
+    const fruit::LayerStack& thin = *lr.layers;
+    fruit::BBox3 crop = lr.bounds;
+    crop.min = crop.min - fruit::Vec3{1, 1, 0};
+    crop.max = crop.max + fruit::Vec3{1, 1, 0};
+    const auto pr = fruit::PrinterProfile::saturn4Ultra16k();
+    std::size_t merged_checked = 0;
+    for (std::size_t k = 0; k < e.file_layers.size(); ++k) {
+        const FileLayer& l = e.file_layers[k];
+        const auto first = static_cast<std::size_t>(std::lround(l.z0 / e.thin_height));
+        if (l.count > 1) {
+            // Every thin layer's lit pixels are lit in the file layer's image.
+            const LayerImage whole = drawLayer(*e.file_stack, k, crop, 800, 800, pr, false);
+            for (int c = 0; c < l.count; ++c) {
+                const LayerImage one = drawLayer(thin, first + static_cast<std::size_t>(c), crop, 800, 800, pr, false);
+                REQUIRE(one.lit.size() == whole.lit.size());
+                for (std::size_t i = 0; i < one.lit.size(); ++i) REQUIRE(whole.lit[i] >= one.lit[i]);
+            }
+            // And it is the same Paths the file is written from.
+            fruit::LayerGroup g;
+            g.first = first;
+            g.count = static_cast<std::size_t>(l.count);
+            const fruit::Paths again = fruit::mergedSlice(thin, g);
+            CHECK(fruit::area(again) == Approx(fruit::area(e.file_stack->slices[k])));
+            ++merged_checked;
+        }
+        // The lit area is the image's (to a few pixels' rounding).
+        CHECK(l.area == Approx(std::max(0.0, fruit::area(e.file_stack->slices[k]))));
+        const LayerImage im = drawLayer(*e.file_stack, k, crop, 800, 800, pr, false);
+        double lit = 0;
+        for (auto v : im.lit) lit += v / 255.0;
+        CHECK(lit * im.px * im.py == Approx(l.area).margin(2.0 + 0.02 * l.area));
+    }
+    CHECK(merged_checked > 0);
+}
+
+TEST_CASE("File layers: a re-sliced job keeps file layers at the sample's height",
+          "[gui][print][adaptive][estimate][filelayers]") {
+    const auto doc = boxOnPlate(0.10);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s;
+    s.sample_path = sample003();
+    s.sample = loadSample(s.sample_path);
+    s.adaptive = 8;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.reslice);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    REQUIRE(e.merged_layers > 0);
+    CHECK(e.file_layers.size() == e.layers);
+    CHECK(e.thin_height == Approx(0.03));
+    CHECK(e.file_layers.front().z0 == Approx(0.0));
+    CHECK(e.file_layers.back().z1 == Approx(static_cast<double>(e.thin_layers) * 0.03));
+    CHECK(e.file_layers.front().count == 1);
+}
+
+namespace {
+// Layers 0.05 | 0.05 | 0.10 | 0.20 | 0.20 | 0.05: z 0 to 0.65.
+std::vector<FileLayer> sampleFileLayers() {
+    std::vector<FileLayer> v;
+    double z = 0;
+    for (const int c : {1, 1, 2, 4, 4, 1}) {
+        FileLayer l;
+        l.z0 = z;
+        l.z1 = z + 0.05 * c;
+        l.thickness = 0.05 * c;
+        l.count = c;
+        z = l.z1;
+        v.push_back(l);
+    }
+    return v;
+}
+}  // namespace
+
+TEST_CASE("File layers: height to file layer and back", "[gui][print][adaptive][filelayers]") {
+    const auto v = sampleFileLayers();
+    CHECK(fileLayerAt({}, 1.0) == -1);
+    CHECK(fileLayerAt(v, 0.0) == 0);
+    CHECK(fileLayerAt(v, 0.049) == 0);
+    CHECK(fileLayerAt(v, 0.05) == 1);  // a boundary belongs to the layer above
+    CHECK(fileLayerAt(v, 0.12) == 2);
+    CHECK(fileLayerAt(v, 0.20) == 3);
+    CHECK(fileLayerAt(v, 0.39) == 3);
+    CHECK(fileLayerAt(v, 0.40) == 4);
+    CHECK(fileLayerAt(v, 0.64) == 5);
+    // Below the plate and above the top clamp to the ends.
+    CHECK(fileLayerAt(v, -3.0) == 0);
+    CHECK(fileLayerAt(v, 99.0) == 5);
+    // Every file layer's mid-height is in the layer itself.
+    for (std::size_t k = 0; k < v.size(); ++k) CHECK(fileLayerAt(v, v[k].mid()) == static_cast<int>(k));
+    // In a thick band there are fewer places to stop: 0.20 to 0.40 is one layer for every height in it.
+    for (double z = 0.2; z < 0.4 - 1e-9; z += 0.01) CHECK(fileLayerAt(v, z) == 3);
+    // 0.05 mm layers.
+    CHECK(thinLayerAt(0.0, 0.05, 13) == 0);
+    CHECK(thinLayerAt(0.125, 0.05, 13) == 2);
+    CHECK(thinLayerAt(0.65, 0.05, 13) == 12);
+    CHECK(thinLayerAt(5.0, 0.05, 13) == 12);
+    CHECK(thinLayerAt(-1.0, 0.05, 13) == 0);
+    CHECK(thinLayerMid(2, 0.05) == Approx(0.125));
+}
+
+TEST_CASE("File layers: the 0.05 mm layer and the file layer stay at one height",
+          "[gui][print][adaptive][filelayers]") {
+    const auto v = sampleFileLayers();
+    const double h = 0.05;
+    const int n = 13;
+    // Picking a file layer moves the 0.05 mm layer to its mid-height, and clamps.
+    LayerPick p = pickFileLayer(v, 3, h, n);
+    CHECK(p.file == 3);
+    CHECK(p.thin == 6);  // mid 0.30: the layer 0.30 to 0.35
+    CHECK(pickFileLayer(v, 99, h, n).file == 5);
+    CHECK(pickFileLayer(v, -4, h, n).file == 0);
+    CHECK(pickFileLayerAtHeight(v, 0.33, h, n).file == 3);
+    CHECK(pickFileLayerAtHeight(v, 0.33, h, n).thin == 6);
+    // Every file layer: the thin layer chosen is inside the file layer or touches its middle.
+    for (int k = 0; k < static_cast<int>(v.size()); ++k) {
+        const LayerPick q = pickFileLayer(v, k, h, n);
+        CHECK(std::abs(thinLayerMid(q.thin, h) - v[static_cast<std::size_t>(k)].mid()) <= h / 2 + 1e-9);
+        // Leaving the adaptive view lands at the same height; coming back lands on the same file layer.
+        CHECK(shownFileLayer(v, q.file, q.thin, h, n).file == k);
+    }
+    // Starting the adaptive view: the file layer at the height of the 0.05 mm layer shown.
+    CHECK(shownFileLayer(v, -1, 0, h, n).file == 0);
+    CHECK(shownFileLayer(v, -1, 5, h, n).file == 3);   // 0.25 to 0.30: in the 0.20 to 0.40 layer
+    CHECK(shownFileLayer(v, -1, 12, h, n).file == 5);
+    // A file layer picked earlier does not outlast the 0.05 mm layer being moved without it.
+    CHECK(shownFileLayer(v, 3, 9, h, n).file == 4);    // moved to 0.45 to 0.50
+    CHECK(shownFileLayer(v, 3, 6, h, n).file == 3);    // still where the pick put it
+    // A stale pick (out of range for another estimate) is ignored.
+    CHECK(shownFileLayer(v, 40, 1, h, n).file == 1);
+    CHECK(shownFileLayer({}, 0, 1, h, n).file == 0);
+}
+
+TEST_CASE("File layers: not used with adaptive layers off or the estimate not ready", "[gui][print][adaptive][filelayers]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    // Off: the estimate is the thin numbers, no file layers.
+    const PrintPlan off = planPrint(*doc, lr, 0.0, typed());
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, off, fruit::JobControl::none());
+    CHECK(e.file_layers.empty());
+    CHECK(e.file_stack == nullptr);
+    // On: there are some, but only for an estimate that is for these layers and settings.
+    doc->layers.result = std::make_shared<const LayerResult>(lr);
+    doc->print.settings = typed();
+    doc->print.settings.adaptive = 4;
+    CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);  // not worked out yet: nothing to show
+    const PrintPlan on = planPrint(*doc, lr, 0.0, doc->print.settings);
+    auto est = std::make_shared<AdaptiveEstimate>();
+    est->from = doc->layers.result;
+    est->edits = doc->print.settings;
+    est->numbers = estimatePrint(*doc, lr, {}, on, fruit::JobControl::none());
+    doc->print.estimate = est;
+    REQUIRE(doc->print.estimateFor(doc->layers.result) != nullptr);
+    CHECK(doc->print.estimateFor(doc->layers.result)->file_layers.size() == est->numbers.layers);
+    doc->print.settings.adaptive = 1;  // turned off: stale
+    CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);
+    // With nothing merged the estimate holds none either (the 0.05 mm layers are the file's).
+    PrintEstimate none;
+    none.layers = 10;
+    CHECK(none.file_layers.empty());
 }

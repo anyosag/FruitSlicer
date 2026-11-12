@@ -10,6 +10,7 @@
     {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
     {"step": "print"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2},
+    {"file_layer": 140}, {"frames": 2},
     {"shot": "c3a3_job_print_adaptive_numbers"}
   ]
 }

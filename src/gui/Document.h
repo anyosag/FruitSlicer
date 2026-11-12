@@ -80,6 +80,9 @@ struct LayerState {
     std::shared_ptr<const LayerResult> result;
     std::shared_ptr<const SupportResult> for_supports;  // the supports it was cut with
     int current = -1;         // layer shown (0-based); -1 = the biggest
+    // With adaptive layers worked out, the layers shown are the print file's own: the file layer
+    // last chosen (0-based; -1: none), kept at the same height as `current` (see shownFileLayer).
+    int file_layer = -1;
     bool show_below = false;  // the layer below, dimmed, under this one
     double scroll_carry = 0;  // trackpad scrolling over the chart that has not yet made a whole layer
 

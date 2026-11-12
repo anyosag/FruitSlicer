@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Document.h"
+#include "FileLayers.h"
 #include "Calibration.h"
 #include "JobFile.h"
 #include "LayFace.h"
@@ -359,6 +360,12 @@ public:
         bool working = false, failed = false;
     };
     AdaptiveView adaptiveView();  // all false when adaptive layers are off or there is nothing to plan
+    // The adaptive view of the Layers step: adaptive layers on, worked out for these layers and
+    // settings, and some layers merged. Then the print file's own layers (`file_layers`) are shown
+    // instead of the 0.05 mm ones; null in every other case.
+    const PrintEstimate* fileLayersView();
+    // The file layer shown in that view (and the 0.05 mm layer at its height): 0-based.
+    LayerPick shownFile(const PrintEstimate& view);
     std::string printBlocker();                           // what stops saving, in a few words ("" if nothing)
     void savePrint();                                     // asks where (and once about orientation)
     void savePrintAfterAsking();                          // "Save anyway" in the orientation question
@@ -508,6 +515,10 @@ public:
     std::shared_ptr<const fruit::GooCompareResult> gooComparison() const { return goo_comparison_; }
     // Layers.
     void setLayer(int index);  // 0-based; clamped
+    // In the adaptive view: shows a file layer (0-based; clamped), or the one at a height (mm); the
+    // 0.05 mm layer at its mid-height becomes the current one too.
+    void setFileLayer(int index);
+    void setFileLayerAtHeight(double z);
     void setShowBelow(bool show);
     // The current layer drawn for an area of `max_w` × `max_h` pixels, as a
     // texture (0 while there is none); `image` describes it.
@@ -648,6 +659,7 @@ private:
     unsigned layer_tex_ = 0;
     LayerImage layer_image_;
     std::shared_ptr<const LayerResult> layer_tex_result_;
+    std::shared_ptr<const fruit::LayerStack> layer_tex_stack_;  // the layers the picture is from (the file's or the job's)
     int layer_tex_index_ = -1, layer_tex_w_ = 0, layer_tex_h_ = 0;
     bool layer_tex_below_ = false;
     std::vector<platform::Volume> drives_;

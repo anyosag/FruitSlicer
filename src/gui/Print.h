@@ -14,6 +14,7 @@
 #include "formats/GooFile.h"
 #include "formats/GooSetup.h"
 #include "geometry/BBox.h"
+#include "layers/LayerStack.h"
 #include "mesh/TriangleMesh.h"
 #include "printer/PrinterProfile.h"
 
@@ -129,11 +130,26 @@ struct LayerBand {
     double z0 = 0, z1 = 0;  // mm above the plate, bottom and top
     int count = 1;          // thin layers per layer here (1: thin, 2, 4, 8)
 };
+// One layer of the print file, for looking at: where it sits, how thick it
+// is and how much of it is lit. Its image is in `PrintEstimate::file_stack`,
+// at the same index.
+struct FileLayer {
+    double z0 = 0, z1 = 0;  // mm above the plate, bottom and top
+    double thickness = 0;   // mm (z1 - z0)
+    int count = 1;          // thin layers it is made of
+    double area = 0;        // lit area, mm²
+    double mid() const { return 0.5 * (z0 + z1); }
+};
 struct PrintEstimate {
     std::size_t layers = 0, thin_layers = 0, merged_layers = 0;
     double print_time_s = 0;
     double thin_height = 0;        // mm
     std::vector<LayerBand> bands;  // bottom to top, with adaptive layers (empty without)
+    // The file's own layers, bottom to top (only when some are merged, else
+    // empty): each one's image is the union of its thin layers' full slices,
+    // as the file is written. `file_layers.size() == layers`.
+    std::vector<FileLayer> file_layers;
+    std::shared_ptr<const fruit::LayerStack> file_stack;  // their images, the same order
 };
 // Without adaptive layers, the plan's own (thin) numbers; with them, exactly
 // what savePrint writes. Cancellable; `plan` must be ready.
