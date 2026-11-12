@@ -8,7 +8,7 @@ add_executable(fruit_tests
   test_hollow_print.cpp
   test_calibration.cpp
   test_points.cpp
-  test_start_zone.cpp
+  test_fresh_edges.cpp
   test_tree.cpp
   test_full_raft.cpp
   test_orient.cpp

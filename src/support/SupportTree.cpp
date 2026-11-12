@@ -107,7 +107,7 @@ private:
     double footRoom(const Vec2& xy, double r) const {
         const double z0 = out_.raft_top, h = cfg_.base_height, gap = footGap();
         double d = cfg_.base_diameter;
-        for (double z = z0; z < z0 + h - 1e-9; z += 0.1) {
+        for (double z = z0; z < z0 + h - 1e-9; z += 0.05) {
             const double t = (z - z0) / h;
             const double room = tree_.closest({xy.x, xy.y, z}).distance - gap;  // the radius allowed at this height
             d = std::min(d, 2 * (room - r * t) / (1 - t));
@@ -567,6 +567,9 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
             P.base_diameter = std::min(cfg_.base_diameter, footRoom(P.xy, shaft_r));
             P.heads.push_back(hi);
             P.bridges = 1;
+            // The bridge lands on its top: a later head may raise the top, and a
+            // merge into a trunk must still start below where this bridge lands.
+            P.lowest_attach = route_end.z;
             out_.pillars.push_back(P);
             continue;
         }

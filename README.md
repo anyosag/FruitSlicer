@@ -336,12 +336,17 @@ Points are chosen bottom-up so that
 3. **islands**: every island gets 1 tip (≤ 1.7 mm), 2 tips (≤ 6.5 mm) or at
    least 3, using the mesh minimum as the contact. Islands too small to hold a
    tip that join the model almost at once are left alone and reported;
-4. **the start of a part**: within its first 2 mm of height, the edge of what
-   prints has a tip within 1.6 mm, closer than the coverage radius asks. A part
-   hangs from its fewest tips there, and the lowest edge of a tilted face grows
-   by millimetres a layer. This is reasoning, not a measured value ("Where a
-   part starts" under Advanced settings; 0 turns it off). It adds about 8 to
-   11 % more tips on the test models, all near where each part begins.
+4. **fresh edges**: where a layer reaches more than 0.5 mm past the layer
+   before it, that part is one cured skin with nothing behind it: the first
+   layer of a flat face, the ends of the sliver a tilted face starts as, the
+   rim of a shelf. Where its edge is free (the part's own outline, not the
+   side that faces what holds it, nor a ceiling with walls all round) it has
+   a tip within 1.6 mm, closer than the coverage radius asks. Slow growth (a
+   dome widening, a steady slope) is not touched. This is reasoning, not a
+   measured value ("Edges with nothing behind them" under Advanced settings;
+   0 turns it off). It adds little on most models (a lid 462 to 494 tips, a
+   cup 318 to 320, a ball none) and most where a wide flat face prints
+   level, which is the hardest thing to hold.
 
 Placement is a cost-weighted greedy set cover (cosmetic keep-out regions and
 sharp edges cost more), followed by pruning that re-checks coverage and

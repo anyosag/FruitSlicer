@@ -276,14 +276,26 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   column as wide as the tip, sunk into both faces, now joins a tip to the model
   up to 3 mm below it when nothing is beside it on the way. The lid as it sits
   has no dropped tip and nothing floating. Not printed.
-- **Closer tips where a part starts (2026-11-12).** Reasoning, not measured:
-  see `SupportConfig::start_zone_height`. A vendor's file for a 90 mm disc
-  tipped 12.6° (87 contacts, a 10 mm grid plus a row 1.6 mm apart along the
-  lowest edge) had more contacts in the first 1 mm of height than this planner
-  did (27 against 18) although far fewer overall (87 against 620 on a similar
-  disc). With the rule the planner has 49 there. PrusaSlicer's own constants
-  (11.1 mm² per 0.4 mm tip; a 3.2 mm radius growing to 4 mm at 3.9 mm) match
-  the spacing used everywhere else.
+- **Closer tips at fresh edges (2026-11-12).** Reasoning, not measured: see
+  `SupportConfig::skin_advance` / `skin_reach`. Where a layer reaches more
+  than 0.5 mm past the one before, and its edge there is the part's own
+  outline (a free edge: not the side facing what holds it, not a ceiling with
+  walls all round), that edge needs a tip within 1.6 mm. The
+  first version of this was a zone (the first 2 mm of height of every part);
+  on a ball that put nearly every tip under its lowest point and none up its
+  sides, where the hold rule used to spread them as the layers grew, so it was
+  replaced by this test of what each layer actually does. A vendor's file for
+  a 90 mm disc tipped 12.6° (87 contacts: a 10 mm grid plus a row 1.6 mm apart
+  along the lowest edge) is where the idea of holding a starting edge closer
+  came from; the user reports that vendor's supports sometimes fail, so its
+  numbers are not a target. PrusaSlicer's own constants (11.1 mm² per 0.4 mm
+  tip; a 3.2 mm radius growing to 4 mm at 3.9 mm) match the spacing used
+  everywhere else.
+- **A bridge left hanging (2026-11-12).** A pillar made at the end of a
+  diagonal route did not record where the route lands on it. When a later head
+  raised its top and it then merged into a trunk, the merge could start above
+  the landing, leaving the route's end in mid-air. Found by the validator on
+  the cap test once the tips moved; `lowest_attach` is now set for it.
 - **SatelLite 16K sample (1.0.2.43).**
   - Anti-aliasing off: every pixel is 0 or 255, and AA and grey-scale flags are 0.
   - Mirror Y = 1.

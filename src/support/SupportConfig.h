@@ -83,17 +83,18 @@ struct SupportConfig {
     double stabilize_min_height = 5.0;  // mm above the lowest tip
     double slenderness = 4.0;           // height / tip spread that triggers it
 
-    // The first millimetres of every part that starts in mid-air. Its outline
-    // grows fastest there (the lowest edge of a tilted face lengthens by
-    // millimetres a layer) while it hangs from its fewest tips, and a failure
-    // there loses everything above it. So the edge of what prints within
-    // `start_zone_height` of a part's lowest point needs a tip within
-    // `start_zone_reach`, closer than the coverage curve asks. REASONING, not
-    // measured: 1.6 mm keeps a one-layer skin between two tips to the span a
-    // 1.0-1.5 mm ledge is trusted with (see self_supported_reach); other
-    // slicers reinforce the first 2-3 mm too. Height 0 = off.
-    double start_zone_height = 2.0;
-    double start_zone_reach = 1.6;
+    // A fresh edge. Where a layer reaches more than `skin_advance` past the
+    // layer before it, that part is one cured skin with nothing behind it:
+    // the first layer of a flat face, the ends of the sliver a tilted face
+    // starts as (they lengthen by millimetres a layer), the rim of a shelf.
+    // Where its edge is free (the part's own outline, not the side that faces
+    // what holds it, nor a ceiling with walls all round) it needs a tip within
+    // `skin_reach`, closer than the coverage curve asks. Slow growth (a dome
+    // widening, a steady slope) is not touched. REASONING, not measured: 1.6 mm keeps a one-layer skin between
+    // two tips to the span a 1.0-1.5 mm ledge is trusted with (see
+    // self_supported_reach). Reach 0 = off.
+    double skin_advance = 0.5;
+    double skin_reach = 1.6;
 
     std::vector<TipClass> tip_classes{{"mini", 0.2}, {"light", 0.3}, {"medium", 0.4}, {"heavy", 0.6}};
     int default_tip = 2;  // medium

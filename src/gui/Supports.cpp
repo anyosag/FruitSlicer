@@ -175,18 +175,18 @@ std::vector<AdvancedSetting> makeAdvanced() {
                                  "wobble.",
                                  x.cfg.slenderness);
                  }});
-    v.push_back({.group = "Where tips go", .label = "Where a part starts", .kind = K::Number,
+    v.push_back({.group = "Where tips go", .label = "Edges with nothing behind them", .kind = K::Number,
                  .source = S::Assumption,
-                 .fields = {{"start_zone", "its first", "mm", 0, 10, 1,
-                             [](const C& c, const T&) { return c.start_zone_height; },
-                             [](C& c, T&, double x) { c.start_zone_height = x; }}},
+                 .fields = {{"skin_reach", "a tip within", "mm", 0, 5, 1,
+                             [](const C& c, const T&) { return c.skin_reach; },
+                             [](C& c, T&, double x) { c.skin_reach = x; }}},
                  .help = [](const X& x) {
-                     if (x.cfg.start_zone_height <= 0)
-                         return std::string("Off: a part's first layers get the same spacing as the rest of it.");
-                     return strf("The edge of what prints there has a tip within %.1f mm, closer than elsewhere: a "
-                                 "part hangs from its fewest tips as it starts. Reasoned, not measured. 0 turns it "
-                                 "off.",
-                                 x.cfg.start_zone_reach / std::sqrt(std::max(x.cfg.coverage.density, 1e-9)));
+                     if (x.cfg.skin_reach <= 0)
+                         return std::string("Off: an edge that prints in mid-air gets the same spacing as the rest.");
+                     return strf("Where a layer reaches more than %.1f mm past the one before (a flat face's first "
+                                 "layer, a tilted edge as it starts, a shelf's rim), its edge is one thin layer, so "
+                                 "a tip sits this close. Reasoned, not measured. 0 turns it off.",
+                                 x.cfg.skin_advance);
                  }});
     // ---- Keeping marks off ----
     v.push_back({.group = "Keeping marks off", .label = "Visible faces and keep-out boxes", .kind = K::Number,

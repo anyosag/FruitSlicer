@@ -23,6 +23,7 @@ namespace {
 
 constexpr double kInward = 0.01;   // mm: nudge endpoints into the solid for through-material tests
 constexpr double kEdgeInset = 0.02; // mm: edge samples sit just inside the face
+constexpr double kRimBand = 0.1;    // mm: how near a part's outline counts as on it
 
 struct Sample {
     Vec3 pos, normal;
@@ -30,7 +31,7 @@ struct Sample {
     bool island = false;
     bool excluded = false;
     bool needs_cover = true;  // false: only a place where capacity tips may go
-    bool start_edge = false;  // on the edge of what prints as its part starts: needs a tip closer by
+    bool fresh_edge = false;  // on the edge of a skin with nothing behind it: needs a tip closer by
     int tip_class = 0;
     double cost = 1.0;
     int tip = -1;  // tip placed on this sample, if any
@@ -139,12 +140,13 @@ private:
 
     // ---- samples and tips
     int makeSample(const Vec2& xy, int layer, int part, bool island, bool decimate = true,
-                   bool needs_cover = true, double spacing = -1, bool edge = false);
-    // How close a tip must be to the edge of a part that is just starting.
-    double startReach() const {
-        return cfg_.start_zone_reach / std::sqrt(std::max(cfg_.coverage.density, 1e-9));
-    }
-    void sampleRegion(const Paths& region, int layer, int part, bool island, std::vector<int>& out);
+                   bool needs_cover = true, double spacing = -1, bool fresh_edge = false);
+    // How close a tip must be to a fresh edge (see SupportConfig::skin_reach).
+    double skinReach() const { return cfg_.skin_reach / std::sqrt(std::max(cfg_.coverage.density, 1e-9)); }
+    // `fresh`: the part of `region` that reaches past the layer before (its
+    // edge samples are fresh edges); `all_fresh`: all of it does (an island).
+    void sampleRegion(const Paths& region, int layer, int part, bool island, std::vector<int>& out,
+                      const Paths* fresh = nullptr, bool all_fresh = false);
     int addTip(int sample, PointCategory cat, bool pinned);
     int addTipAt(const Vec3& pos, const Vec3& normal, int layer, int part, int cls, PointCategory cat, bool pinned);
 
@@ -216,7 +218,6 @@ private:
         double capacity = 0;
         std::vector<int> tips;
         std::vector<int> pool;  // samples where extra tips may go
-        double z0 = 1e300;  // the lowest point of the part: where it started
         double last_stab_z = -1e9;
         double last_warn_z = -1e9;
         bool exempt = false;  // skipped tiny island not yet merged: no capacity demand
@@ -254,7 +255,7 @@ bool Generator::covers(const Tip& t, const Sample& s) const {
     if (t.pos.z > s.pos.z + 1e-6) return false;
     const double dz = s.pos.z - t.pos.z;
     double r = cfg_.coverage.radius(std::min(dz, t.thickness));
-    if (s.start_edge) r = std::min(r, startReach());
+    if (s.fresh_edge) r = std::min(r, skinReach());
     if (norm2((s.pos - t.pos).xy()) > r * r) return false;
     return segmentInside(t.pos, t.normal, s.pos, s.normal);
 }
@@ -299,7 +300,7 @@ double Generator::peelFactor(const Vec2& xy) const {
 // ---------------------------------------------------------------- samples
 
 int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool decimate, bool needs_cover,
-                          double spacing, bool edge) {
+                          double spacing, bool fresh_edge) {
     Sample s;
     project(xy, layers().layerBottom(layer), s.pos, s.normal);
     if (s.normal.z > (needs_cover ? 0.2 : -0.05)) return -1;  // not a downward-facing surface
@@ -324,10 +325,7 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     s.layer = layer;
     s.part = part;
     s.island = island;
-    if (edge && needs_cover && cfg_.start_zone_height > 0) {
-        const Comp& C = comp_[find(part)];
-        s.start_edge = !C.plate && s.pos.z - C.z0 <= cfg_.start_zone_height;
-    }
+    s.fresh_edge = fresh_edge && needs_cover && cfg_.skin_reach > 0;
     s.excluded = costf_.excluded(s.pos);
     const double r_default = cfg_.tip_classes[cfg_.default_tip].diameter / 2;
     const bool delicate = costf_.isCosmetic(s.pos, s.normal) || costf_.nearEdge(s.pos, r_default);
@@ -341,7 +339,15 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     return id;
 }
 
-void Generator::sampleRegion(const Paths& region, int layer, int part, bool island, std::vector<int>& out) {
+void Generator::sampleRegion(const Paths& region, int layer, int part, bool island, std::vector<int>& out,
+                             const Paths* fresh, bool all_fresh) {
+    const ExPolygons fresh_parts = fresh && !fresh->empty() ? toExPolygons(*fresh) : ExPolygons{};
+    auto isFresh = [&](const Vec2& q) {
+        if (all_fresh) return true;
+        for (const ExPolygon& f : fresh_parts)
+            if (f.contains(q)) return true;
+        return false;
+    };
     for (const ExPolygon& e : toExPolygons(region)) {
         Paths ring = offset(e.toPaths(), -kEdgeInset);
         if (ring.empty()) ring = e.toPaths();
@@ -353,8 +359,8 @@ void Generator::sampleRegion(const Paths& region, int layer, int part, bool isla
                 const double len = distance(a, b);
                 double t = carry;
                 while (t <= len) {
-                    const int id = makeSample(a + (b - a) * (len > 0 ? t / len : 0), layer, part, island, true, true,
-                                              -1, true);
+                    const Vec2 q = a + (b - a) * (len > 0 ? t / len : 0);
+                    const int id = makeSample(q, layer, part, island, true, true, -1, isFresh(q));
                     if (id >= 0) out.push_back(id);
                     t += cfg_.edge_step;
                 }
@@ -417,7 +423,6 @@ void Generator::unite(int a, int b) {
     A.capacity += B.capacity;
     A.tips.insert(A.tips.end(), B.tips.begin(), B.tips.end());
     A.pool.insert(A.pool.end(), B.pool.begin(), B.pool.end());
-    A.z0 = std::min(A.z0, B.z0);
     A.last_stab_z = std::max(A.last_stab_z, B.last_stab_z);
     A.exempt = A.exempt && B.exempt;
     A.plate = A.plate || B.plate;
@@ -560,7 +565,7 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
     // Large island: cover its whole first layer like an overhang, then make
     // sure it has at least `large_island_min_tips` tips.
     std::vector<int> mine;
-    sampleRegion(P.shape.toPaths(), L, part, true, mine);
+    sampleRegion(P.shape.toPaths(), L, part, true, mine, nullptr, true);  // nothing behind any of it
     layer_samples.insert(layer_samples.end(), mine.begin(), mine.end());
     large_islands.push_back({part, std::move(mine)});
     if (P.area > cfg_.warn_flat_area) {
@@ -616,7 +621,21 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     const Paths anchor = anchorFor(part);
     if (!anchor.empty()) N = difference(N, offset(anchor, cfg_.self_supported_reach));
     if (N.empty() || std::abs(area(N)) < 1e-4) return;
-    sampleRegion(N, P.layer, part, false, layer_samples);
+    // What reaches more than skin_advance past the layer before is a fresh
+    // skin: its edge is held closer.
+    // Only where that skin's edge is the part's own outline: a free edge. The
+    // side of it that faces what holds it, or a ceiling with walls all round,
+    // is held along that side and needs nothing closer.
+    Paths fresh;
+    if (cfg_.skin_reach > 0) {
+        const Paths shape = P.shape.toPaths();
+        const Paths rim = difference(shape, offset(shape, -kRimBand));
+        fresh = intersection(difference(N, offset(below_union, cfg_.skin_advance)), rim);
+    }
+    // Sampled on its own first, so that even a short fresh end (shorter than
+    // the spacing of the edge samples) has a sample on it.
+    if (!fresh.empty()) sampleRegion(fresh, P.layer, part, false, layer_samples, nullptr, true);
+    sampleRegion(N, P.layer, part, false, layer_samples, &fresh);
 }
 
 void Generator::coverLayer(const std::vector<int>& layer_samples) {
@@ -902,10 +921,6 @@ PointGenResult Generator::run() {
         for (int p : graph_.partsInLayer(L)) {
             layer_area += graph_.part(p).area;
             for (int q : graph_.part(p).parents) unite(p, q);
-            if (graph_.part(p).parents.empty()) {  // a part starts here
-                Comp& C = comp_[find(p)];
-                C.z0 = std::min(C.z0, layers().layerBottom(L));
-            }
         }
         if (layer_area > st.peak_layer_area) {
             st.peak_layer_area = layer_area;
