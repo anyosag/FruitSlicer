@@ -37,30 +37,41 @@ double headBottom(const Head& h) {
 // direction: the tip ball, kept above the plate, then the cone down to where
 // its slanted end just meets the plate, and an upright foot under that end.
 // Draws it into `m` when given; returns the foot's middle, on the plate.
-Vec3 plateHead(const Head& h, TriangleMesh* m, const GeometryQuality& q) {
-    const Vec3 d = normalized(h.dir);  // heads point down, within the tilt limit
-    const double down = std::max(-d.z, 1e-6), slant = std::sqrt(std::max(0.0, 1 - down * down));
-    const double r_tip = h.spec.tip_diameter / 2, r_back = h.spec.shaft_diameter / 2;
-    Vec3 front = h.contact + d * (r_tip - h.spec.penetration);
-    if (front.z < r_tip) front = front - d * ((r_tip - front.z) / down);  // deeper into the part, not the plate
-    if (m) appendSphere(*m, front, r_tip, q.segments(r_tip));
-    Vec3 end = front;
-    double r_end = r_tip;
+struct PlateHeadShape {
+    Vec3 d;            // its direction (unit)
+    Vec3 front, end;   // the tip ball's centre; where the cone ends above its foot
+    double r_tip = 0, r_end = 0;
+};
+PlateHeadShape plateHeadShape(const Head& h) {
+    PlateHeadShape s;
+    s.d = normalized(h.dir);  // heads point down, within the tilt limit
+    const double down = std::max(-s.d.z, 1e-6), slant = std::sqrt(std::max(0.0, 1 - down * down));
+    const double r_back = h.spec.shaft_diameter / 2;
+    s.r_tip = h.spec.tip_diameter / 2;
+    s.front = h.contact + s.d * (s.r_tip - h.spec.penetration);
+    if (s.front.z < s.r_tip) s.front = s.front - s.d * ((s.r_tip - s.front.z) / down);  // deeper into the part, not the plate
+    s.end = s.front;
+    s.r_end = s.r_tip;
     const double end_z = r_back * slant;  // the slanted end's lowest edge on the plate
-    if (front.z > end_z) {
-        end = front + d * ((front.z - end_z) / down);
-        r_end = r_back;
-        if (m) appendFrustum(*m, front, r_tip, end, r_back, q.segments(r_back));
+    if (s.front.z > end_z) {
+        s.end = s.front + s.d * ((s.front.z - end_z) / down);
+        s.r_end = r_back;
     }
-    const Vec3 foot{end.x, end.y, 0};
-    if (m && end.z > 1e-9) appendFrustum(*m, foot, r_end, end, r_end, q.segments(r_end));
+    return s;
+}
+Vec3 plateHead(const Head& h, TriangleMesh* m, const GeometryQuality& q) {
+    const PlateHeadShape s = plateHeadShape(h);
+    if (m) appendSphere(*m, s.front, s.r_tip, q.segments(s.r_tip));
+    if (m && s.r_end > s.r_tip) appendFrustum(*m, s.front, s.r_tip, s.end, s.r_end, q.segments(s.r_end));
+    const Vec3 foot{s.end.x, s.end.y, 0};
+    if (m && s.end.z > 1e-9) appendFrustum(*m, foot, s.r_end, s.end, s.r_end, q.segments(s.r_end));
     return foot;
 }
 
 class Builder {
 public:
     Builder(const TriangleMesh& m, const TreeConfig& c, double min_raft)
-        : mesh_(m), cfg_(c), tree_(m) {
+        : mesh_(m), cfg_(c), tree_(m), first_layers_(std::max(min_raft, 0.5)) {
         out_.raft_top = cfg_.raft == RaftStyle::None ? 0.0 : std::max(cfg_.raft_thickness, min_raft);
     }
 
@@ -215,6 +226,49 @@ private:
         out_.warnings.push_back({code, msg, -1, where});
     }
 
+    // The directions a head may take at a face with outward normal `n`:
+    // `first`, then a fan sorted by closeness to it.
+    std::vector<Vec3> headDirections(const Vec3& first) const {
+        std::vector<Vec3> cands{first};
+        for (double tilt : {0.0, 10.0, 20.0, 30.0, 40.0, cfg_.max_head_tilt_deg})
+            for (int k = 0; k < 16; ++k) {
+                const double az = 2 * kPi * k / 16, t = deg2rad(tilt);
+                cands.push_back({std::sin(t) * std::cos(az), std::sin(t) * std::sin(az), -std::cos(t)});
+            }
+        std::stable_sort(cands.begin() + 1, cands.end(),
+                         [&](const Vec3& a, const Vec3& b) { return dot(a, first) > dot(b, first); });
+        return cands;
+    }
+    static Vec3 junctionOf(const Vec3& contact, const Vec3& d, const PinheadSpec& s) {
+        const Vec3 front = contact + d * (s.tip_diameter / 2 - s.penetration);
+        return front + d * (s.tip_diameter / 2 + s.head_length + s.shaft_diameter / 2);
+    }
+    // How far to the side the model is from a head that stands on the plate,
+    // within the first layers' height, beyond the head's own surface. Sideways
+    // only (what is above it is the face it holds), and not the last stretch
+    // below its tip, which runs beside that face.
+    double plateHeadGap(const Head& h) const {
+        const PlateHeadShape s = plateHeadShape(h);
+        const double reach = std::max(s.r_end, s.r_tip) + footGap() + 0.05;
+        double gap = 1e9;
+        auto look = [&](const Vec3& q, double r) {
+            for (int k = 0; k < 16; ++k) {
+                const double a = 2 * kPi * k / 16;
+                const auto hit = tree_.raycast(q, {std::cos(a), std::sin(a), 0}, reach);
+                if (hit) gap = std::min(gap, distance(q, hit->point) - r);
+            }
+        };
+        for (double z = 0.02; z <= std::min(s.end.z, first_layers_); z += 0.05) look({s.end.x, s.end.y, z}, s.r_end);
+        const double len = distance(s.front, s.end);
+        for (double t = len; t >= 0.25; t -= 0.05) {
+            const Vec3 q = s.front + s.d * t;
+            if (q.z > first_layers_) break;
+            look(q, s.r_tip + (s.r_end - s.r_tip) * (len > 0 ? t / len : 1.0));
+        }
+        return gap;
+    }
+    void settlePlateHead(const SupportPoint& p, Head& h);
+
     bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok);
     bool placeStub(const SupportPoint& p, int point);
     bool attachToPillar(int head);
@@ -230,6 +284,9 @@ private:
     const TriangleMesh& mesh_;
     const TreeConfig& cfg_;
     AabbTree tree_;
+    // How high the long-exposure layers reach (and a little above): what
+    // stands on the plate there cures wider than drawn.
+    double first_layers_ = 0.5;
     SupportTree out_;
 };
 
@@ -244,14 +301,7 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
 
     // Candidate directions: the preferred one first, then a fan sorted by
     // closeness to it. A head must leave the surface (dir · n > cos 80°).
-    std::vector<Vec3> cands{preferred};
-    for (double tilt : {0.0, 10.0, 20.0, 30.0, 40.0, cfg_.max_head_tilt_deg})
-        for (int k = 0; k < 16; ++k) {
-            const double az = 2 * kPi * k / 16, t = deg2rad(tilt);
-            cands.push_back({std::sin(t) * std::cos(az), std::sin(t) * std::sin(az), -std::cos(t)});
-        }
-    std::stable_sort(cands.begin() + 1, cands.end(),
-                     [&](const Vec3& a, const Vec3& b) { return dot(a, preferred) > dot(b, preferred); });
+    const std::vector<Vec3> cands = headDirections(preferred);
     const double min_dot = std::cos(deg2rad(80.0));
     int fallback = -1;
     for (size_t i = 0; i < cands.size(); ++i) {
@@ -261,8 +311,7 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
             PinheadSpec si = s;
             si.head_length = len;
             if (!headClear(p.pos, d, si)) continue;
-            const Vec3 front = p.pos + d * (si.tip_diameter / 2 - si.penetration);
-            const Vec3 j = front + d * (si.tip_diameter / 2 + si.head_length + si.shaft_diameter / 2);
+            const Vec3 j = junctionOf(p.pos, d, si);
             if (shaftClear(j, si.shaft_diameter / 2)) {
                 h = Head{-1, p.pos, d, j, si};
                 drop_ok = true;
@@ -276,6 +325,53 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
     }
     drop_ok = false;
     return fallback >= 0;
+}
+
+// A head that stands on the plate itself: like a pillar's foot, it keeps the
+// wider gap to the model beside it down where the first layers cure wide. It
+// leans away from a wall if another direction has the room, else its base
+// narrows, down to the tip's own width; with no room even then it is reported.
+void Builder::settlePlateHead(const SupportPoint& p, Head& h) {
+    const double need = footGap() - 1e-9;
+    double best_gap = plateHeadGap(h);
+    if (best_gap >= need) return;
+    const Vec3 n = normalized(p.normal);
+    const double min_dot = std::cos(deg2rad(80.0));
+    Head best = h;
+    for (const Vec3& d : headDirections(normalized(h.dir))) {
+        if (dot(d, n) < min_dot || !headClear(p.pos, d, h.spec)) continue;
+        Head c = h;
+        c.dir = d;
+        c.junction = junctionOf(p.pos, d, c.spec);
+        if (headBottom(c) >= 0) continue;  // would no longer reach the plate itself
+        const double g = plateHeadGap(c);
+        if (g >= need) {
+            h = c;
+            return;
+        }
+        if (g > best_gap) {
+            best = c;
+            best_gap = g;
+        }
+    }
+    h = best;
+    const double tip = h.spec.tip_diameter;
+    for (double d = h.spec.shaft_diameter - 0.2; d > tip + 1e-9; d -= 0.2) {
+        Head c = h;
+        c.spec.shaft_diameter = d;
+        if (plateHeadGap(c) >= need) {
+            h = c;
+            return;
+        }
+    }
+    h.spec.shaft_diameter = tip;  // a straight column
+    const double g = plateHeadGap(h);
+    if (g < need) {
+        std::ostringstream m;
+        m << "a tip just above the plate stands " << std::max(0.0, g) << " mm from the model beside it; the first "
+          << "layers cure wider than drawn, so it may stick to the model there";
+        warn("foot_near_model", m.str(), {h.contact.x, h.contact.y, 0});
+    }
 }
 
 // No head fits at `p`: when the model is just below, a straight column as wide
@@ -543,6 +639,7 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
             // pillar under it: it stands on the plate.
             Head& ph = out_.heads.back();
             ph.on_plate = true;
+            settlePlateHead(p, ph);
             ph.junction = plateHead(ph, nullptr, cfg_.quality);
             continue;
         }

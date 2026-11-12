@@ -578,6 +578,10 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
 
 void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     const LayerPart& P = graph_.part(part);
+    // Standing on the plate, the long first exposures cure what prints just
+    // above it onto the plate: nothing there for a tip to hold.
+    if (cfg_.on_plate && layers().layerBottom(P.layer) < cfg_.plate_hold_height - 1e-9 && comp_[find(part)].plate)
+        return;
     Paths below;
     for (int q : P.parents) {
         const Paths ps = graph_.part(q).shape.toPaths();

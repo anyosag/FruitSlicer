@@ -267,9 +267,17 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   is measured along its length, and the foot is as wide as the room allows
   (`Pillar::base_diameter`, `TreeConfig::foot_clearance`). On those parts the
   nearest foot is 0.50 mm from the model and no tip is lost.
-  Not changed: a tip so low that its head stands on the plate itself is still
-  within 0.2 to 0.5 mm of the model below its tip, which may join on in the
-  first layers.
+  A tip so low that its head stands on the plate itself now follows the same
+  rule sideways (`settlePlateHead`): it leans away from a wall beside it or
+  narrows its base, and is reported when it still stands closer than 0.5 mm.
+  And on the plate nothing within the long-exposure layers (0.4 mm,
+  `SupportConfig::plate_hold_height`) gets a tip at all: on a lid laid on the
+  plate that was 13 tips which would have printed fused to it. Islands that
+  start that low still get tips, because the mid-air check does not know the
+  plate holds them. Measured on the same parts: no head on the user's rack
+  parts has a wall beside it; on a lid lying on a shallow curved face all 86
+  low heads stand in the wedge between the plate and that face, become plain
+  columns and are reported, with the advice to use a raft.
 - **A column where no head fits (2026-11-12).** F-01's island (inside the
   lid's threaded bore, 0.5 mm above another face) could not take a head in any
   direction, so the lid always had one part starting in mid-air. A straight

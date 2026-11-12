@@ -336,6 +336,11 @@ Points are chosen bottom-up so that
 3. **islands**: every island gets 1 tip (≤ 1.7 mm), 2 tips (≤ 6.5 mm) or at
    least 3, using the mesh minimum as the contact. Islands too small to hold a
    tip that join the model almost at once are left alone and reported;
+   Standing on the plate (no raft), a part gets no tip within 0.4 mm of the
+   plate: those layers are cured many times longer than the rest, which
+   hardens the resin between them and the plate too, so the plate holds them
+   and a tip there would only print as part of the model (reasoning, not
+   measured). A separate piece that starts that low still gets its tips;
 4. **fresh edges**: where a layer reaches more than 0.5 mm past the layer
    before it, that part is one cured skin with nothing behind it: the first
    layer of a flat face, the ends of the sliver a tilted face starts as, the
@@ -427,7 +432,10 @@ Each point gets:
   A foot that stands on the plate itself (no raft) keeps 0.5 mm, because the
   first layers are cured much longer and come out wider than drawn (an
   assumption, not measured); one with no room for that anywhere is built at
-  the shaft's gap and reported ("Feet close to the model");
+  the shaft's gap and reported ("Feet close to the model"). A tip so low that
+  its head stands on the plate itself follows the same rule: the head leans
+  away from a wall beside it, or its base narrows down to the tip's own
+  width, and it is reported when even that leaves it closer than 0.5 mm;
 - bracing between tall pillars, those on the raft with each other and those
   on the model with each other, kept out of the 2 mm flex zone below the
   heads so the tips bend and snap off at the part;

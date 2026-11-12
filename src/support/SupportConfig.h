@@ -107,6 +107,12 @@ struct SupportConfig {
     // The model stands on the build plate (no elevation, no raft): parts on
     // the first layer are held by the plate, not by tips.
     bool on_plate = false;
+    // On the plate, what prints within this height of it needs no tip. Those
+    // layers are cured many times longer than the rest, which hardens the
+    // resin between them and the plate as well: the plate holds them, and a
+    // tip there would only print as part of the model. The printer's bottom
+    // and transition layers, 8 × 0.05 mm by default. REASONING, not measured.
+    double plate_hold_height = 0.4;
 
     // Tilt release: extra peel demand towards the side away from the hinge.
     double peel_bias = 0.0;  // 0 = off (hinge side unknown)

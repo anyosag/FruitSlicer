@@ -211,6 +211,91 @@ TEST_CASE("on the plate, a support's foot keeps clear of the model beside it", "
     CHECK(validateSupported(m, t.mesh(tc), cfg.layer_height, cfg.link_grow).floating.empty());
 }
 
+namespace {
+
+// How far to the side the model is from a head that stands on the plate,
+// within the first half millimetre above it and away from its own tip: beyond
+// the head's surface. 1e9 with nothing beside it.
+double plateHeadSideGap(const AabbTree& tree, const Head& h) {
+    const Vec3 d = normalized(h.dir);
+    const double down = std::max(-d.z, 1e-6), slant = std::sqrt(std::max(0.0, 1 - down * down));
+    const double r_tip = h.spec.tip_diameter / 2, r_back = h.spec.shaft_diameter / 2;
+    Vec3 front = h.contact + d * (r_tip - h.spec.penetration);
+    if (front.z < r_tip) front = front - d * ((r_tip - front.z) / down);
+    Vec3 end = front;
+    double r_end = r_tip;
+    if (front.z > r_back * slant) {
+        end = front + d * ((front.z - r_back * slant) / down);
+        r_end = r_back;
+    }
+    double gap = 1e9;
+    auto look = [&](const Vec3& q, double r) {
+        for (int k = 0; k < 32; ++k) {
+            const double a = 2 * kPi * k / 32;
+            const auto hit = tree.raycast(q, {std::cos(a), std::sin(a), 0}, r + 1.0);
+            if (hit) gap = std::min(gap, distance(q, hit->point) - r);
+        }
+    };
+    for (double z = 0.02; z <= std::min(end.z, 0.5); z += 0.05) look({end.x, end.y, z}, r_end);
+    const double len = distance(front, end);
+    for (double t = len; t >= 0.25; t -= 0.05) {
+        const Vec3 q = front + d * t;
+        if (q.z > 0.5) break;
+        look(q, r_tip + (r_end - r_tip) * (len > 0 ? t / len : 1.0));
+    }
+    return gap;
+}
+
+}  // namespace
+
+TEST_CASE("on the plate, a low tip's head keeps clear of the wall beside it", "[tree]") {
+    // A block on the plate with a shelf 1.2 mm up that sticks out only
+    // 1.5 mm: its tips are so low that their heads stand on the plate
+    // themselves, right beside the block's wall.
+    TriangleMesh m = makeBox({0, 0, 0}, {30, 8, 10});
+    m.append(makeBox({4, -1.5, 1.2}, {26, 0.5, 4}));
+    placeOnPlate(m, {0, 0, 0}, 0.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    cfg.on_plate = true;
+    cfg.self_supported_reach = 0.3;  // so that a shelf this short gets tips at all
+    const auto pts = generateSupportPoints(m, cfg).points;
+    REQUIRE_FALSE(pts.empty());
+    const AabbTree tree(m);
+    auto build = [&](double foot_clearance) {
+        TreeConfig tc;
+        tc.raft = RaftStyle::None;
+        tc.foot_clearance = foot_clearance;
+        return buildSupportTree(m, pts, tc, 0.0);
+    };
+    const SupportTree t = build(TreeConfig{}.foot_clearance);
+    std::size_t standing = 0, reported = 0;
+    for (const auto& w : t.warnings) reported += w.code == "foot_near_model";
+    for (const Head& h : t.heads) {
+        if (!h.on_plate) continue;
+        ++standing;
+        // Never into the model, and its base no wider than the usual shaft.
+        const double gap = plateHeadSideGap(tree, h);
+        CHECK(gap >= 0);
+        CHECK(h.spec.shaft_diameter >= h.spec.tip_diameter - 1e-9);
+    }
+    REQUIRE(standing > 0);
+    CHECK(t.dropped_points == 0);
+    // Each one keeps the wider gap, or is one of those reported.
+    std::size_t close = 0;
+    for (const Head& h : t.heads) close += h.on_plate && plateHeadSideGap(tree, h) < TreeConfig{}.foot_clearance - 1e-6;
+    CHECK(close <= reported);
+    // The rule is what does it: with only the ordinary gap asked for, more of
+    // them stand nearer the wall.
+    const SupportTree u = build(TreeConfig{}.clearance);
+    std::size_t close_before = 0;
+    for (const Head& h : u.heads) close_before += h.on_plate && plateHeadSideGap(tree, h) < TreeConfig{}.foot_clearance - 1e-6;
+    CHECK(close_before > close);
+    TreeConfig none;
+    none.raft = RaftStyle::None;
+    CHECK(validateSupported(m, t.mesh(none), cfg.layer_height, cfg.link_grow).floating.empty());
+}
+
 TEST_CASE("with a low lift, a foot on the raft keeps the gap to a low part of the model", "[tree]") {
     // A step 1.5 mm above the plate with a shelf above it: supports under the
     // shelf stand beside the step, whose bottom is level with their feet.
