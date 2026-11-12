@@ -484,6 +484,11 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
         PrintEdits without = r.print;
         resetPrintRow(without, "bottom_waits");
         rows[6].base = rowText("bottom_waits", headerWith(r, without, sample, printer), without);
+    } else if (rows[5].source == S::Yours) {
+        // Not set apart, the bottom layers wait as the other layers do: with waits of yours these are yours
+        // too, not the file's, and the way back is that row's.
+        rows[6].source = S::Yours;
+        rows[6].base.clear();
     }
     rows[7].label = "Light power";
     rows[7].fields = {field("light_power", "of 255", p.pwm)};

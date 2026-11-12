@@ -369,6 +369,12 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[4].base == "1.5 s");
     CHECK(rows[4].note.empty());
     CHECK(rows[5].value == "0 · 3 s");
+    CHECK(rows[5].source == PS::Yours);
+    // The bottom layers wait as the others do, so the 3 s is yours there too, not the file's.
+    CHECK(rows[6].value == "0 · 3 s");
+    CHECK(rows[6].source == PS::Yours);
+    CHECK(rows[6].base.empty());  // the way back is the waits row's
+    CHECK(rows[6].note.empty());
     CHECK_THAT(rows[7].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
     CHECK(rows[8].value == "1.1 g/ml");
     CHECK(rows[8].base == "1.15 g/ml");
@@ -458,6 +464,11 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[1].source == PS::File);
     CHECK(rows[2].source == PS::Default);  // FruitSlicer's typical value again
     CHECK(rows[2].value == "0.1 mm");
+    CHECK(rows[6].source == PS::Yours);  // the waits are still yours, and so the bottom layers'
+    resetPrintRow(r.print, "waits");
+    rows = printRows(r, sample.get(), pr);
+    CHECK(rows[5].source == PS::File);
+    CHECK(rows[6].source == PS::File);  // the file's again, with the other layers'
 }
 
 TEST_CASE("Resins: support values you set are the resin's, and a job starts with them", "[gui][resins]") {
@@ -531,12 +542,16 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     CHECK(rows[6].value == rows[5].value);
     CHECK(rows[6].source == PS::Default);
     CHECK(rows[6].note.empty());
-    // A wait typed for every layer is the bottom layers' too.
+    // A wait typed for every layer is the bottom layers' too: the row says it is yours, and the way back
+    // is the waits row's.
     setPrintValue(r, nullptr, pr, "wait_after_retract", 3);
     rows = printRows(r, nullptr, pr);
     CHECK(rows[5].value == "0 · 3 s");
+    CHECK(rows[5].source == PS::Yours);
     CHECK(rows[6].value == "0 · 3 s");
-    CHECK(rows[6].source == PS::Default);
+    CHECK(rows[6].source == PS::Yours);
+    CHECK(rows[6].base.empty());
+    CHECK(rows[6].note.empty());
     // Their own: 1 s after the light (before the lift) and 10 s before it (after the retract).
     setPrintValue(r, nullptr, pr, "bottom_wait_before_lift", 1);
     setPrintValue(r, nullptr, pr, "bottom_wait_after_retract", 10);
