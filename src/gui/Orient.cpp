@@ -9,6 +9,7 @@
 #include <cstdio>
 
 #include "Document.h"
+#include "Print.h"
 #include "mesh/ModelCheck.h"
 #include "support/CosmeticField.h"
 #include "support/OrientationSearch.h"
@@ -84,7 +85,8 @@ std::string fmt(const char* f, double a, double b = 0) {
 OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visible_model,
                       const fruit::JobControl& ctl) {
     const fruit::Placement& p = doc.placement();
-    const fruit::SupportConfig cfg = supportConfig(p, doc.supports.choices.profile);
+    fruit::SupportConfig cfg = supportConfig(p, doc.supports.choices.profile);
+    cfg.plate_hold_height = bottomLayersHeight(doc);
     // The same planner run as the search's finalists, so the numbers compare.
     fruit::CosmeticSpec cos;
     cos.visible_from = visibleInPrinter(visible_model, p);
@@ -129,6 +131,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     }
     fruit::OrientOptions o;
     o.cfg = supportConfig(p, doc.supports.choices.profile);
+    o.cfg.plate_hold_height = bottomLayersHeight(doc);
     o.elevation = p.lift();
     o.visible_from = visible;
     o.keep_points = false;

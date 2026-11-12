@@ -270,9 +270,14 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   A tip so low that its head stands on the plate itself now follows the same
   rule sideways (`settlePlateHead`): it leans away from a wall beside it or
   narrows its base, and is reported when it still stands closer than 0.5 mm.
-  And on the plate nothing within the long-exposure layers (0.4 mm,
-  `SupportConfig::plate_hold_height`) gets a tip at all: on a lid laid on the
-  plate that was 13 tips which would have printed fused to it. Islands that
+  And on the plate nothing within the bottom layers gets a tip at all
+  (`SupportConfig::plate_hold_height`, which the app sets to the job's own
+  bottom layers times its layer height, `bottomLayersHeight`; it was first a
+  fixed 0.4 mm, the default bottom plus transition layers, until the user
+  asked what it was tied to). The transition layers are left out: with the
+  user's resin (27.5 s for 6 layers, then a ramp to 1.5 s over 6 more at
+  0.03 mm) the first few of them would still cure through to the plate for
+  any plausible light depth, the last ones would not. Islands that
   start that low still get tips, because the mid-air check does not know the
   plate holds them. Measured on the same parts: no head on the user's rack
   parts has a wall beside it; on a lid lying on a shallow curved face all 86

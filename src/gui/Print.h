@@ -61,6 +61,10 @@ struct PrintSettings : PrintEdits {
 // The engine's request for these settings; `layer_height` is the job's
 // (used without a sample or an edited one).
 fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height);
+// How high above the plate the job's bottom layers reach: their count times
+// the print's layer height, each the job's own value, else the sample file's,
+// else the printer's. Needs no exposure times.
+double bottomLayersHeight(const Document& doc);
 // The resin density for the weight: the edited one, else FruitSlicer's.
 double resinDensity(const PrintEdits& e);
 // The height correction, mm: the edited one, else FruitSlicer's typical value.

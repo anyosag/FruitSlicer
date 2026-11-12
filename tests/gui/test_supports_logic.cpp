@@ -88,6 +88,45 @@ TEST_CASE("Supports: faces only dropped tips held block saving and show where", 
     CHECK(r.count(SupportProblem::Level::Blocks) >= 1);
 }
 
+TEST_CASE("Supports: on the plate, the job's own bottom layers hold what is lower", "[gui][supports][slow]") {
+    // A block with a shelf whose underside is 0.25 mm above the plate.
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 8, 10});
+    m.append(fruit::makeBox({5, -5, 0.25}, {25, 0.5, 3}));
+    const auto path = std::filesystem::temp_directory_path() / "supports_test_low_shelf.stl";
+    fruit::writeStl(path.string(), m);
+    auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    std::filesystem::remove(path);
+    fruit::Placement p = doc->placement();
+    p.on_plate = true;
+    doc->edit(p);
+    auto tipsUnderShelf = [&] {
+        std::size_t n = 0;
+        for (const auto& t : planTips(*doc, SupportChoices{}, {}, fruit::JobControl::none(), {}).points) n += t.pos.z < 0.5;
+        return n;
+    };
+    // The printer's own four bottom layers at 0.05 mm reach 0.2 mm: the shelf
+    // starts above them and gets tips.
+    CHECK(bottomLayersHeight(*doc) == Approx(4 * 0.05));
+    CHECK(tipsUnderShelf() > 0);
+    // A resin with six bottom layers reaches 0.3 mm: the plate holds the shelf.
+    doc->print.settings.bottom_layers = 6;
+    CHECK(bottomLayersHeight(*doc) == Approx(6 * 0.05));
+    CHECK(tipsUnderShelf() == 0);
+    // The same six at the resin's own 0.03 mm layers reach only 0.18 mm.
+    doc->print.settings.layer_height = 0.03;
+    CHECK(bottomLayersHeight(*doc) == Approx(6 * 0.03));
+    CHECK(tipsUnderShelf() > 0);
+    // Without values of the job's own, a sample file's count and layer height.
+    doc->print.settings.bottom_layers = -1;
+    doc->print.settings.layer_height = 0;
+    auto sample = std::make_shared<fruit::GooHeader>();
+    sample->print.bottom_layers = 8;
+    sample->layer_height = 0.05f;
+    doc->print.settings.sample = sample;
+    CHECK(bottomLayersHeight(*doc) == Approx(8 * fruit::gooLayerHeight(*sample)));
+    CHECK(tipsUnderShelf() == 0);
+}
+
 TEST_CASE("Supports: the demo bracket gets a raft, tips and a clean check", "[gui][supports][slow]") {
     const auto doc = bracket();
     const SupportResult r = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());

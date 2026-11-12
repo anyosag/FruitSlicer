@@ -12,6 +12,7 @@
 #include "Document.h"
 #include "Format.h"
 #include "Orient.h"
+#include "Print.h"
 #include "support/CosmeticField.h"
 #include "support/PointGenerator.h"
 #include "support/SupportSettings.h"
@@ -896,6 +897,7 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
     fruit::TreeConfig tc;
     const fruit::Placement& p = doc.placement();
     resolve(p, c, cfg, tc);
+    cfg.plate_hold_height = bottomLayersHeight(doc);  // on the plate: the job's own bottom layers hold what is lower
     fruit::CosmeticSpec cos;
     cos.visible_from = visible;
     fruit::PointGenOptions po;
@@ -1178,6 +1180,7 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     r.choices = c;
     const fruit::Placement& p = doc.placement();
     resolve(p, c, r.cfg, r.tree_cfg);
+    r.cfg.plate_hold_height = bottomLayersHeight(doc);  // as the plan was made
     r.points = std::move(plan.points);
     r.plan_warnings = std::move(plan.warnings);
     r.hollow = std::move(plan.hollow);

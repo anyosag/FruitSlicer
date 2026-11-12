@@ -170,10 +170,11 @@ TEST_CASE("a dome that widens slowly keeps its tips spread up its sides", "[poin
 }
 
 TEST_CASE("on the plate, nothing within the first layers' height gets a tip", "[points][plate]") {
-    // A block on the plate with two shelves: one whose underside is 0.2 mm
-    // above the plate, inside the long first exposures, and one 1.5 mm up.
+    // A block on the plate with two shelves: one whose underside is 0.1 mm
+    // above the plate, inside the bottom layers' long exposures (4 × 0.05 mm
+    // unless the job says otherwise), and one 1.5 mm up.
     TriangleMesh m = makeBox({0, 0, 0}, {30, 8, 10});
-    m.append(makeBox({2, -5, 0.2}, {12, 0.5, 3}));
+    m.append(makeBox({2, -5, 0.1}, {12, 0.5, 3}));
     m.append(makeBox({18, -5, 1.5}, {28, 0.5, 4}));
     placeOnPlate(m, {0, 0, 0}, 0.0);
     SupportConfig cfg;
@@ -193,14 +194,19 @@ TEST_CASE("on the plate, nothing within the first layers' height gets a tip", "[
     const auto without = lowAndHigh(off);
     CHECK(without.first > 0);
     CHECK(without.second == with.second);
+    // It is the bottom layers' own height: with two of them (0.1 mm) the
+    // shelf starts just above, and is held again.
+    SupportConfig two = cfg;
+    two.plate_hold_height = 2 * 0.05;
+    CHECK(lowAndHigh(two).first > 0);
     // On a raft the same shelf is 5 mm up and is held like any other.
     TriangleMesh lifted = makeBox({0, 0, 0}, {30, 8, 10});
-    lifted.append(makeBox({2, -5, 0.2}, {12, 0.5, 3}));
+    lifted.append(makeBox({2, -5, 0.1}, {12, 0.5, 3}));
     placeOnPlate(lifted, {0, 0, 0}, 5.0);
     SupportConfig raft;
     raft.layer_height = 0.05;
     std::size_t under_shelf = 0;
-    for (const auto& p : generateSupportPoints(lifted, raft).points) under_shelf += std::abs(p.pos.z - 5.2) < 0.2;
+    for (const auto& p : generateSupportPoints(lifted, raft).points) under_shelf += std::abs(p.pos.z - 5.1) < 0.2;
     CHECK(under_shelf > 0);
 }
 

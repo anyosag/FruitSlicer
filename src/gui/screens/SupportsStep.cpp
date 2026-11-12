@@ -143,7 +143,9 @@ void onThePlate(App& app, Document& doc) {
     const std::string raftText =
         raft ? strf("A %g mm raft under the supports, which comes off in one piece. Best for most models.",
                     std::round(thick * 100) / 100)
-             : "Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips.";
+             : strf("Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips, and "
+                    "none within its bottom layers (%g mm): their long exposures cure that onto the plate.",
+                    std::round(bottomLayersHeight(doc) * 100) / 100);
     text(raftText.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::EndGroup();
     if (raft) {

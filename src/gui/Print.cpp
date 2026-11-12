@@ -57,6 +57,15 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
     return r;
 }
 
+double bottomLayersHeight(const Document& doc) {
+    const PrintSettings& s = doc.print.settings;
+    const int layers = s.bottom_layers >= 0 ? s.bottom_layers
+                       : s.sample           ? static_cast<int>(s.sample->print.bottom_layers)
+                                            : doc.printer.bottom_layers;
+    const double height = s.layer_height > 0 ? s.layer_height : s.sample ? fruit::gooLayerHeight(*s.sample) : kLayerHeight;
+    return layers * height;
+}
+
 double resinDensity(const PrintEdits& e) { return e.density > 0 ? e.density : fruit::GooExportOptions{}.resin_density; }
 
 double heightCorrection(const PrintEdits& e) {

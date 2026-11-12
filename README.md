@@ -336,11 +336,14 @@ Points are chosen bottom-up so that
 3. **islands**: every island gets 1 tip (≤ 1.7 mm), 2 tips (≤ 6.5 mm) or at
    least 3, using the mesh minimum as the contact. Islands too small to hold a
    tip that join the model almost at once are left alone and reported;
-   Standing on the plate (no raft), a part gets no tip within 0.4 mm of the
-   plate: those layers are cured many times longer than the rest, which
-   hardens the resin between them and the plate too, so the plate holds them
-   and a tip there would only print as part of the model (reasoning, not
-   measured). A separate piece that starts that low still gets its tips;
+   Standing on the plate (no raft), a part gets no tip within its bottom
+   layers: their count times the print's layer height, from the job's resin
+   (6 × 0.03 mm = 0.18 mm, say; 4 × 0.05 mm without one). Those layers are
+   cured many times longer than the rest, which hardens the resin between
+   them and the plate too, so the plate holds them and a tip there would only
+   print as part of the model (reasoning, not measured). The transition
+   layers after them are not counted, because their exposure falls to the
+   normal one. A separate piece that starts that low still gets its tips;
 4. **fresh edges**: where a layer reaches more than 0.5 mm past the layer
    before it, that part is one cured skin with nothing behind it: the first
    layer of a flat face, the ends of the sliver a tilted face starts as, the
