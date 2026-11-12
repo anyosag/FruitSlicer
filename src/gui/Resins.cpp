@@ -34,10 +34,8 @@ json printJson(const Resin& r) {
             {"transition_layers", e.transition_layers},
             {"layer_height", e.layer_height},
             {"wait_before_lift", e.wait_before_lift},
-            {"wait_after_lift", e.wait_after_lift},
             {"wait_after_retract", e.wait_after_retract},
             {"bottom_wait_before_lift", e.bottom_wait_before_lift},
-            {"bottom_wait_after_lift", e.bottom_wait_after_lift},
             {"bottom_wait_after_retract", e.bottom_wait_after_retract},
             {"lift", e.lift},
             {"light_power", e.light_power},
@@ -57,10 +55,8 @@ void readPrint(const json& p, Resin& r) {
     e.transition_layers = p.value("transition_layers", -1);
     e.layer_height = p.value("layer_height", 0.0);
     e.wait_before_lift = p.value("wait_before_lift", -1.0);
-    e.wait_after_lift = p.value("wait_after_lift", -1.0);
     e.wait_after_retract = p.value("wait_after_retract", -1.0);
     e.bottom_wait_before_lift = p.value("bottom_wait_before_lift", -1.0);
-    e.bottom_wait_after_lift = p.value("bottom_wait_after_lift", -1.0);
     e.bottom_wait_after_retract = p.value("bottom_wait_after_retract", -1.0);
     e.lift = p.value("lift", -1.0);
     e.light_power = p.value("light_power", -1);
@@ -331,9 +327,8 @@ struct FieldRange {
 const FieldRange kFields[] = {
     {"layer_height", 0.01, 0.2, false},     {"bottom_layers", 0, 50, true},    {"bottom_exposure", 0.1, 600, false},
     {"transition_layers", 0, 50, true},     {"exposure", 0.1, 600, false},     {"wait_before_lift", 0, 120, false},
-    {"wait_after_lift", 0, 120, false},     {"wait_after_retract", 0, 120, false}, {"lift", 0.01, 20, false},
-    {"bottom_wait_before_lift", 0, 120, false}, {"bottom_wait_after_lift", 0, 120, false},
-    {"bottom_wait_after_retract", 0, 120, false},
+    {"wait_after_retract", 0, 120, false},  {"lift", 0.01, 20, false},
+    {"bottom_wait_before_lift", 0, 120, false}, {"bottom_wait_after_retract", 0, 120, false},
     {"light_power", 1, 255, true},          {"density", 0.5, 3, false},
     {"height_correction", 0, fruit::kMaxHeightCorrection, false},
     {"adaptive", 0.01, fruit::kMaxLayerHeight, false},
@@ -360,10 +355,8 @@ double valueOf(const fruit::GooHeader& h, const PrintEdits& e, const std::string
     if (key == "transition_layers") return p.transition_layers;
     if (key == "exposure") return std::round(p.exposure * 1000) / 1000;
     if (key == "wait_before_lift") return std::round(p.wait_before_lift * 1000) / 1000;
-    if (key == "wait_after_lift") return std::round(p.wait_after_lift * 1000) / 1000;
     if (key == "wait_after_retract") return std::round(p.wait_after_retract * 1000) / 1000;
     if (key == "bottom_wait_before_lift") return std::round(p.bottom_wait_before_lift * 1000) / 1000;
-    if (key == "bottom_wait_after_lift") return std::round(p.bottom_wait_after_lift * 1000) / 1000;
     if (key == "bottom_wait_after_retract") return std::round(p.bottom_wait_after_retract * 1000) / 1000;
     if (key == "lift") return std::round(p.lift_distance * 1000) / 1000;
     if (key == "light_power") return p.pwm;
@@ -385,10 +378,8 @@ void setEdit(PrintEdits& e, const std::string& key, double v) {
     else if (key == "transition_layers") e.transition_layers = n;
     else if (key == "exposure") e.exposure = v;
     else if (key == "wait_before_lift") e.wait_before_lift = v;
-    else if (key == "wait_after_lift") e.wait_after_lift = v;
     else if (key == "wait_after_retract") e.wait_after_retract = v;
     else if (key == "bottom_wait_before_lift") e.bottom_wait_before_lift = v;
-    else if (key == "bottom_wait_after_lift") e.bottom_wait_after_lift = v;
     else if (key == "bottom_wait_after_retract") e.bottom_wait_after_retract = v;
     else if (key == "lift") e.lift = v;
     else if (key == "light_power") e.light_power = n;
@@ -406,10 +397,8 @@ void clearEdit(PrintEdits& e, const std::string& key) {
     else if (key == "transition_layers") e.transition_layers = none.transition_layers;
     else if (key == "exposure") e.exposure = none.exposure;
     else if (key == "wait_before_lift") e.wait_before_lift = none.wait_before_lift;
-    else if (key == "wait_after_lift") e.wait_after_lift = none.wait_after_lift;
     else if (key == "wait_after_retract") e.wait_after_retract = none.wait_after_retract;
     else if (key == "bottom_wait_before_lift") e.bottom_wait_before_lift = none.bottom_wait_before_lift;
-    else if (key == "bottom_wait_after_lift") e.bottom_wait_after_lift = none.bottom_wait_after_lift;
     else if (key == "bottom_wait_after_retract") e.bottom_wait_after_retract = none.bottom_wait_after_retract;
     else if (key == "lift") e.lift = none.lift;
     else if (key == "light_power") e.light_power = none.light_power;
@@ -429,8 +418,8 @@ const std::vector<std::pair<const char*, std::vector<const char*>>>& rowKeys() {
         {"exposure", {"exposure"}},
         {"adaptive", {"adaptive"}},
         {"light_depth", {"light_depth"}},
-        {"waits", {"wait_before_lift", "wait_after_lift", "wait_after_retract"}},
-        {"bottom_waits", {"bottom_wait_before_lift", "bottom_wait_after_lift", "bottom_wait_after_retract"}},
+        {"waits", {"wait_before_lift", "wait_after_retract"}},
+        {"bottom_waits", {"bottom_wait_before_lift", "bottom_wait_after_retract"}},
         {"lift", {"lift"}},
         {"light_power", {"light_power"}},
         {"density", {"density"}}};
@@ -462,9 +451,8 @@ std::string rowText(const std::string& row, const fruit::GooHeader& h, const Pri
                     fruit::layerDefFor(h, p.bottom_layers + p.transition_layers - 1u).exposure);
     }
     if (row == "exposure") return secondsOr(p.exposure);
-    if (row == "waits") return strf("%g · %g · %g s", p.wait_before_lift, p.wait_after_lift, p.wait_after_retract);
-    if (row == "bottom_waits")
-        return strf("%g · %g · %g s", p.bottom_wait_before_lift, p.bottom_wait_after_lift, p.bottom_wait_after_retract);
+    if (row == "waits") return strf("%g · %g s", p.wait_before_lift, p.wait_after_retract);
+    if (row == "bottom_waits") return strf("%g · %g s", p.bottom_wait_before_lift, p.bottom_wait_after_retract);
     if (row == "lift") return strf("%g mm", std::round(p.lift_distance * 1000) / 1000);
     if (row == "light_power") return strf("%u of 255", p.pwm);
     if (row == "density") return strf("%g g/ml", density);
@@ -543,12 +531,11 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
         rows[6].note = "How deep light hardens this resin; it sets the exposure of thicker layers. 0.10 mm is a "
                        "typical value, not measured for this resin. Too little exposure makes thick layers come "
                        "apart, so try a small part first.";
-    rows[7].label = "Waits (before lift, after lift, after retract)";
-    rows[7].fields = {field("wait_before_lift", "·", p.wait_before_lift), field("wait_after_lift", "·", p.wait_after_lift),
+    rows[7].label = "Waits (before lift, after retract)";
+    rows[7].fields = {field("wait_before_lift", "·", p.wait_before_lift),
                       field("wait_after_retract", "s", p.wait_after_retract)};
-    rows[8].label = "Bottom-layer waits (before lift, after lift, after retract)";
+    rows[8].label = "Bottom-layer waits (before lift, after retract)";
     rows[8].fields = {field("bottom_wait_before_lift", "·", p.bottom_wait_before_lift),
-                      field("bottom_wait_after_lift", "·", p.bottom_wait_after_lift),
                       field("bottom_wait_after_retract", "s", p.bottom_wait_after_retract)};
     if (rows[8].source == S::Yours) {
         rows[8].note = "Not checked on the printer: whether it waits differently on the bottom layers hasn't been "

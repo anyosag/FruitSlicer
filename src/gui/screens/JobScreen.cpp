@@ -422,9 +422,18 @@ void statusBar(App& app) {
         {
             const auto plan = app.printPlan();
             if (plan && plan->ready) {
-                const long m = std::max(1L, std::lround(plan->print_time_s / 60));
-                totals = strf("%s layers · %.1f ml of resin · about %s", thousands(plan->layers).c_str(), lr.resin_ml,
-                              (m >= 60 ? strf("%ld h %ld min", m / 60, m % 60) : strf("%ld min", m)).c_str());
+                // With adaptive layers the saved file has fewer layers: its own numbers once it is saved,
+                // the thin layers' as an upper limit before.
+                const bool saved = plan->adaptive > 1 && showingSaved(*doc) && doc->print.saved->written.merged_layers > 0;
+                const double secs = saved ? doc->print.saved->written.print_time_s : plan->print_time_s;
+                const std::size_t count = saved ? doc->print.saved->written.layers : plan->layers;
+                const long m = std::max(1L, std::lround(secs / 60));
+                const std::string time = m >= 60 ? strf("%ld h %ld min", m / 60, m % 60) : strf("%ld min", m);
+                totals = plan->adaptive > 1 && !saved
+                             ? strf("up to %s layers · %.1f ml of resin · up to %s", thousands(count).c_str(), lr.resin_ml,
+                                    time.c_str())
+                             : strf("%s layers · %.1f ml of resin · about %s", thousands(count).c_str(), lr.resin_ml,
+                                    time.c_str());
             }
         }
     } else if (doc && app.step() == Step::Supports && doc->supports.result &&

@@ -30,9 +30,12 @@ struct PrintEdits {
     double exposure = 0, bottom_exposure = 0;        // s, > 0
     int bottom_layers = -1, transition_layers = -1;  // >= 0
     double layer_height = 0;                         // mm, > 0: over the sample's
-    double wait_before_lift = -1, wait_after_lift = -1, wait_after_retract = -1;  // s, >= 0
+    // After the light (before the vat tilts away) and before it (after the
+    // vat is back). The file's "wait after lift" is not offered: the vat
+    // tilts, there is no lift to wait after.
+    double wait_before_lift = -1, wait_after_retract = -1;  // s, >= 0
     // The bottom layers' own waits, s, >= 0; < 0: as the other layers.
-    double bottom_wait_before_lift = -1, bottom_wait_after_lift = -1, bottom_wait_after_retract = -1;
+    double bottom_wait_before_lift = -1, bottom_wait_after_retract = -1;
     double lift = -1;                                // mm, > 0
     int light_power = -1;                            // 1-255
     double density = 0;                              // g/ml, > 0: for the resin's weight

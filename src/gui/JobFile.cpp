@@ -339,10 +339,8 @@ void saveJob(const std::string& path, const Document& doc) {
                   {"transition_layers", s.transition_layers},
                   {"layer_height", s.layer_height},
                   {"wait_before_lift", s.wait_before_lift},
-                  {"wait_after_lift", s.wait_after_lift},
                   {"wait_after_retract", s.wait_after_retract},
                   {"bottom_wait_before_lift", s.bottom_wait_before_lift},
-                  {"bottom_wait_after_lift", s.bottom_wait_after_lift},
                   {"bottom_wait_after_retract", s.bottom_wait_after_retract},
                   {"lift", s.lift},
                   {"light_power", s.light_power},
@@ -506,10 +504,8 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         s.transition_layers = prj.value("transition_layers", -1);
         s.layer_height = prj.value("layer_height", 0.0);
         s.wait_before_lift = prj.value("wait_before_lift", -1.0);
-        s.wait_after_lift = prj.value("wait_after_lift", -1.0);
         s.wait_after_retract = prj.value("wait_after_retract", -1.0);
         s.bottom_wait_before_lift = prj.value("bottom_wait_before_lift", -1.0);  // older jobs: as the other layers
-        s.bottom_wait_after_lift = prj.value("bottom_wait_after_lift", -1.0);
         s.bottom_wait_after_retract = prj.value("bottom_wait_after_retract", -1.0);
         s.lift = prj.value("lift", -1.0);
         s.light_power = prj.value("light_power", -1);

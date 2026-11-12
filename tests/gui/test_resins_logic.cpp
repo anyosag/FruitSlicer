@@ -79,7 +79,6 @@ TEST_CASE("Resins: kept, read back, named and removed", "[gui][resins]") {
     // Every value of your own is kept with it.
     a.print.layer_height = 0.04;
     a.print.wait_before_lift = 0.5;
-    a.print.wait_after_lift = 1;
     a.print.wait_after_retract = 3;
     a.print.lift = 0.08;
     a.print.light_power = 200;
@@ -219,10 +218,10 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[3].value == "6, from 23.17 to 1.50 s");
     CHECK(rows[3].after == "from 23.17 to 1.50 s");
     CHECK(rows[4].value == "1.5 s");
-    CHECK(rows[7].value == "0 · 0 · 5 s");
+    CHECK(rows[7].value == "0 · 5 s");
     CHECK(rows[8].key == "bottom_waits");  // the bottom layers' own, as the file has them
-    CHECK(rows[8].value == "0 · 0 · 5 s");
-    CHECK(rows[8].fields.size() == 3);
+    CHECK(rows[8].value == "0 · 5 s");
+    CHECK(rows[8].fields.size() == 2);
     CHECK(rows[8].note.empty());
     CHECK(rows[9].value == "0.05 mm");
     CHECK(rows[10].value == "255 of 255");
@@ -239,7 +238,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[2].fields[0].key == "height_correction");
     CHECK(rows[2].fields[0].value == Approx(0.10));
     CHECK(rows[2].fields[0].hi == Approx(0.5));
-    CHECK(rows[7].fields.size() == 3);
+    CHECK(rows[7].fields.size() == 2);
     // Typed in, without a file: the printer's own counts and FruitSlicer's defaults.
     Resin typed;
     typed.print.exposure = 2;
@@ -328,7 +327,7 @@ TEST_CASE("Resins: a job keeps its resin's values, and changing it is a change",
 TEST_CASE("Resins: print values you edit reach the print plan, its estimate and the file", "[gui][resins]") {
     using PS = PrintRow::Source;
     const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
-    // A resin from a SatelLite-like file: 0.03 mm, 1.5 s, 6 × 27.5 s bottom, waits 0 · 0 · 5 s.
+    // A resin from a SatelLite-like file: 0.03 mm, 1.5 s, 6 × 27.5 s bottom, waits 0 · 5 s.
     fruit::GooPrintRequest req;
     req.layer_height = 0.03;
     req.exposure = 1.5;
@@ -374,7 +373,7 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[4].source == PS::Yours);
     CHECK(rows[4].base == "1.5 s");
     CHECK(rows[4].note.empty());
-    CHECK(rows[7].value == "0 · 0 · 3 s");
+    CHECK(rows[7].value == "0 · 3 s");
     CHECK_THAT(rows[9].note, ContainsSubstring("hasn't been tested"));
     CHECK_THAT(rows[10].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
     CHECK(rows[11].value == "1.1 g/ml");
@@ -664,15 +663,15 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     auto rows = printRows(r, nullptr, pr);
     REQUIRE(rows.size() == 12);
     CHECK(rows[8].key == "bottom_waits");
-    CHECK(rows[8].label == "Bottom-layer waits (before lift, after lift, after retract)");
+    CHECK(rows[8].label == "Bottom-layer waits (before lift, after retract)");
     CHECK(rows[8].value == rows[7].value);
     CHECK(rows[8].source == PS::Default);
     CHECK(rows[8].note.empty());
     // A wait typed for every layer is the bottom layers' too.
     setPrintValue(r, nullptr, pr, "wait_after_retract", 3);
     rows = printRows(r, nullptr, pr);
-    CHECK(rows[7].value == "0 · 0 · 3 s");
-    CHECK(rows[8].value == "0 · 0 · 3 s");
+    CHECK(rows[7].value == "0 · 3 s");
+    CHECK(rows[8].value == "0 · 3 s");
     CHECK(rows[8].source == PS::Default);
     // Their own: 1 s after the light (before the lift) and 10 s before it (after the retract).
     setPrintValue(r, nullptr, pr, "bottom_wait_before_lift", 1);
@@ -680,10 +679,10 @@ TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gu
     CHECK(r.print.bottom_wait_before_lift == Approx(1));
     CHECK(r.print.bottom_wait_after_retract == Approx(10));
     rows = printRows(r, nullptr, pr);
-    CHECK(rows[7].value == "0 · 0 · 3 s");  // the other layers are as they were
-    CHECK(rows[8].value == "1 · 0 · 10 s");
+    CHECK(rows[7].value == "0 · 3 s");  // the other layers are as they were
+    CHECK(rows[8].value == "1 · 10 s");
     CHECK(rows[8].source == PS::Yours);
-    CHECK(rows[8].base == "0 · 0 · 3 s");
+    CHECK(rows[8].base == "0 · 3 s");
     CHECK_THAT(rows[8].note, ContainsSubstring("hasn't been tested"));
 
     // In the print file: the header's bottom-layer waits, and so each layer's own.

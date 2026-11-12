@@ -121,11 +121,9 @@ std::string fieldTip(const PrintField& f) {
     const char* what = f.key == "bottom_layers"        ? "Bottom layers"
                        : f.key == "bottom_exposure"    ? "Bottom exposure, s"
                        : f.key == "transition_layers"  ? "Transition layers"
-                       : f.key == "wait_before_lift"   ? "Wait before lift, s"
-                       : f.key == "wait_after_lift"    ? "Wait after lift, s"
-                       : f.key == "wait_after_retract" ? "Wait after retract, s"
+                       : f.key == "wait_before_lift"   ? "Wait before lift (after the light), s"
+                       : f.key == "wait_after_retract" ? "Wait after retract (before the light), s"
                        : f.key == "bottom_wait_before_lift"   ? "Bottom layers: wait before lift (after the light), s"
-                       : f.key == "bottom_wait_after_lift"    ? "Bottom layers: wait after lift, s"
                        : f.key == "bottom_wait_after_retract" ? "Bottom layers: wait after retract (before the light), s"
                                                        : "";
     const std::string range = strf("from %g to %g", f.lo, f.hi);

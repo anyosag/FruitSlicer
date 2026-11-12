@@ -332,7 +332,6 @@ TEST_CASE("Jobs: the height correction is saved with the print settings; older j
     CHECK(adaptive.doc->print.settings.adaptive == 4);
     CHECK(adaptive.doc->print.settings.light_depth == Approx(0.2));
     CHECK(adaptive.doc->print.settings.bottom_wait_before_lift == Approx(1));
-    CHECK(adaptive.doc->print.settings.bottom_wait_after_lift < 0);
     CHECK(adaptive.doc->print.settings.bottom_wait_after_retract == Approx(10));
     const OpenedJob without = rewritten("adaptive_old.fruitjob", [](nlohmann::json& j) {
         j.at("print").erase("adaptive");
