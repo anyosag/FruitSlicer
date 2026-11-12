@@ -236,6 +236,30 @@ TEST_CASE("on the plate, nothing within the first layers' height gets a tip", "[
     CHECK(under_shelf > 0);
 }
 
+TEST_CASE("on the plate, a wall that only leans counts for the held height once another piece floats", "[points][plate]") {
+    // A foot that widens upward by 0.01 mm a layer: every layer has a little
+    // newly exposed underside, none that needs a tip.
+    TriangleMesh foot;
+    appendFrustum(foot, {0, 0, 0}, 5, {0, 0, 10}, 7, 96);
+    placeOnPlate(foot, {0, 0, 0}, 0.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    cfg.on_plate = true;
+    // Alone it gets no tips whatever the plate holds: any height gives the same.
+    const auto alone = generateSupportPoints(foot, cfg);
+    CHECK(alone.points.empty());
+    CHECK(alone.held_layers_min == 0);
+    CHECK(alone.held_layers_max == std::numeric_limits<int>::max());
+    // Beside a piece that starts in mid-air, the spots it offers for extra
+    // hold thin that piece's own: the two held layers must stay just those.
+    TriangleMesh two = foot;
+    two.append(makeBox({9, -2, 1}, {13, 2, 5}));
+    const auto beside = generateSupportPoints(two, cfg);
+    CHECK_FALSE(beside.points.empty());
+    CHECK(beside.held_layers_min == 2);
+    CHECK(beside.held_layers_max == 2);
+}
+
 TEST_CASE("a shelf's rim is a fresh edge wherever it is, and the plate holds a first layer", "[points][fresh]") {
     // A block on the plate with a shelf 6 mm up. Nothing is added under the
     // block itself (the plate holds it); the shelf's free rim is held closer.

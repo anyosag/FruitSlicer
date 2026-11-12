@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <queue>
 #include <sstream>
@@ -237,6 +238,21 @@ private:
             if (e.contains(xy)) return true;
         return false;
     }
+    // How far the height held on the plate may move with the same result, in
+    // layers held (PointGenResult::held_layers_min/max). `tight` counts the
+    // layers where a piece that stands on the plate would get tips or a
+    // warning. `loose` also counts those where it has any newly exposed
+    // underside: the candidate spots for extra hold there are never used on
+    // that piece, but they thin the spots of a piece that floats beside it.
+    struct HeldRange {
+        int min = 0, max = std::numeric_limits<int>::max();
+        void note(bool held, int layer) {
+            if (held) min = std::max(min, layer + 1);
+            else max = std::min(max, layer);
+        }
+    };
+    HeldRange held_tight_, held_loose_;
+    bool floating_ = false;  // some piece that needs its own hold does not stand on the plate
     PointGenResult result_;
 };
 
@@ -492,6 +508,7 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
         comp_[find(part)].exempt = true;
         return;
     }
+    floating_ = true;
     // Island length (max distance between outline points, subsampled).
     std::vector<Vec2> pts;
     const Path& c = P.shape.contour;
@@ -588,19 +605,15 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
         below.insert(below.end(), ps.begin(), ps.end());
     }
     const Paths below_union = unionNonZero(below);
-    const Paths band = difference(P.shape.toPaths(), offset(below_union, 0.002));
-    // Only a newly exposed underside gives that rule something to decide.
-    // Where there is one, the result is the same as long as this layer stays
-    // on its side of the held height.
-    if (stands && !band.empty()) {
-        if (held) result_.held_layers_min = std::max(result_.held_layers_min, P.layer + 1);
-        else result_.held_layers_max = std::min(result_.held_layers_max, P.layer);
-    }
-    if (held) return;
     // Any newly exposed underside (even self-supporting) is a place where
     // capacity tips can go; sampled coarsely and never needing coverage.
     {
-        if (!band.empty())
+        const Paths band = difference(P.shape.toPaths(), offset(below_union, 0.002));
+        // Held or not, these spots are never used on a piece that stands on
+        // the plate (enforceCapacity); they count for the held height only
+        // beside a piece that floats (held_loose_).
+        if (stands && !band.empty()) held_loose_.note(held, P.layer);
+        if (!held && !band.empty())
             for (const ExPolygon& e : toExPolygons(band))
                 for (const Path& path : e.toPaths()) {
                     const double step = cfg_.capacity_candidate_step;
@@ -623,16 +636,24 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     if (std::abs(area(N)) < 1e-4) return;
     const double new_area = std::abs(area(N));
     if (new_area > cfg_.warn_flat_area) {
-        std::ostringstream m;
-        m << "flat overhang of " << new_area << " mm² appears in a single layer; tilting the part 10-45° "
-          << "would spread it over many layers";
-        warn("flat_face", m.str(), P.layer, {P.box.center().x, P.box.center().y, layers().layerBottom(P.layer)});
+        // The plate rule decides here whether this is said: the result is the
+        // same only while this layer stays on its side of the held height.
+        if (stands) held_tight_.note(held, P.layer), held_loose_.note(held, P.layer);
+        if (!held) {
+            std::ostringstream m;
+            m << "flat overhang of " << new_area << " mm² appears in a single layer; tilting the part 10-45° "
+              << "would spread it over many layers";
+            warn("flat_face", m.str(), P.layer, {P.box.center().x, P.box.center().y, layers().layerBottom(P.layer)});
+        }
     }
     // Material within `self_supported_reach` of what existed `anchor_window`
     // below holds itself up.
     const Paths anchor = anchorFor(part);
     if (!anchor.empty()) N = difference(N, offset(anchor, cfg_.self_supported_reach));
     if (N.empty() || std::abs(area(N)) < 1e-4) return;
+    // What is left would get tips: the same again.
+    if (stands) held_tight_.note(held, P.layer), held_loose_.note(held, P.layer);
+    if (held) return;
     // What reaches more than skin_advance past the layer before is a fresh
     // skin: its edge is held closer.
     // Only where that skin's edge is the part's own outline: a free edge. The
@@ -1005,6 +1026,9 @@ PointGenResult Generator::run() {
     finalize();
     ctl_.report("points", 1);
     st.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const HeldRange& held = floating_ ? held_loose_ : held_tight_;
+    result_.held_layers_min = held.min;
+    result_.held_layers_max = held.max;
     result_.analysis.layers = layers_ptr_;
     result_.analysis.islands = std::make_shared<const IslandGraph>(std::move(graph_));
     result_.analysis.hollows = std::make_shared<const HollowReport>(std::move(hollows_));

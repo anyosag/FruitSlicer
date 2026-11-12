@@ -282,8 +282,10 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   model has the long exposure). Because that makes the tips follow three
   print settings (bottom layers, layer height, height correction), the
   planner reports the counts of held layers its tips are right for
-  (`PointGenResult::held_layers_min/max`: a layer counts only where something
-  standing on the plate has a newly exposed underside in it), and supports
+  (`PointGenResult::held_layers_min/max`: a layer counts where a piece
+  standing on the plate would get tips or a flat-face warning, and, only
+  when another piece floats, where it has any newly exposed underside, whose
+  spots for extra hold can thin that piece's), and supports
   made with no raft go out of date when the job's count leaves that range,
   not before (`SupportState::fresh`, `Document::supportSettings`). A plain
   block is never out of date for it; a shelf 0.15 mm up is once its own layer
