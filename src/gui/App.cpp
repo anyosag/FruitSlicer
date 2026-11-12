@@ -1368,6 +1368,11 @@ bool App::startEstimate() {
     if (estimate_started_ && *estimate_started_ == key) return false;  // once per combination
     const auto sup = doc_->supports.result;
     if (!sup) return false;
+    if (!estimate_last_ || !(*estimate_last_ == key)) {
+        estimate_last_ = key;
+        estimate_tries_ = 0;
+    }
+    ++estimate_tries_;
     estimate_started_ = key;
     estimate_failed_ = false;
     const auto plan = printPlan();
@@ -1386,9 +1391,11 @@ bool App::startEstimate() {
                 try {
                     std::rethrow_exception(err);
                 } catch (const fruit::Cancelled&) {
-                    // Stopped: not started again for these layers and settings (it would loop if
-                    // whatever stopped it did so every time); the Print step says so.
-                    estimate_failed_ = true;
+                    // Another job took over (a save, say): it starts again when nothing is busy. After
+                    // a few tries it is left alone (it would loop if something stopped it every time),
+                    // and the Print step says the merging is not known.
+                    if (estimate_tries_ < 3) estimate_started_.reset();
+                    else estimate_failed_ = true;
                 } catch (const std::exception& e) {
                     // Not tried again for these settings; the Print step says so.
                     estimate_failed_ = true;

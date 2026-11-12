@@ -16,8 +16,9 @@ struct LayerScrollStep {
 };
 
 // One wheel unit moves about 1 % of the `count` layers, at least one. `units`
-// is io.MouseWheel + io.MouseWheelH: scrolling up (as a mouse wheel does) and
-// swiping right both give positive units and move to higher layers. `carry`
+// is io.MouseWheelH - io.MouseWheel: on a Mac trackpad with natural scrolling,
+// swiping right and swiping up both give positive units and move to higher
+// layers (a mouse wheel turned towards you does too). `carry`
 // is what the last call left over. The result stays within the first and last
 // layer; the leftover is dropped at either end, so no scrolling is owed there.
 inline LayerScrollStep scrollLayer(int layer, int count, double units, double carry) {

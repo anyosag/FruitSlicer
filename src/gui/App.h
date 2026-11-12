@@ -639,6 +639,8 @@ private:
         bool operator==(const EstimateKey&) const = default;
     };
     std::optional<EstimateKey> estimate_started_;
+    std::optional<EstimateKey> estimate_last_;  // the combination the tries below count for
+    int estimate_tries_ = 0;
     bool estimate_failed_ = false;
     bool startEstimate();  // starts it when one is wanted and nothing is busy
     unsigned layer_tex_ = 0;

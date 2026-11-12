@@ -99,13 +99,14 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_c
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const std::size_t n = r.area.size();
     if (hovered && n > 1) {
-        // Two-finger scrolling on a trackpad: right or up (as a wheel turns up) goes to higher layers.
-        // Vertical and horizontal scrolling both count. The chart owns the wheel while the pointer is
-        // over it, so no panel behind it scrolls too (taking effect from the next frame's input).
+        // Two-finger scrolling on a Mac trackpad (natural scrolling, the default): swiping right or up
+        // goes to higher layers, as if pushing the marker along. Swiping up arrives as a negative
+        // MouseWheel (the page moves up), swiping right as a positive MouseWheelH. The chart owns the
+        // wheel while the pointer is over it, so no panel behind it scrolls too (from the next frame's input).
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
         const ImGuiIO& io = ImGui::GetIO();
-        const double units = static_cast<double>(io.MouseWheel) + static_cast<double>(io.MouseWheelH);
+        const double units = static_cast<double>(io.MouseWheelH) - static_cast<double>(io.MouseWheel);
         if (units != 0) {
             const LayerScrollStep step = scrollLayer(at, static_cast<int>(n), units, scroll_carry);
             scroll_carry = step.carry;
