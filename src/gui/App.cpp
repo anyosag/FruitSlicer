@@ -1377,8 +1377,8 @@ const PrintEstimate* App::fileLayersView() {
 
 LayerPick App::shownFile(const PrintEstimate& view) {
     const LayerResult& r = *doc_->layers.result;
-    const int thin = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(r.biggest);
-    return shownFileLayer(view.file_layers, doc_->layers.file_layer, thin, r.layers->layer_height,
+    const int job = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(r.biggest);
+    return shownFileLayer(view.file_layers, doc_->layers.file_layer, job, r.layers->layer_height,
                           static_cast<int>(r.layers->size()));
 }
 
@@ -2719,7 +2719,7 @@ void App::setFileLayer(int index) {
     const LayerResult& r = *doc_->layers.result;
     const LayerPick p = pickFileLayer(v->file_layers, index, r.layers->layer_height, static_cast<int>(r.layers->size()));
     doc_->layers.file_layer = p.file;
-    doc_->layers.current = p.thin;
+    doc_->layers.current = p.job;
 }
 
 void App::setFileLayerAtHeight(double z) {

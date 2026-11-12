@@ -690,12 +690,12 @@ TEST_CASE("File layers: height to file layer and back", "[gui][print][adaptive][
     // In a thick band there are fewer places to stop: 0.20 to 0.40 is one layer for every height in it.
     for (double z = 0.2; z < 0.4 - 1e-9; z += 0.01) CHECK(fileLayerAt(v, z) == 3);
     // 0.05 mm layers.
-    CHECK(thinLayerAt(0.0, 0.05, 13) == 0);
-    CHECK(thinLayerAt(0.125, 0.05, 13) == 2);
-    CHECK(thinLayerAt(0.65, 0.05, 13) == 12);
-    CHECK(thinLayerAt(5.0, 0.05, 13) == 12);
-    CHECK(thinLayerAt(-1.0, 0.05, 13) == 0);
-    CHECK(thinLayerMid(2, 0.05) == Approx(0.125));
+    CHECK(jobLayerAt(0.0, 0.05, 13) == 0);
+    CHECK(jobLayerAt(0.125, 0.05, 13) == 2);
+    CHECK(jobLayerAt(0.65, 0.05, 13) == 12);
+    CHECK(jobLayerAt(5.0, 0.05, 13) == 12);
+    CHECK(jobLayerAt(-1.0, 0.05, 13) == 0);
+    CHECK(jobLayerMid(2, 0.05) == Approx(0.125));
 }
 
 TEST_CASE("File layers: the 0.05 mm layer and the file layer stay at one height",
@@ -706,17 +706,17 @@ TEST_CASE("File layers: the 0.05 mm layer and the file layer stay at one height"
     // Picking a file layer moves the 0.05 mm layer to its mid-height, and clamps.
     LayerPick p = pickFileLayer(v, 3, h, n);
     CHECK(p.file == 3);
-    CHECK(p.thin == 6);  // mid 0.30: the layer 0.30 to 0.35
+    CHECK(p.job == 6);  // mid 0.30: the layer 0.30 to 0.35
     CHECK(pickFileLayer(v, 99, h, n).file == 5);
     CHECK(pickFileLayer(v, -4, h, n).file == 0);
     CHECK(pickFileLayerAtHeight(v, 0.33, h, n).file == 3);
-    CHECK(pickFileLayerAtHeight(v, 0.33, h, n).thin == 6);
+    CHECK(pickFileLayerAtHeight(v, 0.33, h, n).job == 6);
     // Every file layer: the thin layer chosen is inside the file layer or touches its middle.
     for (int k = 0; k < static_cast<int>(v.size()); ++k) {
         const LayerPick q = pickFileLayer(v, k, h, n);
-        CHECK(std::abs(thinLayerMid(q.thin, h) - v[static_cast<std::size_t>(k)].mid()) <= h / 2 + 1e-9);
+        CHECK(std::abs(jobLayerMid(q.job, h) - v[static_cast<std::size_t>(k)].mid()) <= h / 2 + 1e-9);
         // Leaving the adaptive view lands at the same height; coming back lands on the same file layer.
-        CHECK(shownFileLayer(v, q.file, q.thin, h, n).file == k);
+        CHECK(shownFileLayer(v, q.file, q.job, h, n).file == k);
     }
     // Starting the adaptive view: the file layer at the height of the 0.05 mm layer shown.
     CHECK(shownFileLayer(v, -1, 0, h, n).file == 0);

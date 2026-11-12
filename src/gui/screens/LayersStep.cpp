@@ -42,10 +42,10 @@ void layerColumn(App& app, Document& doc, float h) {
     beginPanel("layer_column", ImVec2(kColumnW, h), col::Panel, ImVec2(16, 18));
     edge(true, false);
     const LayerResult& r = *doc.layers.result;
-    const int thin_n = static_cast<int>(r.layers->size());
+    const int job_n = static_cast<int>(r.layers->size());
     // With adaptive layers worked out and merged, these are the print file's own layers; else the job's.
     const PrintEstimate* fv = app.fileLayersView();
-    const int n = fv ? static_cast<int>(fv->file_layers.size()) : thin_n;
+    const int n = fv ? static_cast<int>(fv->file_layers.size()) : job_n;
     const int at = fv ? app.shownFile(*fv).file : shownLayer(doc);
     groupLabel("Layer");
     double v = at + 1;
@@ -59,7 +59,7 @@ void layerColumn(App& app, Document& doc, float h) {
         for (const FileLayer& l : fv->file_layers) thickest = std::max(thickest, l.thickness);
         text(strf("These are the saved file's layers: thin ones of %.2f mm merged up to %.2f mm. The checks ran on the "
                   "%s layers at %.2f mm.",
-                  fv->thin_height, thickest, thousands(static_cast<std::size_t>(thin_n)).c_str(), r.layers->layer_height)
+                  fv->thin_height, thickest, thousands(static_cast<std::size_t>(job_n)).c_str(), r.layers->layer_height)
                  .c_str(),
              fonts().regular, size::Help, col::TextMuted, true);
     } else if (const auto plan = app.printPlan(); plan && plan->ready && plan->reslice) {
@@ -143,7 +143,7 @@ void layerColumn(App& app, Document& doc, float h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (std::size_t m : r.marks) {
         // (a mark stays at its own height, in either kind of layers)
-        const float frac = fv ? static_cast<float>(thinLayerMid(static_cast<int>(m), r.layers->layer_height) /
+        const float frac = fv ? static_cast<float>(jobLayerMid(static_cast<int>(m), r.layers->layer_height) /
                                                     std::max(1e-9, fv->file_layers.back().z1))
                               : static_cast<float>(m) / static_cast<float>(std::max(1, n - 1));
         const float y = p.y + sh - 7 - (sh - 14) * std::clamp(frac, 0.0f, 1.0f);
@@ -208,7 +208,7 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_c
                 if (step.layer != file_at) {
                     app.setFileLayer(step.layer);
                     file_at = step.layer;
-                    at = app.shownFile(*view).thin;
+                    at = app.shownFile(*view).job;
                 }
             } else {
                 const LayerScrollStep step = scrollLayer(at, static_cast<int>(n), units, scroll_carry);
@@ -265,7 +265,7 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_c
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            if (view) app.setFileLayerAtHeight(thinLayerMid(static_cast<int>(i), r.layers->layer_height));
+            if (view) app.setFileLayerAtHeight(jobLayerMid(static_cast<int>(i), r.layers->layer_height));
             else app.setLayer(static_cast<int>(i));
         }
     }
@@ -287,7 +287,7 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         ImGui::SameLine(0, 10);
         text(strf("%.0f mm² lit", l.area).c_str(), fonts().regular, size::Body, col::TextSecondary);
         // The biggest layer is one of the job's: this layer holds it when it spans its mid-height.
-        const double bz = thinLayerMid(static_cast<int>(r.biggest), r.layers->layer_height);
+        const double bz = jobLayerMid(static_cast<int>(r.biggest), r.layers->layer_height);
         at_biggest = bz >= l.z0 && bz < l.z1;
     } else {
         text(strf("Layer %d · %.2f mm", at + 1, r.layers->layerTop(static_cast<std::size_t>(at))).c_str(),
@@ -300,7 +300,7 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         ImGui::SameLine(0, 16);
         if (fv) {
             const std::size_t fb = static_cast<std::size_t>(fileLayerAt(
-                fv->file_layers, thinLayerMid(static_cast<int>(r.biggest), r.layers->layer_height)));
+                fv->file_layers, jobLayerMid(static_cast<int>(r.biggest), r.layers->layer_height)));
             text(strf("Biggest: %.0f mm² at layer %zu", fv->file_layers[fb].area, fb + 1).c_str(), fonts().regular,
                  size::Body, col::TextMuted);
         } else {
@@ -309,7 +309,7 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         }
         ImGui::SameLine(0, 8);
         if (linkButton("Go there")) {
-            if (fv) app.setFileLayerAtHeight(thinLayerMid(static_cast<int>(r.biggest), r.layers->layer_height));
+            if (fv) app.setFileLayerAtHeight(jobLayerMid(static_cast<int>(r.biggest), r.layers->layer_height));
             else app.setLayer(static_cast<int>(r.biggest));
         }
     }
@@ -413,7 +413,7 @@ void layersMode(App& app, Document& doc, ImVec2 size) {
     // The chart's marker is at the 0.05 mm layer at the shown file layer's mid-height.
     const PrintEstimate* fv = app.fileLayersView();
     const LayerPick shown = fv ? app.shownFile(*fv) : LayerPick{};
-    chart(app, *doc.layers.result, fv ? shown.thin : shownLayer(doc), ImVec2(w, kChartH), doc.layers.scroll_carry, fv,
+    chart(app, *doc.layers.result, fv ? shown.job : shownLayer(doc), ImVec2(w, kChartH), doc.layers.scroll_carry, fv,
           shown.file);
     ImGui::EndGroup();
     ImGui::SameLine(0, 0);
