@@ -20,6 +20,7 @@
 #include "formats/GooSetup.h"
 #include "io/PngWriter.h"
 #include "io/Render.h"
+#include "layers/AdaptiveLayers.h"
 #include "layers/IslandGraph.h"
 #include "layers/LayerStack.h"
 #include "mesh/MeshAnalysis.h"
@@ -687,6 +688,8 @@ struct GooCli {
     int bottom_layers = -1, transition_layers = -1, aa = 1;
     bool flip_x = false, flip_y = false;
     unsigned threads = 0;
+    double adaptive = 0;                // mm, > 0: thickest layer to merge up to (snapped; the layer height is off)
+    double light_depth = kDefaultLightDepth;  // mm, for the longer exposures
     bool on_plate = false;              // the model stands on the plate: add the height correction
     double height_correction = 0.10;    // mm, used with on_plate
 };
@@ -724,7 +727,27 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     eo.aa_levels = o.aa;
     eo.threads = o.threads;
     GooExportResult res;
-    if (o.on_plate) {
+    const double lh0 = gooLayerHeight(h);
+    const int multiplier = o.adaptive > 0 ? snapAdaptiveMultiplier(lh0, o.adaptive) : 1;
+    if (multiplier > 1) {
+        // Equal thin layers, then merged where the model's outline doesn't change.
+        const int base = o.on_plate ? heightCorrectionLayers(o.height_correction, lh0) : 0;
+        LayerStack layers = sliceModel(mesh, lh0, nullptr, o.threads);
+        addBaseLayers(layers, base);
+        AdaptiveSettings ad;
+        ad.multiplier = multiplier;
+        ad.light_depth = o.light_depth;
+        ad.protected_layers = static_cast<std::size_t>(base);
+        res = exportGooAdaptive(layers, layers, &mesh, h, grid, eo, ad, o.out);
+        if (o.on_plate) r["height_correction"] = {{"mm", base * lh0}, {"layers", base}};
+        r["adaptive"] = {{"up_to_mm", multiplier * lh0},
+                         {"light_depth_mm", o.light_depth},
+                         {"thin_layers", res.thin_layers},
+                         {"merged_layers", res.merged_layers},
+                         {"unverified", "this printer has not been checked to obey a height per layer; print a small "
+                                        "part first and measure it; the light depth is a typical value, not measured; the STL has its "
+                                        "supports in it, so they count in deciding where layers merge"}};
+    } else if (o.on_plate) {
         // Standing on the plate: the printer squashes the first layers, so
         // copies of the first layer go under the model (whole layers).
         const double lh = gooLayerHeight(h);
@@ -738,6 +761,13 @@ int cmdGoo(const std::string& path, double layer_h, const GooCli& o) {
     }
     r["output"] = o.out;
     r["layers"] = res.layers;
+    {
+        const GooFileInfo written = readGoo(o.out);
+        json per = json::array();
+        for (const auto& [t, n] : gooThicknessCounts(written.header, written.layers))
+            per.push_back({{"thickness_mm", t}, {"layers", n}});
+        r["layers_per_thickness"] = per;
+    }
     r["bytes"] = res.bytes;
     r["volume_ml"] = res.volume_mm3 / 1000.0;
     r["print_time_h"] = res.print_time_s / 3600.0;
@@ -801,6 +831,11 @@ int cmdGooInfo(const std::string& path, bool decode) {
                   {"pwm", {p.bottom_pwm, p.pwm}},
                   {"advance_mode", p.advance_mode}};
     r["footer_ok"] = f.footer_ok;
+    {
+        json per = json::array();
+        for (const auto& [t, n] : gooThicknessCounts(h, f.layers)) per.push_back({{"thickness_mm", t}, {"layers", n}});
+        r["layers_per_thickness"] = per;
+    }
     auto def = [](const GooLayerDef& d) {
         return json{{"z", d.z}, {"exposure", d.exposure}, {"lift", {d.lift_distance, d.lift_speed}},
                     {"retract", {d.retract_distance, d.retract_speed}}, {"pwm", d.pwm}, {"pause", d.pause}};
@@ -1005,6 +1040,14 @@ int main(int argc, char** argv) {
                     "With --on-plate: height added under the model for the squashed first layers (mm, as whole layers; "
                     "0.10 is typical, not measured on your printer)")
         ->check(CLI::Range(0.0, kMaxHeightCorrection));
+    goo->add_option("--adaptive", gcli.adaptive,
+                    "Merge thin layers up to this height (mm, snapped to the layer height doubled up to 8 times, at most "
+                    "0.2) where the model's walls are straight; the layer height itself is off")
+        ->check(CLI::PositiveNumber);
+    goo->add_option("--light-depth", gcli.light_depth,
+                    "With --adaptive: how deep light hardens the resin (mm), for the longer exposures; 0.10 is typical, "
+                    "not measured for your resin")
+        ->check(CLI::Range(kMinLightDepth, kMaxLightDepth));
     goo->add_option("--threads", gcli.threads, "Worker threads (0 = all cores)");
 
     bool goo_decode = false;

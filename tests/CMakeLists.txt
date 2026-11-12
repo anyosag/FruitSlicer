@@ -2,6 +2,7 @@ add_executable(fruit_tests
   test_geometry.cpp
   test_mesh.cpp
   test_slicer.cpp
+  test_adaptive.cpp
   test_islands.cpp
   test_hollow.cpp
   test_drain.cpp

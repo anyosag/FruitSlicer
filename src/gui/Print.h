@@ -37,6 +37,12 @@ struct PrintEdits {
     // mm, >= 0: added under a model standing on the plate (no raft), because
     // the printer squashes the first layers; < 0: FruitSlicer's typical 0.10.
     double height_correction = -1;
+    // The thickest layer the print file may merge up to, as a multiple of the
+    // layer height (1: off; 2, 4, 8), so it survives a change of layer height.
+    int adaptive = 1;
+    // mm, >= 0: how deep light hardens the resin, for the exposure of thicker
+    // layers; < 0: FruitSlicer's typical 0.10.
+    double light_depth = -1;
     bool operator==(const PrintEdits&) const = default;
     bool any() const { return !(*this == PrintEdits{}); }
 };
@@ -59,6 +65,11 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
 double resinDensity(const PrintEdits& e);
 // The height correction, mm: the edited one, else FruitSlicer's typical value.
 double heightCorrection(const PrintEdits& e);
+// The light depth, mm: the edited one, else FruitSlicer's typical value.
+double lightDepth(const PrintEdits& e);
+// The thickest layer, in thin layers of `layer_height`, as the print file
+// would use it (1: no merging): the setting held to the printer's 0.2 mm.
+int adaptiveCount(const PrintEdits& e, double layer_height);
 // Whole layers of `layer_height` added under `doc`'s models for the height
 // correction of its print settings: none with a raft.
 int baseLayers(const Document& doc, double layer_height);
@@ -81,6 +92,8 @@ struct PrintPlan {
     double resin_ml = 0, resin_g = 0;
     double density = 1.15;     // g/ml, for the weight (written in the file too)
     double print_time_s = 0;   // estimate
+    int adaptive = 1;          // thickest layer in thin layers (1: no merging)
+    double light_depth = 0.10; // mm, for the exposure of thicker layers
     double raft_needed = 0;    // bottom + transition layers' thickness
     bool raft_thick_enough = true;
     bool fits = true;          // model and supports inside the build volume

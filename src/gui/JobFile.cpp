@@ -15,6 +15,7 @@
 
 #include "Orient.h"
 #include "formats/GooFile.h"
+#include "layers/AdaptiveLayers.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
 #include "support/SupportIO.h"
@@ -344,6 +345,8 @@ void saveJob(const std::string& path, const Document& doc) {
                   {"light_power", s.light_power},
                   {"density", s.density},
                   {"height_correction", s.height_correction},
+                  {"adaptive", s.adaptive},
+                  {"light_depth", s.light_depth},
                   {"sample_path", s.sample_path}};
 
     std::vector<std::uint8_t> sample;
@@ -506,6 +509,8 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         s.light_power = prj.value("light_power", -1);
         s.density = prj.value("density", 0.0);
         s.height_correction = prj.value("height_correction", -1.0);
+        s.adaptive = std::clamp(prj.value("adaptive", 1), 1, fruit::kMaxAdaptiveMultiplier);
+        s.light_depth = prj.value("light_depth", -1.0);
         if (!prj.contains("height_correction")) {
             // Saved while it sat with the placement (for a short while): one of
             // the usual value is the same as none.

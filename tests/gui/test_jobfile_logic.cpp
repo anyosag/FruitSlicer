@@ -317,4 +317,22 @@ TEST_CASE("Jobs: the height correction is saved with the print settings; older j
         pl["height_correction"] = 0.2;
     });
     CHECK(moved.doc->print.settings.height_correction == Approx(0.2));
+
+    // Adaptive layers and the light depth are saved too; older jobs have them off and at the typical value.
+    CHECK(o.doc->print.settings.adaptive == 1);
+    CHECK(o.doc->print.settings.light_depth < 0);
+    doc->print.settings.adaptive = 4;
+    doc->print.settings.light_depth = 0.2;
+    const auto job2 = (dir() / "adaptive.fruitjob").string();
+    saveJob(job2, *doc);
+    const OpenedJob adaptive = openJob(job2, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(adaptive.doc->print.settings.adaptive == 4);
+    CHECK(adaptive.doc->print.settings.light_depth == Approx(0.2));
+    const OpenedJob without = rewritten("adaptive_old.fruitjob", [](nlohmann::json& j) {
+        j.at("print").erase("adaptive");
+        j.at("print").erase("light_depth");
+    });
+    CHECK(without.doc->print.settings.adaptive == 1);
+    CHECK(without.doc->print.settings.light_depth < 0);
+    CHECK(lightDepth(without.doc->print.settings) == Approx(0.10));
 }

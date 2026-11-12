@@ -1862,6 +1862,8 @@ void App::replaceResinSampleFile(const std::string& id, const std::string& goo) 
         PrintEdits kept;
         kept.density = r.print.density;
         kept.height_correction = r.print.height_correction;
+        kept.adaptive = r.print.adaptive;
+        kept.light_depth = r.print.light_depth;
         r.print = kept;
         resin_samples_.erase(r.sample_path);  // the same name may hold another file now
         storeResin(r);

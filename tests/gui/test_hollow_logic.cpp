@@ -216,6 +216,51 @@ TEST_CASE("Hollow: applied, the supports, the layers and the print file use the 
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("Hollow: adaptive layers merge by the hollowed model and still read back", "[gui][hollow][adaptive]") {
+    const auto doc = load(sealed(), "hollow_adaptive.stl");
+    doc->hollow.applied = true;
+    const SupportResult s = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+    REQUIRE(s.hollow);
+    const LayerResult lr = sliceLayers(*doc, s.mesh, 0.0, fruit::JobControl::none(), s.hollow);
+    const auto dir = std::filesystem::temp_directory_path() / "fruit_hollow_adaptive";
+    std::filesystem::create_directories(dir);
+    // At the job's own layer height.
+    PrintSettings ps;
+    ps.exposure = 2.5;
+    ps.bottom_exposure = 30;
+    ps.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, s.tree.raft_top, ps);
+    REQUIRE(plan.ready);
+    REQUIRE_FALSE(plan.reslice);
+    const SaveResult saved =
+        savePrint(*doc, lr, s.mesh, plan, (dir / "hollow_adaptive.goo").string(), false, fruit::JobControl::none());
+    CHECK(saved.good);
+    CHECK(saved.written.layers < plan.layers);
+    CHECK(saved.written.merged_layers > 0);
+    // At a sample's 0.03 mm, with the hollowing planned again.
+    fruit::GooPrintRequest req;
+    req.layer_height = 0.03;
+    req.exposure = 1.5;
+    req.bottom_exposure = 27.5;
+    req.bottom_layers = 6;
+    req.transition_layers = 6;
+    const fruit::GooPrintSetup setup = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), req);
+    const std::string sample = (dir / "sample_003.goo").string();
+    fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 1}), setup.header, setup.grid, fruit::GooExportOptions{}, sample);
+    PrintSettings ps3;
+    ps3.sample_path = sample;
+    ps3.sample = loadSample(sample);
+    ps3.adaptive = 4;
+    const PrintPlan plan3 = planPrint(*doc, lr, s.tree.raft_top, ps3);
+    REQUIRE(plan3.reslice);
+    const SaveResult saved3 =
+        savePrint(*doc, lr, s.mesh, plan3, (dir / "hollow_adaptive_003.goo").string(), false, fruit::JobControl::none());
+    CHECK(saved3.good);
+    CHECK(saved3.written.thin_layers == plan3.layers);
+    CHECK(saved3.written.layers < plan3.layers);
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Hollow: holes by hand, none placed yet, change nothing", "[gui][hollow]") {
     const auto doc = load(sealed(), "hollow_none_yet.stl");
     HollowChoices c;

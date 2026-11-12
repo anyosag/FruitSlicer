@@ -12,6 +12,7 @@
 #include "Document.h"
 #include "Hollows.h"
 #include "Layers.h"
+#include "layers/AdaptiveLayers.h"
 #include "raster/Rasterizer.h"
 #include "support/SupportSettings.h"
 
@@ -63,6 +64,14 @@ double heightCorrection(const PrintEdits& e) {
     return e.height_correction >= 0 ? e.height_correction : fruit::kDefaultHeightCorrection;
 }
 
+double lightDepth(const PrintEdits& e) {
+    return e.light_depth >= 0 ? e.light_depth : fruit::kDefaultLightDepth;
+}
+
+int adaptiveCount(const PrintEdits& e, double layer_height) {
+    return fruit::maxAdaptiveCount(layer_height, e.adaptive);
+}
+
 int baseLayers(const Document& doc, double layer_height) {
     if (doc.parts().empty() || !doc.placement().on_plate) return 0;
     return fruit::heightCorrectionLayers(heightCorrection(doc.print.settings), layer_height);
@@ -92,6 +101,8 @@ PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_
     fruit::BBox3 b = layers.bounds;
     b.max.z += extra;
     p.fits = fitsPlate(doc.printer, b);
+    p.adaptive = adaptiveCount(s, p.layer_height);
+    p.light_depth = lightDepth(s);
     p.resin_ml = layers.resin_ml;
     fruit::GooExportOptions o;
     o.resin_density = p.density = resinDensity(s);
@@ -116,25 +127,53 @@ SaveResult savePrint(const Document& doc, const LayerResult& layers, const fruit
     o.resin_density = plan.density;
     // On the plate: the height correction's layers, at the print file's height.
     const int base = baseLayers(doc, fruit::gooLayerHeight(plan.setup.header));
+    const double h = fruit::gooLayerHeight(plan.setup.header);
+    fruit::AdaptiveSettings ad;
+    ad.multiplier = plan.adaptive;
+    ad.light_depth = plan.light_depth;
+    ad.protected_layers = static_cast<std::size_t>(base);
+    // Writes `print` (model and supports); with adaptive layers on, `model`
+    // (the model alone, thin layers) decides where they merge.
+    auto write = [&](const fruit::LayerStack& print, const fruit::LayerStack& model, const fruit::JobControl& c) {
+        if (plan.adaptive > 1)
+            r.written = fruit::exportGooAdaptive(print, model, &all, plan.setup.header, plan.setup.grid, o, ad, path, c);
+        else
+            r.written = fruit::exportGooLayers(print, &all, plan.setup.header, plan.setup.grid, o, path, c);
+    };
     if (plan.reslice && layers.hollow) {
         // The same again at the sample's layer height: the model hollowed
         // or filled as before, with the same holes, and the supports.
-        const double h = fruit::gooLayerHeight(plan.setup.header);
         HollowChoices c = layers.hollow->choices;
         c.auto_holes = false;
         const HollowPlan again = planHollow(doc, c, layers.hollow->holes, h, ctl.sub(0.0, 0.3));
         fruit::LayerStack print =
             fruit::unionLayers(*again.layers, fruit::sliceModel(supports, h, nullptr, 0, ctl.sub(0.3, 0.4)));
         fruit::addBaseLayers(print, base);
-        r.written = fruit::exportGooLayers(print, &all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.4, 0.85));
+        fruit::LayerStack model;
+        if (plan.adaptive > 1) {
+            model = *again.layers;  // the hollowed model's own layers
+            fruit::addBaseLayers(model, base);
+        }
+        write(print, model, ctl.sub(0.4, 0.85));
     } else if (plan.reslice) {
         // The sample's exposures are for its layer height: cut the layers again.
-        fruit::LayerStack print = fruit::sliceModel(all, fruit::gooLayerHeight(plan.setup.header), nullptr, 0, ctl.sub(0.0, 0.4));
+        const bool merge = plan.adaptive > 1;
+        fruit::LayerStack print = fruit::sliceModel(all, h, nullptr, 0, ctl.sub(0.0, merge ? 0.2 : 0.4));
         fruit::addBaseLayers(print, base);
-        r.written = fruit::exportGooLayers(print, &all, plan.setup.header, plan.setup.grid, o, path, ctl.sub(0.4, 0.85));
+        fruit::LayerStack model;
+        if (plan.adaptive > 1) {
+            model = fruit::sliceModel(doc.placed(), h, nullptr, 0, ctl.sub(0.2, 0.4));
+            fruit::addBaseLayers(model, base);
+        }
+        write(print, model, ctl.sub(0.4, 0.85));
     } else {
-        r.written = fruit::exportGooLayers(*layers.layers, &all, plan.setup.header, plan.setup.grid, o, path,
-                                           ctl.sub(0.0, 0.85));
+        fruit::LayerStack model;
+        if (plan.adaptive > 1) {
+            if (layers.hollow) model = *layers.hollow->layers;
+            else model = fruit::sliceModel(doc.placed(), h, nullptr, 0, ctl.sub(0.0, 0.3));
+            fruit::addBaseLayers(model, static_cast<int>(layers.base_layers));
+        }
+        write(*layers.layers, model, plan.adaptive > 1 ? ctl.sub(0.3, 0.85) : ctl.sub(0.0, 0.85));
     }
     readBack(r, ctl.sub(0.85, 1.0));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

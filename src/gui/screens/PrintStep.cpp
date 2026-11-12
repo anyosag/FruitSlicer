@@ -155,6 +155,15 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
         keyValue("Normal exposure", strf("%.2f s", hd.print.exposure));
         keyValue("Transition layers", strf("%d", static_cast<int>(hd.print.transition_layers)));
         keyValue("Wait after retract", strf("%.1f s", hd.print.wait_after_retract));
+        if (plan->adaptive > 1) {
+            ImGui::Dummy(ImVec2(0, 2));
+            text(strf("Layers are merged up to %g mm where the model's walls are straight. The layer count and time "
+                      "shown before saving are for thin layers throughout; the saved file's own numbers show "
+                      "after saving.",
+                      plan->layer_height * plan->adaptive)
+                     .c_str(),
+                 fonts().regular, size::Help, col::TextSecondary, true);
+        }
         if (plan->reslice) {
             ImGui::Dummy(ImVec2(0, 2));
             text(strf("Saving cuts the layers again at %.2f mm, the height these exposures are for.",
@@ -331,6 +340,11 @@ void savedPage(App& app, Document& doc, ImVec2 size) {
     text("The print", fonts().semibold, size::Section + 1, col::Text);
     keyValue("Print time", "about " + duration(r.written.print_time_s));
     keyValue("Resin", strf("%.1f ml", r.written.volume_mm3 / 1000.0));
+    if (r.written.merged_layers > 0)
+        keyValue("Merged layers", strf("%s thicker layers, from %s thin ones", thousands(r.written.merged_layers).c_str(),
+                                       thousands(r.written.thin_layers - (r.written.layers - r.written.merged_layers)).c_str()));
+    else if (doc.print.settings.adaptive > 1 && r.written.thin_layers > 0)
+        keyValue("Merged layers", "none: the walls changed in every layer");
     keyValue("Supports", strf("%zu tips on %zu trunks", doc.supports.result->tips, doc.supports.result->trunks));
     endCard();
     ImGui::Dummy(ImVec2(0, 14));

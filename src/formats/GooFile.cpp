@@ -301,6 +301,30 @@ GooLayerDef layerDefFor(const GooHeader& h, uint32_t i) {
     return d;
 }
 
+std::vector<double> gooLayerThicknesses(const GooHeader& h, const std::vector<GooLayerDef>& layers) {
+    std::vector<double> t(layers.size(), h.layer_height);
+    if (!h.print.advance_mode) return t;
+    double below = 0;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const double z = layers[i].z;
+        const double d = std::round((z - below) * 1e4) / 1e4;
+        if (d > 0) t[i] = d;
+        below = z;
+    }
+    return t;
+}
+
+std::vector<std::pair<double, uint32_t>> gooThicknessCounts(const GooHeader& h, const std::vector<GooLayerDef>& layers) {
+    std::vector<std::pair<double, uint32_t>> out;
+    for (const double t : gooLayerThicknesses(h, layers)) {
+        auto it = std::find_if(out.begin(), out.end(), [&](const auto& e) { return std::abs(e.first - t) < 5e-5; });
+        if (it == out.end()) out.push_back({t, 1});
+        else ++it->second;
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 // ---------------------------------------------------------------- RLE
 
 GooRleEncoder::GooRleEncoder() { out_.push_back(kLayerMagic); }
@@ -415,8 +439,10 @@ GooVerifyResult verifyGoo(const std::string& path, const JobControl& ctl) {
     v.footer_ok = f.footer_ok;
     const size_t pixels = static_cast<size_t>(h.res_x) * h.res_y;
     bool seen[256] = {};
-    double lit = 0;
+    const std::vector<double> thick = gooLayerThicknesses(h, f.layers);
+    double volume_px = 0;  // Σ lit coverage × layer thickness
     for (size_t i = 0; i < f.rle.size(); ++i) {
+        double lit = 0;
         try {
             walkGooRuns(f.rle[i], pixels, [&](uint8_t color, size_t, uint32_t run) {
                 if (!color) return;
@@ -430,6 +456,7 @@ GooVerifyResult verifyGoo(const std::string& path, const JobControl& ctl) {
                 v.error = e.what();
             }
         }
+        volume_px += lit * (i < thick.size() ? thick[i] : h.layer_height);
         if ((i & 63) == 0) ctl.step("verify", static_cast<double>(i) / static_cast<double>(std::max<size_t>(1, f.rle.size())));
     }
     for (int c = 1; c < 256; ++c) {
@@ -437,7 +464,7 @@ GooVerifyResult verifyGoo(const std::string& path, const JobControl& ctl) {
         v.grey_values += seen[c] && c != 255;
     }
     const double pixel_area = static_cast<double>(h.size_x) / h.res_x * h.size_y / h.res_y;
-    v.volume_mm3 = lit * pixel_area * h.layer_height;
+    v.volume_mm3 = volume_px * pixel_area;
     ctl.report("verify", 1.0);
     return v;
 }

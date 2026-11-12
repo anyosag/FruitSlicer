@@ -12,6 +12,7 @@
 #include "Format.h"
 #include "Supports.h"
 #include "formats/GooExport.h"
+#include "layers/AdaptiveLayers.h"
 #include "support/SupportSettings.h"
 
 namespace gui {
@@ -38,7 +39,9 @@ json printJson(const Resin& r) {
             {"lift", e.lift},
             {"light_power", e.light_power},
             {"density", e.density},
-            {"height_correction", e.height_correction}};
+            {"height_correction", e.height_correction},
+            {"adaptive", e.adaptive},
+            {"light_depth", e.light_depth}};
 }
 
 void readPrint(const json& p, Resin& r) {
@@ -57,6 +60,8 @@ void readPrint(const json& p, Resin& r) {
     e.light_power = p.value("light_power", -1);
     e.density = p.value("density", 0.0);
     e.height_correction = p.value("height_correction", -1.0);
+    e.adaptive = std::clamp(p.value("adaptive", 1), 1, fruit::kMaxAdaptiveMultiplier);
+    e.light_depth = p.value("light_depth", -1.0);
 }
 
 bool hasMeasured(const json& p, const char* key) { return p.is_object() && p.contains(key) && !p[key].is_null(); }
@@ -323,6 +328,8 @@ const FieldRange kFields[] = {
     {"wait_after_lift", 0, 120, false},     {"wait_after_retract", 0, 120, false}, {"lift", 0.01, 20, false},
     {"light_power", 1, 255, true},          {"density", 0.5, 3, false},
     {"height_correction", 0, fruit::kMaxHeightCorrection, false},
+    {"adaptive", 0.01, fruit::kMaxLayerHeight, false},
+    {"light_depth", fruit::kMinLightDepth, fruit::kMaxLightDepth, false},
 };
 
 const FieldRange* rangeOf(const std::string& key) {
@@ -351,6 +358,11 @@ double valueOf(const fruit::GooHeader& h, const PrintEdits& e, const std::string
     if (key == "light_power") return p.pwm;
     if (key == "density") return resinDensity(e);
     if (key == "height_correction") return heightCorrection(e);
+    if (key == "adaptive") {
+        const double h0 = fruit::gooLayerHeight(h);
+        return h0 * adaptiveCount(e, h0);
+    }
+    if (key == "light_depth") return lightDepth(e);
     return 0;
 }
 
@@ -368,6 +380,8 @@ void setEdit(PrintEdits& e, const std::string& key, double v) {
     else if (key == "light_power") e.light_power = n;
     else if (key == "density") e.density = v;
     else if (key == "height_correction") e.height_correction = v;
+    else if (key == "adaptive") e.adaptive = n;  // the multiplier (the page's mm are turned into it first)
+    else if (key == "light_depth") e.light_depth = v;
 }
 
 void clearEdit(PrintEdits& e, const std::string& key) {
@@ -384,6 +398,8 @@ void clearEdit(PrintEdits& e, const std::string& key) {
     else if (key == "light_power") e.light_power = none.light_power;
     else if (key == "density") e.density = none.density;
     else if (key == "height_correction") e.height_correction = none.height_correction;
+    else if (key == "adaptive") e.adaptive = none.adaptive;
+    else if (key == "light_depth") e.light_depth = none.light_depth;
 }
 
 // The rows and the values each one holds, in page order.
@@ -394,6 +410,8 @@ const std::vector<std::pair<const char*, std::vector<const char*>>>& rowKeys() {
         {"height_correction", {"height_correction"}},
         {"transition", {"transition_layers"}},
         {"exposure", {"exposure"}},
+        {"adaptive", {"adaptive"}},
+        {"light_depth", {"light_depth"}},
         {"waits", {"wait_before_lift", "wait_after_lift", "wait_after_retract"}},
         {"lift", {"lift"}},
         {"light_power", {"light_power"}},
@@ -431,6 +449,12 @@ std::string rowText(const std::string& row, const fruit::GooHeader& h, const Pri
     if (row == "light_power") return strf("%u of 255", p.pwm);
     if (row == "density") return strf("%g g/ml", density);
     if (row == "height_correction") return strf("%g mm", heightCorrection(e));
+    if (row == "adaptive") {
+        const double h0 = fruit::gooLayerHeight(h);
+        const int n = adaptiveCount(e, h0);
+        return n > 1 ? strf("up to %g mm", h0 * n) : "Off";
+    }
+    if (row == "light_depth") return strf("%g mm", lightDepth(e));
     return "";
 }
 
@@ -449,7 +473,8 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
         row.value = rowText(key, h, r.print);
         row.base = rowText(key, base, PrintEdits{});
         // Density and the height correction are FruitSlicer's: no print file has them.
-        const bool ours = row.key == "density" || row.key == "height_correction";
+        const bool ours = row.key == "density" || row.key == "height_correction" || row.key == "adaptive" ||
+                          row.key == "light_depth";
         row.source = edited(r.print, keys) ? S::Yours : file && !ours ? S::File : S::Default;
         rows.push_back(std::move(row));
     }
@@ -470,15 +495,43 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
                              fruit::layerDefFor(h, p.bottom_layers + p.transition_layers - 1u).exposure);
     rows[4].label = "Normal exposure";
     rows[4].fields = {field("exposure", "s", p.exposure)};
-    rows[5].label = "Waits (before lift, after lift, after retract)";
-    rows[5].fields = {field("wait_before_lift", "·", p.wait_before_lift), field("wait_after_lift", "·", p.wait_after_lift),
+    rows[5].label = "Adaptive layers";
+    rows[5].fields = {field("adaptive", "mm", valueOf(h, r.print, "adaptive"))};
+    {
+        const double h0 = fruit::gooLayerHeight(h);
+        const int n = adaptiveCount(r.print, h0);
+        if (n <= 1) {
+            rows[5].after = "Off";
+        } else {
+            // Each thicker height and the exposure the formula gives it.
+            std::string words;
+            for (const double height : fruit::adaptiveHeights(h0, n)) {
+                if (height <= h0 + 1e-9) continue;
+                if (!words.empty()) words += " · ";
+                words += p.exposure > 0
+                             ? strf("%g mm at %.2f s", height, fruit::adaptiveExposure(p.exposure, h0, height, lightDepth(r.print)))
+                             : strf("%g mm", height);
+            }
+            rows[5].after = words;
+            rows[5].note = "Thick layers are used where the model's walls are straight. This printer has not been "
+                           "checked to obey a height per layer, so make a small part first and measure it.";
+        }
+    }
+    rows[6].label = "Light depth";
+    rows[6].fields = {field("light_depth", "mm", lightDepth(r.print))};
+    if (rows[6].source != S::Yours)
+        rows[6].note = "How deep light hardens this resin; it sets the exposure of thicker layers. 0.10 mm is a "
+                       "typical value, not measured for this resin. Too little exposure makes thick layers come "
+                       "apart, so try a small part first.";
+    rows[7].label = "Waits (before lift, after lift, after retract)";
+    rows[7].fields = {field("wait_before_lift", "·", p.wait_before_lift), field("wait_after_lift", "·", p.wait_after_lift),
                       field("wait_after_retract", "s", p.wait_after_retract)};
-    rows[6].label = "Lift and retract";
-    rows[6].fields = {field("lift", "mm", valueOf(h, r.print, "lift"))};
-    rows[7].label = "Light power";
-    rows[7].fields = {field("light_power", "of 255", p.pwm)};
-    rows[8].label = "Density, for weight";
-    rows[8].fields = {field("density", "g/ml", resinDensity(r.print))};
+    rows[8].label = "Lift and retract";
+    rows[8].fields = {field("lift", "mm", valueOf(h, r.print, "lift"))};
+    rows[9].label = "Light power";
+    rows[9].fields = {field("light_power", "of 255", p.pwm)};
+    rows[10].label = "Density, for weight";
+    rows[10].fields = {field("density", "g/ml", resinDensity(r.print))};
     // Exposures with no file and none typed: nothing to go back to.
     if (!file) {
         if (base.print.bottom_exposure <= 0) rows[1].base.clear();
@@ -488,11 +541,11 @@ std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, 
     const double lh = fruit::gooLayerHeight(h), base_lh = fruit::gooLayerHeight(base);
     if (rows[0].source == S::Yours && std::abs(lh - base_lh) > 1e-6 && (file || base.print.exposure > 0))
         rows[0].note = strf("The exposures were set for %g mm layers and haven't been checked at %g mm.", base_lh, lh);
-    if (rows[6].source == S::Yours && std::abs(p.lift_distance - base.print.lift_distance) > 1e-6)
-        rows[6].note = "Not checked on the printer: the 16K tilts its vat, and how it uses this distance hasn't been "
+    if (rows[8].source == S::Yours && std::abs(p.lift_distance - base.print.lift_distance) > 1e-6)
+        rows[8].note = "Not checked on the printer: the 16K tilts its vat, and how it uses this distance hasn't been "
                        "tested.";
-    if (rows[7].source == S::Yours && p.pwm != base.print.pwm)
-        rows[7].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
+    if (rows[9].source == S::Yours && p.pwm != base.print.pwm)
+        rows[9].note = strf("The exposures were set at %u and haven't been checked at %u.", base.print.pwm, p.pwm);
     return rows;
 }
 
@@ -500,6 +553,13 @@ void setPrintValue(Resin& r, const fruit::GooHeader* sample, const fruit::Printe
                    const std::string& key, double value) {
     const FieldRange* f = rangeOf(key);
     if (!f) throw std::invalid_argument("no print setting called " + key);
+    if (key == "adaptive") {
+        // Typed in mm: the nearest height the layer height allows (the layer
+        // height itself is off), kept as a multiple of it.
+        const double h0 = fruit::gooLayerHeight(headerWith(r, r.print, sample, printer));
+        r.print.adaptive = fruit::snapAdaptiveMultiplier(h0, value);
+        return;
+    }
     double v = std::clamp(value, f->lo, f->hi);
     if (f->whole) v = std::round(v);
     PrintEdits without = r.print;

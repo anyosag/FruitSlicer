@@ -115,6 +115,9 @@ parts::SourceBadge badgeOf(PrintRow::Source s) {
 
 // What a print field is, for its tooltip.
 std::string fieldTip(const PrintField& f) {
+    if (f.key == "adaptive")
+        return "Thickest layer, mm. A value snaps to the nearest height the layer height allows; the layer height itself is off.";
+    if (f.key == "light_depth") return strf("Light depth, mm: from %g to %g", f.lo, f.hi);
     const char* what = f.key == "bottom_layers"        ? "Bottom layers"
                        : f.key == "bottom_exposure"    ? "Bottom exposure, s"
                        : f.key == "transition_layers"  ? "Transition layers"
@@ -143,7 +146,9 @@ void printCard(App& app, const Resin& r, const fruit::GooHeader* sample) {
         e.badge = badgeOf(row.source);
         e.note = row.note;
         if (row.source == PrintRow::Source::Yours && !row.base.empty())
-            e.was = (file && row.key != "density" ? "File: " : "FruitSlicer's: ") + row.base;
+            e.was = (file && row.key != "density" && row.key != "adaptive" && row.key != "light_depth" ? "File: "
+                                                                                                    : "FruitSlicer's: ") +
+                    row.base;
         const float gap = 6;
         for (const PrintField& f : row.fields) {
             e.value_w += fieldWidth(f) + gap;

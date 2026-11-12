@@ -18,6 +18,7 @@
 #include "Layers.h"
 #include "Print.h"
 #include "Supports.h"
+#include "layers/AdaptiveLayers.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
 
@@ -308,4 +309,97 @@ TEST_CASE("Height correction: a print setting; changing it cuts the layers again
     CHECK(baseLayers(*doc, kLayerHeight) == 0);
     doc->print.settings.height_correction = 0.4;
     CHECK(baseLayers(*doc, kLayerHeight) == 0);
+}
+
+TEST_CASE("Adaptive layers: saving writes merged layers and reads back good", "[gui][print][adaptive]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());  // the box 5 mm up: 160 layers of 0.05 mm
+    PrintSettings off = typed();
+    const PrintPlan p_off = planPrint(*doc, lr, 0.0, off);
+    REQUIRE(p_off.ready);
+    CHECK(p_off.adaptive == 1);
+    const SaveResult thin = savePrint(*doc, lr, {}, p_off, tmp("adaptive_thin.goo").string(), false, fruit::JobControl::none());
+    REQUIRE(thin.good);
+    CHECK(thin.written.merged_layers == 0);
+    CHECK_FALSE(fruit::readGoo(thin.path).header.print.advance_mode);
+
+    PrintSettings s = typed();
+    s.adaptive = 4;      // up to 0.2 mm
+    s.light_depth = 0.12;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    CHECK(plan.adaptive == 4);
+    CHECK(plan.light_depth == Approx(0.12));
+    CHECK(plan.layers == 160);  // (the box stands 5 mm up on a raft) what is shown before saving: thin layers throughout
+    const auto path = tmp("adaptive_box.goo").string();
+    const SaveResult r = savePrint(*doc, lr, {}, plan, path, false, fruit::JobControl::none());
+    CHECK(r.good);
+    CHECK(r.volume_matches);
+    CHECK(r.written.layers < 160);
+    CHECK(r.written.merged_layers > 0);
+    CHECK(r.written.thin_layers == 160);
+    CHECK(r.check.layers == r.written.layers);
+    const fruit::GooFileInfo f = fruit::readGoo(path);
+    CHECK(f.header.print.advance_mode);
+    CHECK(f.layers.back().z == Approx(8.0).margin(1e-4));
+    CHECK(f.header.volume == Approx(thin.written.volume_mm3).epsilon(0.005));
+    CHECK(r.check.volume_mm3 == Approx(thin.check.volume_mm3).epsilon(0.005));
+    CHECK(r.written.print_time_s < thin.written.print_time_s);
+    // A merged layer's exposure is from the formula with this light depth.
+    bool seen = false;
+    for (std::size_t k = 1; k < f.layers.size(); ++k) {
+        const double thick = f.layers[k].z - f.layers[k - 1].z;
+        if (thick < 0.06) continue;
+        seen = true;
+        CHECK(f.layers[k].exposure == Approx(fruit::adaptiveExposure(2.5, 0.05, thick, 0.12)).margin(0.011));
+    }
+    CHECK(seen);
+}
+
+TEST_CASE("Adaptive layers: on the plate, the height correction's layers stay thin", "[gui][print][adaptive]") {
+    const auto doc = boxOnPlate(0.15);  // 3 layers of 0.05 mm under the box
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    REQUIRE(lr.base_layers == 3);
+    PrintSettings s = typed();
+    s.bottom_layers = 1;
+    s.transition_layers = 0;  // so only the height correction protects layers here
+    s.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.ready);
+    const auto path = tmp("adaptive_plate.goo").string();
+    const SaveResult r = savePrint(*doc, lr, {}, plan, path, false, fruit::JobControl::none());
+    CHECK(r.good);
+    const fruit::GooFileInfo f = fruit::readGoo(path);
+    REQUIRE(f.layers.size() > 4);
+    for (std::size_t i = 0; i < 3; ++i) CHECK(f.layers[i].z == Approx(0.05 * static_cast<double>(i + 1)).margin(1e-4));
+    CHECK(f.layers[3].z - f.layers[2].z == Approx(0.10).margin(1e-4));  // merging starts after them, 0.05 -> 0.1
+    CHECK(f.layers.back().z == Approx(3.15).margin(1e-4));
+    CHECK(r.written.merged_layers > 0);
+    // The model's footprint is the same all the way up: the first merged layer is as lit as a thin one.
+    CHECK(r.check.volume_mm3 == Approx(10 * 8 * 3.15).epsilon(0.02));
+}
+
+TEST_CASE("Adaptive layers: a sample at another layer height cuts the layers again and merges them",
+          "[gui][print][adaptive]") {
+    const auto doc = boxOnPlate(0.10);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s;
+    s.sample_path = sample003();
+    s.sample = loadSample(s.sample_path);
+    s.adaptive = 8;  // 0.24 mm is over the limit: 0.12 mm is the thickest
+    const PrintPlan p = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(p.reslice);
+    CHECK(p.adaptive == 4);
+    CHECK(p.base_layers == 3);
+    const auto path = tmp("adaptive_003.goo").string();
+    const SaveResult r = savePrint(*doc, lr, {}, p, path, false, fruit::JobControl::none());
+    CHECK(r.good);
+    CHECK(r.written.thin_layers == 103);
+    CHECK(r.written.layers < 103);
+    const fruit::GooFileInfo f = fruit::readGoo(path);
+    CHECK(f.header.layer_height == Approx(0.03f));
+    CHECK(f.layers.back().z == Approx(3.09).margin(1e-4));
+    const auto counts = fruit::gooThicknessCounts(f.header, f.layers);
+    CHECK(counts.back().first == Approx(0.12).margin(1e-4));
+    // The base layers (and the sample's own 6 bottom and 6 transition layers) are thin.
+    for (std::size_t i = 0; i < 12; ++i) CHECK(f.layers[i].z == Approx(0.03 * static_cast<double>(i + 1)).margin(1e-4));
 }
