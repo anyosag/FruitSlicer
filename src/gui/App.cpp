@@ -873,7 +873,8 @@ void App::generateSupports() {
     advanced_open_ = false;  // the run shows in the 3D view
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
-    const int rev = doc_->revision(), settings = doc_->supportSettings();
+    const int rev = doc_->revision();
+    const std::int64_t settings = doc_->supportSettings();
     const SupportChoices choices = doc_->supports.choices;
     const std::vector<TipEdit> edits = doc_->supports.edits;  // hand edits stay: they apply again
     std::weak_ptr<Document> target = doc_;
@@ -1050,7 +1051,8 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
     // again. Taking back one the planner worked around would leave its hole or
     // zone behind, so then the tips are planned again, around the rest.
     const bool replan = !planStillFits(prev->plan_edits, edits);
-    const int rev = doc_->supports.result_revision, settings = doc_->supports.result_settings;
+    const int rev = doc_->supports.result_revision;
+    const std::int64_t settings = doc_->supports.result_settings;
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
         replan ? "Planning the tips again" : "Updating the tips",
@@ -1058,7 +1060,8 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
             if (replan) {
                 *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
             } else {
-                SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits, prev->hollow};
+                SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits,
+                                 prev->hollow, prev->held_min, prev->held_max};
                 *out = finishWithEdits(*snap, choices, std::move(plan), edits, ctl);
             }
         },

@@ -4,6 +4,7 @@
 // held closer than the rest (SupportConfig::skin_advance / skin_reach).
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -170,11 +171,13 @@ TEST_CASE("a dome that widens slowly keeps its tips spread up its sides", "[poin
 }
 
 TEST_CASE("on the plate, nothing within the first layers' height gets a tip", "[points][plate]") {
-    // A block on the plate with two shelves: one whose underside is 0.1 mm
-    // above the plate, inside the bottom layers' long exposures (4 × 0.05 mm
-    // unless the job says otherwise), and one 1.5 mm up.
+    // A block on the plate with two shelves: one whose underside is 0.05 mm
+    // above the plate, in the part of the model that prints in the bottom
+    // layers' long exposures (0.1 mm unless the job says otherwise: four
+    // bottom layers of 0.05 mm, two of them the height correction's under the
+    // model), and one 1.5 mm up.
     TriangleMesh m = makeBox({0, 0, 0}, {30, 8, 10});
-    m.append(makeBox({2, -5, 0.1}, {12, 0.5, 3}));
+    m.append(makeBox({2, -5, 0.05}, {12, 0.5, 3}));
     m.append(makeBox({18, -5, 1.5}, {28, 0.5, 4}));
     placeOnPlate(m, {0, 0, 0}, 0.0);
     SupportConfig cfg;
@@ -194,11 +197,34 @@ TEST_CASE("on the plate, nothing within the first layers' height gets a tip", "[
     const auto without = lowAndHigh(off);
     CHECK(without.first > 0);
     CHECK(without.second == with.second);
-    // It is the bottom layers' own height: with two of them (0.1 mm) the
-    // shelf starts just above, and is held again.
-    SupportConfig two = cfg;
-    two.plate_hold_height = 2 * 0.05;
-    CHECK(lowAndHigh(two).first > 0);
+    // It is what the bottom layers print of the model, no more: with one
+    // layer of it (0.05 mm) the shelf starts just above, and is held again.
+    SupportConfig one = cfg;
+    one.plate_hold_height = 0.05;
+    CHECK(lowAndHigh(one).first > 0);
+    // And a shelf that starts at 0.1 mm is above the two layers: held too.
+    TriangleMesh above = makeBox({0, 0, 0}, {30, 8, 10});
+    above.append(makeBox({2, -5, 0.1}, {12, 0.5, 3}));
+    placeOnPlate(above, {0, 0, 0}, 0.0);
+    std::size_t low = 0;
+    for (const auto& p : generateSupportPoints(above, cfg).points) low += p.pos.z < 0.8;
+    CHECK(low > 0);
+    // The planner says how far that height may move with the same tips. As
+    // made, the low shelf's layer (the second) must stay held and the high
+    // shelf's (the 31st) must not be.
+    const auto made = generateSupportPoints(m, cfg);
+    CHECK(made.held_layers_min == 2);
+    CHECK(made.held_layers_max == 30);
+    // With nothing held, the low shelf's layer must stay out.
+    const auto none_held = generateSupportPoints(m, off);
+    CHECK(none_held.held_layers_min == 0);
+    CHECK(none_held.held_layers_max == 1);
+    // A plain block has no underside for the rule: any height gives the same.
+    TriangleMesh block = makeBox({0, 0, 0}, {30, 8, 10});
+    placeOnPlate(block, {0, 0, 0}, 0.0);
+    const auto plain = generateSupportPoints(block, cfg);
+    CHECK(plain.held_layers_min == 0);
+    CHECK(plain.held_layers_max == std::numeric_limits<int>::max());
     // On a raft the same shelf is 5 mm up and is held like any other.
     TriangleMesh lifted = makeBox({0, 0, 0}, {30, 8, 10});
     lifted.append(makeBox({2, -5, 0.1}, {12, 0.5, 3}));

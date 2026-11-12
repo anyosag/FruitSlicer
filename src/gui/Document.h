@@ -6,6 +6,7 @@
 // Edits to the parts are undoable.
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -45,18 +46,30 @@ struct OrientState {
     }
 };
 
+// Document::supportSettings() keeps, in its last digits, one more than the
+// count of the planner's layers the bottom layers print of a model that
+// stands on the plate (0 with a raft).
+inline constexpr std::int64_t kHeldSpan = 100000;
+
 // The Supports step's choices and result for this job.
 struct SupportState {
     SupportChoices choices;                     // for the next run
     std::vector<TipEdit> edits;                 // made by hand, in model coordinates
     std::shared_ptr<const SupportResult> result;
-    int result_revision = -1, result_settings = -1;  // what it was made for
+    int result_revision = -1;           // what it was made for: the parts as they were,
+    std::int64_t result_settings = -1;  // and Document::supportSettings()
     int selected_tip = -1;                      // index into result->points
 
-    // Made for this placement, these picks and these choices.
-    bool fresh(int revision, int orient_settings) const {
-        return result && result_revision == revision && result_settings == orient_settings &&
-               result->choices == choices && result->edits == edits;
+    // Made for this placement, these picks and these choices. Made with no
+    // raft for another count of the model's layers in the bottom layers, they
+    // still count while that count gives the same tips.
+    bool fresh(int revision, std::int64_t settings) const {
+        if (!result || result_revision != revision || !(result->choices == choices) || !(result->edits == edits))
+            return false;
+        if (result_settings == settings) return true;
+        const std::int64_t held = settings % kHeldSpan;
+        return result_settings / kHeldSpan == settings / kHeldSpan && result_settings % kHeldSpan > 0 && held > 0 &&
+               result->heldLayersFit(static_cast<int>(held) - 1);
     }
 };
 
@@ -85,7 +98,7 @@ struct LayerState {
 
     // Cut for these supports, with `base_layers` added under a model on the
     // plate (the height correction, a print setting: it changes the layers,
-    // not the supports).
+    // and the supports only when it would move a tip, SupportState::fresh).
     bool fresh(const std::shared_ptr<const SupportResult>& supports, std::size_t base_layers) const {
         return result && supports && for_supports == supports && result->base_layers == base_layers;
     }
@@ -219,9 +232,15 @@ public:
     // Results carry it, so what was made for them counts again once it is
     // back.
     int revision() const { return revision_; }
-    // What supports are made for besides the parts: the sides people see
-    // and, once applied, the Hollow screen's choices.
-    int supportSettings() const { return orientSettings() * 100003 + (hollow.applied ? 1 + hollow.settings : 0); }
+    // What supports are made for besides the parts: the sides people see,
+    // once applied the Hollow screen's choices, and with no raft how many of
+    // the planner's layers print in the bottom layers (no tips there, so the
+    // resin's bottom layers, layer height and height correction count too).
+    std::int64_t supportSettings() const;
+    // The supports are out of date for that last reason alone: made with no
+    // raft, for another count of the model's layers in the bottom layers.
+    // Nothing undo takes back.
+    bool supportsOutdatedByBottomLayers() const;
     int orientSettings() const;  // changes whenever any part's sides do
 
     // Sets the selected part's placement without recording it (loading, the

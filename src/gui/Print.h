@@ -65,6 +65,11 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
 // the print's layer height, each the job's own value, else the sample file's,
 // else the printer's. Needs no exposure times.
 double bottomLayersHeight(const Document& doc);
+// How much of a model that stands on the plate prints in those bottom layers,
+// mm from its underside: their height less the height correction's layers,
+// which go under the model and are bottom layers themselves. 0 when the
+// correction takes them all.
+double modelInBottomLayers(const Document& doc);
 // The resin density for the weight: the edited one, else FruitSlicer's.
 double resinDensity(const PrintEdits& e);
 // The height correction, mm: the edited one, else FruitSlicer's typical value.

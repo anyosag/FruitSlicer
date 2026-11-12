@@ -57,19 +57,43 @@ fruit::GooPrintRequest printRequest(const PrintSettings& s, double layer_height)
     return r;
 }
 
-double bottomLayersHeight(const Document& doc) {
+namespace {
+
+// The print's bottom layers: how many, and how tall each is. The job's own
+// values, else the sample file's, else the printer's.
+struct BottomLayers {
+    int count = 0;
+    double height = 0;
+};
+
+BottomLayers bottomLayers(const Document& doc) {
     const PrintSettings& s = doc.print.settings;
-    const int layers = s.bottom_layers >= 0 ? s.bottom_layers
-                       : s.sample           ? static_cast<int>(s.sample->print.bottom_layers)
-                                            : doc.printer.bottom_layers;
-    const double height = s.layer_height > 0 ? s.layer_height : s.sample ? fruit::gooLayerHeight(*s.sample) : kLayerHeight;
-    return layers * height;
+    BottomLayers b;
+    b.count = s.bottom_layers >= 0 ? s.bottom_layers
+              : s.sample           ? static_cast<int>(s.sample->print.bottom_layers)
+                                   : doc.printer.bottom_layers;
+    b.height = s.layer_height > 0 ? s.layer_height : s.sample ? fruit::gooLayerHeight(*s.sample) : kLayerHeight;
+    return b;
+}
+
+}  // namespace
+
+double bottomLayersHeight(const Document& doc) {
+    const BottomLayers b = bottomLayers(doc);
+    return b.count * b.height;
 }
 
 double resinDensity(const PrintEdits& e) { return e.density > 0 ? e.density : fruit::GooExportOptions{}.resin_density; }
 
 double heightCorrection(const PrintEdits& e) {
     return e.height_correction >= 0 ? e.height_correction : fruit::kDefaultHeightCorrection;
+}
+
+double modelInBottomLayers(const Document& doc) {
+    const BottomLayers b = bottomLayers(doc);
+    // The correction's copies of the first layer print first, as bottom layers: the model's own layers get the rest.
+    const int under = fruit::heightCorrectionLayers(heightCorrection(doc.print.settings), b.height);
+    return std::max(0, b.count - under) * b.height;
 }
 
 int baseLayers(const Document& doc, double layer_height) {

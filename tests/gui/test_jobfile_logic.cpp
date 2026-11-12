@@ -38,6 +38,37 @@ std::shared_ptr<Document> bracketAt(const fs::path& model) {
     return loadDocument(model.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
 }
 
+// The saved job `job` opened again as `name`, with its job.json rewritten by `change`.
+OpenedJob rewrittenJob(const std::string& job, const char* name, const std::function<void(nlohmann::json&)>& change) {
+    mz_zip_archive in{};
+    REQUIRE(mz_zip_reader_init_file(&in, job.c_str(), 0));
+    std::vector<std::pair<std::string, std::string>> files;
+    for (mz_uint k = 0; k < mz_zip_reader_get_num_files(&in); ++k) {
+        char file[256];
+        mz_zip_reader_get_filename(&in, k, file, sizeof file);
+        std::size_t n = 0;
+        void* data = mz_zip_reader_extract_to_heap(&in, k, &n, 0);
+        REQUIRE(data);
+        files.emplace_back(file, std::string(static_cast<const char*>(data), n));
+        mz_free(data);
+    }
+    mz_zip_reader_end(&in);
+    const auto out_path = (dir() / name).string();
+    mz_zip_archive out{};
+    REQUIRE(mz_zip_writer_init_file(&out, out_path.c_str(), 0));
+    for (auto& [file, bytes] : files) {
+        if (file == "job.json") {
+            auto j = nlohmann::json::parse(bytes);
+            change(j);
+            bytes = j.dump();
+        }
+        REQUIRE(mz_zip_writer_add_mem(&out, file.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION));
+    }
+    REQUIRE(mz_zip_writer_finalize_archive(&out));
+    mz_zip_writer_end(&out);
+    return openJob(out_path, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+}
+
 }  // namespace
 
 TEST_CASE("Jobs: what was decided comes back, supports included", "[gui][jobs][slow]") {
@@ -258,6 +289,54 @@ TEST_CASE("Jobs: the hollows come back, and the supports made for the drilled mo
     CHECK_THAT(changes[0], ContainsSubstring("hollows"));
 }
 
+TEST_CASE("Jobs: with no raft, the bottom layers the tips are right for come back with them", "[gui][jobs][slow]") {
+    // A block on the plate with a shelf whose underside is 0.15 mm up: the planner's fourth layer.
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 8, 10});
+    m.append(fruit::makeBox({5, -5, 0.15}, {25, 0.5, 3}));
+    const auto model = dir() / "low_shelf.stl";
+    fruit::writeStl(model.string(), m);
+    const auto doc = loadDocument(model.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    fruit::Placement p = doc->placement();
+    p.on_plate = true;
+    doc->edit(p);
+    auto r = std::make_shared<SupportResult>(generate(*doc, doc->supports.choices, {}, fruit::JobControl::none()));
+    REQUIRE(r->tips > 0);
+    REQUIRE(r->held_min == 0);
+    REQUIRE(r->held_max == 3);
+    doc->supports.result = r;
+    doc->supports.result_revision = doc->revision();
+    doc->supports.result_settings = doc->supportSettings();
+
+    const auto job = (dir() / "low_shelf.fruitjob").string();
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    Document& d = *o.doc;
+    REQUIRE(d.supports.result);
+    CHECK(d.supports.result->tips == r->tips);
+    CHECK(d.supports.result->held_min == 0);
+    CHECK(d.supports.result->held_max == 3);
+    CHECK(d.supports.fresh(d.revision(), d.supportSettings()));
+    // As before saving: one layer of the model in the bottom layers gives the same tips, four do not.
+    d.print.settings.height_correction = 0.15;
+    CHECK(d.supports.fresh(d.revision(), d.supportSettings()));
+    d.print.settings.height_correction = 0;
+    CHECK_FALSE(d.supports.fresh(d.revision(), d.supportSettings()));
+    CHECK(d.supportsOutdatedByBottomLayers());
+
+    // A job saved before that was kept does not say: its tips count for the bottom layers it has, no others.
+    const OpenedJob older = rewrittenJob(job, "low_shelf_old.fruitjob", [](nlohmann::json& j) {
+        REQUIRE(j.at("supports").contains("held_layers"));
+        j.at("supports").erase("held_layers");
+    });
+    Document& e = *older.doc;
+    REQUIRE(e.supports.result);
+    CHECK(e.supports.result->held_min == 2);
+    CHECK(e.supports.result->held_max == 2);
+    CHECK(e.supports.fresh(e.revision(), e.supportSettings()));
+    e.print.settings.height_correction = 0.15;
+    CHECK_FALSE(e.supports.fresh(e.revision(), e.supportSettings()));
+}
+
 TEST_CASE("Jobs: the height correction is saved with the print settings; older jobs get the usual one",
           "[gui][jobs]") {
     const auto doc = bracketAt(dir() / "correction.stl");
@@ -275,33 +354,7 @@ TEST_CASE("Jobs: the height correction is saved with the print settings; older j
 
     // Rewrites the saved job's job.json with `change`.
     auto rewritten = [&](const char* name, const std::function<void(nlohmann::json&)>& change) {
-        mz_zip_archive in{};
-        REQUIRE(mz_zip_reader_init_file(&in, job.c_str(), 0));
-        std::vector<std::pair<std::string, std::string>> files;
-        for (mz_uint k = 0; k < mz_zip_reader_get_num_files(&in); ++k) {
-            char file[256];
-            mz_zip_reader_get_filename(&in, k, file, sizeof file);
-            std::size_t n = 0;
-            void* data = mz_zip_reader_extract_to_heap(&in, k, &n, 0);
-            REQUIRE(data);
-            files.emplace_back(file, std::string(static_cast<const char*>(data), n));
-            mz_free(data);
-        }
-        mz_zip_reader_end(&in);
-        const auto out_path = (dir() / name).string();
-        mz_zip_archive out{};
-        REQUIRE(mz_zip_writer_init_file(&out, out_path.c_str(), 0));
-        for (auto& [file, bytes] : files) {
-            if (file == "job.json") {
-                auto j = nlohmann::json::parse(bytes);
-                change(j);
-                bytes = j.dump();
-            }
-            REQUIRE(mz_zip_writer_add_mem(&out, file.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION));
-        }
-        REQUIRE(mz_zip_writer_finalize_archive(&out));
-        mz_zip_writer_end(&out);
-        return openJob(out_path, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+        return rewrittenJob(job, name, change);
     };
     // A job saved before it existed: not set, so the typical 0.10 mm.
     const OpenedJob older = rewritten("correction_old.fruitjob", [](nlohmann::json& j) {

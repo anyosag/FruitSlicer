@@ -328,7 +328,14 @@ void applySettings(const GenCli& g, SupportConfig& cfg, TreeConfig* tc, json& r)
     const auto notes = resolveSettings(g.profile.empty() ? nullptr : &profile, c, cfg, tc);
     if (!notes.empty()) r["profile_notes"] = notes;
     if (c.hinge) r["peel"] = {{"hinge", g.hinge}, {"bias", cfg.peel_bias}};
-    if (g.on_plate) r["on_plate"] = true;
+    if (g.on_plate) {
+        // What `goo --on-plate` prints of the model itself in the bottom layers, at this layer height: the
+        // printer's count less the typical height correction's layers, which go under the model.
+        const int under = heightCorrectionLayers(kDefaultHeightCorrection, cfg.layer_height);
+        cfg.plate_hold_height =
+            std::max(0, PrinterProfile::saturn4Ultra16k().bottom_layers - under) * cfg.layer_height;
+        r["on_plate"] = true;
+    }
 }
 
 struct PointsOpts {

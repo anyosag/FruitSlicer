@@ -891,13 +891,18 @@ std::optional<fruit::Vec3> yourTip(const TipEdit& e) {
 
 }  // namespace
 
+int plateHeldLayers(double held_mm) {
+    // The planner's rule: a layer is held when its underside is below `held_mm` (PointGenerator, to 1e-9).
+    return std::max(0, static_cast<int>(std::ceil((held_mm - 1e-9) / kLayerHeight)));
+}
+
 SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     fruit::SupportConfig cfg;
     fruit::TreeConfig tc;
     const fruit::Placement& p = doc.placement();
     resolve(p, c, cfg, tc);
-    cfg.plate_hold_height = bottomLayersHeight(doc);  // on the plate: the job's own bottom layers hold what is lower
+    cfg.plate_hold_height = modelInBottomLayers(doc);  // on the plate: the job's own bottom layers hold what they print
     fruit::CosmeticSpec cos;
     cos.visible_from = visible;
     fruit::PointGenOptions po;
@@ -936,7 +941,8 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
     fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, rest);
     // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
     std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });
-    return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits, std::move(hollow)};
+    return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits, std::move(hollow),
+                       pg.held_layers_min, pg.held_layers_max};
 }
 
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
@@ -1180,7 +1186,9 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     r.choices = c;
     const fruit::Placement& p = doc.placement();
     resolve(p, c, r.cfg, r.tree_cfg);
-    r.cfg.plate_hold_height = bottomLayersHeight(doc);  // as the plan was made
+    r.cfg.plate_hold_height = modelInBottomLayers(doc);  // as the plan was made
+    r.held_min = plan.held_min;
+    r.held_max = plan.held_max;
     r.points = std::move(plan.points);
     r.plan_warnings = std::move(plan.warnings);
     r.hollow = std::move(plan.hollow);

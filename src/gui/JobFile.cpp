@@ -302,6 +302,8 @@ void saveJob(const std::string& path, const Document& doc) {
     if (doc.supports.fresh(doc.revision(), doc.supportSettings())) {
         const SupportResult& r = *doc.supports.result;
         sup["tips"] = fruit::pointsToJson(r.planned);  // the planner's; the edits apply on top
+        // With no raft: the counts of the model's layers in the bottom layers these tips are right for.
+        if (doc.placement().on_plate) sup["held_layers"] = {r.held_min, r.held_max};
         sup["planned_around"] = editsJson(doc, r.plan_edits);  // the edits the planner worked around
         json ws = json::array();
         for (const auto& w : r.plan_warnings)
@@ -527,6 +529,13 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     if (sj.contains("tips")) {
         SupportPlan plan;
         plan.points = fruit::pointsFromJson(sj["tips"]);
+        if (const auto held = sj.find("held_layers"); held != sj.end() && held->is_array() && held->size() == 2) {
+            plan.held_min = (*held)[0].get<int>();
+            plan.held_max = (*held)[1].get<int>();
+        } else if (doc->placement().on_plate) {
+            // An older job does not say: its tips are taken to be right for the bottom layers it has now only.
+            plan.held_min = plan.held_max = plateHeldLayers(modelInBottomLayers(*doc));
+        }
         plan.edits = editsFrom(*doc, sj.value("planned_around", json::array()));
         for (const auto& w : sj.value("warnings", json::array())) {
             fruit::Warning wn;

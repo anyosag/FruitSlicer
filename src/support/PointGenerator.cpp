@@ -580,18 +580,26 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     const LayerPart& P = graph_.part(part);
     // Standing on the plate, the long first exposures cure what prints just
     // above it onto the plate: nothing there for a tip to hold.
-    if (cfg_.on_plate && layers().layerBottom(P.layer) < cfg_.plate_hold_height - 1e-9 && comp_[find(part)].plate)
-        return;
+    const bool stands = cfg_.on_plate && comp_[find(part)].plate;
+    const bool held = stands && layers().layerBottom(P.layer) < cfg_.plate_hold_height - 1e-9;
     Paths below;
     for (int q : P.parents) {
         const Paths ps = graph_.part(q).shape.toPaths();
         below.insert(below.end(), ps.begin(), ps.end());
     }
     const Paths below_union = unionNonZero(below);
+    const Paths band = difference(P.shape.toPaths(), offset(below_union, 0.002));
+    // Only a newly exposed underside gives that rule something to decide.
+    // Where there is one, the result is the same as long as this layer stays
+    // on its side of the held height.
+    if (stands && !band.empty()) {
+        if (held) result_.held_layers_min = std::max(result_.held_layers_min, P.layer + 1);
+        else result_.held_layers_max = std::min(result_.held_layers_max, P.layer);
+    }
+    if (held) return;
     // Any newly exposed underside (even self-supporting) is a place where
     // capacity tips can go; sampled coarsely and never needing coverage.
     {
-        const Paths band = difference(P.shape.toPaths(), offset(below_union, 0.002));
         if (!band.empty())
             for (const ExPolygon& e : toExPolygons(band))
                 for (const Path& path : e.toPaths()) {

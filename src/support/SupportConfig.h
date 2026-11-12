@@ -107,16 +107,19 @@ struct SupportConfig {
     // The model stands on the build plate (no elevation, no raft): parts on
     // the first layer are held by the plate, not by tips.
     bool on_plate = false;
-    // On the plate, what prints within this height of it needs no tip: the
-    // height of the bottom layers (their count times the print's layer
-    // height; the app sets it from the job's resin, 4 × 0.05 mm otherwise).
-    // Those layers are cured many times longer than the rest, which hardens
-    // the resin between them and the plate as well: the plate holds them, and
-    // a tip there would only print as part of the model. The transition
-    // layers after them are not counted: their exposure falls to the normal
-    // one, so the last of them no longer reach the plate. REASONING, not
-    // measured.
-    double plate_hold_height = 0.2;
+    // On the plate, what starts within this height of the model's underside
+    // needs no tip: the part of the model that prints in the bottom layers.
+    // That is their count less the height correction's layers (copies of the
+    // first layer that go under the model, bottom layers themselves), times
+    // the print's layer height; the app sets it from the job, and it is
+    // (4 − 2) × 0.05 mm otherwise, the printer's four bottom layers and the
+    // typical 0.10 mm correction. Those layers are cured many times longer
+    // than the rest, which hardens the resin between them and the plate as
+    // well: the plate holds them, and a tip there would only print as part of
+    // the model. The transition layers after them are not counted: their
+    // exposure falls to the normal one, so the last of them no longer reach
+    // the plate. REASONING, not measured.
+    double plate_hold_height = 0.1;
 
     // Tilt release: extra peel demand towards the side away from the hinge.
     double peel_bias = 0.0;  // 0 = off (hinge side unknown)

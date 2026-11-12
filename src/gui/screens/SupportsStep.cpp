@@ -140,12 +140,17 @@ void onThePlate(App& app, Document& doc) {
             ? made.result->tree.raft_top
             : std::max(treeConfig(made.choices).raft_thickness,
                        fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight));
+    // With no raft the model's first layers print as bottom layers (those left after the height correction's own).
+    const double held = std::round(modelInBottomLayers(doc) * 100) / 100;
     const std::string raftText =
         raft ? strf("A %g mm raft under the supports, which comes off in one piece. Best for most models.",
                     std::round(thick * 100) / 100)
-             : strf("Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips, and "
-                    "none within its bottom layers (%g mm): their long exposures cure that onto the plate.",
-                    std::round(bottomLayersHeight(doc) * 100) / 100);
+        : held > 0
+            ? strf("Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips, and none "
+                   "in its first %g mm: that prints in the bottom layers, whose long exposures should cure it onto "
+                   "the plate. Not measured.",
+                   held)
+            : std::string("Off: the model sits flat on the plate. For flat-backed parts; only overhangs get tips.");
     text(raftText.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::EndGroup();
     if (raft) {
@@ -200,6 +205,21 @@ void onThePlate(App& app, Document& doc) {
     ImGui::EndDisabled();
 }
 
+// Why supports that were made no longer count, and whether undo is the way back.
+struct Stale {
+    const char* why;
+    bool undo;
+};
+Stale whyStale(const Document& doc) {
+    // With no raft no tip goes where the bottom layers print the model: a print setting, not an edit.
+    if (doc.supportsOutdatedByBottomLayers())
+        return {"The resin's bottom layers or height correction changed after they were made.", false};
+    return {doc.supports.result->choices == doc.supports.choices
+                ? "The model or the picked sides changed after they were made."
+                : "The settings changed after they were made.",
+            true};
+}
+
 // Under the controls: nothing made, what was made, or that it is out of date.
 void statusArea(App& app, Document& doc) {
     const SupportState& s = doc.supports;
@@ -213,9 +233,7 @@ void statusArea(App& app, Document& doc) {
     if (!s.fresh(doc.revision(), doc.supportSettings()) && !running(app)) {
         beginCard("stale", ImVec2(0, 0), 10, col::WarnBg, col::WarnBorder);
         text("Supports are out of date", fonts().semibold, size::Body, col::Text);
-        text(s.result->choices == s.choices ? "The model or the picked sides changed after they were made."
-                                            : "The settings changed after they were made.",
-             fonts().regular, size::Help, col::TextSecondary, true);
+        text(whyStale(doc).why, fonts().regular, size::Help, col::TextSecondary, true);
         endCard();
         return;
     }
@@ -468,12 +486,10 @@ void staleBanner(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     beginCard("stale", bs, 14, col::WarnBg, col::WarnBorder);
     const float y = ImGui::GetCursorPosY();
     text("Supports are out of date", fonts().semibold, size::Body + 1, col::Text);
-    const char* why = doc.supports.result->choices == doc.supports.choices
-                          ? "The model or the picked sides changed after they were made."
-                          : "The settings changed after they were made.";
-    text(why, fonts().regular, size::Body, col::TextSecondary);
+    const Stale stale = whyStale(doc);
+    text(stale.why, fonts().regular, size::Body, col::TextSecondary);
     // Remaking them is the Job panel's main button; here, the way back.
-    if (doc.canUndo()) {
+    if (stale.undo && doc.canUndo()) {
         ImGui::PushFont(fonts().semibold, size::Body);
         const float uw = ImGui::CalcTextSize("Undo the change").x + 32;
         ImGui::PopFont();

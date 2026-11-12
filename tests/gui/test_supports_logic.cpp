@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <set>
 
@@ -88,10 +89,10 @@ TEST_CASE("Supports: faces only dropped tips held block saving and show where", 
     CHECK(r.count(SupportProblem::Level::Blocks) >= 1);
 }
 
-TEST_CASE("Supports: on the plate, the job's own bottom layers hold what is lower", "[gui][supports][slow]") {
-    // A block with a shelf whose underside is 0.25 mm above the plate.
+TEST_CASE("Supports: on the plate, the job's own bottom layers hold what they print of the model", "[gui][supports][slow]") {
+    // A block with a shelf whose underside is 0.15 mm above the plate.
     fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 8, 10});
-    m.append(fruit::makeBox({5, -5, 0.25}, {25, 0.5, 3}));
+    m.append(fruit::makeBox({5, -5, 0.15}, {25, 0.5, 3}));
     const auto path = std::filesystem::temp_directory_path() / "supports_test_low_shelf.stl";
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
@@ -104,27 +105,168 @@ TEST_CASE("Supports: on the plate, the job's own bottom layers hold what is lowe
         for (const auto& t : planTips(*doc, SupportChoices{}, {}, fruit::JobControl::none(), {}).points) n += t.pos.z < 0.5;
         return n;
     };
-    // The printer's own four bottom layers at 0.05 mm reach 0.2 mm: the shelf
-    // starts above them and gets tips.
+    PrintSettings& s = doc->print.settings;
+    // The printer's own four bottom layers at 0.05 mm reach 0.2 mm, but two of
+    // them are the typical height correction's copies under the model: 0.1 mm
+    // of the model prints in them. The shelf starts above that and gets tips.
     CHECK(bottomLayersHeight(*doc) == Approx(4 * 0.05));
+    CHECK(modelInBottomLayers(*doc) == Approx(2 * 0.05));
     CHECK(tipsUnderShelf() > 0);
-    // A resin with six bottom layers reaches 0.3 mm: the plate holds the shelf.
-    doc->print.settings.bottom_layers = 6;
-    CHECK(bottomLayersHeight(*doc) == Approx(6 * 0.05));
+    // With no height correction all four are the model's: the plate holds the shelf.
+    s.height_correction = 0;
+    CHECK(modelInBottomLayers(*doc) == Approx(4 * 0.05));
     CHECK(tipsUnderShelf() == 0);
-    // The same six at the resin's own 0.03 mm layers reach only 0.18 mm.
-    doc->print.settings.layer_height = 0.03;
+    // The same with the typical correction and a resin with six bottom layers.
+    s.height_correction = -1;
+    s.bottom_layers = 6;
+    CHECK(bottomLayersHeight(*doc) == Approx(6 * 0.05));
+    CHECK(modelInBottomLayers(*doc) == Approx(4 * 0.05));
+    CHECK(tipsUnderShelf() == 0);
+    // Six at the resin's own 0.03 mm layers: the correction is three of them,
+    // and the three left reach only 0.09 mm of the model.
+    s.layer_height = 0.03;
     CHECK(bottomLayersHeight(*doc) == Approx(6 * 0.03));
+    CHECK(modelInBottomLayers(*doc) == Approx(3 * 0.03));
+    CHECK(tipsUnderShelf() > 0);
+    // A correction as tall as the bottom layers leaves none of them to the model.
+    s.height_correction = 0.2;
+    CHECK(modelInBottomLayers(*doc) == Approx(0.0).margin(1e-12));
     CHECK(tipsUnderShelf() > 0);
     // Without values of the job's own, a sample file's count and layer height.
-    doc->print.settings.bottom_layers = -1;
-    doc->print.settings.layer_height = 0;
+    s.height_correction = -1;
+    s.bottom_layers = -1;
+    s.layer_height = 0;
     auto sample = std::make_shared<fruit::GooHeader>();
     sample->print.bottom_layers = 8;
     sample->layer_height = 0.05f;
-    doc->print.settings.sample = sample;
+    s.sample = sample;
     CHECK(bottomLayersHeight(*doc) == Approx(8 * fruit::gooLayerHeight(*sample)));
+    CHECK(modelInBottomLayers(*doc) == Approx(6 * fruit::gooLayerHeight(*sample)));
     CHECK(tipsUnderShelf() == 0);
+}
+
+TEST_CASE("Supports: with no raft they go out of date when the bottom layers print another part of the model, "
+          "if that changes the tips",
+          "[gui][supports]") {
+    const auto doc = bracket();
+    fruit::Placement p = doc->placement();
+    p.on_plate = true;
+    doc->edit(p);
+    // Supports whose tips are right for exactly two of the planner's layers in the bottom layers.
+    auto make = [&](int held_min, int held_max) {
+        auto r = std::make_shared<SupportResult>();
+        r->held_min = held_min;
+        r->held_max = held_max;
+        doc->supports.result = r;
+        doc->supports.result_revision = doc->revision();
+        doc->supports.result_settings = doc->supportSettings();
+    };
+    auto fresh = [&] { return doc->supports.fresh(doc->revision(), doc->supportSettings()); };
+    make(2, 2);
+    REQUIRE(fresh());
+    PrintSettings& s = doc->print.settings;
+    // 0.12 mm is still two layers under the model: the same two of its layers print in the bottom layers.
+    s.height_correction = 0.12;
+    CHECK(fresh());
+    CHECK_FALSE(doc->supportsOutdatedByBottomLayers());
+    // Three layers under it leave one of the four bottom layers to the model: tips would come out lower.
+    s.height_correction = 0.15;
+    CHECK_FALSE(fresh());
+    CHECK(doc->supportsOutdatedByBottomLayers());
+    // Put back, they count again.
+    s.height_correction = -1;
+    CHECK(fresh());
+    // A resin with six bottom layers holds four layers of the model.
+    s.bottom_layers = 6;
+    CHECK_FALSE(fresh());
+    CHECK(doc->supportsOutdatedByBottomLayers());
+    // The same six at 0.03 mm, three of them the correction's, reach 0.09 mm of the model: the planner's
+    // first two layers again, as with the printer's own values.
+    s.layer_height = 0.03;
+    CHECK(fresh());
+    // A change to the model is another reason, and says so.
+    s.height_correction = 0.3;
+    REQUIRE_FALSE(fresh());
+    REQUIRE(doc->supportsOutdatedByBottomLayers());
+    fruit::Placement moved = doc->placement();
+    moved.offset.x += 5;
+    doc->edit(moved);
+    CHECK_FALSE(fresh());
+    CHECK_FALSE(doc->supportsOutdatedByBottomLayers());
+    // Tips that are the same whatever the bottom layers hold stay up to date through all of it.
+    s = PrintSettings{};
+    make(0, std::numeric_limits<int>::max());
+    s.height_correction = 0.3;
+    s.bottom_layers = 12;
+    CHECK(fresh());
+    // On a raft the bottom layers are the raft's: none of it matters.
+    fruit::Placement lifted = doc->placement();
+    lifted.on_plate = false;
+    doc->edit(lifted);
+    s = PrintSettings{};
+    make(2, 2);
+    s.bottom_layers = 12;
+    s.height_correction = 0;
+    CHECK(fresh());
+}
+
+TEST_CASE("Supports: the planner says which bottom layers its tips are right for", "[gui][supports][slow]") {
+    // A block with a shelf whose underside is 0.15 mm above the plate: the planner's fourth layer.
+    auto shelved = [](bool shelf) {
+        fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 8, 10});
+        if (shelf) m.append(fruit::makeBox({5, -5, 0.15}, {25, 0.5, 3}));
+        const auto path = std::filesystem::temp_directory_path() / "supports_test_held_layers.stl";
+        fruit::writeStl(path.string(), m);
+        auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+        std::filesystem::remove(path);
+        fruit::Placement p = doc->placement();
+        p.on_plate = true;
+        doc->edit(p);
+        return doc;
+    };
+    auto made = [](Document& d) {
+        auto r = std::make_shared<SupportResult>(generate(d, d.supports.choices, {}, fruit::JobControl::none()));
+        d.supports.result = r;
+        d.supports.result_revision = d.revision();
+        d.supports.result_settings = d.supportSettings();
+        return r;
+    };
+    auto fresh = [](const Document& d) { return d.supports.fresh(d.revision(), d.supportSettings()); };
+
+    // A plain block has no underside near the plate: its (no) tips are right for any bottom layers.
+    const auto block = shelved(false);
+    const auto none = made(*block);
+    CHECK(none->held_min == 0);
+    CHECK(none->held_max == std::numeric_limits<int>::max());
+    block->print.settings.height_correction = 0;
+    block->print.settings.bottom_layers = 20;
+    CHECK(fresh(*block));
+
+    // With the shelf, made with two layers of the model in the bottom layers: the shelf has its tips, and
+    // would as long as its own layer, the fourth, stays out of them.
+    const auto doc = shelved(true);
+    const auto r = made(*doc);
+    REQUIRE(r->tips > 0);
+    CHECK(r->held_min == 0);
+    CHECK(r->held_max == 3);
+    PrintSettings& s = doc->print.settings;
+    s.height_correction = 0.15;  // one layer of the model in them
+    CHECK(fresh(*doc));
+    s.height_correction = 0.05;  // three
+    CHECK(fresh(*doc));
+    s.height_correction = 0;  // four: the shelf prints in them now, and would get no tips
+    CHECK_FALSE(fresh(*doc));
+    CHECK(doc->supportsOutdatedByBottomLayers());
+    // Made again for that, the plate holds the shelf: right while at least four layers are held.
+    const auto again = made(*doc);
+    CHECK(again->tips == 0);
+    CHECK(again->held_min == 4);
+    CHECK(again->held_max == std::numeric_limits<int>::max());
+    s.bottom_layers = 9;
+    CHECK(fresh(*doc));
+    s.height_correction = -1;  // two again: the shelf needs its tips back
+    s.bottom_layers = -1;
+    CHECK_FALSE(fresh(*doc));
 }
 
 TEST_CASE("Supports: the demo bracket gets a raft, tips and a clean check", "[gui][supports][slow]") {

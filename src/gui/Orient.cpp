@@ -86,7 +86,7 @@ OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visib
                       const fruit::JobControl& ctl) {
     const fruit::Placement& p = doc.placement();
     fruit::SupportConfig cfg = supportConfig(p, doc.supports.choices.profile);
-    cfg.plate_hold_height = bottomLayersHeight(doc);
+    cfg.plate_hold_height = modelInBottomLayers(doc);
     // The same planner run as the search's finalists, so the numbers compare.
     fruit::CosmeticSpec cos;
     cos.visible_from = visibleInPrinter(visible_model, p);
@@ -131,7 +131,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     }
     fruit::OrientOptions o;
     o.cfg = supportConfig(p, doc.supports.choices.profile);
-    o.cfg.plate_hold_height = bottomLayersHeight(doc);
+    o.cfg.plate_hold_height = modelInBottomLayers(doc);
     o.elevation = p.lift();
     o.visible_from = visible;
     o.keep_points = false;

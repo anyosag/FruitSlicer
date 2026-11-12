@@ -5,6 +5,7 @@
 // check the result, and say what needs a look. No UI here.
 
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -240,9 +241,15 @@ struct SupportResult {
     std::vector<fruit::SupportPoint> planned;   // the planner's own tips, before hand edits
     std::vector<TipEdit> plan_edits;            // the hand edits the planner worked around
     std::vector<TipEdit> edits;                 // the hand edits `points` has
+    // With no raft: the planner's tips are the same while the bottom layers
+    // print at least `held_min` and at most `held_max` of its layers of the
+    // model (plateHeldLayers). Any count when nothing near the plate has an
+    // underside there.
+    int held_min = 0, held_max = std::numeric_limits<int>::max();
     double seconds = 0;
 
     std::size_t count(SupportProblem::Level l) const;
+    bool heldLayersFit(int held) const { return held_min <= held && held <= held_max; }
 };
 
 // The planner's settings for this placement and these choices.
@@ -264,7 +271,14 @@ struct SupportPlan {
     std::vector<fruit::Warning> warnings;
     std::vector<TipEdit> edits;  // the hand edits it planned around
     std::shared_ptr<const HollowPlan> hollow;  // the hollowed or drilled model, when the Hollow screen changed it
+    // With no raft: the counts of held layers these tips are right for (SupportResult::held_min).
+    int held_min = 0, held_max = std::numeric_limits<int>::max();
 };
+// With no raft the planner gives no tips to what starts within `held_mm` of
+// the plate (what the bottom layers print of the model, modelInBottomLayers):
+// how many of its layers that is. Supports planned for another count would
+// come out differently, so they no longer count.
+int plateHeldLayers(double held_mm);
 SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
 // Everything after the tips: the tree, its checks and the problems. Used

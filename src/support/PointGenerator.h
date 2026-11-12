@@ -18,6 +18,7 @@
 // (gain / cost; cost penalises cosmetic regions and sharp edges), then
 // reverse-delete pruning that re-checks coverage and capacity.
 
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -63,6 +64,12 @@ struct PointGenResult {
     std::vector<Warning> warnings;
     PointGenStats stats;
     LayerAnalysis analysis;  // the layers the points were generated from
+    // With cfg.on_plate: the points are the same for any plate_hold_height
+    // that holds at least `held_layers_min` of the lowest layers and at most
+    // `held_layers_max` (a layer is held when its underside is below that
+    // height). 0 and the largest int when nothing that stands on the plate
+    // has an underside in reach of the rule: then that height changes nothing.
+    int held_layers_min = 0, held_layers_max = std::numeric_limits<int>::max();
 };
 
 enum class CoverStrategy {

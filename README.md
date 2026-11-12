@@ -72,7 +72,11 @@ checks (nothing starts in mid-air, the raft comes off in one piece, no
 support stands on the model) and a drawer of things to review. Faces that
 only tips the tree could not reach would have held block saving ("Spots no
 support reaches", with Show). Changing
-the model afterwards marks the supports out of date. **Edit tips by hand**
+the model afterwards marks the supports out of date. So does, with no raft,
+a change to the resin's bottom layers, layer height or height correction that
+would move a tip: the planner notes which counts of the model's layers in the
+bottom layers its tips are right for, the job keeps that, and other changes
+to those settings leave the supports as they are. **Edit tips by hand**
 adds tips where you click the model, moves (drag), deletes, resizes and pins
 them, and draws no-tip zones. Every edit is listed and can be undone on its
 own (changing a tip of your own changes the edit that made it), is kept in
@@ -336,14 +340,17 @@ Points are chosen bottom-up so that
 3. **islands**: every island gets 1 tip (≤ 1.7 mm), 2 tips (≤ 6.5 mm) or at
    least 3, using the mesh minimum as the contact. Islands too small to hold a
    tip that join the model almost at once are left alone and reported;
-   Standing on the plate (no raft), a part gets no tip within its bottom
-   layers: their count times the print's layer height, from the job's resin
-   (6 × 0.03 mm = 0.18 mm, say; 4 × 0.05 mm without one). Those layers are
-   cured many times longer than the rest, which hardens the resin between
-   them and the plate too, so the plate holds them and a tip there would only
-   print as part of the model (reasoning, not measured). The transition
-   layers after them are not counted, because their exposure falls to the
-   normal one. A separate piece that starts that low still gets its tips;
+   Standing on the plate (no raft), a part gets no tip in what the bottom
+   layers print of it: their count, less the height correction's layers
+   (copies of the first layer that go under the model and are bottom layers
+   themselves), times the print's layer height, all from the job's resin
+   ((6 − 3) × 0.03 mm = 0.09 mm, say; (4 − 2) × 0.05 mm = 0.1 mm without
+   one). Those layers are cured many times longer than the rest, which
+   hardens the resin between them and the plate too, so the plate holds them
+   and a tip there would only print as part of the model (reasoning, not
+   measured). The transition layers after them are not counted, because
+   their exposure falls to the normal one. A separate piece that starts that
+   low still gets its tips;
 4. **fresh edges**: where a layer reaches more than 0.5 mm past the layer
    before it, that part is one cured skin with nothing behind it: the first
    layer of a flat face, the ends of the sliver a tilted face starts as, the

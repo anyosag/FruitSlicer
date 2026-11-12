@@ -209,6 +209,19 @@ bool Document::orientDecided() const {
     return !parts_.empty();
 }
 
+std::int64_t Document::supportSettings() const {
+    const std::int64_t picked = orientSettings() * 100003LL + (hollow.applied ? 1 + hollow.settings : 0);
+    const int held = !parts_.empty() && placement().on_plate ? 1 + plateHeldLayers(modelInBottomLayers(*this)) : 0;
+    return picked * kHeldSpan + std::min<std::int64_t>(held, kHeldSpan - 1);
+}
+
+bool Document::supportsOutdatedByBottomLayers() const {
+    const SupportState& s = supports;
+    const std::int64_t now = supportSettings();
+    // They would count with the bottom layers they were made for.
+    return !s.fresh(revision_, now) && s.fresh(revision_, now / kHeldSpan * kHeldSpan + s.result_settings % kHeldSpan);
+}
+
 int Document::orientSettings() const {
     int n = 0;
     for (const Part& p : parts_) n += orientOf(p.id()).settings;

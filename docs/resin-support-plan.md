@@ -270,11 +270,24 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   A tip so low that its head stands on the plate itself now follows the same
   rule sideways (`settlePlateHead`): it leans away from a wall beside it or
   narrows its base, and is reported when it still stands closer than 0.5 mm.
-  And on the plate nothing within the bottom layers gets a tip at all
-  (`SupportConfig::plate_hold_height`, which the app sets to the job's own
-  bottom layers times its layer height, `bottomLayersHeight`; it was first a
-  fixed 0.4 mm, the default bottom plus transition layers, until the user
-  asked what it was tied to). The transition layers are left out: with the
+  And on the plate nothing in what the bottom layers print of the model gets
+  a tip at all (`SupportConfig::plate_hold_height`, which the app sets from
+  the job, `modelInBottomLayers`: its bottom layers, less the height
+  correction's layers, times its layer height. It was first a fixed 0.4 mm,
+  the default bottom plus transition layers, until the user asked what it
+  was tied to; then the bottom layers' whole height, which counted the
+  correction's copies under the model as if they were the model's own
+  layers: with the defaults, four bottom layers of 0.05 mm of which two are
+  the correction's, that kept tips out of 0.2 mm when only 0.1 mm of the
+  model has the long exposure). Because that makes the tips follow three
+  print settings (bottom layers, layer height, height correction), the
+  planner reports the counts of held layers its tips are right for
+  (`PointGenResult::held_layers_min/max`: a layer counts only where something
+  standing on the plate has a newly exposed underside in it), and supports
+  made with no raft go out of date when the job's count leaves that range,
+  not before (`SupportState::fresh`, `Document::supportSettings`). A plain
+  block is never out of date for it; a shelf 0.15 mm up is once its own layer
+  joins or leaves the bottom layers. The transition layers are left out: with the
   user's resin (27.5 s for 6 layers, then a ramp to 1.5 s over 6 more at
   0.03 mm) the first few of them would still cure through to the plate for
   any plausible light depth, the last ones would not. Islands that
