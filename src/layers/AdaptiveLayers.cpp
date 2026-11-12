@@ -60,21 +60,44 @@ std::vector<LayerGroup> planAdaptiveLayers(const LayerStack& model, std::size_t 
         if (x.empty() || y.empty()) return x.empty() && y.empty();
         return x == y || (fits(x, grown[b]) && fits(y, grown[a]));
     };
+    // Where the outline changes from one layer to the next by more than the
+    // tolerance (a flat face, a step, the model or an island starting or
+    // ending), the layer on each side stays thin: a flat face lands at its
+    // own height with a thin layer's exposure, and the last layers of the
+    // support tips under it are not printed as one slab.
+    std::vector<char> thin(total, 0);
+    if (top > 1)
+        for (std::size_t k = o.first_mergeable + 1; k < total; ++k)
+            if (!matches(k - 1, k)) thin[k - 1] = thin[k] = 1;
     std::size_t i = 0, prev = 1;
     while (i < total) {
         ctl.check();
         std::size_t n = 1;
-        if (top > 1 && i >= o.first_mergeable) {
+        if (top > 1 && i >= o.first_mergeable && !thin[i]) {
             // How many layers in a row, from here, match this one (at most as many as may be used).
             const std::size_t limit = std::min<std::size_t>({static_cast<std::size_t>(top), prev * 2, total - i});
             std::size_t run = 1;
-            while (run < limit && matches(i, i + run)) ++run;
+            while (run < limit && !thin[i + run] && matches(i, i + run)) ++run;
             while (n * 2 <= run) n *= 2;
         }
         groups.push_back({i, n});
         i += n;
         prev = n;
         ctl.report("merge", static_cast<double>(i) / static_cast<double>(std::max<std::size_t>(total, 1)));
+    }
+    // No sudden thinning either: a layer is at most twice as thick as the one
+    // after it. A group that is too thick for what follows is halved, back
+    // half first, so the layers step down towards detail (4, 2, 2, 1 rather
+    // than 8, 1). Support tips end where the model's outline starts, so this
+    // also keeps a tip from being printed as one thick slab.
+    for (std::size_t k = groups.size(); k-- > 1;) {
+        std::size_t j = k - 1;
+        while (groups[j].count > 2 * groups[j + 1].count) {
+            const std::size_t half = groups[j].count / 2;
+            groups[j].count = half;
+            groups.insert(groups.begin() + static_cast<std::ptrdiff_t>(j) + 1, LayerGroup{groups[j].first + half, half});
+            ++j;  // the back half against what follows it
+        }
     }
     return groups;
 }

@@ -60,7 +60,9 @@ bool outlinesMatch(const Paths& a, const Paths& b, double tolerance_mm);
 // model's own outline per thin layer (no supports; a layer it doesn't reach
 // counts as empty). A group of n = 2, 4, 8 … layers needs every outline in
 // it to match the first's; the thickest allowed is tried first, and a layer
-// is at most twice as thick as the one before (getting thinner is not limited).
+// is at most twice as thick as the one before it and as the one after it,
+// so thicknesses step up and down gradually. The layer on each side of a
+// sudden change of outline (a flat face, a step, the model starting) is thin.
 std::vector<LayerGroup> planAdaptiveLayers(const LayerStack& model, std::size_t total, const AdaptiveOptions& o,
                                            unsigned threads = 0, const JobControl& ctl = JobControl::none());
 

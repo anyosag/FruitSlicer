@@ -33,6 +33,9 @@ GooHeader printHeader(const PrinterProfile& printer, const GooPrintRequest& r, s
     if (r.wait_after_lift >= 0) p.wait_after_lift = p.bottom_wait_after_lift = static_cast<float>(r.wait_after_lift);
     if (r.wait_after_retract >= 0)
         p.wait_after_retract = p.bottom_wait_after_retract = static_cast<float>(r.wait_after_retract);
+    if (r.bottom_wait_before_lift >= 0) p.bottom_wait_before_lift = static_cast<float>(r.bottom_wait_before_lift);
+    if (r.bottom_wait_after_lift >= 0) p.bottom_wait_after_lift = static_cast<float>(r.bottom_wait_after_lift);
+    if (r.bottom_wait_after_retract >= 0) p.bottom_wait_after_retract = static_cast<float>(r.bottom_wait_after_retract);
     if (r.lift_distance > 0)
         p.lift_distance = p.bottom_lift_distance = p.retract_distance = p.bottom_retract_distance =
             static_cast<float>(r.lift_distance);

@@ -190,6 +190,39 @@ TEST_CASE("Adaptive: a step in the outline keeps its exact height", "[adaptive][
     CHECK(boundaryAt(planAdaptiveLayers(late, late.size(), opts(h0, 8, 6)), 40));
 }
 
+TEST_CASE("Adaptive: layers are thin at a sudden change and step down towards it", "[adaptive][plan]") {
+    const double h0 = 0.03;
+    // Supports only (no model outline) up to layer 40, then a straight box: as under a part lifted on supports.
+    LayerStack ls = sliceModel(makeBox({0, 0, 0}, {10, 10, 3}), h0);
+    for (std::size_t i = 0; i < 40; ++i) ls.slices[i].clear();
+    const auto g = planAdaptiveLayers(ls, ls.size(), opts(h0, 8, 6));
+    // The last layer under the model and the model's first layer are thin ones.
+    CHECK(countAt(g, 39) == 1);
+    CHECK(countAt(g, 40) == 1);
+    // Thick layers are used on both sides, away from the change.
+    std::size_t before = 0, after = 0;
+    for (const LayerGroup& x : g) {
+        if (x.first + x.count <= 39) before = std::max(before, x.count);
+        if (x.first > 40) after = std::max(after, x.count);
+    }
+    CHECK(before == 4);
+    CHECK(after == 4);
+    // Never more than twice the layer before or the layer after: 4, 2, 1 | 1, 2, 4.
+    for (std::size_t k = 1; k < g.size(); ++k) {
+        CHECK(g[k].count <= 2 * g[k - 1].count);
+        CHECK(g[k - 1].count <= 2 * g[k].count);
+        CHECK(g[k].first == g[k - 1].first + g[k - 1].count);
+    }
+    // A step in the middle of a model: thin on both sides of it too.
+    TriangleMesh m = makeBox({0, 0, 0}, {10, 10, 0.96});
+    m.append(makeBox({2, 2, 0.9}, {8, 8, 3}));
+    const LayerStack st = sliceModel(m, h0);
+    const auto s = planAdaptiveLayers(st, st.size(), opts(h0, 8, 6));
+    CHECK(countAt(s, 31) == 1);
+    CHECK(countAt(s, 32) == 1);
+    for (std::size_t k = 1; k < s.size(); ++k) CHECK(s[k - 1].count <= 2 * s[k].count);
+}
+
 TEST_CASE("Adaptive: supports don't decide where layers merge", "[adaptive][plan]") {
     const double h0 = 0.03;
     const TriangleMesh box = makeBox({0, 0, 0}, {10, 8, 3});

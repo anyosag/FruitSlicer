@@ -209,7 +209,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     Resin from_file;
     from_file.sample_path = "/kept/sample.goo";
     auto rows = printRows(from_file, &h, pr);
-    REQUIRE(rows.size() == 11);
+    REQUIRE(rows.size() == 12);
     CHECK(rows[0].value == "0.03 mm");
     CHECK(rows[1].value == "6 × 27.5 s");
     CHECK(rows[2].key == "height_correction");  // next to the bottom layers
@@ -220,12 +220,16 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[3].after == "from 23.17 to 1.50 s");
     CHECK(rows[4].value == "1.5 s");
     CHECK(rows[7].value == "0 · 0 · 5 s");
-    CHECK(rows[8].value == "0.05 mm");
-    CHECK(rows[9].value == "255 of 255");
-    CHECK(rows[10].value == "1.15 g/ml");
-    for (std::size_t i : {0, 1, 3, 4, 7, 8, 9}) CHECK(rows[i].source == PS::File);
+    CHECK(rows[8].key == "bottom_waits");  // the bottom layers' own, as the file has them
+    CHECK(rows[8].value == "0 · 0 · 5 s");
+    CHECK(rows[8].fields.size() == 3);
+    CHECK(rows[8].note.empty());
+    CHECK(rows[9].value == "0.05 mm");
+    CHECK(rows[10].value == "255 of 255");
+    CHECK(rows[11].value == "1.15 g/ml");
+    for (std::size_t i : {0, 1, 3, 4, 7, 8, 9, 10}) CHECK(rows[i].source == PS::File);
     CHECK(rows[2].source == PS::Default);  // no print file has a height correction
-    CHECK(rows[10].source == PS::Default);  // or a density
+    CHECK(rows[11].source == PS::Default);  // or a density
     CHECK(rows[5].source == PS::Default);   // nor the adaptive layers
     CHECK(rows[6].source == PS::Default);   // nor the light depth
     REQUIRE(rows[1].fields.size() == 2);
@@ -241,7 +245,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     typed.print.exposure = 2;
     typed.print.bottom_exposure = 30;
     rows = printRows(typed, nullptr, pr);
-    REQUIRE(rows.size() == 11);
+    REQUIRE(rows.size() == 12);
     CHECK(rows[0].value == "0.05 mm");
     CHECK(rows[0].source == PS::Default);
     CHECK(rows[1].value == "4 × 30 s");
@@ -251,7 +255,7 @@ TEST_CASE("Resins: print settings as the page lists them", "[gui][resins]") {
     CHECK(rows[7].source == PS::Default);
     // Nothing yet: every row there to type into, the exposures not set.
     rows = printRows(Resin{}, nullptr, pr);
-    REQUIRE(rows.size() == 11);
+    REQUIRE(rows.size() == 12);
     CHECK(rows[4].value == "not set");
     CHECK(rows[4].fields[0].value == 0);
 }
@@ -371,10 +375,10 @@ TEST_CASE("Resins: print values you edit reach the print plan, its estimate and 
     CHECK(rows[4].base == "1.5 s");
     CHECK(rows[4].note.empty());
     CHECK(rows[7].value == "0 · 0 · 3 s");
-    CHECK_THAT(rows[8].note, ContainsSubstring("hasn't been tested"));
-    CHECK_THAT(rows[9].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
-    CHECK(rows[10].value == "1.1 g/ml");
-    CHECK(rows[10].base == "1.15 g/ml");
+    CHECK_THAT(rows[9].note, ContainsSubstring("hasn't been tested"));
+    CHECK_THAT(rows[10].note, ContainsSubstring("set at 255 and haven't been checked at 200"));
+    CHECK(rows[11].value == "1.1 g/ml");
+    CHECK(rows[11].base == "1.15 g/ml");
 
     // Kept with the resin.
     const auto lib = (dir() / "edited_lib").string();
@@ -534,10 +538,10 @@ TEST_CASE("Resins: adaptive layers and the light depth, as rows, as edits and in
     r.sample_path = "/kept/sample.goo";
     // After "Normal exposure": off, with the light depth's note while it is the typical value.
     auto rows = printRows(r, &h, pr);
-    REQUIRE(rows.size() == 11);
+    REQUIRE(rows.size() == 12);
     CHECK(rows[4].key == "exposure");
     CHECK(rows[5].key == "adaptive");
-    CHECK(rows[5].label == "Adaptive layers");
+    CHECK(rows[5].label == "Adaptive layers, up to");
     CHECK(rows[5].value == "Off");
     CHECK(rows[5].after == "Off");
     CHECK(rows[5].note.empty());
@@ -646,4 +650,75 @@ TEST_CASE("Resins: adaptive layers and the light depth, as rows, as edits and in
     // A job on the resin starts with them.
     CHECK(printSettingsFor(r).adaptive == 2);
     CHECK(lightDepth(printSettingsFor(r)) == Approx(0.15));
+}
+
+TEST_CASE("Resins: the bottom layers can wait differently from the others", "[gui][resins]") {
+    using PS = PrintRow::Source;
+    const fruit::PrinterProfile pr = fruit::PrinterProfile::saturn4Ultra16k();
+    Resin r;
+    r.id = "bottom-waits";
+    r.name = "Bottom waits";
+    r.print.exposure = 2.5;
+    r.print.bottom_exposure = 30;
+    // Nothing set: the bottom layers wait as the others do.
+    auto rows = printRows(r, nullptr, pr);
+    REQUIRE(rows.size() == 12);
+    CHECK(rows[8].key == "bottom_waits");
+    CHECK(rows[8].label == "Bottom-layer waits (before lift, after lift, after retract)");
+    CHECK(rows[8].value == rows[7].value);
+    CHECK(rows[8].source == PS::Default);
+    CHECK(rows[8].note.empty());
+    // A wait typed for every layer is the bottom layers' too.
+    setPrintValue(r, nullptr, pr, "wait_after_retract", 3);
+    rows = printRows(r, nullptr, pr);
+    CHECK(rows[7].value == "0 · 0 · 3 s");
+    CHECK(rows[8].value == "0 · 0 · 3 s");
+    CHECK(rows[8].source == PS::Default);
+    // Their own: 1 s after the light (before the lift) and 10 s before it (after the retract).
+    setPrintValue(r, nullptr, pr, "bottom_wait_before_lift", 1);
+    setPrintValue(r, nullptr, pr, "bottom_wait_after_retract", 10);
+    CHECK(r.print.bottom_wait_before_lift == Approx(1));
+    CHECK(r.print.bottom_wait_after_retract == Approx(10));
+    rows = printRows(r, nullptr, pr);
+    CHECK(rows[7].value == "0 · 0 · 3 s");  // the other layers are as they were
+    CHECK(rows[8].value == "1 · 0 · 10 s");
+    CHECK(rows[8].source == PS::Yours);
+    CHECK(rows[8].base == "0 · 0 · 3 s");
+    CHECK_THAT(rows[8].note, ContainsSubstring("hasn't been tested"));
+
+    // In the print file: the header's bottom-layer waits, and so each layer's own.
+    const PrintSettings s = printSettingsFor(r);
+    const fruit::GooHeader h = fruit::buildGooSetup(pr, printRequest(s, 0.05)).header;
+    CHECK(h.print.bottom_wait_before_lift == Approx(1));
+    CHECK(h.print.bottom_wait_after_lift == Approx(0));
+    CHECK(h.print.bottom_wait_after_retract == Approx(10));
+    CHECK(h.print.wait_before_lift == Approx(0));
+    CHECK(h.print.wait_after_retract == Approx(3));
+    const uint32_t bottoms = h.print.bottom_layers;
+    REQUIRE(bottoms > 0);
+    CHECK(fruit::layerDefFor(h, 0).wait_before_lift == Approx(1));
+    CHECK(fruit::layerDefFor(h, bottoms - 1).wait_after_retract == Approx(10));
+    CHECK(fruit::layerDefFor(h, bottoms).wait_after_retract == Approx(3));  // transition and normal layers
+    CHECK(fruit::layerDefFor(h, bottoms + 20).wait_before_lift == Approx(0));
+    // And in the time: 8 s more on each bottom layer.
+    Resin plain = r;
+    resetPrintRow(plain.print, "bottom_waits");
+    CHECK(plain.print.bottom_wait_before_lift < 0);
+    CHECK(plain.print.bottom_wait_after_retract < 0);
+    const fruit::GooHeader hp = fruit::buildGooSetup(pr, printRequest(printSettingsFor(plain), 0.05)).header;
+    const fruit::GooExportOptions o;
+    CHECK(fruit::estimatePrintSeconds(h, 100, o) == Approx(fruit::estimatePrintSeconds(hp, 100, o) + 8.0 * bottoms));
+
+    // Typing the other layers' value again is not an edit.
+    setPrintValue(r, nullptr, pr, "bottom_wait_after_retract", 3);
+    CHECK(r.print.bottom_wait_after_retract < 0);
+    setPrintValue(r, nullptr, pr, "bottom_wait_after_retract", 10);
+
+    // Kept with the resin.
+    const auto lib = (dir() / "bottom_waits_lib").string();
+    fs::remove_all(lib);
+    saveResin(lib, r);
+    const auto back = loadResins(lib);
+    REQUIRE(back.size() == 1);
+    CHECK(back[0] == r);
 }

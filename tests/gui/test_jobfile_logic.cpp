@@ -323,11 +323,17 @@ TEST_CASE("Jobs: the height correction is saved with the print settings; older j
     CHECK(o.doc->print.settings.light_depth < 0);
     doc->print.settings.adaptive = 4;
     doc->print.settings.light_depth = 0.2;
+    CHECK(o.doc->print.settings.bottom_wait_after_retract < 0);  // older jobs: as the other layers
+    doc->print.settings.bottom_wait_before_lift = 1;
+    doc->print.settings.bottom_wait_after_retract = 10;
     const auto job2 = (dir() / "adaptive.fruitjob").string();
     saveJob(job2, *doc);
     const OpenedJob adaptive = openJob(job2, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     CHECK(adaptive.doc->print.settings.adaptive == 4);
     CHECK(adaptive.doc->print.settings.light_depth == Approx(0.2));
+    CHECK(adaptive.doc->print.settings.bottom_wait_before_lift == Approx(1));
+    CHECK(adaptive.doc->print.settings.bottom_wait_after_lift < 0);
+    CHECK(adaptive.doc->print.settings.bottom_wait_after_retract == Approx(10));
     const OpenedJob without = rewritten("adaptive_old.fruitjob", [](nlohmann::json& j) {
         j.at("print").erase("adaptive");
         j.at("print").erase("light_depth");

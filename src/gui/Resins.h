@@ -101,8 +101,9 @@ struct PrintRow {
     std::string after;    // words after the fields (the transition layers' exposures)
 };
 // Every print setting, in page order: layer height, bottom layers, height
-// correction (with no raft), transition layers, normal exposure, waits, lift
-// and retract, light power, density. `sample` is the resin's kept header, if read.
+// correction (with no raft), transition layers, normal exposure, adaptive
+// layers, light depth, waits, bottom-layer waits, lift and retract, light
+// power, density. `sample` is the resin's kept header, if read.
 std::vector<PrintRow> printRows(const Resin& r, const fruit::GooHeader* sample, const fruit::PrinterProfile& printer);
 // Sets one of the resin's own print values (clamped to its field's range).
 // A value equal to the file's (or FruitSlicer's own) is not kept: the row

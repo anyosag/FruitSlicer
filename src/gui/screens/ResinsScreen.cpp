@@ -124,6 +124,9 @@ std::string fieldTip(const PrintField& f) {
                        : f.key == "wait_before_lift"   ? "Wait before lift, s"
                        : f.key == "wait_after_lift"    ? "Wait after lift, s"
                        : f.key == "wait_after_retract" ? "Wait after retract, s"
+                       : f.key == "bottom_wait_before_lift"   ? "Bottom layers: wait before lift (after the light), s"
+                       : f.key == "bottom_wait_after_lift"    ? "Bottom layers: wait after lift, s"
+                       : f.key == "bottom_wait_after_retract" ? "Bottom layers: wait after retract (before the light), s"
                                                        : "";
     const std::string range = strf("from %g to %g", f.lo, f.hi);
     return *what ? std::string(what) + ": " + range : "From " + range.substr(5);
@@ -131,7 +134,8 @@ std::string fieldTip(const PrintField& f) {
 
 // Counts and waits are short; the rest take the advanced page's width.
 float fieldWidth(const PrintField& f) {
-    const bool narrow = f.key == "bottom_layers" || f.key == "transition_layers" || f.key.rfind("wait_", 0) == 0;
+    const bool narrow = f.key == "bottom_layers" || f.key == "transition_layers" || f.key.rfind("wait_", 0) == 0 ||
+                        f.key.rfind("bottom_wait_", 0) == 0;
     return narrow ? 50 : 62;
 }
 
@@ -145,10 +149,14 @@ void printCard(App& app, const Resin& r, const fruit::GooHeader* sample) {
         e.label = row.label;
         e.badge = badgeOf(row.source);
         e.note = row.note;
-        if (row.source == PrintRow::Source::Yours && !row.base.empty())
-            e.was = (file && row.key != "density" && row.key != "adaptive" && row.key != "light_depth" ? "File: "
-                                                                                                    : "FruitSlicer's: ") +
-                    row.base;
+        if (row.source == PrintRow::Source::Yours && !row.base.empty()) {
+            // Values no print file has are FruitSlicer's own; the bottom layers go back to the other layers' waits.
+            const bool ours = row.key == "density" || row.key == "adaptive" || row.key == "light_depth" ||
+                              row.key == "height_correction";
+            const bool as_others = row.key == "bottom_waits" && i > 0 && rows[i - 1].key == "waits" &&
+                                   rows[i - 1].value == row.base;
+            e.was = (as_others ? "The other layers': " : file && !ours ? "File: " : "FruitSlicer's: ") + row.base;
+        }
         const float gap = 6;
         for (const PrintField& f : row.fields) {
             e.value_w += fieldWidth(f) + gap;

@@ -155,6 +155,11 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
         keyValue("Normal exposure", strf("%.2f s", hd.print.exposure));
         keyValue("Transition layers", strf("%d", static_cast<int>(hd.print.transition_layers)));
         keyValue("Wait after retract", strf("%.1f s", hd.print.wait_after_retract));
+        if (hd.print.bottom_wait_before_lift != hd.print.wait_before_lift ||
+            hd.print.bottom_wait_after_lift != hd.print.wait_after_lift ||
+            hd.print.bottom_wait_after_retract != hd.print.wait_after_retract)
+            keyValue("Bottom-layer waits", strf("%g · %g · %g s", hd.print.bottom_wait_before_lift,
+                                                hd.print.bottom_wait_after_lift, hd.print.bottom_wait_after_retract));
         if (plan->adaptive > 1) {
             ImGui::Dummy(ImVec2(0, 2));
             text(strf("Layers are merged up to %g mm where the model's walls are straight. The layer count and time "

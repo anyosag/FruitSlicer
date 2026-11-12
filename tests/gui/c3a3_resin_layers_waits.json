@@ -1,0 +1,9 @@
+{
+  "size": [1440, 1500],
+  "scale": 1,
+  "steps": [
+    {"screen": "resins"}, {"resin_new_from": "@demo-sample"},
+    {"resin_print": {"adaptive": 0.12, "bottom_wait_before_lift": 1, "bottom_wait_after_retract": 10}},
+    {"frames": 2}, {"shot": "c3a3_resin_adaptive_and_bottom_waits"}
+  ]
+}

@@ -27,6 +27,9 @@ struct GooPrintRequest {
     // distance in mm, > 0; light power 1-255.
     double own_layer_height = 0;
     double wait_before_lift = -1, wait_after_lift = -1, wait_after_retract = -1;
+    // The bottom layers' own waits, s, >= 0: over the ones above (and the
+    // sample's) for the bottom layers only. < 0: as the other layers.
+    double bottom_wait_before_lift = -1, bottom_wait_after_lift = -1, bottom_wait_after_retract = -1;
     double lift_distance = -1;
     int light_power = -1;
     // Orientation correction found with the orientation check.
