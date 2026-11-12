@@ -257,6 +257,12 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   up but adds nothing to what holds the print on the raft. The plan still
   counts it while placing tips; after the tree, `layersShortOfRaftHold` joins
   what each one ties and reports the layers the raft's own tips can't hold.
+- **A column where no head fits (2026-11-12).** F-01's island (inside the
+  lid's threaded bore, 0.5 mm above another face) could not take a head in any
+  direction, so the lid always had one part starting in mid-air. A straight
+  column as wide as the tip, sunk into both faces, now joins a tip to the model
+  up to 3 mm below it when nothing is beside it on the way. The lid as it sits
+  has no dropped tip and nothing floating. Not printed.
 - **Closer tips where a part starts (2026-11-12).** Reasoning, not measured:
   see `SupportConfig::start_zone_height`. A vendor's file for a 90 mm disc
   tipped 12.6° (87 contacts, a 10 mm grid plus a row 1.6 mm apart along the

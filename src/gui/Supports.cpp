@@ -1237,6 +1237,7 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     r.trunks = r.tree.trunks();
     r.braces = r.tree.braces.size();
     for (const auto& pl : r.tree.pillars) r.on_model += pl.on_model;
+    r.on_model += r.tree.stubs.size();  // short columns from the model just below a tip
     r.support_ml = std::max(0.0, r.mesh.volume()) / 1000.0;
     fruit::BBox3 b = doc.placed().bbox();
     b.extend(r.mesh.bbox());

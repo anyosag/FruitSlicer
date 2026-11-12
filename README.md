@@ -405,7 +405,9 @@ Each point gets:
 - a pinhead pointing along the surface normal, tilted at most 45° from
   vertical. Its direction is searched when the default one would hit the
   model; the check uses rays along the cone, so walls are seen but the
-  surface under the tip is not;
+  surface under the tip is not. Where the model is so close under the tip
+  that no head fits at all (inside a thread, between ribs), a straight column
+  as wide as the tip joins the tip to the face up to 3 mm below it instead;
 - a vertical pillar to the raft. Up to three heads share one pillar through
   45° bridges. A head with no clear vertical drop walks diagonally outwards
   until it finds one. Where none is in reach, its support stands on the model
@@ -438,8 +440,8 @@ print together: it holds a ceiling up but adds nothing to what holds the print
 on the raft, so `short_layers_from_raft` counts the layers that are short once
 those tips are left out of the hold. All four should be 0. They are not the same as
 `point_stats.uncovered_samples`, which is the plan before the tree. With the
-default settings a tip is dropped only where no head fits or no spot to stand
-on is found; with `anchor_drop` lowered, turning the model or a longer `route`
+default settings a tip is dropped only where no head fits and nothing is close
+enough below for a column, or no spot to stand on is found; with `anchor_drop` lowered, turning the model or a longer `route`
 brings them down.
 
 Safety checks and options:

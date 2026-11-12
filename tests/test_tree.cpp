@@ -232,6 +232,50 @@ TEST_CASE("with standing on the model turned off, a tip with no way down is left
         if (P.on_model) CHECK(P.top - P.anchor_contact.z <= 10 + 1e-9);
 }
 
+TEST_CASE("where no head fits, a short column from the model just below holds the tip", "[tree]") {
+    // A small block 0.6 mm above the middle of a slab, like a thread's turn
+    // above the one before: a head is longer than the gap.
+    TriangleMesh m = makeBox({0, 0, 0}, {20, 20, 2});
+    m.append(makeBox({9, 9, 2.6}, {11, 11, 4.6}));
+    placeOnPlate(m, {0, 0, 0}, 5.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    std::size_t under_block = 0;
+    for (const auto& p : pts) under_block += p.pos.z > 7.5;
+    REQUIRE(under_block > 0);
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    TreeConfig tc;
+    const SupportTree t = buildSupportTree(m, pts, tc, raft);
+    CHECK(t.dropped_points == 0);
+    CHECK(t.heads.size() == pts.size());
+    REQUIRE(t.stubs.size() == under_block);
+    for (const Rod& r : t.stubs) {
+        // Straight up, from inside the slab to inside the block, as wide as its tip.
+        CHECK(distance(r.a.xy(), r.b.xy()) < 1e-9);
+        CHECK(r.a.z > 7.6);
+        CHECK(r.b.z < 7.0);
+        CHECK(r.diameter >= 0.2 - 1e-9);
+    }
+    const TriangleMesh sup = t.mesh(tc);
+    CHECK(validateSupported(m, sup, cfg.layer_height, cfg.link_grow).floating.empty());
+    // Its tips count as tied to the slab, which the slab's own tips hold.
+    std::vector<SupportPoint> from_raft;
+    std::vector<TiedTip> tied;
+    splitByFooting(t, pts, from_raft, tied);
+    CHECK(tied.size() == under_block);
+    for (const auto& x : tied) CHECK(x.foot.z == Approx(7.0).margin(0.01));
+    CHECK(layersShortOfRaftHold(m, cfg, from_raft, tied) == 0);
+
+    // Turned off, the tip is left out and the block is reported as floating.
+    TreeConfig none;
+    none.max_stub_length = 0;
+    const SupportTree u = buildSupportTree(m, pts, none, raft);
+    CHECK(u.dropped_points == under_block);
+    CHECK(u.stubs.empty());
+    CHECK_FALSE(validateSupported(m, u.mesh(none), cfg.layer_height, cfg.link_grow).floating.empty());
+}
+
 TEST_CASE("a tip whose support stands on the print adds no hold from the raft", "[tree]") {
     // A block on supports: every layer is 400 mm², held by the tips under it.
     TriangleMesh m = makeBox({0, 0, 0}, {20, 20, 10});

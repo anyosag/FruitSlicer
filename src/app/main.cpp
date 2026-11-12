@@ -526,6 +526,7 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     r["trunks_on_raft"] = tree.trunks();
     r["branches"] = tree.branches.size();
     r["pillars_on_model"] = anchors;
+    r["stubs_on_model"] = tree.stubs.size();
     r["bridges"] = tree.bridges.size();
     r["braces"] = tree.braces.size();
     r["braces_skipped_no_trap"] = tree.braces_skipped_trap;

@@ -189,6 +189,7 @@ private:
     }
 
     bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok);
+    bool placeStub(const SupportPoint& p, int point);
     bool attachToPillar(int head);
     // `top`: where the pillar starts when that isn't the head's junction (a
     // bridge leads there).
@@ -248,6 +249,44 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
     }
     drop_ok = false;
     return fallback >= 0;
+}
+
+// No head fits at `p`: when the model is just below, a straight column as wide
+// as the tip, sunk into both, holds it from there.
+bool Builder::placeStub(const SupportPoint& p, int point) {
+    if (cfg_.max_stub_length <= 0) return false;
+    const double d = p.tip_diameter, r = d / 2, pen = penetrationFor(d, cfg_);
+    const Vec3 start = p.pos - Vec3{0, 0, 0.02};  // just clear of the face the tip touches
+    const auto hit = tree_.raycast(start, {0, 0, -1}, cfg_.max_stub_length);
+    if (!hit) return false;
+    const double gap = p.pos.z - hit->point.z;
+    if (gap < 0.05) return false;                          // touching: it prints joined on
+    if (mesh_.faceNormal(hit->face).z < 0.2) return false;  // a wall, not a face to stand on
+    // Nothing beside the column on its way down.
+    for (double t : {0.25, 0.5, 0.75}) {
+        const Vec3 q{p.pos.x, p.pos.y, p.pos.z - gap * t};
+        for (int k = 0; k < 8; ++k) {
+            const double a = 2 * kPi * k / 8;
+            if (tree_.anyHit(q, {std::cos(a), std::sin(a), 0}, r + 0.05)) return false;
+        }
+    }
+    Head h;
+    h.point = point;
+    h.contact = p.pos;
+    h.dir = {0, 0, -1};
+    h.junction = hit->point;
+    h.spec.tip_diameter = d;
+    h.spec.penetration = pen;
+    h.spec.shaft_diameter = d;
+    h.spec.head_length = gap;
+    h.stub = true;
+    out_.heads.push_back(h);
+    out_.stubs.push_back({p.pos + Vec3{0, 0, pen}, hit->point - Vec3{0, 0, pen}, d});
+    std::ostringstream m;
+    m << "no room for a support head: a " << gap << " mm column from the model just below holds the tip; leaves a "
+      << "small mark there";
+    warn("anchor_on_model", m.str(), hit->point);
+    return true;
 }
 
 bool Builder::attachToPillar(int hi) {
@@ -463,6 +502,7 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
         Head h;
         bool drop_ok = false;
         if (!placeHead(p, h, drop_ok)) {
+            if (placeStub(p, pi)) continue;
             ++out_.dropped_points;
             warn("head_blocked", "no collision-free head direction; point dropped", p.pos);
             continue;
@@ -552,7 +592,8 @@ void splitByFooting(const SupportTree& tree, const std::vector<SupportPoint>& po
     for (size_t hi = 0; hi < tree.heads.size(); ++hi) {
         const int pt = tree.heads[hi].point;
         if (pt < 0 || static_cast<size_t>(pt) >= points.size()) continue;
-        if (foot_of[hi] >= 0) tied.push_back({points[pt], tree.pillars[foot_of[hi]].anchor_contact});
+        if (tree.heads[hi].stub) tied.push_back({points[pt], tree.heads[hi].junction});
+        else if (foot_of[hi] >= 0) tied.push_back({points[pt], tree.pillars[foot_of[hi]].anchor_contact});
         else from_raft.push_back(points[pt]);
     }
 }
@@ -597,11 +638,13 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;
     for (const Head& h : heads) {
+        if (h.stub) continue;  // drawn as its column, below
         if (h.on_plate)
             plateHead(h, &m, q);
         else
             appendPinhead(m, h.contact, h.dir, h.spec, q);
     }
+    for (const Rod& r : stubs) appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
     for (const Rod& r : bridges) {
         appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
         appendSphere(m, r.b, r.diameter / 2, q.segments(r.diameter / 2));

@@ -11,10 +11,11 @@
 // a head with no clear drop and no reachable pillar stands on the model
 // below, however far down that is, on a reversed pinhead as wide as its own
 // tip ("anchor", reported because it marks an upward surface): a spot is
-// never left without a support for want of a way to the raft. Pillars taller
-// than 15 mm are cross-braced, those on the raft with each other and those on
-// the model with each other, but never within the
-// flex zone below the heads, so tips bend and snap at the part (Formlabs'
+// never left without a support for want of a way to the raft. Where the
+// model is too close under a tip for any head, a short column joins the two.
+// Pillars taller than 15 mm are cross-braced, those on the raft with each
+// other and those on the model with each other, but never within the flex
+// zone below the heads, so tips bend and snap at the part (Formlabs'
 // light-touch idea). The raft is one pad per pillar joined by bars, so the
 // whole support comes off in one piece. A tip nearer the plate than a head
 // is long stands on the plate on its head alone: nothing reaches below z = 0.
@@ -54,6 +55,10 @@ struct TreeConfig {
     // A pillar stands on the model only where the face is no steeper than this
     // from level, so its foot sits on it instead of sliding down a wall.
     double max_anchor_slope_deg = 60.0;
+    // Where the model is so close under a tip that no head fits (inside a
+    // thread, between ribs, under raised text), a straight column as wide as
+    // the tip joins the two, if the model is at most this far below. 0: none.
+    double max_stub_length = 3.0;
     // Branching: pillars within reach merge where 45° branches from each meet,
     // below the flex zone; fewer, thicker trunks reach the raft.
     bool merge_pillars = true;
@@ -82,6 +87,9 @@ struct Head {
     // the head's cone runs down to the plate and stands on it, with no
     // pillar. `junction` is then the middle of its foot on the plate.
     bool on_plate = false;
+    // No head fits: a short straight column to the model just below holds
+    // the tip instead (SupportTree::stubs). `junction` is where it lands.
+    bool stub = false;
 };
 
 struct Pillar {
@@ -111,6 +119,7 @@ struct SupportTree {
     std::vector<Rod> bridges;
     std::vector<Rod> braces;
     std::vector<Rod> branches;   // pillar -> trunk diagonals
+    std::vector<Rod> stubs;      // short columns where no head fits, tip (a) to the model below (b)
     std::vector<Rod> raft_links;
     double raft_top = 0;
     std::vector<Warning> warnings;
