@@ -106,6 +106,33 @@ struct PrintPlan {
 
 PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_top, const PrintSettings& s);
 
+// The layers a print file is made of, before any are merged, built the one
+// way saving and the estimate both use: `print` is the model and supports,
+// `model` (only when asked for, i.e. with adaptive layers) the model alone,
+// both at the print file's layer height with the height correction's base
+// layers. Re-cuts the layers when the print file's height differs from the
+// job's (hollowing planned again). Progress: 0 to 1 of `ctl`.
+struct PrintStacks {
+    std::shared_ptr<const fruit::LayerStack> print;
+    std::shared_ptr<const fruit::LayerStack> model;
+};
+PrintStacks buildPrintStacks(const Document& doc, const LayerResult& layers, const fruit::TriangleMesh& supports,
+                             const PrintPlan& plan, bool want_model, const fruit::JobControl& ctl);
+// The adaptive layers settings a print file of `plan` is merged with.
+fruit::AdaptiveSettings adaptiveSettings(const Document& doc, const PrintPlan& plan);
+
+// What saving the print file will have in it, worked out without cutting an
+// image: the layers in the file, the thin layers they come from, how many are
+// merged, and the print time.
+struct PrintEstimate {
+    std::size_t layers = 0, thin_layers = 0, merged_layers = 0;
+    double print_time_s = 0;
+};
+// Without adaptive layers, the plan's own (thin) numbers; with them, exactly
+// what savePrint writes. Cancellable; `plan` must be ready.
+PrintEstimate estimatePrint(const Document& doc, const LayerResult& layers, const fruit::TriangleMesh& supports,
+                            const PrintPlan& plan, const fruit::JobControl& ctl);
+
 struct SaveResult {
     std::string path;
     fruit::GooExportResult written;

@@ -403,3 +403,118 @@ TEST_CASE("Adaptive layers: a sample at another layer height cuts the layers aga
     // The base layers (and the sample's own 6 bottom and 6 transition layers) are thin.
     for (std::size_t i = 0; i < 12; ++i) CHECK(f.layers[i].z == Approx(0.03 * static_cast<double>(i + 1)).margin(1e-4));
 }
+
+namespace {
+
+// What the estimate says is what saving writes: layers, thin layers, merged layers and print time.
+void checkEstimateIsWhatSaves(const Document& doc, const LayerResult& lr, const fruit::TriangleMesh& supports,
+                              const PrintPlan& plan, const char* name) {
+    const PrintEstimate e = estimatePrint(doc, lr, supports, plan, fruit::JobControl::none());
+    const auto path = tmp(name).string();
+    const SaveResult r = savePrint(doc, lr, supports, plan, path, false, fruit::JobControl::none());
+    REQUIRE(r.good);
+    CHECK(e.layers == r.written.layers);
+    CHECK(e.thin_layers == r.written.thin_layers);
+    CHECK(e.merged_layers == r.written.merged_layers);
+    CHECK(static_cast<std::uint32_t>(e.print_time_s) == r.written.print_time_s);
+    // And what the file itself holds.
+    const fruit::GooFileInfo f = fruit::readGoo(path);
+    CHECK(f.layers.size() == e.layers);
+    CHECK(f.header.print_time == r.written.print_time_s);
+}
+
+}  // namespace
+
+TEST_CASE("Adaptive estimate: the job's own layers give what saving writes", "[gui][print][adaptive][estimate]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s = typed();
+    s.adaptive = 4;
+    s.light_depth = 0.12;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.ready);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    CHECK(e.merged_layers > 0);
+    CHECK(e.layers < e.thin_layers);
+    CHECK(e.thin_layers == 160);
+    CHECK(e.print_time_s < plan.print_time_s);
+    checkEstimateIsWhatSaves(*doc, lr, {}, plan, "estimate_same.goo");
+}
+
+TEST_CASE("Adaptive estimate: a re-sliced job (a 0.03 mm sample)", "[gui][print][adaptive][estimate]") {
+    const auto doc = boxOnPlate(0.10);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s;
+    s.sample_path = sample003();
+    s.sample = loadSample(s.sample_path);
+    s.adaptive = 8;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.reslice);
+    checkEstimateIsWhatSaves(*doc, lr, {}, plan, "estimate_reslice.goo");
+}
+
+TEST_CASE("Adaptive estimate: height-correction layers on the plate stay thin", "[gui][print][adaptive][estimate]") {
+    const auto doc = boxOnPlate(0.15);
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s = typed();
+    s.bottom_layers = 1;
+    s.transition_layers = 0;
+    s.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    REQUIRE(plan.ready);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    CHECK(e.thin_layers == 63);
+    CHECK(e.merged_layers > 0);
+    checkEstimateIsWhatSaves(*doc, lr, {}, plan, "estimate_plate.goo");
+}
+
+TEST_CASE("Adaptive estimate: off, it is the thin numbers and nothing merges", "[gui][print][adaptive][estimate]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, typed());
+    REQUIRE(plan.adaptive == 1);
+    const PrintEstimate e = estimatePrint(*doc, lr, {}, plan, fruit::JobControl::none());
+    CHECK(e.layers == plan.layers);
+    CHECK(e.thin_layers == plan.layers);
+    CHECK(e.merged_layers == 0);
+    CHECK(e.print_time_s == Approx(plan.print_time_s));
+    checkEstimateIsWhatSaves(*doc, lr, {}, plan, "estimate_off.goo");
+}
+
+TEST_CASE("Adaptive estimate: it can be cancelled", "[gui][print][adaptive][estimate]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    PrintSettings s = typed();
+    s.adaptive = 4;
+    const PrintPlan plan = planPrint(*doc, lr, 0.0, s);
+    const fruit::JobControl ctl;
+    ctl.cancel();
+    CHECK_THROWS_AS(estimatePrint(*doc, lr, {}, plan, ctl), fruit::Cancelled);
+}
+
+TEST_CASE("Adaptive estimate: the document keeps one for the same layers and settings only",
+          "[gui][print][adaptive][estimate]") {
+    const auto doc = box();
+    const LayerResult lr = sliceLayers(*doc, {}, 0.0, fruit::JobControl::none());
+    doc->layers.result = std::make_shared<const LayerResult>(lr);
+    doc->print.settings = typed();
+    doc->print.settings.adaptive = 4;
+    CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);
+    auto e = std::make_shared<AdaptiveEstimate>();
+    e->from = doc->layers.result;
+    e->edits = doc->print.settings;
+    e->sample_path = doc->print.settings.sample_path;
+    e->numbers.layers = 52;
+    doc->print.estimate = e;
+    REQUIRE(doc->print.estimateFor(doc->layers.result) != nullptr);
+    CHECK(doc->print.estimateFor(doc->layers.result)->layers == 52);
+    doc->print.settings.light_depth = 0.2;  // another setting: stale
+    CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);
+    doc->print.settings.light_depth = -1;
+    CHECK(doc->print.estimateFor(doc->layers.result) != nullptr);
+    doc->print.settings.sample_path = "other.goo";
+    CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);
+    doc->print.settings.sample_path.clear();
+    doc->layers.result = std::make_shared<const LayerResult>(lr);  // cut again: stale
+    CHECK(doc->print.estimateFor(doc->layers.result) == nullptr);
+}

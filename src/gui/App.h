@@ -352,6 +352,13 @@ public:
     void useSample(const std::string& path);
     void setExposures(double normal_s, double bottom_s);  // typed; 0 keeps the sample's
     std::shared_ptr<const PrintPlan> printPlan();         // for the current layers and settings
+    // With adaptive layers on: what saving will write, once worked out in the
+    // background (`numbers`), or that it is being worked out or could not be.
+    struct AdaptiveView {
+        const PrintEstimate* numbers = nullptr;
+        bool working = false, failed = false;
+    };
+    AdaptiveView adaptiveView();  // all false when adaptive layers are off or there is nothing to plan
     std::string printBlocker();                           // what stops saving, in a few words ("" if nothing)
     void savePrint();                                     // asks where (and once about orientation)
     void savePrintAfterAsking();                          // "Save anyway" in the orientation question
@@ -623,6 +630,17 @@ private:
     int scene_key_ = 0;
     std::shared_ptr<const SupportResult> sliced_for_;  // last slicing started (it may have been cancelled)
     int sliced_base_ = -1;                             // its height correction, in layers
+    // The adaptive estimate last started: for these layers and settings
+    // (once per combination, as with the cut above; one that failed or was cancelled is not started again).
+    struct EstimateKey {
+        std::shared_ptr<const LayerResult> layers;
+        PrintEdits edits;
+        std::string sample_path;
+        bool operator==(const EstimateKey&) const = default;
+    };
+    std::optional<EstimateKey> estimate_started_;
+    bool estimate_failed_ = false;
+    bool startEstimate();  // starts it when one is wanted and nothing is busy
     unsigned layer_tex_ = 0;
     LayerImage layer_image_;
     std::shared_ptr<const LayerResult> layer_tex_result_;

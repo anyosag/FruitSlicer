@@ -12,6 +12,7 @@
 #include "App.h"
 #include "Format.h"
 #include "Icons.h"
+#include "LayerScroll.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "screens/JobParts.h"
@@ -79,7 +80,7 @@ void layerColumn(App& app, Document& doc, float h) {
     endPanel();
 }
 
-void chart(App& app, const LayerResult& r, int at, ImVec2 size) {
+void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_carry) {
     beginPanel("area_chart", size, col::Panel, ImVec2(16, 12));
     {
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -97,6 +98,21 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size) {
     const bool hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const std::size_t n = r.area.size();
+    if (hovered && n > 1) {
+        // Two-finger scrolling on a trackpad: right or up (as a wheel turns up) goes to higher layers.
+        // Vertical and horizontal scrolling both count. The chart owns the wheel while the pointer is
+        // over it, so no panel behind it scrolls too (taking effect from the next frame's input).
+        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
+        const ImGuiIO& io = ImGui::GetIO();
+        const double units = static_cast<double>(io.MouseWheel) + static_cast<double>(io.MouseWheelH);
+        if (units != 0) {
+            const LayerScrollStep step = scrollLayer(at, static_cast<int>(n), units, scroll_carry);
+            scroll_carry = step.carry;
+            if (step.layer != at) app.setLayer(step.layer);
+            at = step.layer;
+        }
+    }
     double peak = 1;
     for (double v : r.area) peak = std::max(peak, v);
     const double nice = std::pow(10.0, std::floor(std::log10(peak)));
@@ -262,7 +278,7 @@ void layersMode(App& app, Document& doc, ImVec2 size) {
     ImGui::BeginGroup();
     const float w = ImGui::GetContentRegionAvail().x - kJobW;
     layerPicture(app, doc, ImVec2(w, size.y - kChartH));
-    chart(app, *doc.layers.result, shownLayer(doc), ImVec2(w, kChartH));
+    chart(app, *doc.layers.result, shownLayer(doc), ImVec2(w, kChartH), doc.layers.scroll_carry);
     ImGui::EndGroup();
     ImGui::SameLine(0, 0);
     printSide(app, doc, size.y);

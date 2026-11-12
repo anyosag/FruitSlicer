@@ -144,36 +144,54 @@ double estimatePrintSeconds(const std::vector<GooLayerDef>& layers, const GooExp
     return t;
 }
 
+AdaptiveFilePlan planAdaptiveFile(std::size_t thin_layers, const LayerStack& model, const GooHeader& header,
+                                  const GooExportOptions& o, const AdaptiveSettings& a, const JobControl& ctl) {
+    GooHeader h = header;
+    const double layer_h = gooLayerHeight(h);
+    const GooPrintSettings& p = h.print;
+    AdaptiveOptions ao;
+    ao.thin_height = layer_h;
+    ao.multiplier = a.multiplier;
+    ao.first_mergeable = std::max<std::size_t>(a.protected_layers, std::size_t{p.bottom_layers} + p.transition_layers);
+    AdaptiveFilePlan plan;
+    plan.groups = planAdaptiveLayers(model, thin_layers, ao, o.threads, ctl);
+    plan.thin_layers = static_cast<uint32_t>(thin_layers);
+    plan.merged_layers = static_cast<uint32_t>(mergedCount(plan.groups));
+    if (plan.merged_layers == 0) {  // nothing merges: the file is the equal-layers one
+        plan.layers = plan.thin_layers;
+        plan.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(h, plan.layers, o));
+        return plan;
+    }
+    plan.layers = static_cast<uint32_t>(plan.groups.size());
+    h.print.advance_mode = true;
+    plan.defs.resize(plan.groups.size());
+    for (std::size_t k = 0; k < plan.groups.size(); ++k) {
+        const LayerGroup& g = plan.groups[k];
+        plan.defs[k] = layerDefFor(h, static_cast<uint32_t>(g.first));
+        plan.defs[k].z = h.layer_height * static_cast<float>(g.first + g.count);
+        if (g.count > 1)
+            plan.defs[k].exposure = static_cast<float>(
+                adaptiveExposure(p.exposure, layer_h, static_cast<double>(g.count) * layer_h, a.light_depth));
+    }
+    plan.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(plan.defs, o));
+    return plan;
+}
+
 GooExportResult exportGooAdaptive(const LayerStack& full, const LayerStack& model, const TriangleMesh* preview,
                                   GooHeader h, const RasterGrid& grid, const GooExportOptions& o,
                                   const AdaptiveSettings& a, const std::string& path, const JobControl& ctl) {
     const double layer_h = gooLayerHeight(h);
     if (std::abs(full.layer_height - layer_h) > 1e-6)
         throw std::invalid_argument("layer height of the slices does not match the GOO header");
-    const GooPrintSettings& p = h.print;
-    AdaptiveOptions ao;
-    ao.thin_height = layer_h;
-    ao.multiplier = a.multiplier;
-    ao.first_mergeable = std::max<std::size_t>(a.protected_layers, std::size_t{p.bottom_layers} + p.transition_layers);
-    const std::vector<LayerGroup> groups = planAdaptiveLayers(model, full.size(), ao, o.threads, ctl.sub(0, 0.1));
-    if (mergedCount(groups) == 0) {  // nothing merges: the file is the equal-layers one
-        GooExportResult r = exportGooLayers(full, preview, std::move(h), grid, o, path, ctl.sub(0.1, 1));
-        return r;
-    }
+    const AdaptiveFilePlan plan = planAdaptiveFile(full.size(), model, h, o, a, ctl.sub(0, 0.1));
+    const std::vector<LayerGroup>& groups = plan.groups;
+    const std::vector<GooLayerDef>& defs = plan.defs;
+    if (!plan.merges()) return exportGooLayers(full, preview, std::move(h), grid, o, path, ctl.sub(0.1, 1));
     const auto t0 = std::chrono::steady_clock::now();
     GooExportResult res;
-    h.layer_count = static_cast<uint32_t>(groups.size());
+    h.layer_count = plan.layers;
     h.print.advance_mode = true;
     prepareHeader(h, grid, o, preview);
-    std::vector<GooLayerDef> defs(groups.size());
-    for (std::size_t k = 0; k < groups.size(); ++k) {
-        const LayerGroup& g = groups[k];
-        defs[k] = layerDefFor(h, static_cast<uint32_t>(g.first));
-        defs[k].z = h.layer_height * static_cast<float>(g.first + g.count);
-        if (g.count > 1)
-            defs[k].exposure = static_cast<float>(adaptiveExposure(p.exposure, layer_h,
-                                                                   static_cast<double>(g.count) * layer_h, a.light_depth));
-    }
 
     GooWriter writer(path, h);
     const unsigned threads = resolveThreads(o.threads);
@@ -206,10 +224,10 @@ GooExportResult exportGooAdaptive(const LayerStack& full, const LayerStack& mode
     }
     ctl.check();
     res.layers = h.layer_count;
-    res.thin_layers = static_cast<uint32_t>(full.size());
-    res.merged_layers = static_cast<uint32_t>(mergedCount(groups));
+    res.thin_layers = plan.thin_layers;
+    res.merged_layers = plan.merged_layers;
     res.volume_mm3 = volume_px * grid.px * grid.py;
-    res.print_time_s = static_cast<uint32_t>(estimatePrintSeconds(defs, o));
+    res.print_time_s = plan.print_time_s;
     h.print_time = res.print_time_s;
     h.volume = static_cast<float>(res.volume_mm3);
     h.weight = static_cast<float>(res.volume_mm3 / 1000.0 * o.resin_density);

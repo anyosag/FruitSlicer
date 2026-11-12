@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include "Document.h"
+#include "LayerScroll.h"
 #include "Layers.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
@@ -68,4 +69,62 @@ TEST_CASE("Layers: drawing keeps whole printer pixels and is not mirrored", "[gu
     CHECK(small.h <= 100);
     CHECK(small.px / small.py == Approx(pr.pixelX() / pr.pixelY()));
     CHECK(small.below.size() == small.lit.size());
+}
+
+TEST_CASE("Layers: scrolling over the chart moves about 1 % of the layers per unit", "[gui][layers][scroll]") {
+    // 674 layers: one unit is 6.74 layers; the fraction is kept for the next time.
+    LayerScrollStep s = scrollLayer(100, 674, 1.0, 0);
+    CHECK(s.layer == 106);
+    CHECK(s.carry == Approx(0.74));
+    s = scrollLayer(s.layer, 674, 1.0, s.carry);  // 0.74 + 6.74 = 7.48
+    CHECK(s.layer == 113);
+    CHECK(s.carry == Approx(0.48));
+    // Up and right (positive) go higher, down and left lower.
+    CHECK(scrollLayer(100, 674, -1.0, 0).layer == 94);  // trunc(-6.74) = -6
+    CHECK(scrollLayer(100, 674, 3.0, 0).layer == 120);
+}
+
+TEST_CASE("Layers: a slow swipe steps one layer at a time, a short job still moves one", "[gui][layers][scroll]") {
+    // 50 layers: 1 % is under a layer, so a unit is one layer.
+    CHECK(scrollLayer(10, 50, 1.0, 0).layer == 11);
+    // A trackpad sends small fractions: they add up to whole layers.
+    int layer = 20;
+    double carry = 0;
+    for (int i = 0; i < 10; ++i) {
+        const LayerScrollStep s = scrollLayer(layer, 50, 0.1, carry);  // ten tenths of a unit
+        layer = s.layer;
+        carry = s.carry;
+    }
+    CHECK(layer == 21);
+    CHECK(carry == Approx(0).margin(1e-9));
+    // The same, backwards.
+    layer = 20;
+    carry = 0;
+    for (int i = 0; i < 25; ++i) {
+        const LayerScrollStep s = scrollLayer(layer, 50, -0.1, carry);
+        layer = s.layer;
+        carry = s.carry;
+    }
+    CHECK(layer == 18);
+    CHECK(carry == Approx(-0.5));
+}
+
+TEST_CASE("Layers: scrolling stops at the first and last layer and owes nothing there", "[gui][layers][scroll]") {
+    LayerScrollStep s = scrollLayer(670, 674, 5.0, 0);
+    CHECK(s.layer == 673);
+    CHECK(s.carry == 0);
+    s = scrollLayer(2, 674, -5.0, 0.3);
+    CHECK(s.layer == 0);
+    CHECK(s.carry == 0);
+    // Pushing on at the end does not build up a debt that delays turning back.
+    s = scrollLayer(673, 674, 0.1, 0.5);
+    s = scrollLayer(s.layer, 674, -1.0, s.carry);
+    CHECK(s.layer < 673);
+    // Nothing to move through, or no scroll.
+    CHECK(scrollLayer(0, 1, 3.0, 0).layer == 0);
+    CHECK(scrollLayer(0, 0, 3.0, 0).layer == 0);
+    CHECK(scrollLayer(7, 100, 0.0, 0.25).layer == 7);
+    CHECK(scrollLayer(7, 100, 0.0, 0.25).carry == Approx(0.25));
+    // A shown layer past the end (the job changed) is brought back in.
+    CHECK(scrollLayer(900, 674, 0.0, 0).layer == 673);
 }

@@ -237,6 +237,12 @@ TEST_CASE("Hollow: adaptive layers merge by the hollowed model and still read ba
     CHECK(saved.good);
     CHECK(saved.written.layers < plan.layers);
     CHECK(saved.written.merged_layers > 0);
+    // What the Print step shows before saving is what this wrote.
+    const PrintEstimate est = estimatePrint(*doc, lr, s.mesh, plan, fruit::JobControl::none());
+    CHECK(est.layers == saved.written.layers);
+    CHECK(est.thin_layers == saved.written.thin_layers);
+    CHECK(est.merged_layers == saved.written.merged_layers);
+    CHECK(static_cast<std::uint32_t>(est.print_time_s) == saved.written.print_time_s);
     // At a sample's 0.03 mm, with the hollowing planned again.
     fruit::GooPrintRequest req;
     req.layer_height = 0.03;
@@ -258,6 +264,11 @@ TEST_CASE("Hollow: adaptive layers merge by the hollowed model and still read ba
     CHECK(saved3.good);
     CHECK(saved3.written.thin_layers == plan3.layers);
     CHECK(saved3.written.layers < plan3.layers);
+    const PrintEstimate est3 = estimatePrint(*doc, lr, s.mesh, plan3, fruit::JobControl::none());
+    CHECK(est3.layers == saved3.written.layers);
+    CHECK(est3.thin_layers == saved3.written.thin_layers);
+    CHECK(est3.merged_layers == saved3.written.merged_layers);
+    CHECK(static_cast<std::uint32_t>(est3.print_time_s) == saved3.written.print_time_s);
     std::filesystem::remove_all(dir);
 }
 

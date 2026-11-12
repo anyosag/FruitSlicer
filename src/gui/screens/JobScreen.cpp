@@ -423,17 +423,20 @@ void statusBar(App& app) {
             const auto plan = app.printPlan();
             if (plan && plan->ready) {
                 // With adaptive layers the saved file has fewer layers: its own numbers once it is saved,
-                // the thin layers' as an upper limit before.
+                // else what saving will write once that is worked out, else the thin layers' as an upper limit.
                 const bool saved = plan->adaptive > 1 && showingSaved(*doc) && doc->print.saved->written.merged_layers > 0;
-                const double secs = saved ? doc->print.saved->written.print_time_s : plan->print_time_s;
-                const std::size_t count = saved ? doc->print.saved->written.layers : plan->layers;
+                const App::AdaptiveView av = app.adaptiveView();
+                const bool known = plan->adaptive <= 1 || saved || av.numbers;
+                const double secs = saved ? doc->print.saved->written.print_time_s
+                                    : av.numbers ? av.numbers->print_time_s : plan->print_time_s;
+                const std::size_t count = saved ? doc->print.saved->written.layers
+                                          : av.numbers ? av.numbers->layers : plan->layers;
                 const long m = std::max(1L, std::lround(secs / 60));
                 const std::string time = m >= 60 ? strf("%ld h %ld min", m / 60, m % 60) : strf("%ld min", m);
-                totals = plan->adaptive > 1 && !saved
-                             ? strf("up to %s layers · %.1f ml of resin · up to %s", thousands(count).c_str(), lr.resin_ml,
-                                    time.c_str())
-                             : strf("%s layers · %.1f ml of resin · about %s", thousands(count).c_str(), lr.resin_ml,
-                                    time.c_str());
+                totals = !known ? strf("up to %s layers · %.1f ml of resin · up to %s", thousands(count).c_str(), lr.resin_ml,
+                                       time.c_str())
+                                : strf("%s layers · %.1f ml of resin · about %s", thousands(count).c_str(), lr.resin_ml,
+                                       time.c_str());
             }
         }
     } else if (doc && app.step() == Step::Supports && doc->supports.result &&

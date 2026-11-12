@@ -4,6 +4,12 @@
   "steps": [
     {"screen": "resins"}, {"resin_new_from": "@demo-sample"},
     {"resin_print": {"adaptive": 0.12, "bottom_wait_before_lift": 1, "bottom_wait_after_retract": 10}},
-    {"frames": 2}, {"shot": "c3a3_resin_adaptive_and_bottom_waits"}
+    {"frames": 2}, {"shot": "c3a3_resin_adaptive_and_bottom_waits"},
+    {"new_job_resin": "sample 0.03 mm"},
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
+    {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
+    {"step": "print"}, {"frames": 2}, {"wait": "jobs"}, {"frames": 2},
+    {"shot": "c3a3_job_print_adaptive_numbers"}
   ]
 }

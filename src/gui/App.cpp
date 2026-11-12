@@ -622,6 +622,7 @@ void App::maintain() {
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
     // The Collisions check (several parts) gives way: the work below cancels it, and it starts again after.
     const auto busy = [this] { return jobs_.busy() && !checkingCollisions(); };
+    if (doc_ && screen_ == Screen::Job && inLayersMode(step_) && !busy() && startEstimate()) return;
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result
         // and height correction.
@@ -1344,6 +1345,67 @@ std::shared_ptr<const PrintPlan> App::printPlan() {
         plan_raft_ = raft;
     }
     return plan_;
+}
+
+App::AdaptiveView App::adaptiveView() {
+    AdaptiveView v;
+    if (!doc_ || !doc_->layersFresh()) return v;
+    const auto plan = printPlan();
+    if (!plan || !plan->ready || plan->adaptive <= 1) return v;
+    v.numbers = doc_->print.estimateFor(doc_->layers.result);
+    if (!v.numbers) {
+        const EstimateKey key{doc_->layers.result, doc_->print.settings, doc_->print.settings.sample_path};
+        v.failed = estimate_failed_ && estimate_started_ && *estimate_started_ == key;
+        v.working = !v.failed;
+    }
+    return v;
+}
+
+bool App::startEstimate() {
+    const AdaptiveView view = adaptiveView();
+    if (!view.working) return false;
+    EstimateKey key{doc_->layers.result, doc_->print.settings, doc_->print.settings.sample_path};
+    if (estimate_started_ && *estimate_started_ == key) return false;  // once per combination
+    const auto sup = doc_->supports.result;
+    if (!sup) return false;
+    estimate_started_ = key;
+    estimate_failed_ = false;
+    const auto plan = printPlan();
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<PrintEstimate>();
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        "Working out adaptive layers",
+        [snap, sup, plan, key, out](const fruit::JobControl& ctl) {
+            *out = estimatePrint(*snap, *key.layers, sup->mesh, *plan, ctl);
+        },
+        [this, target, key, out](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                    // Stopped: not started again for these layers and settings (it would loop if
+                    // whatever stopped it did so every time); the Print step says so.
+                    estimate_failed_ = true;
+                } catch (const std::exception& e) {
+                    // Not tried again for these settings; the Print step says so.
+                    estimate_failed_ = true;
+                    log::info(std::string("adaptive layers: could not be worked out: ") + e.what());
+                }
+                return;
+            }
+            auto e = std::make_shared<AdaptiveEstimate>();
+            e->from = key.layers;
+            e->edits = key.edits;
+            e->sample_path = key.sample_path;
+            e->numbers = *out;
+            d->print.estimate = std::move(e);
+            log::info("adaptive layers: " + std::to_string(out->layers) + " of " + std::to_string(out->thin_layers) +
+                      " thin layers");
+        });
+    return true;
 }
 
 std::string App::printBlocker() {

@@ -11,6 +11,7 @@
 
 #include "core/JobControl.h"
 #include "formats/GooFile.h"
+#include "layers/AdaptiveLayers.h"
 #include "layers/LayerStack.h"
 #include "mesh/TriangleMesh.h"
 #include "raster/Rasterizer.h"
@@ -58,6 +59,25 @@ struct AdaptiveSettings {
     double light_depth = 0.10;      // mm, for the longer exposures
     std::size_t protected_layers = 0;  // never merged: the height correction's layers (bottom and transition ones always are)
 };
+
+// What exportGooAdaptive will write, planned without rasterizing anything:
+// the groups of thin layers and each file layer's definition. The file and the
+// estimate before it is written both come from this.
+struct AdaptiveFilePlan {
+    std::vector<LayerGroup> groups;
+    std::vector<GooLayerDef> defs;  // one per group (empty when nothing merges: the equal-layers file)
+    uint32_t layers = 0;            // in the file
+    uint32_t thin_layers = 0;
+    uint32_t merged_layers = 0;
+    uint32_t print_time_s = 0;
+    bool merges() const { return merged_layers > 0; }
+};
+
+// Plans the file of `thin_layers` equal thin layers (the header's height)
+// with `model`'s outline (the model alone) deciding where they merge.
+AdaptiveFilePlan planAdaptiveFile(std::size_t thin_layers, const LayerStack& model, const GooHeader& header,
+                                  const GooExportOptions& o, const AdaptiveSettings& a,
+                                  const JobControl& ctl = JobControl::none());
 
 // Writes `full` (model and supports together, equal thin layers) with
 // neighbouring thin layers merged where `model`'s outline (the model alone)
