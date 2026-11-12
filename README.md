@@ -335,7 +335,13 @@ Points are chosen bottom-up so that
    scaled by tip area);
 3. **islands**: every island gets 1 tip (≤ 1.7 mm), 2 tips (≤ 6.5 mm) or at
    least 3, using the mesh minimum as the contact. Islands too small to hold a
-   tip that join the model almost at once are left alone and reported.
+   tip that join the model almost at once are left alone and reported;
+4. **the start of a part**: within its first 2 mm of height, the edge of what
+   prints has a tip within 1.6 mm, closer than the coverage radius asks. A part
+   hangs from its fewest tips there, and the lowest edge of a tilted face grows
+   by millimetres a layer. This is reasoning, not a measured value ("Where a
+   part starts" under Advanced settings; 0 turns it off). It adds about 8 to
+   11 % more tips on the test models, all near where each part begins.
 
 Placement is a cost-weighted greedy set cover (cosmetic keep-out regions and
 sharp edges cost more), followed by pruning that re-checks coverage and
@@ -402,9 +408,13 @@ Each point gets:
   surface under the tip is not;
 - a vertical pillar to the raft. Up to three heads share one pillar through
   45° bridges. A head with no clear vertical drop walks diagonally outwards
-  until it finds one, and only as a last resort stands on the model; that
-  case is reported because it marks an upper surface;
-- bracing between tall pillars, kept out of the 2 mm flex zone below the
+  until it finds one. Where none is in reach, its support stands on the model
+  below instead, however far down, on a foot as wide as its tip; it steps
+  aside when the straight drop would brush a wall or land on a face steeper
+  than 60°. That case is reported because it marks an upper surface
+  (`anchor_drop` limits how far down the model may be; 0 turns it off);
+- bracing between tall pillars, those on the raft with each other and those
+  on the model with each other, kept out of the 2 mm flex zone below the
   heads so the tips bend and snap off at the part;
 - branching: pillars within 8 mm merge where 45° branches from each meet,
   below the flex zone and below any bridge already on them. The trunk's
@@ -424,9 +434,10 @@ and hold tests then run again with only the tips that were built:
 some face (`tips`, with where the first 20 were), the surface samples left with
 no tip in reach (`samples`), and the layers short of hold without them
 (`short_layers`). All three should be 0. They are not the same as
-`point_stats.uncovered_samples`, which is the plan before the tree. Turning the
-model, or a longer `route` / `anchor_drop` (Advanced settings in the app),
-usually brings them down.
+`point_stats.uncovered_samples`, which is the plan before the tree. With the
+default settings a tip is dropped only where no head fits or no spot to stand
+on is found; with `anchor_drop` lowered, turning the model or a longer `route`
+brings them down.
 
 Safety checks and options:
 

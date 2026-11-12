@@ -245,6 +245,25 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
 - **Stabilization tips are never pruned.** Their purpose, resisting lateral wobble, is not captured by the coverage and capacity checks.
 - **CI.** GitHub Actions (`build-test`: configure, build, ctest, CLI smoke test) runs on every push to the PR and has passed.
 - **Where traps can form.** A ring in a single horizontal layer cannot form with the current support topology (MST bracing, tree merges). The real trap is a vertical loop: two pillars plus a brace plus the raft, with model material passing through the loop. The rule now checks for that.
+- **Standing on the model at any height (2026-11-12).** The 10 mm limit on a
+  support standing on the model left 106 of 462 planned tips without a support
+  on a lid stood on its edge, and 106 of 318 on a cup: a ceiling whose floor is
+  further down than that had no way to be held. The limit is now the printer's
+  height. The foot is as wide as the tip it holds and sunk as deep (it was a
+  0.35 mm contact whatever the tip), the shaft keeps its gap to the model, it
+  never lands on a face steeper than 60°, and tall ones are braced with each
+  other. Both parts now come out with every tip supported. Not printed.
+  Open: such a tip ties two places on the same part together, so it holds a
+  fresh ceiling up but adds nothing to what holds the part on the raft; the
+  hold check still counts it.
+- **Closer tips where a part starts (2026-11-12).** Reasoning, not measured:
+  see `SupportConfig::start_zone_height`. A vendor's file for a 90 mm disc
+  tipped 12.6° (87 contacts, a 10 mm grid plus a row 1.6 mm apart along the
+  lowest edge) had more contacts in the first 1 mm of height than this planner
+  did (27 against 18) although far fewer overall (87 against 620 on a similar
+  disc). With the rule the planner has 49 there. PrusaSlicer's own constants
+  (11.1 mm² per 0.4 mm tip; a 3.2 mm radius growing to 4 mm at 3.9 mm) match
+  the spacing used everywhere else.
 - **SatelLite 16K sample (1.0.2.43).**
   - Anti-aliasing off: every pixel is 0 or 255, and AA and grey-scale flags are 0.
   - Mirror Y = 1.

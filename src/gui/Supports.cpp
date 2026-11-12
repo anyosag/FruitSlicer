@@ -175,6 +175,19 @@ std::vector<AdvancedSetting> makeAdvanced() {
                                  "wobble.",
                                  x.cfg.slenderness);
                  }});
+    v.push_back({.group = "Where tips go", .label = "Where a part starts", .kind = K::Number,
+                 .source = S::Assumption,
+                 .fields = {{"start_zone", "its first", "mm", 0, 10, 1,
+                             [](const C& c, const T&) { return c.start_zone_height; },
+                             [](C& c, T&, double x) { c.start_zone_height = x; }}},
+                 .help = [](const X& x) {
+                     if (x.cfg.start_zone_height <= 0)
+                         return std::string("Off: a part's first layers get the same spacing as the rest of it.");
+                     return strf("The edge of what prints there has a tip within %.1f mm, closer than elsewhere: a "
+                                 "part hangs from its fewest tips as it starts. Reasoned, not measured. 0 turns it "
+                                 "off.",
+                                 x.cfg.start_zone_reach / std::sqrt(std::max(x.cfg.coverage.density, 1e-9)));
+                 }});
     // ---- Keeping marks off ----
     v.push_back({.group = "Keeping marks off", .label = "Visible faces and keep-out boxes", .kind = K::Number,
                  .source = S::Default,
@@ -227,14 +240,18 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  }});
     v.push_back({.group = "Pillars and trunks", .label = "Standing on the model", .kind = K::Number,
                  .source = S::Default,
-                 .fields = {{"anchor_drop", "drops up to", "mm", 0, 30, 0,
+                 .fields = {{"anchor_drop", "drops up to", "mm", 0, 250, 0,
                              [](const C&, const T& t) { return t.max_model_anchor_drop; },
                              [](C&, T& t, double x) { t.max_model_anchor_drop = x; }}},
                  .help = [](const X& x) {
                      if (x.tc.max_model_anchor_drop <= 0)
                          return std::string("Never: a head with no way down is left out and reported.");
-                     return std::string("A last resort, always reported, because it marks an upper surface. 0 turns "
-                                        "it off.");
+                     if (x.tc.max_model_anchor_drop >= 220)
+                         return std::string("Where nothing reaches the raft, a support stands on the model below, "
+                                            "however far down, so no spot goes without one. Always reported, "
+                                            "because it marks an upper surface. 0 turns it off.");
+                     return std::string("A last resort, always reported, because it marks an upper surface. A spot "
+                                        "with a longer drop under it gets no support. 0 turns it off.");
                  }});
     v.push_back({.group = "Pillars and trunks", .label = "Merge into trunks", .kind = K::Number,
                  .source = S::Default,

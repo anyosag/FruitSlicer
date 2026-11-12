@@ -135,14 +135,67 @@ private:
         }
         return best < 1e9;
     }
+    // Where a pillar can stand on the model below `from`: straight down, else
+    // the nearest spot a 45° walk reaches (as for the raft). Its shaft keeps
+    // the gap to the model all the way down, and the face it lands on is no
+    // steeper than max_anchor_slope_deg, so the foot sits on it. `top` is the
+    // pillar's top; `foot` and `foot_n` are where it meets the model.
+    bool modelStand(const Vec3& from, double r, Vec3& top, Vec3& foot, Vec3& foot_n) const {
+        if (cfg_.max_model_anchor_drop <= 0) return false;
+        const double min_up = std::cos(deg2rad(cfg_.max_anchor_slope_deg));
+        auto stands = [&](const Vec3& q) {
+            const auto hit = tree_.raycast(q, {0, 0, -1}, 1e9);
+            if (!hit) return false;
+            // Room for a foot under the shaft; and the limit is on how far below
+            // the head the model is, so a walk down can't get around it.
+            if (q.z - hit->point.z <= 1.0 || from.z - hit->point.z > cfg_.max_model_anchor_drop) return false;
+            const Vec3 n = mesh_.faceNormal(hit->face);
+            if (n.z < min_up) return false;
+            // The shaft ends a head's length above the model; below that its
+            // foot narrows to the contact.
+            const Vec3 shaft_end{q.x, q.y, hit->point.z + 1.0 + r};
+            if (shaft_end.z < q.z && !segmentClear(q, shaft_end, r)) return false;
+            top = q;
+            foot = hit->point;
+            foot_n = n;
+            return true;
+        };
+        if (stands(from)) return true;
+        double best = 1e9;
+        Vec3 bt, bf, bn;
+        for (int k = 0; k < 16; ++k) {
+            const double az = 2 * kPi * k / 16;
+            const Vec3 step{std::cos(az), std::sin(az), -1.0};
+            for (double d = 1.0; d <= cfg_.max_route_length && d < best; d += 1.0) {
+                const Vec3 q = from + step * d;
+                if (!segmentClear(from, q, r)) break;
+                if (stands(q)) {
+                    best = d;
+                    bt = top;
+                    bf = foot;
+                    bn = foot_n;
+                    break;
+                }
+            }
+        }
+        if (best == 1e9) return false;
+        top = bt;
+        foot = bf;
+        foot_n = bn;
+        return true;
+    }
     void warn(const std::string& code, const std::string& msg, const Vec3& where) {
         out_.warnings.push_back({code, msg, -1, where});
     }
 
     bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok);
     bool attachToPillar(int head);
-    void newPillar(int head, bool on_model, const Vec3& anchor = {}, const Vec3& anchor_n = {});
+    // `top`: where the pillar starts when that isn't the head's junction (a
+    // bridge leads there).
+    void newPillar(int head, bool on_model, const Vec3& anchor = {}, const Vec3& anchor_n = {},
+                   const Vec3* top = nullptr);
     void brace();
+    void braceGroup(bool on_model);
     void raft();
     void mergePillars();
 
@@ -229,18 +282,21 @@ bool Builder::attachToPillar(int hi) {
     return true;
 }
 
-void Builder::newPillar(int hi, bool on_model, const Vec3& anchor, const Vec3& anchor_n) {
+void Builder::newPillar(int hi, bool on_model, const Vec3& anchor, const Vec3& anchor_n, const Vec3* top) {
     const Head& h = out_.heads[hi];
+    const Vec3 t = top ? *top : h.junction;
     Pillar P;
-    P.xy = h.junction.xy();
-    P.top = h.junction.z;
+    P.xy = t.xy();
+    P.top = t.z;
     P.diameter = h.spec.shaft_diameter;
     P.heads.push_back(hi);
     P.on_model = on_model;
     if (on_model) {
         P.anchor_contact = anchor;
         P.anchor_normal = anchor_n;
-        P.bottom = anchor.z + 1.0 + P.diameter / 2;  // small reversed pinhead below
+        P.bottom = anchor.z + 1.0 + P.diameter / 2;  // a reversed pinhead below
+        // The foot is pulled as hard as the tip is: as wide a contact, sunk as deep.
+        P.foot_tip = std::max(0.4, h.spec.tip_diameter);
     } else {
         P.bottom = out_.raft_top + cfg_.base_height;
     }
@@ -248,10 +304,18 @@ void Builder::newPillar(int hi, bool on_model, const Vec3& anchor, const Vec3& a
 }
 
 void Builder::brace() {
-    // Minimum spanning tree over raft-standing pillars (Prim, O(n²)).
+    braceGroup(false);  // the pillars on the raft, with each other
+    braceGroup(true);   // those standing on the model, with each other
+}
+
+void Builder::braceGroup(bool on_model) {
+    // Minimum spanning tree over the group's pillars (Prim, O(n²)).
     std::vector<int> idx;
     for (size_t i = 0; i < out_.pillars.size(); ++i)
-        if (!out_.pillars[i].on_model && !out_.pillars[i].merged) idx.push_back(static_cast<int>(i));
+        if (out_.pillars[i].on_model == on_model && !out_.pillars[i].merged) idx.push_back(static_cast<int>(i));
+    // What a pillar stands on, and where its shaft starts above that.
+    auto ground = [&](const Pillar& P) { return P.on_model ? P.anchor_contact.z : out_.raft_top; };
+    auto shaftFoot = [&](const Pillar& P) { return P.on_model ? P.bottom : out_.raft_top + cfg_.base_height; };
     const size_t n = idx.size();
     if (n < 2) return;
     std::vector<double> best(n, 1e300);
@@ -274,13 +338,13 @@ void Builder::brace() {
         const Pillar& A = out_.pillars[idx[parent[v]]];
         const Pillar& B = out_.pillars[idx[v]];
         const double h = std::min(A.top, B.top) - cfg_.flex_zone;
-        const double z0 = out_.raft_top + cfg_.base_height + 1.0;
-        if (std::max(A.top, B.top) - out_.raft_top < cfg_.brace_min_height || h - z0 < best[v]) continue;
-        // No-trap rule: pillars, brace and raft form a closed loop. If any
-        // model material passes between the two pillars below the braces,
-        // that loop would encircle it and the supports could not come off.
+        const double z0 = std::max(shaftFoot(A), shaftFoot(B)) + 1.0;
+        if (std::max(A.top - ground(A), B.top - ground(B)) < cfg_.brace_min_height || h - z0 < best[v]) continue;
+        // No-trap rule: pillars, brace and what they stand on form a closed
+        // loop. If any model material passes between the two pillars below the
+        // braces, that loop would encircle it and the supports could not come off.
         bool fenced = false;
-        for (double z = out_.raft_top + 0.25; z <= h && !fenced; z += 0.25) {
+        for (double z = std::max(ground(A), ground(B)) + 0.25; z <= h && !fenced; z += 0.25) {
             const Vec3 a{A.xy.x, A.xy.y, z}, b{B.xy.x, B.xy.y, z};
             if (tree_.anyHit(a, b - a, distance(a, b))) fenced = true;
         }
@@ -433,14 +497,17 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
             out_.pillars.push_back(P);
             continue;
         }
-        // Stand on the model below, if the drop is short enough.
-        auto hit = tree_.raycast(h.junction, {0, 0, -1}, 1e9);
-        if (hit && h.junction.z - hit->point.z <= cfg_.max_model_anchor_drop &&
-            h.junction.z - hit->point.z > 1.0) {
-            newPillar(hi, true, hit->point, mesh_.faceNormal(hit->face));
+        // Stand on the model below: straight down, or on the nearest spot a
+        // short walk reaches where the shaft clears the model.
+        Vec3 stand, foot, foot_n;
+        if (modelStand(h.junction, h.spec.shaft_diameter / 2, stand, foot, foot_n)) {
+            const bool walked = distance(stand, h.junction) > 1e-9;
+            if (walked) out_.bridges.push_back({h.junction, stand, h.spec.shaft_diameter});
+            newPillar(hi, true, foot, foot_n, &stand);
+            if (walked) out_.pillars.back().bridges = 1;
             std::ostringstream m;
-            m << "support stands on the model (drop " << h.junction.z - hit->point.z << " mm); leaves a mark on an upper surface";
-            warn("anchor_on_model", m.str(), hit->point);
+            m << "support stands on the model (drop " << stand.z - foot.z << " mm); leaves a mark on an upper surface";
+            warn("anchor_on_model", m.str(), foot);
             continue;
         }
         out_.heads.pop_back();
@@ -526,10 +593,11 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
         if (P.merged) {
             appendSphere(m, bottom, P.diameter / 2, q.segments(P.diameter / 2));
         } else if (P.on_model) {
-            // Reversed pinhead: thin contact sinking 0.1 mm into the surface below.
+            // Reversed pinhead: a contact as wide as the tip above, sunk as deep
+            // into the surface below (it is pulled as hard as the tip is).
             PinheadSpec a;
-            a.tip_diameter = 0.4;
-            a.penetration = 0.1;
+            a.tip_diameter = P.foot_tip;
+            a.penetration = penetrationFor(P.foot_tip, cfg);
             // Junction of the reversed head lands on the pillar bottom.
             a.head_length = std::max(0.1, P.bottom - P.anchor_contact.z - (a.tip_diameter - a.penetration) - P.diameter / 2);
             a.shaft_diameter = P.diameter;

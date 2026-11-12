@@ -45,9 +45,35 @@ std::shared_ptr<Document> sidewaysCap() {
 
 }  // namespace
 
-TEST_CASE("Supports: faces only dropped tips held block saving and show where", "[gui][supports][slow]") {
+TEST_CASE("Supports: a ceiling out of the raft's reach is held from the model, and says so",
+          "[gui][supports][slow]") {
     const auto doc = sidewaysCap();
     const SupportResult r = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+    CHECK(r.tree.dropped_points == 0);
+    CHECK(r.on_model > 0);
+    // Nothing blocks saving; the marks on the model are something to review.
+    CHECK(r.count(SupportProblem::Level::Blocks) == 0);
+    const SupportProblem* p = nullptr;
+    for (const auto& q : r.problems)
+        if (q.code == "anchor_on_model") p = &q;
+    REQUIRE(p != nullptr);
+    CHECK(p->level == SupportProblem::Level::Review);
+    CHECK(p->count == r.on_model);
+    bool said = false;
+    for (const auto& c : r.checks)
+        if (c.title == "No support stands on the model") {
+            said = true;
+            CHECK_FALSE(c.ok);
+        }
+    CHECK(said);
+}
+
+TEST_CASE("Supports: faces only dropped tips held block saving and show where", "[gui][supports][slow]") {
+    const auto doc = sidewaysCap();
+    // With standing on the model turned off, as the advanced page allows.
+    SupportChoices off;
+    off.advanced["anchor_drop"] = 0;
+    const SupportResult r = generate(*doc, off, {}, fruit::JobControl::none());
     REQUIRE(r.tree.dropped_points > 0);
     const SupportProblem* p = nullptr;
     for (const auto& q : r.problems)
@@ -166,7 +192,7 @@ TEST_CASE("Advanced settings: unique keys, ranges that hold the values in use, a
             CHECK(f.get(supportConfig(p, c), treeConfig(c)) == Approx(f.hi));
         }
     }
-    CHECK(rows == 31);  // as on the canvas board "Supports · advanced"
+    CHECK(rows == 32);  // the 31 on the canvas board "Supports · advanced", and "Where a part starts"
     // The usual tip size lives in the choices themselves.
     SupportChoices big;
     big.usual_tip = 3;

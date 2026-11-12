@@ -8,9 +8,12 @@
 // Heads follow the surface normal clamped to 45° from vertical, searching
 // other directions when the head or its drop would hit the model. Up to
 // `max_heads_per_pillar` heads share a vertical pillar through 45° bridges;
-// a head with no clear drop and no reachable pillar lands on the model with
-// a small reversed pinhead ("anchor", reported because it marks an upward
-// surface). Pillars taller than 15 mm are cross-braced, but never within the
+// a head with no clear drop and no reachable pillar stands on the model
+// below, however far down that is, on a reversed pinhead as wide as its own
+// tip ("anchor", reported because it marks an upward surface): a spot is
+// never left without a support for want of a way to the raft. Pillars taller
+// than 15 mm are cross-braced, those on the raft with each other and those on
+// the model with each other, but never within the
 // flex zone below the heads, so tips bend and snap at the part (Formlabs'
 // light-touch idea). The raft is one pad per pillar joined by bars, so the
 // whole support comes off in one piece. A tip nearer the plate than a head
@@ -44,7 +47,13 @@ struct TreeConfig {
     double brace_diameter = 0.6;
     double brace_step = 6.0;           // vertical spacing of brace levels
     double max_route_length = 15.0;    // diagonal search for a clear drop
-    double max_model_anchor_drop = 10.0;  // longest pillar allowed to stand on the model
+    // Longest pillar allowed to stand on the model: any the printer can build.
+    // (10 mm until 2026-11: on a hollow or a cap a quarter of the tips then got
+    // no support at all.) 0: never stand on the model.
+    double max_model_anchor_drop = 250.0;
+    // A pillar stands on the model only where the face is no steeper than this
+    // from level, so its foot sits on it instead of sliding down a wall.
+    double max_anchor_slope_deg = 60.0;
     // Branching: pillars within reach merge where 45° branches from each meet,
     // below the flex zone; fewer, thicker trunks reach the raft.
     bool merge_pillars = true;
@@ -86,6 +95,9 @@ struct Pillar {
     int tips = 1;                // tips carried (for trunk limits)
     double lowest_attach = 1e9;  // lowest bridge attachment on the shaft (a merge must start below it)
     Vec3 anchor_contact, anchor_normal;
+    // On the model: the diameter of the contact its foot makes there, the
+    // tip's own, so the foot holds what the tip holds.
+    double foot_tip = 0.4;
 };
 
 struct Rod {  // bridges and braces

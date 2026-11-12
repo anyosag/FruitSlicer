@@ -83,6 +83,18 @@ struct SupportConfig {
     double stabilize_min_height = 5.0;  // mm above the lowest tip
     double slenderness = 4.0;           // height / tip spread that triggers it
 
+    // The first millimetres of every part that starts in mid-air. Its outline
+    // grows fastest there (the lowest edge of a tilted face lengthens by
+    // millimetres a layer) while it hangs from its fewest tips, and a failure
+    // there loses everything above it. So the edge of what prints within
+    // `start_zone_height` of a part's lowest point needs a tip within
+    // `start_zone_reach`, closer than the coverage curve asks. REASONING, not
+    // measured: 1.6 mm keeps a one-layer skin between two tips to the span a
+    // 1.0-1.5 mm ledge is trusted with (see self_supported_reach); other
+    // slicers reinforce the first 2-3 mm too. Height 0 = off.
+    double start_zone_height = 2.0;
+    double start_zone_reach = 1.6;
+
     std::vector<TipClass> tip_classes{{"mini", 0.2}, {"light", 0.3}, {"medium", 0.4}, {"heavy", 0.6}};
     int default_tip = 2;  // medium
     int minima_tip = 3;   // heavy: "larger touchpoints on minima"

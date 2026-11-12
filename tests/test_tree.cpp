@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
+#include <algorithm>
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -22,14 +24,13 @@ struct Built {
     ValidationReport check;
 };
 
-Built build(TriangleMesh m, double elevation = 5.0) {
+Built build(TriangleMesh m, double elevation = 5.0, const TreeConfig& tc = {}) {
     placeOnPlate(m, {0, 0, 0}, elevation);
     SupportConfig cfg;
     cfg.layer_height = 0.1;
     Built b;
     b.model = m;
     b.points = generateSupportPoints(m, cfg).points;
-    TreeConfig tc;
     b.tree = buildSupportTree(m, b.points, tc, PrinterProfile::saturn4Ultra16k().minRaftThickness());
     b.supports = b.tree.mesh(tc);
     b.check = validateSupported(m, b.supports, 0.1, cfg.link_grow);
@@ -138,10 +139,101 @@ TriangleMesh sidewaysCap() {
     return m;
 }
 
+// Supports that stand on the model: none (`drop` 0), or only on short drops.
+TreeConfig standingUpTo(double drop) {
+    TreeConfig tc;
+    tc.max_model_anchor_drop = drop;
+    return tc;
+}
+
+// How near the model a pillar's shaft comes, beyond its own surface.
+double shaftGap(const AabbTree& tree, const Pillar& P) {
+    double gap = 1e9;
+    for (double z = P.top; z >= P.bottom; z -= 0.25) gap = std::min(gap, tree.closest({P.xy.x, P.xy.y, z}).distance);
+    return gap - P.diameter / 2;
+}
+
 }  // namespace
 
-TEST_CASE("tips the tree drops are checked: what only they held is reported, and where", "[tree]") {
+TEST_CASE("a ceiling the raft can't be reached from is held from the model below", "[tree]") {
+    // Inside the cap the floor is 26 mm under the ceiling: every tip there
+    // gets a support that stands on the floor, and none is left out.
     const Built b = build(sidewaysCap());
+    CHECK(b.tree.dropped_points == 0);
+    CHECK(b.tree.heads.size() == b.points.size());
+    CHECK(b.check.floating.empty());
+    const AabbTree tree(b.model);
+    TreeConfig tc;
+    std::size_t standing = 0, tall = 0;
+    for (const auto& P : b.tree.pillars) {
+        if (!P.on_model) continue;
+        ++standing;
+        tall += P.top - P.anchor_contact.z > 20;
+        // The foot holds what the tip holds: as wide a contact.
+        REQUIRE(P.heads.size() == 1);
+        CHECK(P.foot_tip >= b.tree.heads[P.heads[0]].spec.tip_diameter - 1e-9);
+        CHECK(P.foot_tip >= 0.4 - 1e-9);
+        // It stands on a face it can sit on, and its shaft keeps the gap to the model.
+        CHECK(P.anchor_normal.z >= std::cos(deg2rad(tc.max_anchor_slope_deg)) - 1e-9);
+        CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
+    }
+    CHECK(standing > 0);
+    CHECK(tall > 0);
+    // Tall ones are braced with each other, as those on the raft are.
+    std::size_t braced = 0;
+    for (const auto& r : b.tree.braces)
+        for (const auto& P : b.tree.pillars)
+            if (P.on_model && distance(r.a.xy(), P.xy) < 1e-6) {
+                ++braced;
+                break;
+            }
+    CHECK(braced > 0);
+    // Nothing is left for the check of dropped tips to find.
+    std::vector<SupportPoint> built, dropped;
+    splitByTree(b.tree, b.points, built, dropped);
+    CHECK(dropped.empty());
+}
+
+TEST_CASE("a support never stands on a steep face or brushes a wall on its way down", "[tree]") {
+    // The same cap with a thin fin and a steep cone on its floor, both under
+    // the ceiling: supports that would graze the fin or land on the cone's
+    // flank stand a short walk away instead.
+    TriangleMesh m = sidewaysCap();
+    m.append(makeBox({14, 2, 1.5}, {15, 30, 20}));
+    m.append(makeCone({22, 14, 1.5}, 4, {22, 14, 16}, 48));
+    const Built b = build(m);
+    CHECK(b.check.floating.empty());
+    const AabbTree tree(b.model);
+    TreeConfig tc;
+    std::size_t standing = 0;
+    for (const auto& P : b.tree.pillars) {
+        if (!P.on_model) continue;
+        ++standing;
+        CHECK(P.anchor_normal.z >= std::cos(deg2rad(tc.max_anchor_slope_deg)) - 1e-9);
+        CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
+    }
+    CHECK(standing > 0);
+    // Whatever found no spot to stand on is reported, not hidden.
+    std::size_t no_route = 0;
+    for (const auto& w : b.tree.warnings) no_route += w.code == "no_route";
+    CHECK(no_route == b.tree.dropped_points - static_cast<std::size_t>(std::count_if(
+                                                  b.tree.warnings.begin(), b.tree.warnings.end(),
+                                                  [](const Warning& w) { return w.code == "head_blocked"; })));
+}
+
+TEST_CASE("with standing on the model turned off, a tip with no way down is left out and reported", "[tree]") {
+    const Built b = build(sidewaysCap(), 5.0, standingUpTo(0));
+    CHECK(b.tree.dropped_points > 0);
+    for (const auto& P : b.tree.pillars) CHECK_FALSE(P.on_model);
+    // A limit on the drop keeps short stands only.
+    const Built c = build(sidewaysCap(), 5.0, standingUpTo(10));
+    CHECK(c.tree.dropped_points > 0);
+    for (const auto& P : c.tree.pillars)
+        if (P.on_model) CHECK(P.top - P.anchor_contact.z <= 10 + 1e-9);
+}
+
+TEST_CASE("tips the tree drops are checked: what only they held is reported, and where", "[tree]") {
+    const Built b = build(sidewaysCap(), 5.0, standingUpTo(10));
     REQUIRE(b.tree.dropped_points > 0);
     std::vector<SupportPoint> built, dropped;
     splitByTree(b.tree, b.points, built, dropped);

@@ -139,11 +139,25 @@ TEST_CASE("no bracing across model material passing between two trunks", "[safet
     m.append(makeBox({0, 13, 8}, {30, 17, 10}));   // bar
     m.append(makeBox({13, 13, 10}, {17, 17, 20}));  // post
     placeOnPlate(m, {0, 0, 0}, 12.0);  // pillars under the plate reach > 15 mm: braced
-    const PointGenResult pts = generateSupportPoints(m, fast());
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
     TreeConfig tc;
-    const SupportTree tree = buildSupportTree(m, pts.points, tc, PrinterProfile::saturn4Ultra16k().minRaftThickness());
+    {
+        // Two tips under the plate, one on each side of the bar and 8 mm
+        // apart: their pillars are each other's nearest, but a brace between
+        // them would close a loop around the bar, so there is none.
+        const double under = m.bbox().max.z - 2;
+        std::vector<SupportPoint> two(2);
+        two[0].pos = {-10, -4, under};
+        two[1].pos = {-10, 4, under};
+        for (SupportPoint& p : two) p.normal = {0, 0, -1};
+        const SupportTree t = buildSupportTree(m, two, tc, raft);
+        REQUIRE(t.trunks() == 2);
+        CHECK(t.braces.empty());
+        CHECK(t.braces_skipped_trap == 1);
+    }
+    const PointGenResult pts = generateSupportPoints(m, fast());
+    const SupportTree tree = buildSupportTree(m, pts.points, tc, raft);
     CHECK_FALSE(tree.braces.empty());
-    CHECK(tree.braces_skipped_trap > 0);
     // Property: below every brace, nothing of the model lies between its pillars.
     AabbTree at(m);
     for (const auto& r : tree.braces) {

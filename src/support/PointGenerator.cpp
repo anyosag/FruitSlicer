@@ -30,6 +30,7 @@ struct Sample {
     bool island = false;
     bool excluded = false;
     bool needs_cover = true;  // false: only a place where capacity tips may go
+    bool start_edge = false;  // on the edge of what prints as its part starts: needs a tip closer by
     int tip_class = 0;
     double cost = 1.0;
     int tip = -1;  // tip placed on this sample, if any
@@ -133,7 +134,11 @@ private:
 
     // ---- samples and tips
     int makeSample(const Vec2& xy, int layer, int part, bool island, bool decimate = true,
-                   bool needs_cover = true, double spacing = -1);
+                   bool needs_cover = true, double spacing = -1, bool edge = false);
+    // How close a tip must be to the edge of a part that is just starting.
+    double startReach() const {
+        return cfg_.start_zone_reach / std::sqrt(std::max(cfg_.coverage.density, 1e-9));
+    }
     void sampleRegion(const Paths& region, int layer, int part, bool island, std::vector<int>& out);
     int addTip(int sample, PointCategory cat, bool pinned);
     int addTipAt(const Vec3& pos, const Vec3& normal, int layer, int part, int cls, PointCategory cat, bool pinned);
@@ -204,6 +209,7 @@ private:
         double capacity = 0;
         std::vector<int> tips;
         std::vector<int> pool;  // samples where extra tips may go
+        double z0 = 1e300;  // the lowest point of the part: where it started
         double last_stab_z = -1e9;
         double last_warn_z = -1e9;
         bool exempt = false;  // skipped tiny island not yet merged: no capacity demand
@@ -240,7 +246,8 @@ bool Generator::covers(const Tip& t, const Sample& s) const {
     if (t.removed) return false;
     if (t.pos.z > s.pos.z + 1e-6) return false;
     const double dz = s.pos.z - t.pos.z;
-    const double r = cfg_.coverage.radius(std::min(dz, t.thickness));
+    double r = cfg_.coverage.radius(std::min(dz, t.thickness));
+    if (s.start_edge) r = std::min(r, startReach());
     if (norm2((s.pos - t.pos).xy()) > r * r) return false;
     return segmentInside(t.pos, t.normal, s.pos, s.normal);
 }
@@ -285,7 +292,7 @@ double Generator::peelFactor(const Vec2& xy) const {
 // ---------------------------------------------------------------- samples
 
 int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool decimate, bool needs_cover,
-                          double spacing) {
+                          double spacing, bool edge) {
     Sample s;
     project(xy, layers().layerBottom(layer), s.pos, s.normal);
     if (s.normal.z > (needs_cover ? 0.2 : -0.05)) return -1;  // not a downward-facing surface
@@ -310,6 +317,10 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     s.layer = layer;
     s.part = part;
     s.island = island;
+    if (edge && needs_cover && cfg_.start_zone_height > 0) {
+        const Comp& C = comp_[find(part)];
+        s.start_edge = !C.plate && s.pos.z - C.z0 <= cfg_.start_zone_height;
+    }
     s.excluded = costf_.excluded(s.pos);
     const double r_default = cfg_.tip_classes[cfg_.default_tip].diameter / 2;
     const bool delicate = costf_.isCosmetic(s.pos, s.normal) || costf_.nearEdge(s.pos, r_default);
@@ -335,7 +346,8 @@ void Generator::sampleRegion(const Paths& region, int layer, int part, bool isla
                 const double len = distance(a, b);
                 double t = carry;
                 while (t <= len) {
-                    const int id = makeSample(a + (b - a) * (len > 0 ? t / len : 0), layer, part, island);
+                    const int id = makeSample(a + (b - a) * (len > 0 ? t / len : 0), layer, part, island, true, true,
+                                              -1, true);
                     if (id >= 0) out.push_back(id);
                     t += cfg_.edge_step;
                 }
@@ -398,6 +410,7 @@ void Generator::unite(int a, int b) {
     A.capacity += B.capacity;
     A.tips.insert(A.tips.end(), B.tips.begin(), B.tips.end());
     A.pool.insert(A.pool.end(), B.pool.begin(), B.pool.end());
+    A.z0 = std::min(A.z0, B.z0);
     A.last_stab_z = std::max(A.last_stab_z, B.last_stab_z);
     A.exempt = A.exempt && B.exempt;
     A.plate = A.plate || B.plate;
@@ -878,6 +891,10 @@ PointGenResult Generator::run() {
         for (int p : graph_.partsInLayer(L)) {
             layer_area += graph_.part(p).area;
             for (int q : graph_.part(p).parents) unite(p, q);
+            if (graph_.part(p).parents.empty()) {  // a part starts here
+                Comp& C = comp_[find(p)];
+                C.z0 = std::min(C.z0, layers().layerBottom(L));
+            }
         }
         if (layer_area > st.peak_layer_area) {
             st.peak_layer_area = layer_area;
