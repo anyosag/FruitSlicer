@@ -1186,17 +1186,30 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     ctl.step("mesh", 0.55);
     r.mesh = r.tree.mesh(r.tree_cfg);
     ctl.step("check", 0.67);
+    fruit::PointGenOptions po;  // the layers the tips were planned on
+    if (r.hollow) {
+        po.layers = r.hollow->layers;
+        if (!r.hollow->filling()) po.hollows = &r.hollow->cavities().interior;
+    }
     // Tips the tree could not build: what only they held has nothing now.
     fruit::DropCheck drops;
     if (r.tree.dropped_points > 0) {
         std::vector<fruit::SupportPoint> built, dropped;
         fruit::splitByTree(r.tree, r.points, built, dropped);
-        fruit::PointGenOptions po;  // the layers the tips were planned on
-        if (r.hollow) {
-            po.layers = r.hollow->layers;
-            if (!r.hollow->filling()) po.hollows = &r.hollow->cavities().interior;
-        }
         drops = fruit::checkDroppedTips(doc.placed(), r.cfg, built, dropped, po, ctl.silent());
+    }
+    // Supports that stand on the model tie two places on the print together:
+    // they hold a ceiling up, but add nothing to what holds it on the raft.
+    std::size_t short_from_raft = 0;
+    fruit::Vec3 first_tied{};
+    {
+        std::vector<fruit::SupportPoint> from_raft;
+        std::vector<fruit::TiedTip> tied;
+        fruit::splitByFooting(r.tree, r.points, from_raft, tied);
+        if (!tied.empty()) {
+            short_from_raft = fruit::layersShortOfRaftHold(doc.placed(), r.cfg, from_raft, tied, po, ctl.silent());
+            first_tied = tied.front().tip.pos;
+        }
     }
     const double pixel = doc.printer.pixelX() * doc.printer.pixelY();
     if (r.hollow) {
@@ -1284,6 +1297,13 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
                       fmt("%.0f layers are short of hold without the tips no support could reach",
                           static_cast<double>(drops.short_layers)),
                       -1, drops.at.empty() ? fruit::Vec3{} : drops.at.front()}},
+                    by_code);
+    if (short_from_raft > 0)
+        addWarnings({{"capacity_deficit",
+                      fmt("%.0f layers are short of hold from the raft: supports that stand on the model hold a "
+                          "face up, but they don't hold the part on the raft",
+                          static_cast<double>(short_from_raft)),
+                      -1, first_tied}},
                     by_code);
     if (v.subpixel) {
         SupportProblem n;

@@ -46,6 +46,9 @@ struct Tip {
     double cost = 1.0;
     double thickness = 0;
     bool removed = false;
+    // Checking: its support stands on the model, on part `foot_part` (-1: unknown).
+    bool tied = false;
+    int foot_part = -1;
 };
 
 // Hash grid over XY. Iteration order is deterministic (cells in fixed order,
@@ -106,14 +109,16 @@ public:
     // With `dropped`, the generator checks instead of planning: `opts.manual`
     // holds the tips that were built, and nothing is added or pruned. What
     // only the dropped tips held ends up in `dropCheck()`.
+    // `tied` (checking only): tips whose supports stand on the model.
     Generator(const TriangleMesh& mesh, const SupportConfig& cfg, const PointGenOptions& opts, const JobControl& ctl,
-              const std::vector<SupportPoint>* dropped = nullptr)
+              const std::vector<SupportPoint>* dropped = nullptr, const std::vector<TiedTip>* tied = nullptr)
         : mesh_(mesh),
           cfg_(cfg),
           opts_(opts),
           ctl_(ctl),
           check_(dropped != nullptr),
           dropped_in_(dropped),
+          tied_in_(tied),
           tip_grid_(std::max(cfg.coverage.maxRadius(), 1.0)),
           sample_grid_(std::max(cfg.sample_min_spacing, 0.05)),
           dropped_grid_(std::max(cfg.coverage.maxRadius(), 1.0)) {}
@@ -183,6 +188,8 @@ private:
     const JobControl& ctl_;
     const bool check_ = false;
     const std::vector<SupportPoint>* dropped_in_ = nullptr;
+    const std::vector<TiedTip>* tied_in_ = nullptr;
+    std::vector<std::vector<int>> tied_by_layer_;
     AabbTree tree_;
     std::shared_ptr<const LayerStack> layers_ptr_;
     LayerStack empty_layers_;
@@ -846,6 +853,10 @@ void Generator::setup() {
         dropped_by_layer_.assign(layers().size(), {});
         for (size_t i = 0; i < dropped_in_->size(); ++i)
             dropped_by_layer_[layerOfGiven((*dropped_in_)[i])].push_back(static_cast<int>(i));
+        tied_by_layer_.assign(layers().size(), {});
+        if (tied_in_)
+            for (size_t i = 0; i < tied_in_->size(); ++i)
+                tied_by_layer_[layerOfGiven((*tied_in_)[i].tip)].push_back(static_cast<int>(i));
     }
 }
 
@@ -932,6 +943,21 @@ PointGenResult Generator::run() {
                 dropped_grid_.insert(static_cast<int>(dropped_.size()), d.pos.xy());
                 dropped_.push_back(t);
             }
+        // Checking: the tips whose supports stand on the model, and the part
+        // each foot stands on (the layer just under the foot holds it).
+        if (check_)
+            for (int ti : tied_by_layer_[L]) {
+                const TiedTip& t = (*tied_in_)[ti];
+                const int part = partAt(layer, t.tip.pos);
+                if (part < 0) continue;
+                const int id = addTipAt(t.tip.pos, t.tip.normal, layer, part, 0, t.tip.category, true);
+                tips_[id].diameter = t.tip.tip_diameter;
+                tips_[id].tip_class = -1;
+                tips_[id].tied = true;
+                const size_t last = layers().size() - 1;
+                const size_t fl = std::min(layers().layerAt(t.foot.z - layers().layer_height / 2), last);
+                tips_[id].foot_part = partAt(static_cast<int>(fl), t.foot);
+            }
         for (int p : graph_.partsInLayer(L)) {
             if (graph_.part(p).parents.empty()) processIsland(p, layer_samples, large_islands);
             else processOverhang(p, layer_samples);
@@ -1002,24 +1028,36 @@ void Generator::finalize() {
         std::vector<std::vector<int>> drops_by_layer(layers().size());
         for (size_t di = 0; di < dropped_.size(); ++di)
             if (dropped_[di].part >= 0) drops_by_layer[dropped_[di].layer].push_back(static_cast<int>(di));
+        // Two parts become one piece: one sits on the other, or a support ties them.
+        auto join = [&](int p, int q) {
+            int a = f(p), b = f(q);
+            if (a == b) return;
+            if (b < a) std::swap(a, b);
+            cap[a] += cap[b];
+            cap_all[a] += cap_all[b];
+            exempt[a] = exempt[a] && exempt[b];
+            plate[a] = plate[a] || plate[b];
+            members[a].insert(members[a].end(), members[b].begin(), members[b].end());
+            members[b].clear();
+            uf[b] = a;
+        };
         for (size_t L = 0; L < layers().size(); ++L) {
             for (int p : graph_.partsInLayer(L))
-                for (int q : graph_.part(p).parents) {
-                    int a = f(p), b = f(q);
-                    if (a == b) continue;
-                    if (b < a) std::swap(a, b);
-                    cap[a] += cap[b];
-                    cap_all[a] += cap_all[b];
-                    exempt[a] = exempt[a] && exempt[b];
-                    plate[a] = plate[a] || plate[b];
-                    members[a].insert(members[a].end(), members[b].begin(), members[b].end());
-                    members[b].clear();
-                    uf[b] = a;
-                }
+                for (int q : graph_.part(p).parents) join(p, q);
             for (int ti : tips_by_layer[L]) {
-                const int r = f(tips_[ti].part);
-                cap[r] += capacityOf(tips_[ti]);
-                cap_all[r] += capacityOf(tips_[ti]);
+                const Tip& t = tips_[ti];
+                if (t.tied) {
+                    // Its support stands on the print: what the tip touches and
+                    // what the foot stands on are held as one from here on, and
+                    // the tip adds no hold from the raft (the plan counted it).
+                    if (t.foot_part >= 0) join(t.part, t.foot_part);
+                    cap_all[f(t.part)] += capacityOf(t);
+                    members[f(t.part)].push_back(ti);
+                    continue;
+                }
+                const int r = f(t.part);
+                cap[r] += capacityOf(t);
+                cap_all[r] += capacityOf(t);
                 members[r].push_back(ti);
             }
             for (int di : drops_by_layer[L]) cap_all[f(dropped_[di].part)] += capacityOf(dropped_[di]);
@@ -1181,6 +1219,19 @@ PointGenResult generateSupportPoints(const TriangleMesh& mesh, const SupportConf
                                      const JobControl& ctl) {
     Generator g(mesh, cfg, opts, ctl);
     return g.run();
+}
+
+size_t layersShortOfRaftHold(const TriangleMesh& mesh, const SupportConfig& cfg,
+                             const std::vector<SupportPoint>& from_raft, const std::vector<TiedTip>& tied,
+                             const PointGenOptions& opts, const JobControl& ctl) {
+    if (tied.empty()) return 0;
+    PointGenOptions o = opts;
+    o.manual = from_raft;
+    o.prune = false;
+    const std::vector<SupportPoint> none;
+    Generator g(mesh, cfg, o, ctl, &none, &tied);
+    g.run();
+    return g.dropCheck().short_layers;
 }
 
 DropCheck checkDroppedTips(const TriangleMesh& mesh, const SupportConfig& cfg, const std::vector<SupportPoint>& built,

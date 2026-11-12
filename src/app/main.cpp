@@ -550,6 +550,17 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
             po.layers = layers;
             drops = checkDroppedTips(mesh, cfg, built, dropped, po);
         }
+        // Supports that stand on the model hold a ceiling up, but add nothing
+        // to what holds the print on the raft.
+        size_t short_from_raft = 0;
+        {
+            std::vector<SupportPoint> from_raft;
+            std::vector<TiedTip> tied;
+            splitByFooting(tree, pts, from_raft, tied);
+            PointGenOptions po;
+            po.layers = layers;
+            short_from_raft = layersShortOfRaftHold(mesh, cfg, from_raft, tied, po);
+        }
         json at = json::array();
         for (const Vec3& p : drops.at)
             if (at.size() < 20) at.push_back({p.x, p.y, p.z});
@@ -562,6 +573,7 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
                            {"unsupported", {{"tips", drops.tips},
                                             {"samples", drops.samples},
                                             {"short_layers", drops.short_layers},
+                                            {"short_layers_from_raft", short_from_raft},
                                             {"first_tips_at", at}}}};
     }
     if (!o.preview.empty()) {

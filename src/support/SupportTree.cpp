@@ -538,6 +538,25 @@ void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& point
     for (size_t i = 0; i < points.size(); ++i) (has_head[i] ? built : dropped).push_back(points[i]);
 }
 
+void splitByFooting(const SupportTree& tree, const std::vector<SupportPoint>& points,
+                    std::vector<SupportPoint>& from_raft, std::vector<TiedTip>& tied) {
+    // A head on a pillar that stands on the model is tied; every other head
+    // reaches the raft (through its own pillar, a bridge or a trunk) or the plate.
+    std::vector<int> foot_of(tree.heads.size(), -1);
+    for (size_t pi = 0; pi < tree.pillars.size(); ++pi)
+        if (tree.pillars[pi].on_model)
+            for (int h : tree.pillars[pi].heads)
+                if (h >= 0 && static_cast<size_t>(h) < foot_of.size()) foot_of[h] = static_cast<int>(pi);
+    from_raft.clear();
+    tied.clear();
+    for (size_t hi = 0; hi < tree.heads.size(); ++hi) {
+        const int pt = tree.heads[hi].point;
+        if (pt < 0 || static_cast<size_t>(pt) >= points.size()) continue;
+        if (foot_of[hi] >= 0) tied.push_back({points[pt], tree.pillars[foot_of[hi]].anchor_contact});
+        else from_raft.push_back(points[pt]);
+    }
+}
+
 double SupportTree::fullRaftInset(const TreeConfig& cfg) const {
     // 45°: as far in as the slab is thick, but never past the brim and margin,
     // so each trunk's foot stays on the top.

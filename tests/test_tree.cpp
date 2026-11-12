@@ -232,6 +232,63 @@ TEST_CASE("with standing on the model turned off, a tip with no way down is left
         if (P.on_model) CHECK(P.top - P.anchor_contact.z <= 10 + 1e-9);
 }
 
+TEST_CASE("a tip whose support stands on the print adds no hold from the raft", "[tree]") {
+    // A block on supports: every layer is 400 mm², held by the tips under it.
+    TriangleMesh m = makeBox({0, 0, 0}, {20, 20, 10});
+    placeOnPlate(m, {0, 0, 0}, 5.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.1;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    REQUIRE(pts.size() > 4);
+    // None tied: nothing to report.
+    CHECK(layersShortOfRaftHold(m, cfg, pts, {}) == 0);
+    // Were they all standing on the print, nothing would hold it on the raft:
+    // every layer is short (the plan, counting them, had enough).
+    std::vector<TiedTip> all;
+    for (const auto& p : pts) all.push_back({p, p.pos});
+    CHECK(layersShortOfRaftHold(m, cfg, {}, all) == 100);
+    // With a couple of them tied the rest still hold it.
+    std::vector<SupportPoint> most(pts.begin() + 2, pts.end());
+    const std::vector<TiedTip> two{{pts[0], pts[0].pos}, {pts[1], pts[1].pos}};
+    double hold = 0;
+    for (const auto& p : most) hold += cfg.capacity.capacity(p.tip_diameter);
+    REQUIRE(hold >= 400);
+    CHECK(layersShortOfRaftHold(m, cfg, most, two) == 0);
+}
+
+TEST_CASE("a piece held only from the model below is held by what holds the model", "[tree]") {
+    // A small block floating 6 mm above the middle of a wide slab, too far in
+    // for a route out: its supports stand on the slab.
+    TriangleMesh m = makeBox({0, 0, 0}, {60, 60, 4});
+    m.append(makeBox({25, 25, 10}, {35, 35, 12}));
+    placeOnPlate(m, {0, 0, 0}, 5.0);
+    SupportConfig cfg;
+    cfg.layer_height = 0.1;
+    const auto pts = generateSupportPoints(m, cfg).points;
+    TreeConfig tc;
+    const SupportTree tree = buildSupportTree(m, pts, tc, PrinterProfile::saturn4Ultra16k().minRaftThickness());
+    REQUIRE(tree.dropped_points == 0);
+    std::vector<SupportPoint> from_raft;
+    std::vector<TiedTip> tied;
+    splitByFooting(tree, pts, from_raft, tied);
+    CHECK(from_raft.size() + tied.size() == tree.heads.size());
+    std::size_t standing = 0;
+    for (const auto& P : tree.pillars) standing += P.on_model;
+    REQUIRE(standing > 0);
+    CHECK(tied.size() == standing);
+    for (const auto& t : tied) {
+        CHECK(t.tip.pos.z > 14.5);             // under the block
+        CHECK(t.foot.z == Approx(9).margin(0.01));  // on top of the slab
+    }
+    // The block hangs from the slab, and the slab's own tips hold both.
+    CHECK(layersShortOfRaftHold(m, cfg, from_raft, tied) == 0);
+    // Were its supports standing on nothing that is held, the block's 20
+    // layers would have no hold at all.
+    std::vector<TiedTip> adrift = tied;
+    for (auto& t : adrift) t.foot = {t.foot.x, t.foot.y, 1.0};
+    CHECK(layersShortOfRaftHold(m, cfg, from_raft, adrift) == 20);
+}
+
 TEST_CASE("tips the tree drops are checked: what only they held is reported, and where", "[tree]") {
     const Built b = build(sidewaysCap(), 5.0, standingUpTo(10));
     REQUIRE(b.tree.dropped_points > 0);

@@ -433,7 +433,10 @@ and hold tests then run again with only the tips that were built:
 `validation.unsupported` counts the dropped tips that were the only cover of
 some face (`tips`, with where the first 20 were), the surface samples left with
 no tip in reach (`samples`), and the layers short of hold without them
-(`short_layers`). All three should be 0. They are not the same as
+(`short_layers`). A support that stands on the model ties two places on the
+print together: it holds a ceiling up but adds nothing to what holds the print
+on the raft, so `short_layers_from_raft` counts the layers that are short once
+those tips are left out of the hold. All four should be 0. They are not the same as
 `point_stats.uncovered_samples`, which is the plan before the tree. With the
 default settings a tip is dropped only where no head fits or no spot to stand
 on is found; with `anchor_drop` lowered, turning the model or a longer `route`

@@ -113,4 +113,14 @@ DropCheck checkDroppedTips(const TriangleMesh& mesh, const SupportConfig& cfg, c
                            const std::vector<SupportPoint>& dropped, const PointGenOptions& opts = {},
                            const JobControl& ctl = JobControl::none());
 
+// How many (layer, part) pairs are short of hold once the tips whose supports
+// stand on the model (`tied`) count as what they are: ties. What a tied tip
+// touches and what its foot stands on are held as one from that layer on, by
+// the tips that reach the raft (`from_raft`) alone. Pairs that would be short
+// with every tip counted are the planner's own report and not counted here.
+// Costs about one planning pass; nothing to do without tied tips.
+size_t layersShortOfRaftHold(const TriangleMesh& mesh, const SupportConfig& cfg,
+                             const std::vector<SupportPoint>& from_raft, const std::vector<TiedTip>& tied,
+                             const PointGenOptions& opts = {}, const JobControl& ctl = JobControl::none());
+
 }  // namespace fruit

@@ -253,9 +253,10 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   0.35 mm contact whatever the tip), the shaft keeps its gap to the model, it
   never lands on a face steeper than 60°, and tall ones are braced with each
   other. Both parts now come out with every tip supported. Not printed.
-  Open: such a tip ties two places on the same part together, so it holds a
-  fresh ceiling up but adds nothing to what holds the part on the raft; the
-  hold check still counts it.
+  Such a tip ties two places on the print together: it holds a fresh ceiling
+  up but adds nothing to what holds the print on the raft. The plan still
+  counts it while placing tips; after the tree, `layersShortOfRaftHold` joins
+  what each one ties and reports the layers the raft's own tips can't hold.
 - **Closer tips where a part starts (2026-11-12).** Reasoning, not measured:
   see `SupportConfig::start_zone_height`. A vendor's file for a 90 mm disc
   tipped 12.6° (87 contacts, a 10 mm grid plus a row 1.6 mm apart along the

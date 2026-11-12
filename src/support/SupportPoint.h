@@ -29,6 +29,14 @@ struct SupportPoint {
 
 uint64_t stablePointId(const Vec3& pos, PointCategory c);
 
+// A tip whose support stands on the model instead of the raft, and where its
+// foot is. Such a support ties two places on the print together: it holds a
+// fresh ceiling up, but adds nothing to what holds the print on the raft.
+struct TiedTip {
+    SupportPoint tip;
+    Vec3 foot;
+};
+
 struct Warning {
     std::string code;     // stable key, e.g. "peak_area", "flat_face", "capacity_deficit", "tiny_islands_skipped"
     std::string message;

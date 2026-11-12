@@ -147,4 +147,10 @@ SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<Suppor
 void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& points, std::vector<SupportPoint>& built,
                  std::vector<SupportPoint>& dropped);
 
+// The tips that got a head, split by what their support stands on: the raft
+// or the plate (`from_raft`), or the model (`tied`, with where the foot is).
+// Dropped tips are in neither. For layersShortOfRaftHold.
+void splitByFooting(const SupportTree& tree, const std::vector<SupportPoint>& points,
+                    std::vector<SupportPoint>& from_raft, std::vector<TiedTip>& tied);
+
 }  // namespace fruit
