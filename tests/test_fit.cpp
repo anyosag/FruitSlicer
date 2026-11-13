@@ -152,6 +152,9 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     CHECK(cfg.tip_classes[cfg.default_tip].diameter == Approx(0.3));
     CHECK_FALSE(tc.penetration_table.empty());
     CHECK(notes.size() == 1);  // layer-height mismatch
+    // Measured tips are trusted nearer to where they let go, so each one's own load is held further under it.
+    CHECK(SupportConfig{}.tip_load_limit == Approx(1.0));
+    CHECK(cfg.tip_load_limit == Approx(kMeasuredTipLoadLimit));
 
     // A tighter measured radius means more points on the same plate.
     TriangleMesh m = makeBox({0, 0, 0}, {20, 20, 2});

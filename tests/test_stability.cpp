@@ -342,6 +342,82 @@ TEST_CASE("one more tip under a thin slab takes load off the tips around it", "[
     CHECK(middle > after);
 }
 
+TEST_CASE("the planner's question: tips on rods of their own carry what they do on real supports", "[stability]") {
+    // The model alone, before there are any supports: each tip is given with the part it touches.
+    auto loads = [](const Path& outline, int layers_of_model, const std::vector<Vec2>& at_xy, StabilityConfig cfg = {}) {
+        Build b(20 + layers_of_model);
+        b.part(20, 20 + layers_of_model, outline);
+        for (Paths& sl : b.model.slices) sl = unionNonZero(sl);
+        auto parts = std::make_shared<const IslandGraph>(b.model, cfg.link_grow);
+        REQUIRE(parts->partsInLayer(20).size() == 1);
+        std::vector<TipContact> tips;
+        for (const Vec2& x : at_xy) {
+            TipContact t;
+            t.at = {x.x, x.y, 20 * kH};
+            t.diameter = 0.4;
+            t.part = parts->partsInLayer(20)[0];
+            tips.push_back(t);
+        }
+        return standaloneTipLoads(b.model, parts, tips, cfg);
+    };
+    // One layer of slab over four tips 4 mm apart, off to one side: each tip holds what is nearest it,
+    // 11.25 and 7.5 mm², as with the supports built (the test of the thin slab above).
+    const std::vector<TipLoad> thin = loads(rect(-3, -2.5, 4.5, 2.5), 1, {{-2, -1.5}, {-2, 1.5}, {2, -1.5}, {2, 1.5}});
+    REQUIRE(thin.size() == 4);
+    CHECK(thin[2].load == Approx(11.25).epsilon(0.03));
+    CHECK(thin[3].load == Approx(11.25).epsilon(0.03));
+    CHECK(thin[0].load == Approx(7.5).epsilon(0.04));
+    CHECK(thin[0].load + thin[1].load + thin[2].load + thin[3].load == Approx(37.5).epsilon(1e-6));
+    for (const TipLoad& t : thin) {
+        CHECK(t.holds == Approx(11.1 / 0.7));  // the tip as given, all of it touching
+        CHECK(t.near == Approx(t.load).epsilon(0.06));  // nearly all of it thin, fresh model given outright
+        CHECK(t.at_layer == 20);
+    }
+    // A stiff block on four tips shares evenly; a fifth tip in the middle takes load off all of them.
+    const std::vector<Vec2> four{{-5, -5}, {-5, 5}, {5, -5}, {5, 5}};
+    std::vector<Vec2> five = four;
+    five.push_back({0, 0});
+    const std::vector<TipLoad> on_four = loads(rect(-6, -6, 6, 6), 10, four, stiffBlock());
+    const std::vector<TipLoad> on_five = loads(rect(-6, -6, 6, 6), 10, five, stiffBlock());
+    for (const TipLoad& t : on_four) CHECK(t.load == Approx(36.0).epsilon(1e-6));
+    for (const TipLoad& t : on_five) CHECK(t.load == Approx(144.0 / 5).epsilon(1e-6));
+    // A longer rod gives more, so its tip takes less of a stiff piece: three in a line, the middle
+    // one on a rod of 40 mm against 1 mm for the others.
+    {
+        Build b(30);
+        b.part(20, 30, rect(-6, -3, 6, 3));
+        for (Paths& sl : b.model.slices) sl = unionNonZero(sl);
+        auto parts = std::make_shared<const IslandGraph>(b.model, 0.02);
+        std::vector<TipContact> tips(3);
+        for (int i = 0; i < 3; ++i) {
+            tips[static_cast<size_t>(i)].at = {-4.0 + 4 * i, 0, 20 * kH};
+            tips[static_cast<size_t>(i)].part = parts->partsInLayer(20)[0];
+        }
+        const std::vector<TipLoad> even = standaloneTipLoads(b.model, parts, tips, stiffBlock());
+        for (const TipLoad& t : even) CHECK(t.load == Approx(24.0).epsilon(1e-6));
+        tips[1].rod = 40;
+        const std::vector<TipLoad> uneven = standaloneTipLoads(b.model, parts, tips, stiffBlock());
+        CHECK(uneven[1].load < 12.0);
+        CHECK(uneven[0].load == Approx(uneven[2].load).epsilon(1e-6));
+        CHECK(uneven[0].load + uneven[1].load + uneven[2].load == Approx(72.0).epsilon(1e-6));
+    }
+    // A tip that touches no part of the model carries nothing, and upsets nothing.
+    {
+        Build b(21);
+        b.part(20, 21, rect(-3, -3, 3, 3));
+        for (Paths& sl : b.model.slices) sl = unionNonZero(sl);
+        auto parts = std::make_shared<const IslandGraph>(b.model, 0.02);
+        std::vector<TipContact> tips(2);
+        tips[0].at = {0, 0, 20 * kH};
+        tips[0].part = parts->partsInLayer(20)[0];
+        tips[1].at = {30, 30, 20 * kH};  // part left at -1
+        const std::vector<TipLoad> one = standaloneTipLoads(b.model, parts, tips, StabilityConfig{});
+        CHECK(one[0].load == Approx(36.0).epsilon(1e-6));
+        CHECK(one[1].load == 0);
+        CHECK(one[1].at_layer == -1);
+    }
+}
+
 TEST_CASE("a piece on one tip pivots: the tip takes the whole pull and no bending", "[stability]") {
     Build b(30);
     b.support(0, 20, rect(-0.2, -0.2, 0.2, 0.2));

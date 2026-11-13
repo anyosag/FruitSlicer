@@ -45,6 +45,11 @@ struct CapacityModel {
     double capacity(double tip_diameter) const;
 };
 
+// Each tip's own load with a measured table (SupportConfig::tip_load_limit).
+// Replayed on the app's test bracket with its made-up resin: at 1 the model
+// went with its tips in 281 of 500 replays, at 0.8 in 29, at 0.7 in 3.
+inline constexpr double kMeasuredTipLoadLimit = 0.7;
+
 struct SupportConfig {
     double layer_height = 0.05;
     // Parts in consecutive layers are linked when the upper one overlaps the
@@ -103,6 +108,25 @@ struct SupportConfig {
 
     CoverageModel coverage;
     CapacityModel capacity;
+    // Each tip's own load. The capacity rule asks that the tips of a piece
+    // hold a layer together; it does not say what any one of them carries.
+    // The replay of the print does (stability/Stability.h): thin, fresh model
+    // is held by the tips near each patch of it, a stiff piece by all its
+    // tips by their stiffness. Where a tip would carry more than this many
+    // times what it is trusted with, it is made a size bigger where that
+    // carries it, else tips are added beside it, and the loads are worked
+    // out again, up to `relief_rounds` times. 0 turns it off. Only when the
+    // planner is asked to (PointGenOptions::relieve).
+    //
+    // 1 with the built-in table, whose numbers are taken as a third of the
+    // load at which half of such tips let go. A measured table trusts a tip
+    // with 0.7 of that load, and at it about 1 in 18 already lets go: with a
+    // hundred tips all at it, one very likely does, and its neighbours
+    // follow. So a resin's measured table brings kMeasuredTipLoadLimit with
+    // it (calibration's applyProfile): about half the load at which half
+    // let go, where about 1 in 200 does.
+    double tip_load_limit = 1.0;
+    int relief_rounds = 8;
 
     // The model stands on the build plate (no elevation, no raft): parts on
     // the first layer are held by the plate, not by tips.

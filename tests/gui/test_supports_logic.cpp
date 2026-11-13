@@ -331,6 +331,13 @@ TEST_CASE("Supports: every kind of tip explains itself", "[gui][supports]") {
     fruit::SupportConfig cfg;
     // Default penetration: half the diameter within 0.08–0.2 mm.
     CHECK_THAT(tipNumbers(p, cfg, tc), ContainsSubstring("Contact depth 0.15 mm"));
+    // A tip the planner made a size bigger says so; one of your own does not.
+    p.category = fruit::PointCategory::Overhang;
+    CHECK_THAT(tipWhy(p), !ContainsSubstring("bigger than usual"));
+    p.enlarged = true;
+    CHECK_THAT(tipWhy(p), ContainsSubstring("One size bigger than usual"));
+    p.category = fruit::PointCategory::Manual;
+    CHECK_THAT(tipWhy(p), !ContainsSubstring("bigger than usual"));
 }
 
 TEST_CASE("Advanced settings: unique keys, ranges that hold the values in use, and values that reach the engine",
@@ -373,9 +380,16 @@ TEST_CASE("Advanced settings: unique keys, ranges that hold the values in use, a
             CHECK(f.get(supportConfig(p, c), treeConfig(c)) == Approx(f.hi));
         }
     }
-    // The 31 on the canvas board "Supports · advanced", "Where a part starts", and the two that came from the
-    // Supports panel: "Tip spacing" and "Trunks and braces".
-    CHECK(rows == 34);
+    // The 31 on the canvas board "Supports · advanced", "Where a part starts", "Each tip's own load", and the two
+    // that came from the Supports panel: "Tip spacing" and "Trunks and braces".
+    CHECK(rows == 35);
+    // Each tip's own load: 1 with FruitSlicer's own strengths, less with a resin's measured ones, yours over both.
+    CHECK(supportConfig(p, none).tip_load_limit == Approx(1.0));
+    SupportChoices measured;
+    measured.profile = {{"capacity_table", {{0.3, 4.0}, {0.4, 8.0}, {0.6, 16.0}}}};
+    CHECK(supportConfig(p, measured).tip_load_limit == Approx(fruit::kMeasuredTipLoadLimit));
+    measured.advanced["tip_load_limit"] = 1.5;
+    CHECK(supportConfig(p, measured).tip_load_limit == Approx(1.5));
     // The usual tip size lives in the choices themselves.
     SupportChoices big;
     big.usual_tip = 3;

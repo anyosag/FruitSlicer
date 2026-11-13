@@ -434,6 +434,9 @@ void applyProfile(const json& p, SupportConfig& cfg, TreeConfig* tree, std::vect
         cfg.capacity.table = pairs(p.at("capacity_table"));
         // Tip classes become the measured diameters.
         if (!cfg.capacity.table.empty()) {
+            // A measured table is trusted nearer to where its tips let go: each tip's own load is held
+            // further under it (SupportConfig::tip_load_limit).
+            cfg.tip_load_limit = kMeasuredTipLoadLimit;
             cfg.tip_classes.clear();
             for (const auto& [d, c] : cfg.capacity.table) {
                 std::ostringstream name;

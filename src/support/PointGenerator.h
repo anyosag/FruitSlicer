@@ -12,7 +12,11 @@
 //     capacity of the tips holding it is at least its peel demand (layer
 //     area × peel factor);
 //  3. islands — every island gets its minimum count (1 tip ≤ 1.7 mm,
-//     2 tips ≤ 6.5 mm, ≥ 3 for larger islands).
+//     2 tips ≤ 6.5 mm, ≥ 3 for larger islands);
+//  4. each tip's own load (when asked: PointGenOptions::relieve) — no tip
+//     carries more than it is trusted with, as the replay of the print shares
+//     each layer's pull among the tips (SupportConfig::tip_load_limit). Rule
+//     2 is about the tips of a piece together; this one is about each.
 //
 // Bottom-up over the layers, deterministic. Weighted greedy set cover
 // (gain / cost; cost penalises cosmetic regions and sharp edges), then
@@ -46,6 +50,13 @@ struct PointGenStats {
     size_t capacity_deficits = 0;   // component-layers short of capacity after all fixes
     size_t greedy_points = 0;       // before pruning
     size_t pruned = 0;
+    // Rule 4: how often the loads were worked out, the tips added beside one
+    // that carried too much, the tips made a size bigger instead, and the
+    // tips still over their load when it stopped (no room, or out of rounds).
+    size_t relief_rounds = 0;
+    size_t relief_added = 0;
+    size_t relief_upgraded = 0;
+    size_t relief_left = 0;
     double peak_layer_area = 0;
     int peak_layer = 0;
     double seconds = 0;
@@ -82,6 +93,11 @@ enum class CoverStrategy {
 
 struct PointGenOptions {
     bool prune = true;
+    // Rule 4: after the tips are planned, work out what each would carry;
+    // those that carry too much get a size bigger, or tips beside them. The
+    // loads are worked out afresh each round (the model, layer by layer), so
+    // the orientation search and the checks leave it off.
+    bool relieve = false;
     CoverStrategy strategy = CoverStrategy::Greedy;
     std::vector<SupportPoint> manual;  // pinned user points (snapped to the surface)
     const CosmeticSpec* cosmetic = nullptr;

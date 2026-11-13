@@ -386,7 +386,7 @@ private:
     double tipHolds(double diameter) const { return cfg_.capacity.capacity(diameter) / usable_; }
     double hingeFactor(const Vec2& xy) const;
     int layerOf(int n) const { return part_[n].layer; }
-    bool ground(int n) const { return layerOf(n) == 0; }
+    bool ground(int n) const { return layerOf(n) == 0 || (!stub_.empty() && stub_[n]); }
 
     const StabilityInput& in_;
     const StabilityConfig& cfg_;
@@ -403,6 +403,13 @@ private:
         const ExPolygon& poly() const { return *shape; }
     };
     std::shared_ptr<const IslandGraph> model_graph_, support_graph_;  // own the shapes
+    // Standalone tips (the planner's question): each tip's support is one
+    // part of its own, taken to stand on the plate through a rod of a given
+    // stiffness. They come after the model's and the supports' parts.
+    std::vector<char> stub_;          // by part: such a part
+    std::vector<double> stub_k_;      // by part: the stiffness of the rod under it
+    std::vector<int> stub_tip_;       // by part: which of the tips given it is
+    std::vector<ExPolygon> stub_shape_;
     std::vector<Part> part_;
     std::vector<std::vector<int>> in_layer_;
     std::vector<int> same_;                        // by part: how many of its parents are of its own kind
@@ -535,7 +542,11 @@ void Analysis::buildParts() {
         model_graph_ = std::make_shared<const IslandGraph>(model ? *model : all, cfg_.link_grow);
     }
     LayerStack rest;  // the supports: each layer less the model
-    if (model) {
+    if (model && in_.standalone_tips) {  // no supports yet: the tips come as given
+        rest.layer_height = h_;
+        rest.sample_z = all.sample_z;
+        rest.slices.resize(all.size());
+    } else if (model) {
         rest.layer_height = h_;
         rest.sample_z = all.sample_z;
         rest.slices.resize(all.size());
@@ -562,7 +573,17 @@ void Analysis::buildParts() {
 
     const int nm = static_cast<int>(model_graph_->parts().size());
     const int ns = support_graph_ ? static_cast<int>(support_graph_->parts().size()) : 0;
-    n_ = nm + ns;
+    // Standalone tips: one part each, for those that touch a part of the model above the plate.
+    std::vector<int> standalone;
+    if (in_.standalone_tips) {
+        if (!model || !in_.model_graph) throw std::invalid_argument("stability: standalone tips need the model's parts");
+        for (size_t t = 0; t < in_.tips.size(); ++t) {
+            const TipContact& tc = in_.tips[t];
+            if (tc.foot || tc.part < 0 || tc.part >= nm || model_graph_->part(tc.part).layer < 1) continue;
+            standalone.push_back(static_cast<int>(t));
+        }
+    }
+    n_ = nm + ns + static_cast<int>(standalone.size());
     models_ = nm;
     part_.assign(n_, {});
     in_layer_.assign(layers_, {});
@@ -588,6 +609,39 @@ void Analysis::buildParts() {
             for (int i : model_graph_->partsInLayer(static_cast<size_t>(L))) in_layer_[L].push_back(i);
         if (support_graph_ && static_cast<size_t>(L) < support_graph_->layerCount())
             for (int i : support_graph_->partsInLayer(static_cast<size_t>(L))) in_layer_[L].push_back(nm + i);
+    }
+    stub_.clear();
+    stub_k_.clear();
+    stub_tip_.clear();
+    stub_shape_.clear();
+    if (!standalone.empty()) {
+        stub_.assign(n_, 0);
+        stub_k_.assign(n_, 0);
+        stub_tip_.assign(n_, -1);
+        stub_shape_.resize(standalone.size());
+        for (size_t j = 0; j < standalone.size(); ++j) {
+            const TipContact& tc = in_.tips[standalone[j]];
+            const int id = nm + ns + static_cast<int>(j);
+            // Its shape: the tip's own round, under the part it touches.
+            ExPolygon& e = stub_shape_[j];
+            const double r = std::max(tc.diameter, 0.05) / 2;
+            for (int a = 0; a < 16; ++a)
+                e.contour.push_back(toPoint({tc.at.x + r * std::cos(2 * kPi * a / 16), tc.at.y + r * std::sin(2 * kPi * a / 16)}));
+            Part& q = part_[id];
+            q.layer = part_[tc.part].layer - 1;
+            q.shape = &e;
+            q.box = e.bbox();
+            stub_[id] = 1;
+            stub_tip_[id] = standalone[j];
+            // The rod under it: a head narrowing to the tip, on a rod down to
+            // the plate. Each layer of it gives as one joint of its own
+            // cross-section does, one after the other.
+            const double rp = std::max(cfg_.rod_diameter, tc.diameter) / 2;
+            const double len = tc.rod > 0 ? tc.rod : std::max(h_, tc.at.z);
+            const double head = std::min(std::max(cfg_.head_length, 0.0), len);
+            const double give = head / h_ / (kPi * r * rp) + (len - head) / h_ / (kPi * rp * rp);
+            stub_k_[id] = give > 0 ? 1 / give : kInf;
+        }
     }
     same_.assign(n_, 0);
     for (int i = 0; i < n_; ++i) same_[i] = static_cast<int>(part_[i].parents.size());
@@ -635,6 +689,19 @@ void Analysis::buildParts() {
                 if (id >= 0) lit_[id] += e.area();
             }
     });
+    // A standalone tip touches its part with all of itself, where it was put.
+    for (size_t j = 0; j < standalone.size(); ++j) {
+        const TipContact& tc = in_.tips[standalone[j]];
+        const int id = nm + ns + static_cast<int>(j);
+        const double r = std::max(tc.diameter, 0.05) / 2;
+        AreaMoments m;
+        m.area = kPi * r * r;
+        m.centroid = tc.at.xy();
+        m.sxx = m.syy = kPi * r * r * r * r / 4;
+        area_[id] = m.area;
+        centre_[id] = m.centroid;
+        touches[static_cast<size_t>(part_[tc.part].layer)].push_back({tc.part, id, m});
+    }
     // The supports that reach the plate through supports. The others stand
     // on the model, on a small tip of their own turned upside down.
     std::vector<char> rooted(n_, 0);
@@ -717,6 +784,7 @@ void Analysis::buildParts() {
     // part smaller than one printer pixel is not printed at all (a corner of
     // a faceted tip, a shaving): it holds nothing and nothing holds it.
     held_.assign(n_, 0);
+    for (size_t j = 0; j < standalone.size(); ++j) held_[nm + ns + static_cast<int>(j)] = 1;  // on its rod
     for (int L = 0; L < layers_; ++L)
         for (int id : in_layer_[L]) {
             if (area_[id] < cfg_.pixel_area) continue;
@@ -870,6 +938,11 @@ void Analysis::sizeJoints() {
     for (size_t i = 0; i < links_.size(); ++i) {
         const Link& l = links_[i];
         if (!contact(l) || grid.empty()) continue;
+        if (!stub_.empty() && stub_[l.parent]) {  // a standalone tip: it is the one it was made for
+            tip_of[i] = stub_tip_[l.parent];
+            touching[tip_of[i]] += l.area;
+            continue;
+        }
         const double z = layerOf(l.child) * h_;
         double best_d = 1e300;
         const std::int64_t cx = cell(l.c.x), cy = cell(l.c.y), cz = cell(z);
@@ -1041,6 +1114,7 @@ void Analysis::buildRods() {
     }
     // What a joint onto a support part finds under it: its share of that part's hold.
     auto under = [&](const Link& l) {
+        if (!stub_.empty() && stub_[l.parent]) return stub_k_[l.parent];  // a standalone tip's own rod
         if (ground(l.parent)) return kInf;
         return fan_[l.parent] > 0 ? rod_k_[l.parent] * (l.area / fan_[l.parent]) : 0.0;
     };
@@ -2085,6 +2159,7 @@ void Analysis::findRuns() {
 
 void Analysis::findSkins() {
     out_.skins.assign(layers_, {});
+    if (in_.standalone_tips) return;  // the planner asks what each tip carries, not what forms
     const double chances[] = {0.01, 0.05, 0.2, 0.5, 0.9};
     double reach[5];
     for (int j = 0; j < 5; ++j)
@@ -2130,6 +2205,10 @@ void Analysis::runReplays() {
     lost_with_.assign(links_.size(), 0.0f);
     lost_per_print_.assign(links_.size(), 0.0f);
     tips_cost_chance_ = tips_cost_volume_ = 0;
+    if (in_.standalone_tips) {  // the planner's question is what each tip carries: nothing is replayed
+        for (int id = 0; id < n_; ++id) out_.parts[id].lost_chance = held_[id] ? 0.0f : 1.0f;
+        return;
+    }
     const int replays = std::max(cfg_.replays, 0);
     out_.stats.replays = replays;
 
@@ -2714,7 +2793,8 @@ StabilityResult Analysis::run() {
     out_.support_graph = support_graph_;
     out_.in_layer = in_layer_;
     out_.where.resize(n_);
-    for (int i = 0; i < n_; ++i) out_.where[i] = {part_[i].layer, part_[i].box, area_[i], part_[i].shape};
+    for (int i = 0; i < n_; ++i)
+        out_.where[i] = {part_[i].layer, part_[i].box, area_[i], !stub_.empty() && stub_[i] ? nullptr : part_[i].shape};
     out_.layer_height = h_;
     out_.closeness_by_layer = by_layer_;
     findSpots();
@@ -2802,6 +2882,28 @@ double StabilityResult::breakAt(std::size_t layer, const Vec2& xy) const {
 StabilityResult analyzeStability(const StabilityInput& in, const StabilityConfig& cfg, const JobControl& ctl) {
     Analysis a(in, cfg, ctl);
     return a.run();
+}
+
+std::vector<TipLoad> standaloneTipLoads(const LayerStack& model, std::shared_ptr<const IslandGraph> parts,
+                                        const std::vector<TipContact>& tips, const StabilityConfig& cfg,
+                                        const JobControl& ctl) {
+    std::vector<TipLoad> out(tips.size());
+    if (tips.empty() || model.size() == 0) return out;
+    StabilityInput in;
+    in.print = &model;
+    in.model = &model;
+    in.model_graph = std::move(parts);
+    in.tips = tips;
+    in.standalone_tips = true;
+    StabilityConfig c = cfg;
+    c.replays = 0;
+    c.skin_half_reach = cfg.skin_half_reach;
+    const StabilityResult r = analyzeStability(in, c, ctl);
+    for (const TipRisk& t : r.tips) {
+        if (t.contact < 0 || static_cast<size_t>(t.contact) >= out.size()) continue;
+        out[static_cast<size_t>(t.contact)] = {t.load, t.near, t.holds, t.at_layer};
+    }
+    return out;
 }
 
 }  // namespace fruit

@@ -3,8 +3,10 @@
   "scale": 1,
   "steps": [
     {"open": "@demo-shelf"}, {"wait": "jobs"}, {"health": "place"},
-    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"view": "angled"},
-    {"risk": "wait"}, {"risk": "show"}, {"shot": "i1_risk_tips"},
+    {"step": "supports"}, {"setting": ["tip_load_limit", 0]}, {"supports": "generate"}, {"wait": "jobs"},
+    {"view": "angled"}, {"risk": "wait"}, {"risk": "show"}, {"shot": "i1_risk_tips"},
+    {"advanced": "reset"}, {"supports": "generate"}, {"wait": "jobs"}, {"risk": "wait"},
+    {"supports_view": "supports"}, {"shot": "i1_risk_tips_held"},
     {"edit_tips": true}, {"tip_delete_over": 12}, {"edit_tips": false},
     {"risk": "wait"}, {"supports_view": "supports"}, {"shot": "i1_risk_checks"},
     {"risk": "show"}, {"shot": "i1_risk_view"},

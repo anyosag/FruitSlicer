@@ -294,6 +294,7 @@ struct GenCli {
     std::string hinge;           // side of the vat hinge: +x, -x, +y, -y
     double peel_bias = -1;       // < 0: 0.25 when a hinge is given
     bool on_plate = false;
+    double tip_limit = -1;       // < 0: the planner's own (1, or 0.7 with a measured table); 0: off
 };
 
 void addGenOptions(CLI::App* cmd, GenCli& g) {
@@ -305,6 +306,10 @@ void addGenOptions(CLI::App* cmd, GenCli& g) {
     cmd->add_option("--peel-bias", g.peel_bias,
                     "Extra peel demand on the side far from the hinge (default 0.25 with --hinge; UNVERIFIED size)");
     cmd->add_flag("--on-plate", g.on_plate, "Print standing on the build plate: no elevation, no raft");
+    cmd->add_option("--tip-limit", g.tip_limit,
+                    "No tip is asked to carry more than this many times what it is trusted with, as the replay "
+                    "shares each layer's pull (default 1, or 0.7 with a profile's measured tips; 0: only the "
+                    "tips of a piece together)");
 }
 
 // Resin profile first, then explicit command-line overrides (cfg's layer
@@ -327,6 +332,7 @@ void applySettings(const GenCli& g, SupportConfig& cfg, TreeConfig* tc, json& r)
     c.on_plate = g.on_plate;
     const auto notes = resolveSettings(g.profile.empty() ? nullptr : &profile, c, cfg, tc);
     if (!notes.empty()) r["profile_notes"] = notes;
+    if (g.tip_limit >= 0) cfg.tip_load_limit = g.tip_limit;
     if (c.hinge) r["peel"] = {{"hinge", g.hinge}, {"bias", cfg.peel_bias}};
     if (g.on_plate) {
         // What `goo --on-plate` prints of the model itself in the bottom layers, at this layer height: the
@@ -369,6 +375,7 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
         for (const auto& p : pointsFromJson(json::parse(std::ifstream(o.points_in))))
             if (p.category == PointCategory::Manual) opts.manual.push_back(p);
     }
+    opts.relieve = true;
     const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
 
     json out = pointsToJson(res.points);
@@ -490,6 +497,7 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
         if (!popts.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(popts.cosmetic)));
         PointGenOptions opts;
         opts.cosmetic = &cosmetic;
+        opts.relieve = true;
         const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
         pts = res.points;
         layers = res.analysis.layers;
@@ -497,7 +505,11 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
                             {"capacity_deficit_layers", res.stats.capacity_deficits},
                             {"small_islands_skipped", res.stats.tiny_islands_skipped},
                             {"suction_cups", res.stats.suction_cups},
-                            {"resin_traps", res.stats.resin_traps}};
+                            {"resin_traps", res.stats.resin_traps},
+                            {"tips_added_beside_overloaded_ones", res.stats.relief_added},
+                            {"tips_made_bigger_instead", res.stats.relief_upgraded},
+                            {"rounds_of_working_out_loads", res.stats.relief_rounds},
+                            {"tips_still_over_their_load", res.stats.relief_left}};
         json w = json::array();
         for (const auto& x : res.warnings) w.push_back({{"code", x.code}, {"message", x.message}});
         r["point_warnings"] = w;
@@ -635,10 +647,16 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
         if (!popts.cosmetic.empty()) cosmetic = CosmeticSpec::fromJson(json::parse(std::ifstream(popts.cosmetic)));
         PointGenOptions opts;
         opts.cosmetic = &cosmetic;
+        opts.relieve = true;
         const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
         pts = res.points;
         model_layers = res.analysis.layers;
         model_parts = res.analysis.islands;
+        r["planning"] = {{"seconds", res.stats.seconds},
+                         {"tips_added_beside_overloaded_ones", res.stats.relief_added},
+                         {"tips_made_bigger_instead", res.stats.relief_upgraded},
+                         {"rounds_of_working_out_loads", res.stats.relief_rounds},
+                         {"tips_still_over_their_load", res.stats.relief_left}};
     }
     tc.merge_pillars = !o.no_merge;
     if (o.raft == "none") tc.raft = RaftStyle::None;
@@ -775,7 +793,9 @@ int cmdABPlate(const std::string& path, const PlacementOpts& place, double layer
     cfg.coverage.density = popts.density;
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
-    const PointGenResult res = generateSupportPoints(mesh, cfg, {});
+    PointGenOptions popt;
+    popt.relieve = true;
+    const PointGenResult res = generateSupportPoints(mesh, cfg, popt);
     const SupportTree tree =
         buildSupportTree(mesh, res.points, tc, minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h));
     const TriangleMesh sup = tree.mesh(tc);

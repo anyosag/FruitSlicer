@@ -17,6 +17,7 @@
 #include "layers/LayerStack.h"
 #include "mesh/AabbTree.h"
 #include "mesh/MeshAnalysis.h"
+#include "stability/Stability.h"
 
 namespace fruit {
 
@@ -25,6 +26,7 @@ namespace {
 constexpr double kInward = 0.01;   // mm: nudge endpoints into the solid for through-material tests
 constexpr double kEdgeInset = 0.02; // mm: edge samples sit just inside the face
 constexpr double kRimBand = 0.1;    // mm: how near a part's outline counts as on it
+constexpr double kReliefSlack = 1.1; // rule 4: a tip counts as carrying too much from this many times its limit
 
 struct Sample {
     Vec3 pos, normal;
@@ -48,6 +50,7 @@ struct Tip {
     double cost = 1.0;
     double thickness = 0;
     bool removed = false;
+    bool enlarged = false;  // a size up, to carry its own load (rule 4)
     // Checking: its support stands on the model, on part `foot_part` (-1: unknown).
     bool tied = false;
     int foot_part = -1;
@@ -178,6 +181,11 @@ private:
 
     // ---- final passes
     void finalize();
+    // Rule 4: tips beside those that would carry more than they are trusted with.
+    void relieve();
+    // The spot for a tip beside tip `ti`, within `reach` of it: where the
+    // model's underside is furthest from every tip (-1: none).
+    int reliefSpot(int ti, double reach) const;
     // Check mode: what only the dropped tips held (uses the coverage and
     // capacity replay of finalize()).
     void checkDropped(const std::vector<int>& cover_count);
@@ -1168,6 +1176,8 @@ void Generator::finalize() {
         }
     }
 
+    relieve();
+
     for (size_t si = 0; si < samples_.size(); ++si)
         if (samples_[si].needs_cover && cover_count[si] == 0) ++st.uncovered;
     for (double s : slack)
@@ -1224,6 +1234,7 @@ void Generator::finalize() {
         p.layer = t.layer;
         p.part = t.part;
         p.cost = t.cost;
+        p.enlarged = t.enlarged;
         p.id = stablePointId(t.pos, t.cat);
         result_.points.push_back(p);
     }
@@ -1232,6 +1243,136 @@ void Generator::finalize() {
         if (a.pos.x != b.pos.x) return a.pos.x < b.pos.x;
         return a.pos.y < b.pos.y;
     });
+}
+
+int Generator::reliefSpot(int ti, double reach) const {
+    const Tip& t = tips_[ti];
+    // No nearer any tip than two tip widths: closer, two heads run together.
+    const double gap = std::max(0.8, 2 * t.diameter);
+    int own = -1, other = -1;
+    double own_score = 0, other_score = 0;
+    sample_grid_.query(t.pos.xy(), reach, [&](int si) {
+        const Sample& s = samples_[si];
+        if (s.excluded || (s.tip >= 0 && !tips_[s.tip].removed)) return;
+        if (distance(s.pos, t.pos) > reach) return;
+        double d = 1e9;
+        int nearest = -1;
+        tip_grid_.query(s.pos.xy(), reach, [&](int tj) {
+            if (tips_[tj].removed) return;
+            const double dd = distance(tips_[tj].pos, s.pos);
+            if (dd < d) {
+                d = dd;
+                nearest = tj;
+            }
+        });
+        if (d < gap) return;
+        // Through the model, as coverage is: a spot across a slot is under another piece of it.
+        if (!segmentInside(t.pos, t.normal, s.pos, s.normal)) return;
+        // Furthest from every tip, cheap spots first; the tip's own patch before a neighbour's.
+        const double score = d / s.cost;
+        if (nearest == ti) {
+            if (score > own_score) {
+                own_score = score;
+                own = si;
+            }
+        } else if (score > other_score) {
+            other_score = score;
+            other = si;
+        }
+    });
+    return own >= 0 ? own : other;
+}
+
+void Generator::relieve() {
+    PointGenStats& st = result_.stats;
+    if (!opts_.relieve || check_ || !(cfg_.tip_load_limit > 0) || cfg_.relief_rounds <= 0) return;
+    const StabilityConfig sc = stabilityConfig(cfg_);
+    // (The parts are this planner's own until it hands them on: lent, not given.)
+    const std::shared_ptr<const IslandGraph> parts(std::shared_ptr<const IslandGraph>(), &graph_);
+    const double limit = cfg_.tip_load_limit;
+    const int classes = static_cast<int>(cfg_.tip_classes.size());
+    for (int round = 0; round < cfg_.relief_rounds; ++round) {
+        ctl_.check();
+        std::vector<int> live;
+        std::vector<TipContact> contacts;
+        for (size_t ti = 0; ti < tips_.size(); ++ti) {
+            const Tip& t = tips_[ti];
+            if (t.removed) continue;
+            live.push_back(static_cast<int>(ti));
+            TipContact c;
+            c.at = t.pos;
+            c.diameter = t.diameter;
+            c.part = t.part;
+            contacts.push_back(c);
+        }
+        if (live.empty()) break;
+        const std::vector<TipLoad> loads = standaloneTipLoads(layers(), parts, contacts, sc, ctl_.silent());
+        struct Over {
+            int tip;
+            double times, load;
+        };
+        std::vector<Over> over;
+        for (size_t i = 0; i < live.size(); ++i) {
+            const double trusted = limit * capacityOf(tips_[live[i]]);
+            // (A tenth over is within what this way of working the loads out is good for: with the supports
+            // built and replayed in full, a tip's load comes out up to a third either side of it.)
+            if (trusted > 0 && loads[i].load > kReliefSlack * trusted) over.push_back({live[i], loads[i].load / trusted, loads[i].load});
+        }
+        st.relief_left = over.size();
+        if (over.empty()) break;
+        ++st.relief_rounds;
+        std::stable_sort(over.begin(), over.end(), [](const Over& a, const Over& b) { return a.times > b.times; });
+        std::vector<char> eased(tips_.size(), 0);
+        size_t changed = 0;
+        for (const Over& o : over) {
+            // A tip was put beside it this round already: see what that did first.
+            if (eased[static_cast<size_t>(o.tip)]) continue;
+            // A size bigger, where the size is the planner's to choose.
+            auto bigger = [&]() {
+                Tip& t = tips_[static_cast<size_t>(o.tip)];
+                if (t.tip_class < 0 || t.tip_class + 1 >= classes) return false;
+                Comp& C = comp_[find(t.part)];
+                C.capacity -= capacityOf(t);
+                ++t.tip_class;
+                t.diameter = cfg_.tip_classes[static_cast<size_t>(t.tip_class)].diameter;
+                C.capacity += capacityOf(t);
+                t.enlarged = true;
+                ++st.relief_upgraded;
+                ++changed;
+                return true;
+            };
+            // Where one size up carries it, that is the least to add: no new support, one mark a little
+            // bigger. Not for a tip that was chosen small on purpose (beside a sharp edge, on a side people
+            // see): there another small tip goes beside it instead.
+            {
+                const Tip& t = tips_[static_cast<size_t>(o.tip)];
+                const bool small_on_purpose = t.tip_class >= 0 && t.tip_class < cfg_.default_tip;
+                if (t.tip_class >= 0 && t.tip_class + 1 < classes && !small_on_purpose &&
+                    o.load <= kReliefSlack * limit * cfg_.capacity.capacity(cfg_.tip_classes[static_cast<size_t>(t.tip_class) + 1].diameter)) {
+                    bigger();
+                    continue;
+                }
+            }
+            // Its patch: the area it carries, as a round. Twice over wants one more tip, three times two.
+            const double reach = std::clamp(1.6 * std::sqrt(o.load / kPi), 1.2, cfg_.coverage.maxRadius());
+            const int want = std::clamp(static_cast<int>(std::ceil(o.times)) - 1, 1, 3);
+            int got = 0;
+            for (; got < want; ++got) {
+                const int si = reliefSpot(o.tip, reach);
+                if (si < 0) break;
+                const int id = addTip(si, PointCategory::Capacity, true);
+                eased.resize(tips_.size(), 0);
+                const Vec3 at = tips_[static_cast<size_t>(id)].pos;
+                tip_grid_.query(at.xy(), reach, [&](int tj) {
+                    if (tj != o.tip && distance(tips_[static_cast<size_t>(tj)].pos, at) <= reach) eased[static_cast<size_t>(tj)] = 1;
+                });
+                ++st.relief_added;
+                ++changed;
+            }
+            if (got == 0) bigger();  // nowhere to put one
+        }
+        if (changed == 0) break;
+    }
 }
 
 void Generator::checkDropped(const std::vector<int>& cover_count) {

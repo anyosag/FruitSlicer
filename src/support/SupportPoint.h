@@ -25,6 +25,8 @@ struct SupportPoint {
     int layer = 0;
     int part = -1;          // IslandGraph part the tip touches
     double cost = 1.0;      // placement cost (cosmetic / edge penalties)
+    // One size up from what the planner gives its kind, so that it can carry its own share of the pull.
+    bool enlarged = false;
 };
 
 uint64_t stablePointId(const Vec3& pos, PointCategory c);

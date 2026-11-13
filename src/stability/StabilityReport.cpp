@@ -81,6 +81,40 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
         }
         j["tips_that_may_let_go"] = at_risk;
         j["worst_tip_chance"] = worst;
+        // How many tips carry more than they are trusted with, by how many times that load
+        // (grazing contacts, under kSliverContact, left out).
+        {
+            const double usable = std::clamp(cfg.usable_fraction, 0.05, 1.0);
+            const double steps[] = {1.0, 1.25, 1.5, 2.0, 3.0};
+            std::size_t over[5] = {0, 0, 0, 0, 0}, counted = 0;
+            // And of those over, how many are over by the thin, fresh model near them alone.
+            std::size_t thin_alone = 0, feet = 0, feet_over = 0;
+            std::size_t under[3] = {0, 0, 0};  // how many carry under a quarter, a half and three quarters of it
+            double most = 0, sum = 0;
+            for (const TipRisk& t : r.tips) {
+                if (t.area < kSliverContact || !(t.holds > 0)) continue;
+                ++counted;
+                const double times = t.load / (t.holds * usable);
+                sum += times;
+                under[0] += times < 0.25;
+                under[1] += times < 0.5;
+                under[2] += times < 0.75;
+                most = std::max(most, times);
+                for (int k = 0; k < 5; ++k) over[k] += times > steps[k];
+                thin_alone += t.near > t.holds * usable;
+                feet += t.foot;
+                feet_over += t.foot && times > 1.0;
+            }
+            j["tips_under_what_they_are_trusted_with"] = {{"under_0.25", under[0]}, {"under_0.5", under[1]}, {"under_0.75", under[2]}};
+            j["mean_a_tip_carries_times_trusted"] = counted ? sum / static_cast<double>(counted) : 0.0;
+            j["tips_over_by_thin_model_near_them_alone"] = thin_alone;
+            j["upside_down_tips"] = feet;
+            j["upside_down_tips_over"] = feet_over;
+            j["tips_counted"] = counted;
+            j["tips_over_what_they_are_trusted_with"] = {{"over_1.0", over[0]}, {"over_1.25", over[1]}, {"over_1.5", over[2]},
+                                                        {"over_2.0", over[3]}, {"over_3.0", over[4]}};
+            j["most_a_tip_carries_times_trusted"] = most;
+        }
         // How often part of the model went with tips that let go, and how much then.
         j["chance_model_goes_with_tips"] = r.stats.tips_cost_chance;
         j["model_gone_with_tips_then_mm3"] = r.stats.tips_cost_volume;
