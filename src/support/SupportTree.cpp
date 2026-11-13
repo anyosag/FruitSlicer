@@ -460,34 +460,47 @@ bool Builder::shareJunction(int hi) {
 
 bool Builder::attachToPillar(int hi) {
     Head& h = out_.heads[hi];
-    int best = -1;
-    double best_d = 1e9;
-    Vec3 best_attach;
+    struct Candidate {
+        double d;
+        int pillar;
+        Vec3 attach;
+    };
+    std::vector<Candidate> found;
     for (size_t pi = 0; pi < out_.pillars.size(); ++pi) {
-        Pillar& P = out_.pillars[pi];
+        const Pillar& P = out_.pillars[pi];
         if (P.on_model || P.bridges >= cfg_.max_heads_per_pillar - 1) continue;
         const double d = distance(P.xy, h.junction.xy());
-        if (d > cfg_.max_bridge_length || d >= best_d) continue;
+        if (d > cfg_.max_bridge_length) continue;
         // 45° descent from the junction to the pillar axis.
         const Vec3 attach{P.xy.x, P.xy.y, h.junction.z - d};
         if (attach.z < out_.raft_top + cfg_.base_height + 1.0) continue;
         if (!segmentClear(h.junction, attach, h.spec.shaft_diameter / 2)) continue;
-        // Extending the pillar upwards must also be clear.
-        if (attach.z > P.top && !segmentClear({P.xy.x, P.xy.y, P.top}, attach, P.diameter / 2)) continue;
-        best = static_cast<int>(pi);
-        best_d = d;
-        best_attach = attach;
+        found.push_back({d, static_cast<int>(pi), attach});
     }
-    if (best < 0) return false;
-    Pillar& P = out_.pillars[best];
-    out_.bridges.push_back({h.junction, best_attach, h.spec.shaft_diameter});
-    P.top = std::max(P.top, best_attach.z);
-    P.lowest_attach = std::min(P.lowest_attach, best_attach.z);
-    P.heads.push_back(hi);
-    ++P.bridges;
-    ++P.tips;
-    P.diameter = std::max(P.diameter, h.spec.shaft_diameter) + 0.1;
-    return true;
+    // Nearest first (ties by pillar). The pillar grows by 0.1 mm for each tip
+    // it takes on, so all of it, raised to the new top, must keep its gap to
+    // the model at the new width, and its foot must still fit: a pillar that
+    // was placed right at its gap beside a wall would otherwise grow into it.
+    std::stable_sort(found.begin(), found.end(), [](const Candidate& a, const Candidate& b) { return a.d < b.d; });
+    for (const Candidate& c : found) {
+        Pillar& P = out_.pillars[c.pillar];
+        const double grown = std::max(P.diameter, h.spec.shaft_diameter) + 0.1;
+        const double top = std::max(P.top, c.attach.z);
+        if (!segmentClear({P.xy.x, P.xy.y, P.bottom}, {P.xy.x, P.xy.y, top}, grown / 2)) continue;
+        const double foot = P.base_diameter > 0 ? P.base_diameter : cfg_.base_diameter;
+        const double room = footRoom(P.xy, grown / 2);
+        if (room < grown - 1e-9) continue;
+        out_.bridges.push_back({h.junction, c.attach, h.spec.shaft_diameter});
+        P.top = top;
+        P.lowest_attach = std::min(P.lowest_attach, c.attach.z);
+        P.heads.push_back(hi);
+        ++P.bridges;
+        ++P.tips;
+        P.diameter = grown;
+        P.base_diameter = std::max(grown, std::min(foot, room));
+        return true;
+    }
+    return false;
 }
 
 // Two supports that stand on the model closer than this (mm, foot to foot)

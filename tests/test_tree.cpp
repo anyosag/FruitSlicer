@@ -330,6 +330,42 @@ TEST_CASE("a pillar's shaft keeps its gap to a thin wall beside it", "[tree]") {
         if (!P.on_model) CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
 }
 
+TEST_CASE("a pillar that takes on more tips keeps its gap to the wall beside it", "[tree]") {
+    // A hollow post closed at the top and open below, as on a dish rack's
+    // legs, with three tips in a row under its ceiling 0.82 mm from a wall: a
+    // shaft there keeps 0.22 mm. A pillar grows 0.1 mm for each tip it takes
+    // on; taking on both others, it stood 0.12 mm from the wall, under its
+    // gap, and in the print the two were one.
+    TriangleMesh m = makeBox({0, 0, 8}, {11, 9, 9.5});            // the post's top
+    m.append(makeBox({0, 0, 0}, {1.3, 9, 8.2}));                  // its walls
+    m.append(makeBox({9.7, 0, 0}, {11, 9, 8.2}));
+    m.append(makeBox({1.2, 0, 0}, {9.8, 1.3, 8.2}));
+    m.append(makeBox({1.2, 7.7, 0}, {9.8, 9, 8.2}));
+    placeOnPlate(m, {0, 0, 0}, 10.0);
+    const BBox3 box = m.bbox();
+    const double wall = box.min.x + 1.3, ceiling = box.min.z + 8;
+    auto tip = [&](double y) {
+        SupportPoint p;
+        p.pos = {wall + 0.82, y, ceiling};
+        p.normal = {0, 0, -1};
+        p.tip_diameter = 0.6;
+        return p;
+    };
+    const TreeConfig tc;
+    const SupportTree t = buildSupportTree(m, {tip(0), tip(1.5), tip(-1.5)}, tc, 0.4);
+    CHECK(t.dropped_points == 0);
+    CHECK(t.heads.size() == 3);
+    const AabbTree tree(m);
+    std::size_t shared = 0;
+    for (const auto& P : t.pillars) {
+        CHECK_FALSE(P.on_model);
+        CHECK(shaftGap(tree, P) >= tc.clearance - 1e-6);
+        CHECK(footGapOf(tree, P, tc, t.raft_top) >= tc.clearance - 1e-6);
+        shared += P.tips > 1;
+    }
+    CHECK(shared > 0);  // where it keeps its gap, a pillar still takes on another tip
+}
+
 TEST_CASE("a ceiling the raft can't be reached from is held from the model below", "[tree]") {
     // Inside the cap the floor is 26 mm under the ceiling: every tip there
     // gets a support that stands on the floor, and none is left out.

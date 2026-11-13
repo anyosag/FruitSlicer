@@ -490,7 +490,10 @@ Each point gets:
   model. Standing on the model is reported because it marks an upper surface
   (`anchor_drop` limits how far down the model may be; 0 turns it off);
 - a gap to the model everywhere but at the tip: shafts, bridges, braces and
-  feet stay 0.15 mm clear of it. A pillar's foot flares to 3 mm where it
+  feet stay 0.15 mm clear of it. A pillar grows 0.1 mm for each other tip
+  it takes on, and takes one on only where it keeps that gap at its new
+  width, all the way down and at its foot (one placed right at its gap
+  beside a wall used to grow into it). A pillar's foot flares to 3 mm where it
   stands, but only as far as the room beside the model allows, so a pillar
   next to a wall gets a narrower foot instead of one that cuts into the wall.
   A foot that stands on the plate itself (no raft) keeps 0.5 mm, because the
