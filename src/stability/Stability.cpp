@@ -26,6 +26,9 @@ constexpr double kWorthLosing = 1.0;  // mm³ of model: less than this lost stil
 constexpr double kBorrowedMargin = 1.0 / 3;  // a borrowed limit, as a share of where half fail
 constexpr double kLen = 10.0;      // mm: a sheet's slope is counted as its rise over this length
 constexpr size_t kMaxSheets = 16;  // more parts of one piece in one layer than this are taken as one stiff sheet
+// mm: how far up a support that stands on the model may still be sunk in the face it stands on. On a face
+// that climbs at 60° a 1 mm support is in it for 1.7 mm. Longer than this it lies along the model: a seam.
+constexpr double kFootRun = 2.0;
 
 // ---------------------------------------------------------------- small matrices
 //
@@ -748,23 +751,37 @@ void Analysis::buildParts() {
     // it: its tip, turned upside down and sunk in. Higher up it is passing
     // the model by like any other.
     {
-        std::vector<int> start(n_, -1), touching(n_, -1);
+        // By support part: the layer where the support under it began to
+        // stand on the model (the latest, where supports have joined: one
+        // that stands close beside another is still a foot where the two
+        // fuse), and the layer from which it has lain in the model without a
+        // break since it began there (-1: it is clear of the model).
+        std::vector<int> start(n_, -1), touching(n_, -1), sunk(n_, -1);
         for (int L = 1; L < layers_; ++L) {
             for (const Touch& t : touches[L])
                 if (!model_[t.child]) touching[t.child] = L;
             for (int id : in_layer_[L]) {
                 if (model_[id] || rooted[id]) continue;
-                int from = -1;
-                for (int q : part_[id].parents)
-                    if (start[q] >= 0 && (from < 0 || start[q] < from)) from = start[q];
-                if (from < 0 && touching[id] == L) from = L;
+                int from = -1, run = -1;
+                for (int q : part_[id].parents) {
+                    from = std::max(from, start[q]);
+                    run = std::max(run, sunk[q]);
+                }
+                if (from < 0 && touching[id] == L) from = run = L;
                 start[id] = from;
+                sunk[id] = touching[id] == L ? run : -1;
             }
-            // (Nor does the model over that sunk tip hang from it: the two are one solid there.)
-            auto foot = [&](int part) { return start[part] >= 0 && (layerOf(part) - start[part]) * h_ <= 0.6; };
+            auto foot = [&](int part) { return start[part] >= 0 && (layerOf(part) - start[part]) * h_ <= 0.6 + 1e-9; };
+            // Nor does the model over that sunk tip hang from it: the two are
+            // one solid there. And where the face it stands on climbs past
+            // it, the support is in that face for longer than its tip is
+            // tall: the model lying over its uphill side is the same solid
+            // still, not a small tip of its own.
+            auto flank = [&](int part) { return sunk[part] >= 0 && (layerOf(part) - sunk[part]) * h_ <= kFootRun; };
             touches[L].erase(std::remove_if(touches[L].begin(), touches[L].end(),
                                             [&](const Touch& t) {
-                                                return model_[t.child] ? !rooted[t.parent] && foot(t.parent) : !foot(t.child);
+                                                return model_[t.child] ? !rooted[t.parent] && (foot(t.parent) || flank(t.parent))
+                                                                       : !foot(t.child);
                                             }),
                              touches[L].end());
         }
@@ -1033,14 +1050,14 @@ void Analysis::sizeJoints() {
     // longer than a tip is tall is no tip but a seam: each of its joints
     // holds by itself, with its own area.
     for (size_t g = 0; g < top.size(); ++g) {
-        if ((high[g] - low[g]) * h_ > 0.6) continue;
+        if ((high[g] - low[g]) * h_ > 0.6 + 1e-9) continue;
         group_holds_[given + g] = tipHolds(2 * std::sqrt(top[g] / kPi));
         group_area_[given + g] = top[g];
         ++tips_found_;
     }
     for (size_t i = 0; i < links_.size(); ++i) {
         const int g = tip_group_[i] - given;
-        if (g < 0 || !((high[static_cast<size_t>(g)] - low[static_cast<size_t>(g)]) * h_ > 0.6)) continue;
+        if (g < 0 || !((high[static_cast<size_t>(g)] - low[static_cast<size_t>(g)]) * h_ > 0.6 + 1e-9)) continue;
         tip_group_[i] = static_cast<int>(group_holds_.size());
         group_holds_.push_back(tipHolds(2 * std::sqrt(links_[i].area / kPi)));
         group_area_.push_back(links_[i].area);

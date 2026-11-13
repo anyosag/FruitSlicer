@@ -899,6 +899,64 @@ TEST_CASE("a support stands on the model with a tip turned upside down, and only
     CHECK(at(r, 65, {1, 1}).lost_chance >= one - 0.03);
 }
 
+TEST_CASE("a face that climbs past a support standing on it is that support's foot, not a tip", "[stability]") {
+    // A wedge on the plate whose top face climbs at 60°: each layer of it starts 0.029 mm further along x.
+    // A support 1 mm wide stands on that face, so the face climbs past it for 1.7 mm of its height: all
+    // that way the wedge lies over the support's uphill side. Above, the support holds a block by its top.
+    const double step = kH / std::tan(60 * kPi / 180);
+    auto wedge = [&](Build& b) {
+        b.part(0, 20, rect(0, 0, 10, 6));
+        for (int L = 20; L < 100; ++L) b.part(L, L + 1, rect((L - 20) * step, 0, 10, 6));
+    };
+    {
+        Build b(140);
+        wedge(b);
+        b.support(60, 120, rect(1.2, 2.5, 2.2, 3.5));  // the face is at x = 1.16 in layer 60 and at 2.2 in layer 96
+        b.part(120, 140, rect(0.5, 0, 2.9, 6));        // 14.4 mm² on the support's top
+        const StabilityResult r = b.runWhole(StabilityConfig{});
+        // Two tips: the foot it stands on the wedge with, and its top under the block.
+        CHECK(r.stats.tips == 2);
+        CHECK(r.stats.unheld == 0);
+        // The block's pull goes down the support and into the wedge through that foot, and nothing of the
+        // wedge's own layers goes into the support on the way.
+        CHECK(supportAt(r, 110, {1.7, 3}).load == Approx(14.4).epsilon(1e-3));
+        CHECK(supportAt(r, 75, {1.7, 3}).load == Approx(14.4).epsilon(1e-3));
+        CHECK(supportAt(r, 60, {1.7, 3}).cause == RiskCause::Tip);
+        // No layer of the wedge hangs from the support beside it: each lies on the layer below.
+        for (int L = 62; L < 100; L += 4) {
+            const PartRisk& p = at(r, L, {6, 3});
+            CHECK(p.cause != RiskCause::Tip);
+            CHECK(p.lost_chance == 0);
+        }
+    }
+    // Two supports standing close together on that face, the second 1 mm higher up it, fuse into one a little
+    // above the second one's foot. The second is still a foot there: the face over its side is no tip either.
+    {
+        Build b(140);
+        wedge(b);
+        b.support(60, 120, rect(1.2, 2.5, 1.7, 3.5));
+        b.support(80, 84, rect(1.75, 2.5, 2.25, 3.5));  // the face is at x = 1.73 in layer 80
+        b.support(84, 120, rect(1.7, 2.5, 2.25, 3.5));  // from here the two are one
+        b.part(120, 140, rect(0.5, 0, 2.9, 6));
+        const StabilityResult r = b.runWhole(StabilityConfig{});
+        CHECK(r.stats.tips == 3);  // two feet and the top
+        CHECK(r.stats.unheld == 0);
+        for (int L = 82; L < 100; L += 3) CHECK(at(r, L, {6, 3}).cause != RiskCause::Tip);
+    }
+    // A support that lies in the model for longer than that is a seam, as before: each layer holds by itself.
+    {
+        Build b(140);
+        b.part(0, 20, rect(0, 0, 10, 6));
+        b.part(20, 100, rect(2.0, 0, 10, 6));          // a wall 4 mm tall, upright
+        b.support(20, 120, rect(1.2, 2.5, 2.2, 3.5));  // stands on the block and lies in the wall by 0.2 mm
+        b.part(120, 140, rect(0.5, 0, 2.9, 6));
+        const StabilityResult r = b.runWhole(StabilityConfig{});
+        // Above the first 2 mm the wall's layers lie on the support too, and it carries a little of them.
+        CHECK(supportAt(r, 110, {1.7, 3}).load == Approx(14.4).epsilon(1e-3));
+        CHECK(supportAt(r, 30, {1.7, 3}).load > 14.6);
+    }
+}
+
 TEST_CASE("a strut between two parts of one piece is not a way to the plate", "[stability]") {
     // A base on four tips, two walls on it, and a thick lid across the
     // walls. Inside, a support stands on the base and holds the lid's
