@@ -756,7 +756,9 @@ std::string howManyCaption(int stop, const SupportChoices& choices) {
     if (stop == kHowManyCentre) {
         out = strf("Faces leaning more than %.0f° get tips, no spot more than %.1f mm from one.", cfg.critical_angle_deg,
                    reach);
-        out += howManyMeasured(c) ? " As measured for this resin." : " Starting values: not measured for this resin.";
+        // Whose values those are, unless the job has set them itself.
+        if (!c.advanced.count("critical_angle") && !c.advanced.count("spacing"))
+            out += howManyMeasured(c) ? " As measured for this resin." : " Starting values: not measured for this resin.";
     } else if (stop > kHowManyCentre) {
         out = strf("Faces leaning more than %.0f° get tips", cfg.critical_angle_deg);
         const double closer = reach0 > 0 ? (1 - reach / reach0) * 100 : 0;

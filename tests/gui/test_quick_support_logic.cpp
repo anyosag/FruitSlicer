@@ -297,6 +297,10 @@ TEST_CASE("Quick support: captions and words state the real values", "[gui][supp
     own.advanced["critical_angle"] = 50;
     CHECK_THAT(howManyCaption(1, own), ContainsSubstring("50°"));
     CHECK_THAT(howManyCaption(1, own), ContainsSubstring("Advanced"));
+    // ...and in the middle it no longer calls them starting values.
+    CHECK_THAT(howManyCaption(3, own), ContainsSubstring("50°"));
+    CHECK_THAT(howManyCaption(3, own), ContainsSubstring("Advanced"));
+    CHECK_THAT(howManyCaption(3, own), !ContainsSubstring("Starting values"));
 
     CHECK_THAT(tipSizeCaption(at(3, 2)), ContainsSubstring("0.6 mm where a part starts in mid-air"));
     CHECK_THAT(tipSizeCaption(at(3, 2)), ContainsSubstring("0.3 mm near edges"));

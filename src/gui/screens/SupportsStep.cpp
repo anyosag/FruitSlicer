@@ -74,7 +74,8 @@ bool stopSlider(const char* id, int* v, int lo, int hi, bool* activated = nullpt
 
 // How many: the slider, the tips this job would get at each stop under its
 // stops, and what the stop sets.
-void howMany(App& app, const SupportChoices& choices) {
+void howMany(App& app, const Document& doc) {
+    const SupportChoices& choices = doc.supports.choices;
     ImGui::PushID("how_many");
     const int stop = std::clamp(choices.how_many, 1, kQuickStops);
     const float y = ImGui::GetCursorPosY();
@@ -93,9 +94,10 @@ void howMany(App& app, const SupportChoices& choices) {
     const float ey = ImGui::GetCursorPosY();
     text("Fewer", fonts().regular, size::Label, col::TextMuted);
     rightText("More", fonts().regular, size::Label, col::TextMuted, ey);
-    // Under each stop, the tips it would give this job (counted in the background).
+    // Under each stop, the tips it would give this job, made again now (counted in the background;
+    // "…" until then). A job that doesn't fit the plate gets no supports, so nothing to count.
     const auto* counts = app.tipCountsByStop();
-    {
+    if (doc.fits()) {
         ImGui::PushFont(fonts().regular, size::Label);
         const float row_y = ImGui::GetCursorScreenPos().y;
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -108,13 +110,26 @@ void howMany(App& app, const SupportChoices& choices) {
         }
         ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight() + 4));
         ImGui::PopFont();
-        if (ImGui::IsItemHovered()) tooltip("The tips this job would get at each stop.");
+        if (ImGui::IsItemHovered()) tooltip("The tips this job would get at each stop, made again now.");
     }
     std::string caption = howManyCaption(stop, choices);
-    if (counts && stop != kHowManyCentre &&
-        (*counts)[static_cast<std::size_t>(stop - 1)] == (*counts)[kHowManyCentre - 1])
-        caption += strf(" On this job that changes nothing: %s tips, as in the middle.",
-                        thousands((*counts)[static_cast<std::size_t>(stop - 1)]).c_str());
+    if (counts) {
+        // What the stop comes to on this job, where that is not what its words lead one to expect.
+        const std::size_t here = (*counts)[static_cast<std::size_t>(stop - 1)], middle = (*counts)[kHowManyCentre - 1];
+        if (stop != kHowManyCentre && here == middle)
+            caption += strf(" On this job that changes nothing: %s tips, as in the middle.", thousands(here).c_str());
+        else if (stop > kHowManyCentre && here < middle)
+            caption += strf(" On this job that is fewer tips than in the middle (%s against %s)%s", thousands(here).c_str(),
+                            thousands(middle).c_str(),
+                            supportConfig(doc.placement(), choices).tip_load_limit > 0
+                                ? ": with tips closer together, fewer extra ones are needed to share the load."
+                                : ".");
+        // Hand edits apply on top of the tips as they were planned; made again, the tips are planned around them.
+        const SupportState& s = doc.supports;
+        if (s.result && !s.edits.empty() && s.fresh(doc.revision(), doc.supportSettings()) && here != s.result->tips)
+            caption += strf(" Made again, the tips are planned around your hand edits: %s, not the %s there are now.",
+                            thousands(here).c_str(), thousands(s.result->tips).c_str());
+    }
     text(caption.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::PopID();
 }
@@ -351,7 +366,7 @@ void controlsPanel(App& app, Document& doc) {
     }
     ImGui::Dummy(ImVec2(0, 4));
     // Each control reads the choices as they are now, so a change earlier in the frame shows.
-    howMany(app, doc.supports.choices);
+    howMany(app, doc);
     ImGui::Dummy(ImVec2(0, 8));
     tipSize(app, doc.supports.choices);
     ImGui::Dummy(ImVec2(0, 8));
