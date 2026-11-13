@@ -317,7 +317,13 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   the model go from 114 to 8 on an eye cup, for 18% more resin). The panel
   shows this job's tips under each stop (`tipCounts`, counted in the
   background). Tips per stop, Fewest to Most: bracket 56 / 68 / 72 / 91 /
-  109; bracket at 45° 22 / 22 / 22 / 71 / 79. Jobs saved with the sliders
+  109; bracket at 45° 22 / 22 / 22 / 71 / 79; and with the rule that no tip
+  carries more than it is trusted with (added the same night, on by default)
+  59 / 71 / 75 / 91 / 109 and 67 / 67 / 70 / 129 / 126: that rule adds the
+  tips for hold that the 45° bracket lacked, so above the middle the count
+  can come out a few tips either way, and a smaller Tip size now means more
+  tips (bracket at 30°: 231, 110 and 86 tips at 0.3, 0.4 and 0.6 mm), some
+  made a size bigger again. Jobs saved with the sliders
   convert to the same planner and tree settings (`convertOldQuick`, checked
   for all 125 combinations). The stop sizes are arbitrary until a plate is
   printed; the lighter stops relax the fresh-edge rule, which is itself

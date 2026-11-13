@@ -536,10 +536,11 @@ TEST_CASE("Quick support: what the controls do to real parts", "[gui][supports][
             CHECK(r.count(SupportProblem::Level::Blocks) == 0);
         }
         CAPTURE(tips);
-        // More never gives fewer: Fewest to Most, the count does not go down (a tip of slack on a small plan:
-        // above the middle each stop is planned afresh).
+        // More never gives fewer: Fewest to Most, the count does not go down. Below the middle that is
+        // exact (a lighter stop keeps the fewer of two plans). Above it each stop is planned afresh, and the
+        // tips added so that none carries too much come out a few either way: 1 tip in 30 of slack.
         for (std::size_t i = 0; i + 1 < tips.size(); ++i) {
-            CHECK(tips[i] <= tips[i + 1] + (i >= 2 ? 1 : 0));
+            CHECK(tips[i] <= tips[i + 1] + (i >= 2 ? std::max<std::size_t>(1, tips[i] / 30) : 0));
             if (tips[i] != tips[i + 1]) differs[i] = true;
         }
         // What the panel shows under the stops is what making them gives.
@@ -549,21 +550,30 @@ TEST_CASE("Quick support: what the controls do to real parts", "[gui][supports][
     for (const bool d : differs) CHECK(d);
 
     // The case the old Amount slider could not reach: tilted 45°, the faces lean exactly as much as the
-    // starting angle, and only a lower angle with the ledge rule moved along gives them tips.
+    // starting angle, and only a lower angle with the ledge rule moved along gives them tips of their own
+    // (tips that cover a face, as against the ones added for hold).
     const Document& tilted = *models[2].doc;
-    const std::size_t middle = made(tilted, at(3)).tips;
-    CHECK(made(tilted, at(4)).tips >= 2 * middle);
+    const auto covering = [](const SupportResult& r) {
+        return std::count_if(r.points.begin(), r.points.end(),
+                             [](const fruit::SupportPoint& p) { return p.category == fruit::PointCategory::Overhang; });
+    };
+    const auto middle = covering(made(tilted, at(3)));
+    CHECK(covering(made(tilted, at(4))) >= 5 * middle);
     SupportChoices angle_alone;
     angle_alone.advanced["critical_angle"] = 40;  // what "More" used to be
-    CHECK(made(tilted, angle_alone).tips <= middle + 2);
+    CHECK(covering(made(tilted, angle_alone)) <= 2 * middle + 2);
 
-    // Tip size reaches every tip: no tip stays at its size between two sizes next to each other, apart
-    // from where the sizes run out (0.2 and 0.6 mm).
+    // Tip size reaches every tip the planner places: none stays at its size between two sizes next to each
+    // other, apart from where the sizes run out (0.2 and 0.6 mm). (With "Each tip's own load" on, as it
+    // is unless turned off, a tip that would carry too much is then made a size bigger: so that is off
+    // here, and on only for the check that every size still makes supports that can be saved.)
     for (const Model& m : models) {
         CAPTURE(m.name);
         const auto sizes = [&](int tip) {
-            const SupportResult r = made(*m.doc, at(3, tip));
-            CHECK(r.count(SupportProblem::Level::Blocks) == 0);
+            CHECK(made(*m.doc, at(3, tip)).count(SupportProblem::Level::Blocks) == 0);
+            SupportChoices placed = at(3, tip);
+            placed.advanced["tip_load_limit"] = 0;
+            const SupportResult r = made(*m.doc, placed);
             double lo = 1e9, hi = 0;
             for (const auto& [d, n] : r.tip_sizes) lo = std::min(lo, d), hi = std::max(hi, d);
             return std::pair<double, double>{lo, hi};

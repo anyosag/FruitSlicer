@@ -777,10 +777,16 @@ std::string tipSizeCaption(const SupportChoices& c) {
     resolve(fruit::Placement{}, c, cfg, tc);
     const auto size = [&](int cls) { return cfg.tip_classes[static_cast<std::size_t>(cls)].diameter; };
     const double usual = size(cfg.default_tip), air = size(cfg.minima_tip), edge = size(cfg.edge_tip);
-    if (std::abs(air - usual) < 1e-9 && std::abs(edge - usual) < 1e-9) return "Every tip is this size.";
-    if (std::abs(air - usual) < 1e-9) return strf("%.1f mm near edges and visible faces.", edge);
-    if (std::abs(edge - usual) < 1e-9) return strf("%.1f mm where a part starts in mid-air.", air);
-    return strf("%.1f mm where a part starts in mid-air, %.1f mm near edges and visible faces.", air, edge);
+    std::string out =
+        std::abs(air - usual) < 1e-9 && std::abs(edge - usual) < 1e-9 ? std::string("Every tip starts at this size.")
+        : std::abs(air - usual) < 1e-9   ? strf("%.1f mm near edges and visible faces.", edge)
+        : std::abs(edge - usual) < 1e-9  ? strf("%.1f mm where a part starts in mid-air.", air)
+                                         : strf("%.1f mm where a part starts in mid-air, %.1f mm near edges and "
+                                                "visible faces.",
+                                                air, edge);
+    // "Each tip's own load" (the Advanced page) changes sizes after that.
+    if (cfg.tip_load_limit > 0) out += " A tip that would carry too much gets a size bigger, or another beside it.";
+    return out;
 }
 
 std::string lookFurtherCaption(const SupportChoices& choices) {
