@@ -318,7 +318,11 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   user's parts it
   found 2 small island tips over their limit (1 to 2 % chance), and its "90 %
   likely" tip on the lid is the foot of a support standing on a 60° slope,
-  which the replay counts as a separate tiny tip.
+  which the replay counted as a separate tiny tip (it no longer does: the
+  model over the side of a support that stands on it is that support's foot
+  for as long as the support stays sunk in the face, up to 2 mm, and where
+  two such supports fuse the later one keeps its foot; the lid then has no
+  flagged tip, and the eye cup at "Most" none).
 - **A piece that starts inside the bottom layers stands on the plate
   (2026-11-13).** With no raft, a separate piece whose first layer has its
   underside inside `plate_hold_height` (0.05 mm up with the defaults: the
