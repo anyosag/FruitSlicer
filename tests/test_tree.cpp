@@ -579,3 +579,69 @@ TEST_CASE("on the plate, tips just above it stand on it and nothing reaches belo
     const ValidationReport v = validateSupported(m, s, cfg.layer_height, cfg.link_grow);
     CHECK(v.floating.empty());
 }
+
+namespace {
+
+// A square tube 1.4 mm wide inside, open at the bottom, under a cap: its
+// ceiling is at z 12. A shaft needs its radius and the gap (0.15 mm) to the
+// walls: 0.75 mm for a 0.6 mm tip's 1.2 mm shaft, 0.65 mm for a 0.4 mm tip's.
+TriangleMesh tube() {
+    const double w = 0.7;
+    TriangleMesh m = makeBox({-5, -5, 12}, {5, 5, 14});  // the cap
+    m.append(makeBox({-5, -5, 5}, {-w, 5, 12}));
+    m.append(makeBox({w, -5, 5}, {5, 5, 12}));
+    m.append(makeBox({-w, -5, 5}, {w, -w, 12}));
+    m.append(makeBox({-w, w, 5}, {w, 5, 12}));
+    return m;
+}
+
+SupportPoint ceilingTip(double x, double d) {
+    SupportPoint p;
+    p.pos = {x, 0, 12};
+    p.normal = {0, 0, -1};
+    p.tip_diameter = d;
+    return p;
+}
+
+}  // namespace
+
+TEST_CASE("a tip whose planned head has no way down is built smaller before it is dropped", "[tree]") {
+    const TriangleMesh m = tube();
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    // A 0.6 mm tip in the middle of the tube's ceiling: its shaft would touch the walls, a 0.4 mm one's does not.
+    const SupportTree t = buildSupportTree(m, {ceilingTip(0, 0.6)}, TreeConfig{}, raft);
+    CHECK(t.dropped_points == 0);
+    CHECK(t.smaller_heads == 1);
+    CHECK(t.moved_heads == 0);
+    REQUIRE(t.heads.size() == 1);
+    CHECK(t.heads[0].spec.tip_diameter == Approx(0.4));
+    CHECK(t.heads[0].smaller);
+    CHECK(t.heads[0].moved == 0);
+    // At its own size where it fits, nothing changes.
+    const SupportTree u = buildSupportTree(m, {ceilingTip(0, 0.4)}, TreeConfig{}, raft);
+    CHECK(u.dropped_points == 0);
+    CHECK(u.smaller_heads + u.moved_heads == 0);
+    REQUIRE(u.heads.size() == 1);
+    CHECK_FALSE(u.heads[0].smaller);
+}
+
+TEST_CASE("a tip with no way down at any size is moved a little across the same face before it is dropped", "[tree]") {
+    // A ceiling at z 12 over a wall (x below -0.35) with a thin fin hanging 3 mm from it (x 0.1 to 0.3): a tip
+    // between the two has 0.45 mm of room, too little for any shaft, and the fin keeps a head from leaning out.
+    // Past the fin the ceiling is open.
+    TriangleMesh m = makeBox({-5, -5, 12}, {5, 5, 14});
+    m.append(makeBox({-5, -5, 5}, {-0.35, 5, 12}));
+    m.append(makeBox({0.1, -5, 9}, {0.3, 5, 12}));
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    const SupportTree t = buildSupportTree(m, {ceilingTip(-0.12, 0.4)}, TreeConfig{}, raft);
+    CHECK(t.dropped_points == 0);
+    CHECK(t.moved_heads == 1);
+    CHECK(t.smaller_heads == 0);  // moved, it keeps its size
+    REQUIRE(t.heads.size() == 1);
+    const Head& h = t.heads[0];
+    CHECK(h.moved == Approx(0.5).margin(1e-6));      // the nearest ring tried first
+    CHECK(h.contact.z == Approx(12).margin(1e-6));   // on the same ceiling
+    CHECK(h.contact.x > 0.3);                        // past the fin
+    CHECK(h.spec.tip_diameter == Approx(0.4));
+    CHECK(h.point == 0);
+}

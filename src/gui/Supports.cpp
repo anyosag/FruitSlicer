@@ -1322,6 +1322,14 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     const double min_raft =
         fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight);
     r.tree = fruit::buildSupportTree(doc.placed(), r.points, r.tree_cfg, min_raft, ctl.sub(0.0, 0.55));
+    // Tips the tree built smaller, or a little way off, so that they got a way down at all: as built.
+    for (const fruit::Head& h : r.tree.heads)
+        if (h.point >= 0 && h.point < static_cast<int>(r.points.size()) && (h.smaller || h.moved > 0)) {
+            fruit::SupportPoint& pt = r.points[static_cast<std::size_t>(h.point)];
+            pt.tip_diameter = h.spec.tip_diameter;
+            pt.built_smaller = h.smaller;
+            pt.built_moved = h.moved;
+        }
     ctl.step("mesh", 0.55);
     r.mesh = r.tree.mesh(r.tree_cfg);
     ctl.step("check", 0.67);
@@ -1499,6 +1507,13 @@ std::string tipWhy(const fruit::SupportPoint& p) {
     // (Not for a tip of your own size: that is yours.)
     if (p.enlarged && p.category != fruit::PointCategory::Manual)
         why += " One size bigger than usual: at the usual size it would carry more of the pull than it holds.";
+    if (p.built_smaller && p.built_moved > 0)
+        why += fmt(" Built smaller than planned and %.1f mm away: there no head of the planned size found a way down.",
+                   p.built_moved);
+    else if (p.built_smaller)
+        why += " Built smaller than planned: no head of the planned size found a way down here.";
+    else if (p.built_moved > 0)
+        why += fmt(" Its head touches the same face %.1f mm from here: here no head found a way down.", p.built_moved);
     return why;
 }
 

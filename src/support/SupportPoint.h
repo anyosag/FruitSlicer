@@ -27,6 +27,12 @@ struct SupportPoint {
     double cost = 1.0;      // placement cost (cosmetic / edge penalties)
     // One size up from what the planner gives its kind, so that it can carry its own share of the pull.
     bool enlarged = false;
+    // As the support tree built it, where that differs from the plan: no head
+    // of the planned size found a way down here, so it is a size or two
+    // smaller (tip_diameter is the size built), or its head touches the same
+    // face this far away (mm; `pos` stays where it was planned).
+    bool built_smaller = false;
+    double built_moved = 0;
 };
 
 uint64_t stablePointId(const Vec3& pos, PointCategory c);

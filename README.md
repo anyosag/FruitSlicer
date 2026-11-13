@@ -352,7 +352,13 @@ Points are chosen bottom-up so that
 1. **coverage**: every surface that leans more than 45° from vertical has a tip
    within a radius that grows with the cured height above the tip (seeded with
    PrusaSlicer's curve, 3.2 mm → 6 mm), measured *through material*, so a tip
-   never "covers" across a slot or onto a neighbouring finger;
+   never "covers" across a slot or onto a neighbouring finger. A face just past
+   the angle grows only a little past it each layer (0.0036 mm at 47° on
+   0.05 mm layers), so on the part's outside that growth is also measured
+   against what was there 1 mm below; before, faces up to about 47.5° got no
+   tips. Within 0.5° of the angle is taken for the outlines' rounding. Ceilings
+   over holes (hollows, cups, bores) keep the layer-by-layer rule: a hollow's
+   ceiling is shaped at the angle and its rounding closes it at 45.6° on average;
 2. **capacity**: for every connected piece at every layer, its tips together
    can hold its cross-section under peel (seed: one 0.4 mm tip per 11.1 mm²,
    scaled by tip area);
@@ -479,8 +485,12 @@ Each point gets:
 The report re-slices model plus supports and lists anything that would still
 start printing in mid-air (`validation.floating_islands`, which should be 0).
 
-A tip the tree cannot build (no clear way down within reach, no room for a
-head) is dropped, and `tree_warnings` counts why. The planner's own coverage
+A tip with no head of its planned size that finds a way down is first built
+a size or two smaller (0.4, then 0.3 mm: a narrower head and shaft), then, at
+the planned size and smaller, half a millimetre to 1.5 mm across the same
+face; the report counts them (`smaller_heads`, `moved_heads`) and the tip's
+card in the app says so. A tip the tree still cannot build is dropped, and
+`tree_warnings` counts why. The planner's own coverage
 and hold tests then run again with only the tips that were built:
 `validation.unsupported` counts the dropped tips that were the only cover of
 some face (`tips`, with where the first 20 were), the surface samples left with

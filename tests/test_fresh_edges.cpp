@@ -278,3 +278,26 @@ TEST_CASE("a shelf's rim is a fresh edge wherever it is, and the plate holds a f
         CHECK(d <= kReach + 0.6);
     }
 }
+
+TEST_CASE("a face just past the lean angle gets tips, one at it does not, and a hollow's ceiling keeps none",
+          "[points][angle]") {
+    // A slab tilted about X: its underside leans 90° − a from upright, one of its ends a.
+    auto overhangTips = [](double a) {
+        TriangleMesh m = makeBox({0, 0, 0}, {20, 20, 3});
+        Placement p;
+        p.rotation_deg = {a, 0, 0};
+        p.elevation = 5;
+        const TriangleMesh placed = placeModel(m, p);
+        SupportConfig cfg;
+        cfg.layer_height = 0.05;
+        std::size_t n = 0;
+        for (const auto& q : generateSupportPoints(placed, cfg).points) n += q.category == PointCategory::Overhang;
+        return n;
+    };
+    // 46° and 47° from upright: past the 45° the planner holds faces from. Before, a band this thin each layer
+    // was taken for slicing noise and nothing up to about 47.5° got a tip.
+    CHECK(overhangTips(44) >= 10);
+    CHECK(overhangTips(43) >= 10);
+    // 44.8° (and its end at 45.2°, within the half degree of rounding): nothing to hold.
+    CHECK(overhangTips(45.2) <= 2);
+}

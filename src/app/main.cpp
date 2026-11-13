@@ -548,6 +548,8 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     r["branches"] = tree.branches.size();
     r["pillars_on_model"] = anchors;
     r["stubs_on_model"] = tree.stubs.size();
+    r["smaller_heads"] = tree.smaller_heads;  // built smaller than planned: the planned size had no way down
+    r["moved_heads"] = tree.moved_heads;      // built a little way across the same face, for the same reason
     r["bridges"] = tree.bridges.size();
     r["braces"] = tree.braces.size();
     r["braces_skipped_no_trap"] = tree.braces_skipped_trap;

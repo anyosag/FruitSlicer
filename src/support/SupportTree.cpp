@@ -271,6 +271,13 @@ private:
 
     bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok);
     bool placeStub(const SupportPoint& p, int point);
+    // A head for `p` at its own size and what it stands on (a pillar, a
+    // bridge to one, a route to the raft, or the model below). False, with
+    // nothing kept, when there is none; `why` is the warning's code then.
+    bool supportTip(const SupportPoint& p, int pi, const char*& why);
+    // The same at the planned size, then smaller ones; then a little way
+    // across the same face. True when one of them got a head.
+    bool supportSmallerOrMoved(const SupportPoint& p, int pi);
     bool attachToPillar(int head);
     // `top`: where the pillar starts when that isn't the head's junction (a
     // bridge leads there).
@@ -612,6 +619,129 @@ void Builder::raft() {
     }
 }
 
+bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
+    Head h;
+    bool drop_ok = false;
+    if (!placeHead(p, h, drop_ok)) {
+        why = "head_blocked";
+        return false;
+    }
+    h.point = pi;
+    const int hi = static_cast<int>(out_.heads.size());
+    out_.heads.push_back(h);
+    if (headBottom(h) < 0) {
+        // Its head alone would reach through the plate, let alone a
+        // pillar under it: it stands on the plate.
+        Head& ph = out_.heads.back();
+        ph.on_plate = true;
+        settlePlateHead(p, ph);
+        ph.junction = plateHead(ph, nullptr, cfg_.quality);
+        return true;
+    }
+    if (attachToPillar(hi)) return true;
+    // Straight down, on a foot as wide as the room beside the model allows.
+    const double shaft_r = h.spec.shaft_diameter / 2;
+    const double room = drop_ok ? footRoom(h.junction.xy(), shaft_r) : 0;
+    if (drop_ok && room >= 2 * shaft_r - 1e-9) {
+        newPillar(hi, false);
+        out_.pillars.back().base_diameter = std::min(cfg_.base_diameter, room);
+        return true;
+    }
+    Vec3 route_end;
+    if (groundRoute(h.junction, shaft_r, cfg_.max_route_length, route_end)) {
+        // Diagonal bridge to a new pillar standing where the drop is clear.
+        out_.bridges.push_back({h.junction, route_end, h.spec.shaft_diameter});
+        Pillar P;
+        P.xy = route_end.xy();
+        P.top = route_end.z;
+        P.bottom = out_.raft_top + cfg_.base_height;
+        P.diameter = h.spec.shaft_diameter;
+        P.base_diameter = std::min(cfg_.base_diameter, footRoom(P.xy, shaft_r));
+        P.heads.push_back(hi);
+        P.bridges = 1;
+        // The bridge lands on its top: a later head may raise the top, and a
+        // merge into a trunk must still start below where this bridge lands.
+        P.lowest_attach = route_end.z;
+        out_.pillars.push_back(P);
+        return true;
+    }
+    if (drop_ok) {
+        // Its shaft is clear but nowhere in reach has room for a foot (the
+        // model is right beside it down at the plate): a straight foot, at
+        // the shaft's own gap, and it is reported.
+        newPillar(hi, false);
+        out_.pillars.back().base_diameter = h.spec.shaft_diameter;
+        std::ostringstream m;
+        m << "support's foot stands " << room / 2 + footGap() - shaft_r << " mm or less from the model on the "
+          << "plate; the first layers cure wider than drawn, so it may stick to the model there";
+        warn("foot_near_model", m.str(), {h.junction.x, h.junction.y, out_.raft_top});
+        return true;
+    }
+    // Stand on the model below: straight down, or on the nearest spot a
+    // short walk reaches where the shaft clears the model.
+    Vec3 stand, foot, foot_n;
+    if (modelStand(h.junction, h.spec.shaft_diameter / 2, stand, foot, foot_n)) {
+        const bool walked = distance(stand, h.junction) > 1e-9;
+        if (walked) out_.bridges.push_back({h.junction, stand, h.spec.shaft_diameter});
+        newPillar(hi, true, foot, foot_n, &stand);
+        if (walked) out_.pillars.back().bridges = 1;
+        std::ostringstream m;
+        m << "support stands on the model (drop " << stand.z - foot.z << " mm); leaves a mark on an upper surface";
+        warn("anchor_on_model", m.str(), foot);
+        return true;
+    }
+    out_.heads.pop_back();
+    why = "no_route";
+    return false;
+}
+
+bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi) {
+    // A smaller head is narrower, and so is its shaft: it may find a way down
+    // where the planned size found none (beside a wall, inside a cup). Better
+    // a smaller tip than none: the planner counted on one here.
+    // The planned size (but not where it was planned: tried already), then 0.4 and 0.3 mm below it.
+    std::vector<double> sizes{p.tip_diameter};
+    for (const double d : {0.4, 0.3})
+        if (d < sizes.back() - 1e-9) sizes.push_back(d);
+    const auto atSizes = [&](const SupportPoint& at, double moved) {
+        for (const double d : sizes) {
+            if (moved == 0 && d == p.tip_diameter) continue;
+            SupportPoint q = at;
+            q.tip_diameter = d;
+            const char* w = nullptr;
+            if (!supportTip(q, pi, w)) continue;
+            Head& h = out_.heads.back();
+            h.smaller = d < p.tip_diameter - 1e-9;
+            h.moved = moved;
+            out_.smaller_heads += h.smaller;
+            out_.moved_heads += moved > 0;
+            return true;
+        }
+        return false;
+    };
+    if (atSizes(p, 0)) return true;
+    // Then the same face a little way off, nearest first: within a tip's
+    // reach of where it was planned, so it still holds what it was for.
+    const Vec3 n = normalized(p.normal);
+    const Vec3 a = normalized(std::abs(n.z) < 0.9 ? cross(n, Vec3{0, 0, 1}) : cross(n, Vec3{1, 0, 0}));
+    const Vec3 b = cross(n, a);
+    for (const double r : {0.5, 1.0, 1.5})
+        for (int k = 0; k < 8; ++k) {
+            const double ang = k * 3.14159265358979323846 / 4;
+            const Vec3 off = (a * std::cos(ang) + b * std::sin(ang)) * r;
+            const auto hit = tree_.raycast(p.pos + off + n * 0.6, n * -1.0, 1.2);
+            if (!hit) continue;
+            const Vec3 hn = mesh_.faceNormal(static_cast<size_t>(hit->face));
+            // The same face, still facing down.
+            if (dot(hn, n) < 0.8 || hn.z > -0.2) continue;
+            SupportPoint q = p;
+            q.pos = hit->point;
+            q.normal = hn;
+            if (atSizes(q, distance(q.pos, p.pos))) return true;
+        }
+    return false;
+}
+
 SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl& ctl) {
     // Highest points first: their pillars are the longest and lower heads
     // bridge into them.
@@ -623,81 +753,14 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
     for (int pi : order) {
         if ((done++ & 15) == 0) ctl.step("tree", 0.7 * static_cast<double>(done) / np);
         const SupportPoint& p = pts[pi];
-        Head h;
-        bool drop_ok = false;
-        if (!placeHead(p, h, drop_ok)) {
-            if (placeStub(p, pi)) continue;
-            ++out_.dropped_points;
-            warn("head_blocked", "no collision-free head direction; point dropped", p.pos);
-            continue;
-        }
-        h.point = pi;
-        const int hi = static_cast<int>(out_.heads.size());
-        out_.heads.push_back(h);
-        if (headBottom(h) < 0) {
-            // Its head alone would reach through the plate, let alone a
-            // pillar under it: it stands on the plate.
-            Head& ph = out_.heads.back();
-            ph.on_plate = true;
-            settlePlateHead(p, ph);
-            ph.junction = plateHead(ph, nullptr, cfg_.quality);
-            continue;
-        }
-        if (attachToPillar(hi)) continue;
-        // Straight down, on a foot as wide as the room beside the model allows.
-        const double shaft_r = h.spec.shaft_diameter / 2;
-        const double room = drop_ok ? footRoom(h.junction.xy(), shaft_r) : 0;
-        if (drop_ok && room >= 2 * shaft_r - 1e-9) {
-            newPillar(hi, false);
-            out_.pillars.back().base_diameter = std::min(cfg_.base_diameter, room);
-            continue;
-        }
-        Vec3 route_end;
-        if (groundRoute(h.junction, shaft_r, cfg_.max_route_length, route_end)) {
-            // Diagonal bridge to a new pillar standing where the drop is clear.
-            out_.bridges.push_back({h.junction, route_end, h.spec.shaft_diameter});
-            Pillar P;
-            P.xy = route_end.xy();
-            P.top = route_end.z;
-            P.bottom = out_.raft_top + cfg_.base_height;
-            P.diameter = h.spec.shaft_diameter;
-            P.base_diameter = std::min(cfg_.base_diameter, footRoom(P.xy, shaft_r));
-            P.heads.push_back(hi);
-            P.bridges = 1;
-            // The bridge lands on its top: a later head may raise the top, and a
-            // merge into a trunk must still start below where this bridge lands.
-            P.lowest_attach = route_end.z;
-            out_.pillars.push_back(P);
-            continue;
-        }
-        if (drop_ok) {
-            // Its shaft is clear but nowhere in reach has room for a foot (the
-            // model is right beside it down at the plate): a straight foot, at
-            // the shaft's own gap, and it is reported.
-            newPillar(hi, false);
-            out_.pillars.back().base_diameter = h.spec.shaft_diameter;
-            std::ostringstream m;
-            m << "support's foot stands " << room / 2 + footGap() - shaft_r << " mm or less from the model on the "
-              << "plate; the first layers cure wider than drawn, so it may stick to the model there";
-            warn("foot_near_model", m.str(), {h.junction.x, h.junction.y, out_.raft_top});
-            continue;
-        }
-        // Stand on the model below: straight down, or on the nearest spot a
-        // short walk reaches where the shaft clears the model.
-        Vec3 stand, foot, foot_n;
-        if (modelStand(h.junction, h.spec.shaft_diameter / 2, stand, foot, foot_n)) {
-            const bool walked = distance(stand, h.junction) > 1e-9;
-            if (walked) out_.bridges.push_back({h.junction, stand, h.spec.shaft_diameter});
-            newPillar(hi, true, foot, foot_n, &stand);
-            if (walked) out_.pillars.back().bridges = 1;
-            std::ostringstream m;
-            m << "support stands on the model (drop " << stand.z - foot.z << " mm); leaves a mark on an upper surface";
-            warn("anchor_on_model", m.str(), foot);
-            continue;
-        }
-        out_.heads.pop_back();
+        const char* why = nullptr;
+        if (supportTip(p, pi, why)) continue;
+        if (supportSmallerOrMoved(p, pi)) continue;
+        // No head at all: a short column to the model just below, if there is one.
+        if (std::string(why) == "head_blocked" && placeStub(p, pi)) continue;
         ++out_.dropped_points;
-        warn("no_route", "head has no clear path to the raft or a short drop onto the model; point dropped", p.pos);
+        if (std::string(why) == "head_blocked") warn("head_blocked", "no collision-free head direction; point dropped", p.pos);
+        else warn("no_route", "head has no clear path to the raft or a short drop onto the model; point dropped", p.pos);
     }
     ctl.step("tree", 0.7);
     mergePillars();

@@ -26,6 +26,7 @@ namespace {
 constexpr double kInward = 0.01;   // mm: nudge endpoints into the solid for through-material tests
 constexpr double kEdgeInset = 0.02; // mm: edge samples sit just inside the face
 constexpr double kRimBand = 0.1;    // mm: how near a part's outline counts as on it
+constexpr double kPastSlackDeg = 0.5;  // degrees past the angle that are rounding, not a face (processOverhang)
 constexpr double kReliefSlack = 1.1; // rule 4: a tip counts as carrying too much from this many times its limit
 
 struct Sample {
@@ -158,7 +159,8 @@ private:
     void processIsland(int part, std::vector<int>& layer_samples,
                        std::vector<std::pair<int, std::vector<int>>>& large_islands);
     void processOverhang(int part, std::vector<int>& layer_samples);
-    Paths anchorFor(int part) const;
+    // `outer`: only the parts' outlines, their holes filled.
+    Paths anchorFor(int part, bool outer = false) const;
     bool mergesSoon(int part, int layers) const;
     void coverLayer(const std::vector<int>& layer_samples);
     void enforceIslandMinimum(int part, const std::vector<int>& island_samples);
@@ -454,7 +456,7 @@ void Generator::unite(int a, int b) {
     uf_[b] = a;
 }
 
-Paths Generator::anchorFor(int part) const {
+Paths Generator::anchorFor(int part, bool outer) const {
     // Ancestors exactly anchor_layers_ below, plus island roots met earlier.
     std::vector<int> frontier{part}, roots;
     for (int d = 0; d < anchor_layers_ && !frontier.empty(); ++d) {
@@ -470,15 +472,17 @@ Paths Generator::anchorFor(int part) const {
     }
     if (frontier.empty() && roots.empty()) return {};
     Paths all;
-    for (int p : frontier) {
+    const auto add = [&](int p) {
+        if (outer) {
+            all.push_back(graph_.part(p).shape.contour);
+            return;
+        }
         const Paths ps = graph_.part(p).shape.toPaths();
         all.insert(all.end(), ps.begin(), ps.end());
-    }
-    for (int p : roots) {
-        if (p == part) continue;
-        const Paths ps = graph_.part(p).shape.toPaths();
-        all.insert(all.end(), ps.begin(), ps.end());
-    }
+    };
+    for (int p : frontier) add(p);
+    for (int p : roots)
+        if (p != part) add(p);
     return unionNonZero(all);
 }
 
@@ -613,10 +617,20 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
         below.insert(below.end(), ps.begin(), ps.end());
     }
     const Paths below_union = unionNonZero(below);
+    // What this layer adds past the one below it, however thin.
+    const Paths band = difference(P.shape.toPaths(), offset(below_union, 0.002));
+    // The same on the outside only, holes filled: what a face of the part's
+    // own outline adds (not a hole closing over a hollow, a cup or a bore).
+    Paths outer_band;
+    if (!band.empty()) {
+        Paths below_outer;
+        for (int q : P.parents) below_outer.push_back(graph_.part(q).shape.contour);
+        outer_band = intersection(difference(Paths{P.shape.contour}, offset(unionNonZero(below_outer), 0.002)),
+                                  P.shape.toPaths());
+    }
     // Any newly exposed underside (even self-supporting) is a place where
     // capacity tips can go; sampled coarsely and never needing coverage.
     {
-        const Paths band = difference(P.shape.toPaths(), offset(below_union, 0.002));
         // Held or not, these spots are never used on a piece that stands on
         // the plate (enforceCapacity); they count for the held height only
         // beside a piece that floats (held_loose_).
@@ -639,6 +653,27 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
                 }
     }
     Paths N = difference(P.shape.toPaths(), offset(below_union, s_off_));
+    // A face leaning just past the angle adds a band each layer only a little
+    // wider than the angle allows: at 47° from upright, 0.0036 mm wider at
+    // 0.05 mm layers, which the sliver filter below took for slicing noise,
+    // so faces up to about 2.5° past the angle got no tips (the view tints
+    // them all). Measured against what was there `anchor_window` below, the
+    // same face is 0.07 mm past: so the part of this layer's new band that is
+    // past the angle from there needs tips too. Only on the part's outside:
+    // a hollow's ceiling is shaped at the angle, and the outlines' rounding
+    // closes it at 45.6° on average (up to 47° in places), so ceilings over
+    // holes keep the per-layer rule as they had. Within kPastSlackDeg of the
+    // angle is rounding too.
+    const Paths anchor = anchorFor(part);
+    if (!outer_band.empty()) {
+        const Paths anchor_outer = anchorFor(part, true);
+        if (!anchor_outer.empty()) {
+            const double win = anchor_layers_ * layers().layer_height;
+            const double lean = std::min(cfg_.critical_angle_deg + kPastSlackDeg, 89.0);
+            const Paths past = difference(outer_band, offset(anchor_outer, win * std::tan(deg2rad(lean))));
+            if (!past.empty()) N = N.empty() ? past : unionOf(N, past);
+        }
+    }
     if (N.empty()) return;
     N = offset(offset(N, -0.002), 0.002);  // drop numerical slivers
     if (std::abs(area(N)) < 1e-4) return;
@@ -656,7 +691,6 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     }
     // Material within `self_supported_reach` of what existed `anchor_window`
     // below holds itself up.
-    const Paths anchor = anchorFor(part);
     if (!anchor.empty()) N = difference(N, offset(anchor, cfg_.self_supported_reach));
     if (N.empty() || std::abs(area(N)) < 1e-4) return;
     // What is left would get tips: the same again.

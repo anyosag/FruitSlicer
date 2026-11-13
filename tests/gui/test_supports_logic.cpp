@@ -616,3 +616,46 @@ TEST_CASE("Tip edits: when the tips are planned again, the planner works around 
     CHECK(tipsNear(back.points, t0.apply(edits[1].at), 0.45, false) == 1);
     CHECK(tipsNear(back.points, t0.apply(edits[2].at), 0.45, false) == 1);
 }
+
+TEST_CASE("Supports: a tip built smaller than planned, or a little way off, shows as built and says why",
+          "[gui][supports]") {
+    // A square tube 1.4 mm wide inside, open below, under a cap: in it only a 0.4 mm tip's shaft clears the walls.
+    const double w = 0.7;
+    fruit::TriangleMesh m = fruit::makeBox({-5, -5, 12}, {5, 5, 14});
+    m.append(fruit::makeBox({-5, -5, 5}, {-w, 5, 12}));
+    m.append(fruit::makeBox({w, -5, 5}, {5, 5, 12}));
+    m.append(fruit::makeBox({-w, -5, 5}, {w, -w, 12}));
+    m.append(fruit::makeBox({-w, w, 5}, {w, 5, 12}));
+    const auto path = std::filesystem::temp_directory_path() / "supports_test_tube.stl";
+    fruit::writeStl(path.string(), m);
+    auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    std::filesystem::remove(path);
+    // The planner leaves a ceiling this narrow to hold itself: a 0.6 mm tip in the middle of it, by hand.
+    const fruit::BBox3 b = doc->placed().bbox();
+    SupportPlan plan;
+    fruit::SupportPoint tip;
+    tip.pos = {(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z + 7};
+    tip.normal = {0, 0, -1};
+    tip.tip_diameter = 0.6;
+    plan.points = {tip};
+    SupportChoices c;
+    c.usual_tip = 3;  // 0.6 mm
+    const SupportResult r = finishSupports(*doc, c, plan, fruit::JobControl::none());
+    CHECK(r.tree.dropped_points == 0);
+    std::size_t smaller = 0;
+    for (const fruit::SupportPoint& p : r.points)
+        if (p.built_smaller) {
+            ++smaller;
+            CHECK(p.tip_diameter < 0.6 - 1e-9);  // the size built, as the card and the counts show it
+            CHECK_THAT(tipWhy(p), ContainsSubstring("Built smaller than planned"));
+        }
+    CHECK(smaller >= 1);
+    CHECK(smaller == r.tree.smaller_heads);
+    bool counted = false;
+    for (const auto& [d, n] : r.tip_sizes) counted = counted || d < 0.6 - 1e-9;
+    CHECK(counted);
+    // Moved, the card says how far.
+    fruit::SupportPoint moved;
+    moved.built_moved = 0.5;
+    CHECK_THAT(tipWhy(moved), ContainsSubstring("0.5 mm from here"));
+}

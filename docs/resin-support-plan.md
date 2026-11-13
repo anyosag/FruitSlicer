@@ -298,6 +298,28 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   parts has a wall beside it; on a lid lying on a shallow curved face all 86
   low heads stand in the wedge between the plate and that face, become plain
   columns and are reported, with the advice to use a raft.
+- **Faces just past the angle, and tips with no way down (2026-11-13).**
+  Measured on the demo bracket tilted so its undersides lean 46° and 47° from
+  upright: 6 tips covered them, as at 45°; from 48° 41. Each layer such a face
+  grows only a little past the angle allows (0.0036 mm at 47°), which the
+  sliver filter took for noise. Now the outside of each layer part is also
+  measured against what was there `anchor_window` below (0.07 mm past at 47°,
+  over 1 mm), with 0.5° allowed for rounding: 46° gets 39 tips, 47° 41. Holes
+  keep the per-layer rule, because the hollowing's ceilings, shaped at 45°,
+  close at 45.6° on average (up to 47°) through its outline rounding, and a
+  hollow ball must keep no tips inside. Lid 639 tips, eye cup 342 → 371,
+  bracket at 30° 110 → 113, the user's rack parts unchanged. And in the tree,
+  a tip with no head of its planned size that finds a way down is built
+  smaller (0.4, 0.3 mm), then up to 1.5 mm across the same face, before it is
+  dropped: the eye cup at How many "Most" and at Tip size 0.6 mm no longer
+  has a spot that blocks saving (one tip moved 0.5 mm; nine built at 0.4 mm).
+  Not printed. Not done: a piece that starts inside the bottom layers on the
+  plate still gets tips (the force model's replay also takes only the first
+  layer as standing on the plate, so all three would have to change together);
+  and replaying the real supports to relieve tips: on the user's parts it
+  found 2 small island tips over their limit (1 to 2 % chance), and its "90 %
+  likely" tip on the lid is the foot of a support standing on a 60° slope,
+  which the replay counts as a separate tiny tip.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

@@ -99,6 +99,11 @@ struct Head {
     // No head fits: a short straight column to the model just below holds
     // the tip instead (SupportTree::stubs). `junction` is where it lands.
     bool stub = false;
+    // At its planned size and place no head found a way down: built a size
+    // or two smaller (spec.tip_diameter), or this far from where it was
+    // planned (mm, along the surface; `contact` is where it touches).
+    bool smaller = false;
+    double moved = 0;
 };
 
 struct Pillar {
@@ -137,6 +142,9 @@ struct SupportTree {
     double raft_top = 0;
     std::vector<Warning> warnings;
     size_t dropped_points = 0;
+    // Tips built a size or two smaller than planned, or moved a little, because
+    // at their own size and place no head found a way down (Head::smaller, moved).
+    size_t smaller_heads = 0, moved_heads = 0;
     size_t braces_skipped_trap = 0;  // pillar pairs left unbraced because model passes between them
 
     size_t trunks() const {  // pillars standing on the raft
