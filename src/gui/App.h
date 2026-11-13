@@ -28,6 +28,7 @@
 #include "Navigation.h"
 #include "Placing.h"
 #include "Resins.h"
+#include "Risk.h"
 #include "Send.h"
 #include "platform/Platform.h"
 #include "mesh/AabbTree.h"
@@ -53,8 +54,8 @@ struct AppOptions {
 // screen (the model's own hollows, hollowing it, drain holes).
 enum class OrientView { Settings, Results, Hollow };
 
-// How the Supports step draws the result.
-enum class SupportsView { Supports, TipsOnly, Why };
+// How the Supports step draws the result. Risk: what may not print, painted on the model.
+enum class SupportsView { Supports, TipsOnly, Why, Risk };
 
 struct HealthDialog {
     bool open = false;
@@ -238,6 +239,38 @@ public:
     void finishCollisions();          // scripts and tests: starts the check if it is due and waits for it
     void settleCollisions();          // the same, only when no other work is running (a script's shot)
     void selectCollision(int part);   // from the Collisions tab: selects the part, shows it
+    // What may not print (Risk.h): the print replayed for the job's supports
+    // as they are now. Null while it is being made, and when there are no
+    // supports or they are out of date. It starts by itself once supports are
+    // made, and gives way to any other work.
+    const RiskReport* risk() const;
+    bool checkingRisk() const;
+    const std::string* riskProblem() const;  // why the replay of these supports stopped, if it failed (else null)
+    void finishRisk();                // scripts and tests: starts the replay if it is due and waits for it
+    // A script's shot: both background checks (collisions, then this) run to
+    // their end first, so a picture never depends on how fast they were.
+    // Nothing happens while other work is running: a script waits for that itself.
+    void settleChecks();
+    // The place picked in the Checks list or in the view (its place in
+    // risk()->places; -1: none). Picking one shows it: the Supports place,
+    // the Risk view, the camera turned to it.
+    int riskPlace() const;
+    void selectRiskPlace(int index);
+    void pickRiskPlace(int index);    // from its number in the view: picked, the camera left where it is
+    // Whether the Checks list should bring the risk row into sight this frame (after "Show them on the model").
+    bool takeRiskScroll() {
+        if (risk_scroll_ <= 0) return false;
+        --risk_scroll_;
+        return true;
+    }
+    void showRisk();                  // "Show them on the model": the Risk view, nothing picked
+    // "Go to layer N": Layers, at the layer printing when the place is at its
+    // worst, with the risk colours on. The layers are cut first if need be.
+    void showRiskLayer(int place);
+    bool layersRisk() const { return layers_risk_; }  // Layers: "Show risk"
+    void setLayersRisk(bool on) { layers_risk_ = on; }
+    // The layer of the Layers place (with its height correction's layers) that a layer of the replay is.
+    int layerOfRisk(int risk_layer) const;
     // The handles in the 3D view (Model, and Orient's settings): a drag is
     // previewed as it goes and is one undo step when it ends.
     HandleDrag& handleDrag() { return handle_drag_; }
@@ -611,6 +644,16 @@ private:
     double collision_gap_ = kMinPartGap;
     int collision_generation_ = 0;
     void startCollisionCheck();
+    std::shared_ptr<const RiskReport> risk_report_;
+    std::shared_ptr<const SupportResult> risk_for_;    // the supports it is for
+    std::shared_ptr<const SupportResult> risk_tried_;  // the supports whose replay was started (it may have been cancelled)
+    int risk_generation_ = 0;
+    std::string risk_problem_;  // what stopped the replay of risk_tried_ ("": nothing)
+    int risk_place_ = -1;
+    int risk_scroll_ = 0;  // frames for which the Checks list still scrolls to the risk row
+    bool layers_risk_ = false;
+    int risk_goto_layer_ = -1;  // a layer of the replay to show once the layers are cut
+    void startRiskCheck();
     void forgetJobTools();  // another job is open: what the tools kept was for the one before
     ShapeState shape_;
     void runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,
@@ -626,6 +669,8 @@ private:
     int partAt(const fruit::Vec3& at);  // the part (an id) whose surface is nearest a point
     std::map<std::string, double> advanced_;  // carried over to the next model opened
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from
+    std::shared_ptr<const RiskReport> scene_risk_;    // the replay the risk's paint and tips were built from
+    std::vector<fruit::TriangleMesh> risk_tip_meshes_;  // tips that may let go, by how likely
     void syncCut();
     bool cut_away_ = true;
     std::shared_ptr<const HollowPlan> cut_for_;  // the plan the cap was built from
@@ -642,6 +687,7 @@ private:
     std::shared_ptr<const LayerResult> layer_tex_result_;
     int layer_tex_index_ = -1, layer_tex_w_ = 0, layer_tex_h_ = 0;
     bool layer_tex_below_ = false;
+    std::shared_ptr<const RiskReport> layer_tex_risk_;  // the replay whose colours are on it (null: none)
     std::vector<platform::Volume> drives_;
     int drive_choice_ = -1;
     double drives_checked_ = -1;  // when the drive list was last read (seconds)

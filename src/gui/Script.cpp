@@ -82,7 +82,7 @@ void writeDemo3mf(const std::string& path, const fruit::TriangleMesh& m) {
 // "@demo": the bracket; "@demo-big": six times larger (too deep for the
 // plate); "@demo-3mf": the bracket as a 3MF file; "@demo-hollow": a 30 mm
 // ball with a sealed hollow inside, under a 2 mm wall; "@demo-block": a plain 40 × 24 × 14 mm
-// block; "@demo-bar": a
+// block; "@demo-shelf": a block with a shelf on one thin rib (for what may not print); "@demo-bar": a
 // 13.4 × 154 × 10 mm rack bar with posts, lying along Y: deeper than the
 // plate, but it fits turned a quarter.
 std::string demoPath(const std::string& which) {
@@ -105,6 +105,16 @@ std::string demoPath(const std::string& which) {
     if (which == "@demo-block") {  // a plain 40 × 24 × 14 mm block: one clean solid for Cut, Label and Combine
         const auto p = (demoDir() / "block.stl").string();
         fruit::writeStl(p, fruit::makeBox({0, 0, 0}, {40, 24, 14}));
+        return p;
+    }
+    if (which == "@demo-shelf") {
+        // A block with a shelf on one thin rib, reaching out past the block: with its own tips taken away
+        // the shelf hangs on the rib alone (overlaps keep every shell closed).
+        fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {24, 16, 6});
+        m.append(fruit::makeBox({20, 5, 5.5}, {21.5, 11, 10.5}));
+        m.append(fruit::makeBox({20, 2, 10}, {36, 14, 11.6}));
+        const auto p = (demoDir() / "shelf.stl").string();
+        fruit::writeStl(p, m);
         return p;
     }
     if (which == "@demo-bar") {
@@ -589,7 +599,21 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setSupportChoices(c);
         } else if (step.contains("supports_view")) {
             const std::string v = step["supports_view"].get<std::string>();
-            app.setSupportsView(v == "why" ? SupportsView::Why : v == "tips" ? SupportsView::TipsOnly : SupportsView::Supports);
+            app.setSupportsView(v == "why"    ? SupportsView::Why
+                                : v == "tips" ? SupportsView::TipsOnly
+                                : v == "risk" ? SupportsView::Risk
+                                              : SupportsView::Supports);
+        } else if (step.contains("risk")) {
+            // {"risk": "wait"} lets the replay of the print finish; {"risk": "show"} is "Show them on the model"
+            const std::string what = step["risk"].get<std::string>();
+            if (what == "show") app.showRisk();
+            else app.finishRisk();
+        } else if (step.contains("risk_place")) {
+            app.selectRiskPlace(step["risk_place"].get<int>() - 1);  // 1-based, as numbered; 0: none
+        } else if (step.contains("risk_layer")) {
+            app.showRiskLayer(step["risk_layer"].get<int>() - 1);  // the place's "Go to layer"
+        } else if (step.contains("layers_risk")) {
+            app.setLayersRisk(step["layers_risk"].get<bool>());
         } else if (step.contains("select_tip")) {
             app.selectTip(step["select_tip"].get<int>());
         } else if (step.contains("layer")) {
@@ -846,6 +870,23 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else app.moveTip(i, pos, n);
         } else if (step.contains("tip_select")) {
             app.selectTip(step["tip_select"].get<int>());
+        } else if (step.contains("tip_delete_over")) {
+            // Delete on every tip higher than this many mm above the plate, one after the other.
+            const double z = step["tip_delete_over"].get<double>();
+            for (;;) {
+                app.jobs().wait();
+                const auto& doc = app.document();
+                if (!doc || !doc->supports.result) throw std::runtime_error("tip_delete_over: no supports");
+                const auto& pts = doc->supports.result->points;
+                int next = -1;
+                for (std::size_t i = 0; i < pts.size() && next < 0; ++i)
+                    if (pts[i].pos.z > z) next = static_cast<int>(i);
+                if (next < 0) break;
+                const std::size_t before = pts.size();
+                app.deleteTip(next);
+                app.jobs().wait();
+                if (app.document()->supports.result->points.size() >= before) throw std::runtime_error("tip_delete_over: a tip stayed");
+            }
         } else if (step.contains("tip_delete")) {
             app.deleteTip(step["tip_delete"].get<int>());
         } else if (step.contains("tip_resize")) {
@@ -965,9 +1006,10 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             for (int i = 0, n = step["frames"].get<int>(); i < n; ++i) render();
         } else if (step.contains("shot")) {
             const std::string name = step["shot"].get<std::string>();
-            // The Collisions check the app starts by itself with several parts
-            // is let finish, so the picture doesn't depend on how fast it was.
-            app.settleCollisions();
+            // The checks the app starts by itself (Collisions with several
+            // parts, the replay of the print with supports) are let finish,
+            // so the picture doesn't depend on how fast they were.
+            app.settleChecks();
             // Render until the picture stops changing (layout settles over a
             // frame or two), at most 12 frames.
             std::vector<uint8_t> prev = render(), cur;

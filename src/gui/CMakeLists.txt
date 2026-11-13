@@ -55,6 +55,7 @@ set(app_sources
   App.cpp
   AppParts.cpp
   AppPartsTools.cpp
+  AppRisk.cpp
   PartsTools.cpp
   Collisions.cpp
   screens/PartsToolPanels.cpp
@@ -93,6 +94,7 @@ set(app_sources
   Preferences.cpp
   Print.cpp
   Resins.cpp
+  Risk.cpp
   Send.cpp
   Setup.cpp
   Script.cpp
@@ -117,6 +119,7 @@ set(app_sources
   screens/SettingsScreens.cpp
   screens/SupportsAdvanced.cpp
   screens/OrientStep.cpp
+  screens/RiskParts.cpp
   screens/SupportsStep.cpp
   screens/ToolsScreens.cpp
   screens/TipEdit.cpp

@@ -9,7 +9,8 @@
 //
 // Steps drive the app through the same commands its buttons use:
 //   {"open": path | "@demo" | "@demo-big" | "@demo-bar" | "@demo-3mf" | "@demo-job"}  built-in test models, a saved job
-//     ("@demo-hollow": a ball with a sealed hollow; "@demo-block": a plain 40 × 24 × 14 mm block; "@demo-worn", "@demo-open", "@demo-loose": faulty
+//     ("@demo-hollow": a ball with a sealed hollow; "@demo-block": a plain 40 × 24 × 14 mm block; "@demo-shelf": a block with a
+//     shelf on one thin rib; "@demo-worn", "@demo-open", "@demo-loose": faulty
 //     meshes for the repair) {"show_patch": true} turns the view to the biggest patch
 //   {"add_part": path | "@demo"…} another model beside the others (then "health", as for open)
 //   {"select_part": n} {"remove_part": n} (1-based, in the Parts list's order)
@@ -50,7 +51,10 @@
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
 //   {"quick": {"hold": 1-5, "amount": 1-5, "sturdy": 1-5}} (the quick support sliders) {"raft": bool} {"raft_type": "pads" | "full"} {"lift": 1-10 mm} {"height_correction": 0-0.5 mm} (with no raft) {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
-//   {"supports_view": "supports" | "tips" | "why"} {"select_tip": index} {"problems": bool}
+//   {"supports_view": "supports" | "tips" | "why" | "risk"} {"select_tip": index} {"problems": bool}
+//   {"risk": "wait" | "show"} lets the replay of the print finish, or shows the Risk view ("Show them on the model")
+//   {"risk_place": n} picks the n-th place that may not print (1-based; 0: none) {"risk_layer": n} its "Go to layer"
+//   {"layers_risk": bool} Layers' "Show risk"
 //   {"advanced": "open" | "close" | "reset" | "apply"} {"setting": [key, value]} (keys: advancedSettings())
 //   {"exposures": [normal_s, bottom_s]} {"sample": path | "@demo-sample"} (a 0.03 mm print file)
 //   {"drive": name} adds a stand-in USB drive (a folder) and picks it
@@ -62,6 +66,7 @@
 //   {"printer": n (1-based)} {"start_print": bool} {"send": "go" | "close"}
 //   {"edit_tips": bool} {"tip_tool": "select" | "add" | "zone"} {"tip_select": i} {"tip_delete": i}
 //   {"tip_resize": [i, mm]} {"tip_pin": i} {"tip_undo": i | -1 | "all"}
+//   {"tip_delete_over": mm} Delete on every tip higher than that above the plate, one after the other (waits for each)
 //   {"tip_add_near" | "tip_zone_near" | "tip_move_near": [i, dx, dy]} (up from below the plate, near tip i)
 //   {"orientation_piece": path | "@demo"} {"orientation_sample": path | "@stand-in-flip-y" (-flip-x, -as-is)}
 //   {"orientation_fix": "use"} {"hinge": "back" | "left" | "right" | "front" | "none"}

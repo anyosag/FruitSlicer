@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace fruit {
 
@@ -54,6 +55,8 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
                   {"chance", w.chance},
                   {"chance_lost_above", w.lost_chance},
                   {"area_mm2", w.area}};
+        // What goes with it: averaged over the replays in which it let go.
+        if (w.cause != RiskCause::Skin) e["model_lost_with_it_mm3"] = w.lost_volume;
         if (w.cause != RiskCause::Unheld && w.cause != RiskCause::Skin) {
             e["closeness"] = w.closeness;
             // Bending assumes nothing holds the piece sideways. If the film
@@ -67,6 +70,38 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
             e["joints_like_it_nearby"] = w.count;
         }
         spots.push_back(std::move(e));
+    }
+    {
+        // Tips with a chance of 1 in 20 or more of letting go, and the worst of them.
+        std::size_t at_risk = 0;
+        double worst = 0;
+        for (const TipRisk& t : r.tips) {
+            at_risk += t.chance >= 0.05;
+            worst = std::max(worst, t.chance);
+        }
+        j["tips_that_may_let_go"] = at_risk;
+        j["worst_tip_chance"] = worst;
+        // Each of them (the first forty), the likeliest first.
+        std::vector<const TipRisk*> order;
+        for (const TipRisk& t : r.tips)
+            if (t.chance >= 0.05) order.push_back(&t);
+        std::stable_sort(order.begin(), order.end(), [](const TipRisk* a, const TipRisk* b) { return a->chance > b->chance; });
+        json tips = json::array();
+        for (const TipRisk* t : order) {
+            if (tips.size() >= 40) break;
+            tips.push_back({{"at", {t->at.x, t->at.y, t->at.z}},
+                            {"upside_down", t->foot},
+                            {"chance", t->chance},
+                            {"closeness", t->closeness},
+                            {"touches_mm2", t->area},
+                            {"load_mm2", t->load},
+                            {"of_which_thin_model_near_it_mm2", t->near},
+                            {"half_let_go_at_mm2", t->holds},
+                            {"while_printing_layer", t->at_layer},
+                            {"model_lost_with_it_mm3", t->lost_volume},
+                            {"chance_lost_above", t->lost_chance}});
+        }
+        j["tips_at_risk"] = std::move(tips);
     }
     j["spots_listed"] = spots.size();
     j["spots_found"] = r.spots.size();

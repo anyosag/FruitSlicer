@@ -101,6 +101,7 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
             app.jobTab() = 0;
         }
     }
+    riskBeforeSave(app);  // what may not print: amber, it never blocks saving
     if (app.printerSetup().orientation_confirmed) {
         verdictRow("orientation", Verdict::Ok, "Image orientation confirmed",
                    "Checked against SatelLite's slice of the F; this file uses the fix it found.");
@@ -259,7 +260,7 @@ void saveArea(App& app, Document& doc) {
     if (primaryButton(wifi ? "Send to printer" : "Save .goo", ImVec2(-1, 44), blocker.empty())) app.savePrint();
     if (!blocker.empty()) tooltip(blocker.c_str());
     ImGui::Dummy(ImVec2(0, 2));
-    if (secondaryButton("Export STL instead", ImVec2(-1, 34), !app.jobs().busy())) app.exportStl(false);
+    if (secondaryButton("Export STL instead", ImVec2(-1, 34), !app.jobs().busy() || app.checkingRisk())) app.exportStl(false);
     tooltip("The model and its supports as one mesh, for another slicer.");
     if (doc.supports.result && doc.supports.result->hollow) {
         // A mesh can't carry what was cut from the layers.
@@ -362,7 +363,7 @@ void savedPage(App& app, Document& doc, ImVec2 size) {
     }
     endCard();
     ImGui::Dummy(ImVec2(0, 14));
-    const bool busy = app.jobs().busy();
+    const bool busy = app.jobs().busy() && !app.checkingRisk();  // the replay of the print gives way
     if (drive) {
         if (primaryButton("Eject the drive", ImVec2(140, 40), !busy)) app.ejectDrive();
         ImGui::SameLine(0, 10);

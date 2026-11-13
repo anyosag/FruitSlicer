@@ -304,10 +304,11 @@ void Renderer::clearCut() {
     destroyCap();
 }
 
-void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible) {
+void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible, bool paint) {
     if (i >= extras_.size()) return;
     extras_[i].rgb = rgb;
     extras_[i].visible = visible;
+    extras_[i].paint = paint;
 }
 
 unsigned Renderer::uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb) {
@@ -481,12 +482,24 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         const M4 identity;
         glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
         for (const Extra& e : extras_) {
-            if (!e.visible || !e.mesh.vao) continue;
+            if (!e.visible || !e.mesh.vao || e.paint) continue;
             rgb(e.rgb, c);
             glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
             glBindVertexArray(e.mesh.vao);
             glDrawElements(GL_TRIANGLES, e.mesh.count, GL_UNSIGNED_INT, nullptr);
         }
+        // Paint lies on the model's own surface, which is already drawn: a
+        // little nearer the eye, so it wins there and nowhere else.
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0f, -4.0f);
+        for (const Extra& e : extras_) {
+            if (!e.visible || !e.mesh.vao || !e.paint) continue;
+            rgb(e.rgb, c);
+            glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
+            glBindVertexArray(e.mesh.vao);
+            glDrawElements(GL_TRIANGLES, e.mesh.count, GL_UNSIGNED_INT, nullptr);
+        }
+        glDisable(GL_POLYGON_OFFSET_FILL);
     }
     if (cut_) {
         glDisable(GL_CLIP_DISTANCE0);

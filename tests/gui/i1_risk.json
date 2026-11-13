@@ -1,0 +1,15 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo-shelf"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"}, {"view": "angled"},
+    {"risk": "wait"}, {"risk": "show"}, {"shot": "i1_risk_tips"},
+    {"edit_tips": true}, {"tip_delete_over": 12}, {"edit_tips": false},
+    {"risk": "wait"}, {"supports_view": "supports"}, {"shot": "i1_risk_checks"},
+    {"risk": "show"}, {"shot": "i1_risk_view"},
+    {"risk_place": 1}, {"shot": "i1_risk_place"},
+    {"risk_layer": 1}, {"frames": 2}, {"wait": "jobs"}, {"shot": "i1_risk_layer"},
+    {"layers_risk": false}, {"shot": "i1_risk_layer_plain"}
+  ]
+}

@@ -284,7 +284,8 @@ void supportsPanel(App& app, Document& doc) {
     controlsPanel(app, doc);
     // The tip picked in the view, and why it is there.
     const SupportState& s = doc.supports;
-    if (s.result && !running(app) && s.selected_tip >= 0 &&
+    // (Not in the Risk view: its marks are the places that may not print, and no tip is ringed there.)
+    if (s.result && !running(app) && s.selected_tip >= 0 && app.supportsView() != SupportsView::Risk &&
         s.selected_tip < static_cast<int>(s.result->points.size())) {
         ImGui::Dummy(ImVec2(0, 6));
         groupLabel("Selected tip");
@@ -296,6 +297,10 @@ void supportsPanel(App& app, Document& doc) {
         ImGui::Dummy(ImVec2(0, 2));
         text(tipNumbers(p, r.cfg, r.tree_cfg).c_str(), fonts().regular, size::Help, col::TextMuted, true);
         endCard();
+    } else if (s.result && !running(app) && app.supportsView() == SupportsView::Risk) {
+        ImGui::Dummy(ImVec2(0, 4));
+        text("The view shows what may not print. Each numbered place is listed under Checks.", fonts().regular,
+             size::Body, col::TextSecondary, true);
     } else if (s.result && !running(app) && app.supportsView() == SupportsView::Why) {
         ImGui::Dummy(ImVec2(0, 4));
         text("Click a tip in the view to see why it is there.", fonts().regular, size::Body, col::TextSecondary, true);
@@ -389,7 +394,10 @@ void supportChecks(App& app, Document& doc) {
         ImGui::PushID(static_cast<int>(i));
         checkRow("check", r.checks[i]);
         ImGui::PopID();
+        // Right after "No part starts in mid-air": what else may not print, from replaying the print.
+        if (i == 0) riskChecks(app, doc);
     }
+    if (r.checks.empty()) riskChecks(app, doc);
     if (r.problems.empty()) return;
     ImGui::Dummy(ImVec2(0, 6));
     int i = 0;
@@ -416,6 +424,11 @@ void legend(App& app, const SupportResult& r) {
     const ImVec2 at = ImGui::GetCursorScreenPos();
     float x = at.x;
     const float y = at.y + 14;
+    if (app.supportsView() == SupportsView::Risk) {
+        // What the paint and the tips' colours mean, or that the replay is not done yet.
+        ImGui::Dummy(ImVec2(riskLegend(app, at), 28));
+        return;
+    }
     ImGui::PushFont(fonts().regular, size::Help);
     auto item = [&](const char* label, ImU32 c, bool line) {
         if (line) dl->AddLine(ImVec2(x, y), ImVec2(x + 12, y), c, 2);
@@ -555,6 +568,11 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     const SupportResult& r = *s.result;
     const bool fresh = s.fresh(doc.revision(), doc.supportSettings());
     if (!fresh && doc.fits()) staleBanner(app, doc, origin, size);
+    // The Risk view has its own marks: the places that may not print, by number.
+    if (app.supportsView() == SupportsView::Risk) {
+        if (fresh) riskOverlay(app, doc, origin, size, vp);
+        return;
+    }
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
     auto project = [&](const fruit::Vec3& w, ImVec2* out) {
         const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];
@@ -596,8 +614,10 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
 // Over the view's top: which supports to show, and what the marks mean.
 void supportsViewPill(App& app, Document& doc) {
     if (!doc.supports.result || running(app)) return;
-    const std::pair<const char*, SupportsView> views[] = {
-        {"Supports", SupportsView::Supports}, {"Tips only", SupportsView::TipsOnly}, {"Why", SupportsView::Why}};
+    const std::pair<const char*, SupportsView> views[] = {{"Supports", SupportsView::Supports},
+                                                          {"Tips only", SupportsView::TipsOnly},
+                                                          {"Why", SupportsView::Why},
+                                                          {"Risk", SupportsView::Risk}};
     bool first = true;
     for (const auto& [label, v] : views) {
         if (!first) ImGui::SameLine(0, 4);

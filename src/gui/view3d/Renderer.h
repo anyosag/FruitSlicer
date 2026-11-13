@@ -46,10 +46,11 @@ public:
 
     // Extra meshes in printer coordinates, each with its own colour
     // (0xRRGGBB): the support tree and the tips. Uploaded when `key`
-    // changes; colours and visibility can change every frame.
+    // changes; colours and visibility can change every frame. `paint`: it
+    // lies on the model's own surface and is drawn over it, as paint is.
     void setExtras(const std::vector<const fruit::TriangleMesh*>& meshes, int key);
     void clearExtras();
-    void setExtraStyle(std::size_t i, unsigned rgb, bool visible);
+    void setExtraStyle(std::size_t i, unsigned rgb, bool visible, bool paint = false);
     // Tints faces leaning further than `critical_deg` from vertical (0 = off).
     void setOverhangTint(double critical_deg) { overhang_deg_ = critical_deg; }
 
@@ -103,6 +104,7 @@ private:
         Mesh mesh;
         unsigned rgb = 0xC8CDD6;
         bool visible = true;
+        bool paint = false;
     };
     std::vector<Extra> extras_;
     int extras_key_ = -1;

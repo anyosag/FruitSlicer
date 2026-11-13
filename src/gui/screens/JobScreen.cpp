@@ -470,6 +470,7 @@ void statusBar(App& app) {
     ImGui::SameLine(0, 20);
     text(strf("Problems: %d", problems).c_str(), fonts().regular, size::Body,
          problems ? col::Warn : col::TextSecondary);
+    riskChip(app);  // what may not print, when the replay found something
     if (!app.printerSetup().orientation_confirmed) {
         ImGui::SameLine(0, 20);
         ImGui::SetCursorPosY(cy - 15);

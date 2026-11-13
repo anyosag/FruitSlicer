@@ -20,7 +20,7 @@ namespace {
 
 constexpr double kInf = std::numeric_limits<double>::infinity();
 constexpr double kMinLever = 0.05;  // mm
-constexpr double kSliver = 0.02;    // mm²: under the contact of a 0.2 mm tip (0.031 mm²)
+constexpr double kSliver = kSliverContact;  // mm²: under the contact of a 0.2 mm tip (0.031 mm²)
 constexpr double kListFrom = 0.05;  // a joint is listed from a chance of 1 in 20
 constexpr double kWorthLosing = 1.0;  // mm³ of model: less than this lost still counts as printed whole
 constexpr double kBorrowedMargin = 1.0 / 3;  // a borrowed limit, as a share of where half fail
@@ -351,7 +351,9 @@ private:
     void findSkins();
     void runReplays();
     void findSpots();
+    void listTips();
     void summarise();
+    double lostAbove(int part) const;
 
     struct Scratch;
     void step(int k, Scratch& st) const;
@@ -465,6 +467,8 @@ private:
     std::vector<int> run_of_, run_best_;
     std::vector<char> run_contact_;  // the run ends in a tip (or is a support's foot on the model)
     std::vector<Worst> worst_;        // by link
+    // By link: mm³ of the model lost with it, averaged over the replays in which it let go.
+    std::vector<float> lost_with_;
     std::vector<Seen> seen_;          // by link, then layer
     std::vector<int> worst_link_;     // by part: its most loaded joint
     mutable std::vector<float> by_layer_;  // each layer written by the one thread replaying it
@@ -2097,6 +2101,7 @@ void Analysis::findSkins() {
 
 void Analysis::runReplays() {
     whole_ = 1;
+    lost_with_.assign(links_.size(), 0.0f);
     const int replays = std::max(cfg_.replays, 0);
     out_.stats.replays = replays;
 
@@ -2243,8 +2248,14 @@ void Analysis::runReplays() {
     std::vector<std::vector<Edge>> adj;
     std::vector<int> node_piece, queue, due;
     std::vector<char> reached, upstream;
-    std::vector<std::pair<int, int>> fallen;  // (piece, the layer printing when it fell)
+    struct Fall {
+        int piece, k, by;  // the layer printing when it fell, and the joint whose letting go dropped it
+    };
+    std::vector<Fall> fallen;
     std::vector<std::pair<int, double>> takers;
+    // By joint: the replays in which it let go, and the model that went with it then (mm³, summed).
+    std::vector<int> let_go(nc, 0), lost_by;
+    std::vector<double> went_with(nc, 0);
 
     for (int r = 0; r < replays; ++r) {
         if ((r & 15) == 0) ctl_.step("replays", static_cast<double>(r) / replays);
@@ -2271,6 +2282,7 @@ void Analysis::runReplays() {
             if (x < 0) break;
             const int k = when[x];
             broken[x] = 1;
+            ++let_go[x];
             if (tip_group_[cand[x].link] >= 0)
                 for (int c : of_tip[tip_group_[cand[x].link]]) broken[c] = 1;
             // The pieces as they stand while layer k prints, and what still joins them.
@@ -2309,7 +2321,7 @@ void Analysis::runReplays() {
             for (size_t v = 0; v < node_piece.size(); ++v) {
                 if (reached[v]) continue;
                 fell = true;
-                fallen.emplace_back(node_piece[v], k);
+                fallen.push_back({node_piece[v], k, x});
                 for (const Edge& e : adj[v]) gone[e.cand] = 1;
             }
             if (fell || !reached[above]) continue;
@@ -2364,8 +2376,10 @@ void Analysis::runReplays() {
 
         // Everything in a fallen piece, then whatever would have printed on it alone.
         lost_list.clear();
-        for (const auto& [piece, k] : fallen) {
-            queue.assign(1, piece);
+        lost_by.clear();
+        for (const Fall& f : fallen) {
+            const int k = f.k;
+            queue.assign(1, f.piece);
             for (size_t q = 0; q < queue.size(); ++q) {
                 const Piece& pc = pieces[queue[q]];
                 for (int id : pc.parts) {
@@ -2373,6 +2387,7 @@ void Analysis::runReplays() {
                     if (lost_stamp[id] != r) {
                         lost_stamp[id] = r;
                         lost_list.push_back(id);
+                        lost_by.push_back(f.by);
                     }
                 }
                 queue.insert(queue.end(), pc.kids.begin(), pc.kids.end());
@@ -2381,7 +2396,10 @@ void Analysis::runReplays() {
         double model_lost = 0;  // mm³
         for (size_t q = 0; q < lost_list.size(); ++q) {
             const int id = lost_list[q];
-            if (model_[id]) model_lost += area_[id] * h_;
+            if (model_[id]) {
+                model_lost += area_[id] * h_;
+                went_with[lost_by[q]] += area_[id] * h_;
+            }
             ++counts[id];
             for (int child : part_[id].children) {
                 if (lost_stamp[child] == r || !held_[child]) continue;
@@ -2394,6 +2412,7 @@ void Analysis::runReplays() {
                 if (!any) {
                     lost_stamp[child] = r;
                     lost_list.push_back(child);
+                    lost_by.push_back(lost_by[q]);  // what printed on it goes with the same joint
                 }
             }
         }
@@ -2402,26 +2421,29 @@ void Analysis::runReplays() {
     whole_ = static_cast<double>(whole) / replays;
     for (int id = 0; id < n_; ++id)
         out_.parts[id].lost_chance = held_[id] ? static_cast<float>(static_cast<double>(counts[id]) / replays) : 1.0f;
+    for (int c = 0; c < nc; ++c)
+        if (let_go[c] > 0) lost_with_[cand[c].link] = static_cast<float>(went_with[c] / let_go[c]);
     ctl_.step("replays", 1);
 }
 
 // ---------------------------------------------------------------- what to look at
 
+// What would be lost if a joint let go: the part half a millimetre up from
+// it, not the first sliver of a layer over it.
+double Analysis::lostAbove(int part) const {
+    const int up = std::max(1, static_cast<int>(std::lround(0.5 / h_)));
+    for (int n = 0; n < up; ++n) {
+        int next = -1;
+        for (int c : part_[part].children)
+            if (held_[c] && model_[c] == model_[part] && (next < 0 || area_[c] > area_[next])) next = c;
+        if (next < 0) break;
+        part = next;
+    }
+    return static_cast<double>(out_.parts[part].lost_chance);
+}
+
 void Analysis::findSpots() {
     std::vector<WeakSpot> all;
-    // What would be lost if a joint let go: the part half a millimetre up
-    // from it, not the first sliver of a layer over it.
-    const int up = std::max(1, static_cast<int>(std::lround(0.5 / h_)));
-    auto lostAbove = [&](int part) {
-        for (int n = 0; n < up; ++n) {
-            int next = -1;
-            for (int c : part_[part].children)
-                if (held_[c] && model_[c] == model_[part] && (next < 0 || area_[c] > area_[next])) next = c;
-            if (next < 0) break;
-            part = next;
-        }
-        return static_cast<double>(out_.parts[part].lost_chance);
-    };
     // Joints with a chance worth showing: the weakest of each run, and of
     // several of one kind within reach the worst stands for all.
     std::vector<int> order;
@@ -2472,10 +2494,13 @@ void Analysis::findSpots() {
         s.load = std::abs(w.load);
         s.near = w.near;
         s.holds = l.holds;
+        s.lost_volume = lost_with_[i];
         s.at_layer = w.step;
         all.push_back(s);
     }
     // Parts that start in mid-air.
+    std::vector<char> counted(n_, 0);
+    std::vector<int> stack;
     for (int id = 0; id < n_; ++id) {
         // Only where it starts: what prints on it is unheld with it.
         if (held_[id] || !model_[id]) continue;
@@ -2495,6 +2520,19 @@ void Analysis::findSpots() {
         s.chance = s.lost_chance = 1;
         s.area = area_[id];
         s.at_layer = layerOf(id);
+        // All that prints on it and on nothing else goes with it.
+        stack.assign(1, id);
+        counted[id] = 1;
+        while (!stack.empty()) {
+            const int at = stack.back();
+            stack.pop_back();
+            s.lost_volume += area_[at] * h_;
+            for (int c : part_[at].children)
+                if (!held_[c] && model_[c] && !counted[c]) {
+                    counted[c] = 1;
+                    stack.push_back(c);
+                }
+        }
         all.push_back(s);
     }
     // Skins more likely than not to fail: one per part.
@@ -2528,6 +2566,45 @@ void Analysis::findSpots() {
         return a.at.z < b.at.z;
     });
     out_.spots = std::move(all);
+}
+
+// Every tip that touches the model, with the most it was ever pulled by.
+void Analysis::listTips() {
+    const int given = static_cast<int>(in_.tips.size());
+    std::vector<int> lead(group_holds_.size(), -1);
+    for (size_t i = 0; i < links_.size(); ++i)
+        if (tip_group_[i] >= 0 && !tip_follows_[i] && lead[tip_group_[i]] < 0) lead[tip_group_[i]] = static_cast<int>(i);
+    for (size_t g = 0; g < lead.size(); ++g) {
+        const int i = lead[g];
+        if (i < 0) continue;  // a tip that was given, but touches nothing
+        const Link& l = links_[i];
+        const Worst& w = worst_[i];
+        TipRisk t;
+        t.foot = l.kind == Kind::Foot;
+        if (static_cast<int>(g) < given) {
+            t.contact = static_cast<int>(g);
+            t.at = in_.tips[g].at;
+        } else {
+            t.at = {group_at_[g].x, group_at_[g].y, group_low_[g] * h_};
+        }
+        t.area = group_area_[g];
+        t.holds = l.holds;
+        t.lost_chance = lostAbove(l.child);
+        t.lost_volume = lost_with_[i];
+        if (w.step >= 0) {
+            t.closeness = w.u;
+            t.chance = breakChance(w.u, steep_);
+            t.load = std::abs(w.load);
+            t.near = w.near;
+            t.at_layer = w.step;
+        }
+        out_.tips.push_back(t);
+    }
+    std::stable_sort(out_.tips.begin(), out_.tips.end(), [](const TipRisk& a, const TipRisk& b) {
+        if (a.at.z != b.at.z) return a.at.z < b.at.z;
+        if (a.at.x != b.at.x) return a.at.x < b.at.x;
+        return a.at.y < b.at.y;
+    });
 }
 
 void Analysis::summarise() {
@@ -2599,6 +2676,7 @@ StabilityResult Analysis::run() {
     out_.layer_height = h_;
     out_.closeness_by_layer = by_layer_;
     findSpots();
+    listTips();
     summarise();
     out_.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return std::move(out_);

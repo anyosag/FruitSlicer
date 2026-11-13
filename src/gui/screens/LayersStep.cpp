@@ -13,6 +13,7 @@
 #include "Format.h"
 #include "Icons.h"
 #include "LayerScroll.h"
+#include "Risk.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "screens/JobParts.h"
@@ -26,6 +27,26 @@ constexpr float kColumnW = 128, kChartH = 150;
 int shownLayer(const Document& doc) {
     const LayerResult& r = *doc.layers.result;
     return doc.layers.current >= 0 ? doc.layers.current : static_cast<int>(r.biggest);
+}
+
+const ImU32 kRiskLine = IM_COL32(0xFF, 0x6B, 0x6B, 255);
+
+ImU32 bandColor(RiskBand b) {
+    const unsigned c = riskColour(b);
+    return IM_COL32((c >> 16) & 255, (c >> 8) & 255, c & 255, 255);
+}
+
+// The replay of the print, when it found something to show (null otherwise).
+const RiskReport* riskToShow(App& app) {
+    const RiskReport* r = app.risk();
+    return r && !riskHeadline(*r).ok ? r : nullptr;
+}
+
+// How close the weakest place is while layer `i` of the Layers place prints (1: half would let go).
+float closenessAt(const RiskReport& r, const LayerResult& lr, std::size_t i) {
+    if (r.closeness.empty()) return 0;
+    const std::size_t at = i > lr.base_layers ? i - lr.base_layers : 0;
+    return r.closeness[std::min(at, r.closeness.size() - 1)];
 }
 
 void layerColumn(App& app, Document& doc, float h) {
@@ -47,7 +68,10 @@ void layerColumn(App& app, Document& doc, float h) {
     }
     ImGui::Dummy(ImVec2(0, 4));
     // Tall slider, layer 1 at the bottom, with marks for layers worth a look.
-    const float sh = std::max(80.0f, ImGui::GetContentRegionAvail().y - 46);
+    const RiskReport* replay = riskToShow(app);
+    const int riskiest = replay && replay->riskiest_layer >= 0 ? app.layerOfRisk(replay->riskiest_layer) : -1;
+    const int legend_lines = 1 + (r.hollows.components.empty() ? 0 : 1) + (riskiest >= 0 ? 1 : 0);
+    const float sh = std::max(80.0f, ImGui::GetContentRegionAvail().y - 14 - 16 * std::max(2, legend_lines));
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float x = p.x + (kColumnW - 32) / 2 - 12;
     ImGui::SetCursorScreenPos(ImVec2(x, p.y));
@@ -79,6 +103,11 @@ void layerColumn(App& app, Document& doc, float h) {
         const bool big = m == r.biggest;
         dl->AddLine(ImVec2(x + 28, y), ImVec2(x + 40, y), big ? col::Accent : IM_COL32(0xF0, 0x6B, 0x9A, 255), 2);
     }
+    // The layer whose pull comes closest to breaking something: on the slider's other side.
+    if (riskiest >= 0) {
+        const float y = p.y + sh - 7 - (sh - 14) * static_cast<float>(riskiest) / static_cast<float>(std::max(1, n - 1));
+        dl->AddLine(ImVec2(x - 16, y), ImVec2(x - 4, y), kRiskLine, 2);
+    }
     // Legend: what each kind of mark is.
     float ly = p.y + sh + 8;
     auto legendLine = [&](ImU32 c, const char* label) {
@@ -89,6 +118,7 @@ void layerColumn(App& app, Document& doc, float h) {
     };
     legendLine(col::Accent, "biggest layer");
     if (!r.hollows.components.empty()) legendLine(IM_COL32(0xF0, 0x6B, 0x9A, 255), "cup or trap starts");
+    if (riskiest >= 0) legendLine(kRiskLine, "riskiest layer");
     endPanel();
 }
 
@@ -99,13 +129,35 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_c
         const ImVec2 wp = ImGui::GetWindowPos();
         dl->AddLine(wp, ImVec2(wp.x + size.x, wp.y), col::Border);
     }
-    text("Layer area by height", fonts().semibold, size::Body, col::Text);
-    ImGui::SameLine(0, 10);
-    text("Bigger layers pull harder on the film as they peel.", fonts().regular, size::Body, col::TextMuted);
+    // With the print replayed: a second line, how close the weakest place is to letting go.
+    const RiskReport* replay = app.risk();
+    if (replay && replay->closeness.empty()) replay = nullptr;
+    if (replay) {
+        text("Through the print", fonts().semibold, size::Body, col::Text);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        auto key = [&](ImU32 c, const char* label, bool dashed = false) {
+            ImGui::SameLine(0, 16);
+            const ImVec2 q = ImGui::GetCursorScreenPos();
+            if (dashed) {
+                for (float xx = 0; xx < 16; xx += 6) dl->AddLine(ImVec2(q.x + xx, q.y + 9), ImVec2(q.x + xx + 3, q.y + 9), c, 1);
+            } else {
+                dl->AddLine(ImVec2(q.x, q.y + 9), ImVec2(q.x + 12, q.y + 9), c, 2);
+            }
+            ImGui::SetCursorScreenPos(ImVec2(q.x + (dashed ? 21.0f : 18.0f), q.y));
+            text(label, fonts().regular, size::Body, col::TextMuted);
+        };
+        key(IM_COL32(0x5B, 0x9B, 0xD5, 255), "layer area: bigger layers pull harder on the film");
+        key(kRiskLine, "how close the weakest place is to letting go");
+        key(kRiskLine, "half would let go", true);
+    } else {
+        text("Layer area by height", fonts().semibold, size::Body, col::Text);
+        ImGui::SameLine(0, 10);
+        text("Bigger layers pull harder on the film as they peel.", fonts().regular, size::Body, col::TextMuted);
+    }
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float w = ImGui::GetContentRegionAvail().x, h = ImGui::GetContentRegionAvail().y - 4;
-    const float left = 44, bottom = 16;
-    const ImVec2 a(p.x + left, p.y), b(p.x + w, p.y + h - bottom);  // plot area
+    const float left = 44, bottom = 16, right = replay ? 46.0f : 0.0f;
+    const ImVec2 a(p.x + left, p.y), b(p.x + w - right, p.y + h - bottom);  // plot area
     ImGui::InvisibleButton("plot", ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -157,6 +209,39 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_c
         dl->AddLine(ImVec2(q.x, a.y), ImVec2(q.x, b.y), col::TextMuted, 1);
         dl->AddCircleFilled(q, 4, IM_COL32(0x5B, 0x9B, 0xD5, 255));
     }
+    // How close the weakest place is, against the right-hand scale: 100 % is where half of such places let go.
+    double cmax = 1.5;
+    auto py = [&](double closeness) { return b.y - (b.y - a.y) * static_cast<float>(std::min(closeness, cmax) / cmax); };
+    if (replay && n) {
+        float top = 0;
+        for (float v : replay->closeness) top = std::max(top, v);
+        cmax = std::max(1.5, std::ceil(static_cast<double>(top) * 2) / 2);
+        ImGui::PushFont(fonts().regular, size::Label);
+        const double step = cmax > 3 ? 1.0 : 0.5;
+        for (double v = 0; v <= cmax + 1e-9; v += step) {
+            const std::string l = strf("%.0f %%", v * 100);
+            dl->AddText(ImVec2(b.x + 8, py(v) - 6), col::TextMuted, l.c_str());
+        }
+        // Half would let go: a dashed line (named in the key above, so nothing covers the curves).
+        const float y1 = py(1.0);
+        for (float xx = a.x; xx < b.x; xx += 8) dl->AddLine(ImVec2(xx, y1), ImVec2(std::min(xx + 4, b.x), y1), kRiskLine, 1);
+        ImGui::PopFont();
+        auto rx = [&](std::size_t i) { return ImVec2(px(i).x, py(closenessAt(*replay, r, i))); };
+        for (std::size_t i = stride; i < n; i += stride) dl->AddLine(rx(i - stride), rx(i), kRiskLine, 1.5f);
+        const float now = closenessAt(*replay, r, static_cast<std::size_t>(at));
+        const ImVec2 q = rx(static_cast<std::size_t>(at));
+        dl->AddCircleFilled(q, 4, now >= 1 ? bandColor(RiskBand::VeryLikely) : kRiskLine);
+        dl->AddCircle(q, 4.5f, col::Text, 16, 1.5f);
+        // What it is at this layer, beside the marker (on its left near the plot's right end).
+        ImGui::PushFont(fonts().medium, size::Label);
+        const std::string l = strf("%.0f %% at this layer", now * 100);
+        const ImVec2 ls = ImGui::CalcTextSize(l.c_str());
+        const float lx = q.x + 10 + ls.x > b.x ? q.x - 10 - ls.x : q.x + 10;
+        const float ly = q.y - 20 >= a.y ? q.y - 20 : q.y + 8;  // over the marker, or under it at the plot's top
+        dl->AddRectFilled(ImVec2(lx - 4, ly - 1), ImVec2(lx + ls.x + 4, ly + ls.y + 1), col::Panel, 3);
+        dl->AddText(ImVec2(lx, ly), col::TextSecondary, l.c_str());
+        ImGui::PopFont();
+    }
     if (hovered && n) {
         const float mx = ImGui::GetIO().MousePos.x;
         const auto i = static_cast<std::size_t>(
@@ -169,6 +254,9 @@ void chart(App& app, const LayerResult& r, int at, ImVec2 size, double& scroll_c
         text(strf("%.0f mm²", r.area[i]).c_str(), fonts().semibold, size::Body, col::Text);
         text(strf("at %.2f mm · layer %zu", r.layers->layerTop(i), i + 1).c_str(), fonts().regular, size::Help,
              col::TextSecondary);
+        if (replay)
+            text(strf("weakest place at %.0f %% of where half let go", closenessAt(*replay, r, i) * 100).c_str(),
+                 fonts().regular, size::Help, col::TextSecondary);
         ImGui::EndTooltip();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
@@ -194,15 +282,23 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         ImGui::SameLine(0, 8);
         if (linkButton("Go there")) app.setLayer(static_cast<int>(r.biggest));
     }
-    // "Show the layer below", right-aligned.
+    // "Show risk" (once the print has been replayed) and "Show the layer below", right-aligned.
+    const RiskReport* replay = app.risk();
     ImGui::PushFont(fonts().regular, size::Body);
     const float cw = ImGui::CalcTextSize("Show the layer below").x + 30;
+    const float rw = ImGui::CalcTextSize("Show risk").x + 30;
     ImGui::PopFont();
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - cw, y - 3));
-    bool below = doc.layers.show_below;
     ImGui::PushFont(fonts().regular, size::Body);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3, 3));
+    if (replay) {
+        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - cw - 16 - rw, y - 3));
+        bool risk = app.layersRisk();
+        if (ImGui::Checkbox("Show risk", &risk)) app.setLayersRisk(risk);
+        tooltip("Colours what may not print, as the replay of the print found it.");
+    }
+    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - cw, y - 3));
+    bool below = doc.layers.show_below;
     if (ImGui::Checkbox("Show the layer below", &below)) app.setShowBelow(below);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
@@ -220,8 +316,42 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         const double mm_w = im->w * im->px, mm_h = im->h * im->py;
         const float k = static_cast<float>(std::min(avail.x / mm_w, avail.y / mm_h));
         const ImVec2 sz(static_cast<float>(mm_w) * k, static_cast<float>(mm_h) * k);
-        ImGui::SetCursorScreenPos(ImVec2(o.x + (avail.x - sz.x) / 2, o.y + (avail.y - sz.y) / 2));
+        const ImVec2 io(o.x + (avail.x - sz.x) / 2, o.y + (avail.y - sz.y) / 2);
+        ImGui::SetCursorScreenPos(io);
         ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex)), sz);
+        if (replay && app.layersRisk()) {
+            // The places at their worst while this layer prints, by their numbers in the Checks.
+            for (std::size_t i = 0; i < replay->places.size(); ++i) {
+                const RiskPlace& pl = replay->places[i];
+                if (pl.layer < 0 || app.layerOfRisk(pl.layer) != at) continue;
+                const ImVec2 q(io.x + static_cast<float>((pl.at.x - im->x_left) / mm_w) * sz.x,
+                               io.y + static_cast<float>((im->y_top - pl.at.y) / mm_h) * sz.y);
+                dl->AddCircleFilled(q, 11, IM_COL32(0x18, 0x1B, 0x21, 235), 24);
+                dl->AddCircle(q, 10.25f, col::Text, 24, 1.5f);
+                const std::string s = std::to_string(i + 1);
+                ImGui::PushFont(fonts().bold, size::Label);
+                const ImVec2 ts = ImGui::CalcTextSize(s.c_str());
+                dl->AddText(ImVec2(q.x - ts.x / 2, q.y - ts.y / 2), col::Text, s.c_str());
+                ImGui::PopFont();
+            }
+        }
+    }
+    if (replay && app.layersRisk()) {
+        // What the colours mean, along the picture's foot.
+        ImGui::PushFont(fonts().regular, size::Help);
+        float x = o.x + 12;
+        const float yl = o.y + avail.y - 18;
+        auto item = [&](const char* label, ImU32 c) {
+            dl->AddRectFilled(ImVec2(x, yl - 5), ImVec2(x + 10, yl + 5), c, 2);
+            x += 16;
+            dl->AddText(ImVec2(x, yl - 7), col::TextSecondary, label);
+            x += ImGui::CalcTextSize(label).x + 16;
+        };
+        item("prints", IM_COL32(255, 255, 255, 255));
+        item("may not", bandColor(RiskBand::May));
+        item("likely not", bandColor(RiskBand::Likely));
+        item("very likely not", bandColor(RiskBand::VeryLikely));
+        ImGui::PopFont();
     }
     endPanel();
 }

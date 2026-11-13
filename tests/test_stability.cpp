@@ -378,6 +378,7 @@ TEST_CASE("a part that starts in mid-air is unheld, and so is what prints on it 
     CHECK(r.spots[0].chance == 1);
     CHECK(r.spots[0].area == Approx(16));
     CHECK(r.spots[0].layer == 20);
+    CHECK(r.spots[0].lost_volume == Approx(16 * 10 * kH));  // all ten layers of it
     CHECK(r.stats.at_risk[3] == Approx((16 * 10 + 0.04) * kH));
 }
 
@@ -463,6 +464,21 @@ TEST_CASE("two tips share: when one lets go the other takes its load", "[stabili
     CHECK(r.stats.whole_chance == Approx(1 - both).margin(0.03));
     // The supports stay on the plate either way.
     CHECK(at(r, 10, {-3, 0}).lost_chance == 0);
+    // Both tips are told of, in the order they stand, each as it was given.
+    REQUIRE(r.tips.size() == 2);
+    const double volume = width * 4 * 10 * kH;
+    for (int t = 0; t < 2; ++t) {
+        const TipRisk& tip = r.tips[static_cast<size_t>(t)];
+        CHECK(tip.contact == t);
+        CHECK_FALSE(tip.foot);
+        CHECK(tip.at.x == Approx(t == 0 ? -3 : 3));
+        CHECK(tip.holds == Approx(holds));
+        CHECK(tip.load == Approx(each).epsilon(1e-4));
+        CHECK(tip.chance == Approx(one).epsilon(1e-3));
+        // The block goes with a tip only when the other went before it: less than all of it, on average.
+        CHECK(tip.lost_volume < volume);
+    }
+    CHECK(r.tips[0].lost_volume + r.tips[1].lost_volume > 0);
 }
 
 TEST_CASE("joints one after the other: lost if any of them breaks, and only what hangs from it", "[stability]") {
@@ -501,6 +517,19 @@ TEST_CASE("joints one after the other: lost if any of them breaks, and only what
     }
     CHECK(tips == 1);
     CHECK(necks == 1);
+    // What goes with each. With the tip: the stem and the cap, every time.
+    // With the stem: the cap and the stem above where it broke.
+    REQUIRE(r.tips.size() == 1);
+    CHECK(r.tips[0].contact == 0);
+    CHECK(r.tips[0].chance == Approx(tip));
+    CHECK(r.tips[0].load == Approx(pull).epsilon(1e-6));
+    CHECK(r.tips[0].at_layer == 30);  // when the cap's first layer prints
+    CHECK(r.tips[0].lost_volume == Approx((1.0 + 12.25) * 10 * kH));
+    for (const WeakSpot& s : r.spots)
+        if (s.cause == RiskCause::Neck) {
+            CHECK(s.lost_volume >= 12.25 * 10 * kH - 1e-9);
+            CHECK(s.lost_volume <= (1.0 + 12.25) * 10 * kH + 1e-9);
+        }
 }
 
 TEST_CASE("a lobe on one tip is lost when the tip lets go, even though it joins the model later", "[stability]") {

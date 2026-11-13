@@ -165,6 +165,15 @@ void App::settleCollisions() {
     if (checkingCollisions()) jobs_.wait();
 }
 
+void App::settleChecks() {
+    if (jobs_.busy() && !checkingCollisions() && !checkingRisk()) return;  // other work: a script waits for that itself
+    jobs_.wait();  // the check running now, and any set aside for other work that is still stopping
+    startCollisionCheck();
+    if (checkingCollisions()) jobs_.wait();
+    startRiskCheck();
+    if (checkingRisk()) jobs_.wait();
+}
+
 void App::selectCollision(int part) {
     selectPart(part);
     // Ask for it in view: nothing else to do, the selected part is drawn lit.
@@ -180,6 +189,11 @@ void App::forgetJobTools() {
     parts_tools_.last = ToolReport{};
     parts_tools_.last_doc.reset();
     shape();  // the shape tools' settings and note start again too
+    risk_report_.reset();
+    risk_for_.reset();
+    risk_tried_.reset();
+    risk_place_ = -1;
+    risk_goto_layer_ = -1;
 }
 
 void App::startCollisionCheck() {
@@ -187,7 +201,8 @@ void App::startCollisionCheck() {
     const int rev = doc_->revision();
     if (collisions()) return;
     if (collision_tried_ == rev && sameJob(collision_tried_doc_, doc_) && collision_tried_gap_ == collision_gap_) return;
-    if (jobs_.busy() && !checkingCollisions()) return;  // the work running now comes first
+    // The work running now comes first; the replay of the print gives way to this, and starts again after.
+    if (jobs_.busy() && !checkingCollisions() && !checkingRisk()) return;
     if (jobs_.stopping()) return;  // one set aside is still stopping: one at a time in the background
     collision_tried_ = rev;
     collision_tried_doc_ = doc_;

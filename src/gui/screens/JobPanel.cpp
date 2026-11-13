@@ -43,9 +43,9 @@ void fact(const char* label, const std::string& value) {
     text(value.c_str(), fonts().regular, size::Body, col::Text);
 }
 
-// A row in the checks: a mark, a title and a line under it.
-enum class Tick { Ok, Warn, Error, Todo };
+}  // namespace
 
+// A row in the checks: a mark, a title and a line under it.
 void checkLine(const char* id, Tick t, const char* title, const std::string& detail) {
     const ImU32 bg = t == Tick::Error ? col::ErrorBg : t == Tick::Warn ? col::WarnBg : t == Tick::Todo ? col::Panel : col::Card;
     const ImU32 border = t == Tick::Error ? IM_COL32(0x6B, 0x2A, 0x2A, 255) : t == Tick::Warn ? col::WarnBorder : col::Border;
@@ -83,6 +83,8 @@ void checkLine(const char* id, Tick t, const char* title, const std::string& det
     ImGui::EndGroup();
     endCard();
 }
+
+namespace {
 
 // The resin this job prints in, as a chip: a click opens the resins.
 void resinChooser(App& app, Document* doc) {
@@ -292,6 +294,7 @@ void checksTab(App& app, Document* doc) {
                       "Made before the last change to the model or the settings. Undo brings them back.");
         const char* todo = s.result ? "Not checked: the supports are out of date." : "Not checked yet: needs supports.";
         checkLine("midair", Tick::Todo, "No part starts in mid-air", todo);
+        checkLine("risk", Tick::Todo, "Nothing likely to be lost in printing", todo);
         checkLine("raft", Tick::Todo, "Raft comes off in one piece", todo);
         checkLine("stands", Tick::Todo, "No support stands on the model", todo);
     }
@@ -413,7 +416,7 @@ void mainArea(App& app, Document* doc) {
         if (linkButton("Cancel")) app.jobs().cancel();
         return;
     }
-    const bool busy = app.jobs().busy() && !app.checkingCollisions();  // the check gives way to it
+    const bool busy = app.jobs().busy() && !app.checkingCollisions() && !app.checkingRisk();  // the checks give way to it
     if (!mb.enabled || (busy && doc)) {
         // Greyed: what it would do, and (in the note above) why not yet.
         const ImVec2 p = ImGui::GetCursorScreenPos();

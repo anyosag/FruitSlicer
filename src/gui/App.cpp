@@ -645,8 +645,9 @@ void App::clearSides() {
 void App::maintain() {
     if (placing() && !handlesShown()) endPlacing();  // its handles went (a search finished, another screen)
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
-    // The Collisions check (several parts) gives way: the work below cancels it, and it starts again after.
-    const auto busy = [this] { return jobs_.busy() && !checkingCollisions(); };
+    // The background checks (the Collisions check with several parts, the replay of the print) give way: the
+    // work below cancels them, and they start again after.
+    const auto busy = [this] { return jobs_.busy() && !checkingCollisions() && !checkingRisk(); };
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result
         // and height correction.
@@ -795,7 +796,7 @@ void App::planHollowPreview() {
     if (hs.planFresh(rev)) return;
     if (hollow_tried_revision_ == rev && hollow_tried_choices_ == hs.choices && hollow_tried_manual_ == hs.manual)
         return;  // being made, or it failed
-    if (jobs_.busy() && !planningHollow() && !checkingCollisions()) return;
+    if (jobs_.busy() && !planningHollow() && !checkingCollisions() && !checkingRisk()) return;
     hollow_tried_revision_ = rev;
     hollow_tried_choices_ = hs.choices;
     hollow_tried_manual_ = hs.manual;
@@ -1310,25 +1311,46 @@ void App::syncScene() {
         renderer_.setOverhangTint(supportConfig(doc_->placement(), s.choices).critical_angle_deg);
         return;
     }
-    if (scene_for_ != s.result) {
-        tip_meshes_.assign(5, fruit::TriangleMesh{});
-        for (const auto& p : s.result->points)
-            addMarker(tip_meshes_[static_cast<std::size_t>(p.category)], p.pos, 0.3 + 0.5 * p.tip_diameter);
+    // What may not print, for these supports (null: not replayed yet, or they are out of date).
+    const RiskReport* replay = risk();
+    if (scene_for_ != s.result || scene_risk_.get() != replay) {
+        if (scene_for_ != s.result) {
+            tip_meshes_.assign(5, fruit::TriangleMesh{});
+            for (const auto& p : s.result->points)
+                addMarker(tip_meshes_[static_cast<std::size_t>(p.category)], p.pos, 0.3 + 0.5 * p.tip_diameter);
+        }
+        // The tips that may let go, by how likely: a little bigger than a tip's own mark, so they show over it.
+        risk_tip_meshes_.assign(3, fruit::TriangleMesh{});
+        if (replay)
+            for (const RiskTip& t : replay->tips)
+                addMarker(risk_tip_meshes_[static_cast<std::size_t>(t.band) - 1], t.at, 0.45 + 0.5 * t.diameter);
         scene_for_ = s.result;
+        scene_risk_ = replay ? risk_report_ : nullptr;
         ++scene_key_;
     }
+    // The tree; the tips by kind; then the Risk view's: the model's surface
+    // over what may not print, and the tips that may let go, each by band.
     std::vector<const fruit::TriangleMesh*> meshes{&s.result->mesh};
     for (const auto& t : tip_meshes_) meshes.push_back(&t);
+    for (int b = 0; b < 3; ++b) meshes.push_back(replay ? &replay->paint[b] : nullptr);
+    for (const auto& t : risk_tip_meshes_) meshes.push_back(&t);
     renderer_.setExtras(meshes, scene_key_);
     const bool fresh = s.fresh(doc_->revision(), doc_->supportSettings());
     const bool why = supports_view_ == SupportsView::Why;
+    const bool risky = supports_view_ == SupportsView::Risk && !tip_editing_;
     // While editing, only the tips: the tree and raft would hide them.
-    renderer_.setExtraStyle(0, fresh ? (why ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
+    renderer_.setExtraStyle(0, fresh ? (why || risky ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
                             supports_view_ != SupportsView::TipsOnly && !tip_editing_);
-    // Island, overhang, extra hold, steadying, by hand (yours: the accent while editing).
+    // Island, overhang, extra hold, steadying, by hand (yours: the accent while editing). In the Risk view
+    // they are all dimmed: the colour is for the ones that may let go.
     static const unsigned kWhy[5] = {0xFF8F3F, 0x5B9BD5, 0xB48EF0, 0x5BD69A, 0xF2F4F7};
-    for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : 0xF2F4F7, fresh);
+    for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : risky ? 0x8A92A0u : 0xF2F4F7u, fresh);
     if (tip_editing_) renderer_.setExtraStyle(5, 0xFF8F3F, true);
+    static const RiskBand kBands[3] = {RiskBand::May, RiskBand::Likely, RiskBand::VeryLikely};
+    for (std::size_t b = 0; b < 3; ++b) {
+        renderer_.setExtraStyle(6 + b, riskColour(kBands[b]), risky && fresh && replay, true);
+        renderer_.setExtraStyle(9 + b, riskColour(kBands[b]), risky && fresh && replay);
+    }
 }
 
 void App::chooseSample() {
@@ -1387,7 +1409,8 @@ std::string App::printBlocker() {
     const auto plan = printPlan();
     if (!plan->fits) return "The model and supports reach past the printer's build volume.";
     if (!plan->ready) return plan->why_not;
-    if (jobs_.busy()) return "Wait for the current task to finish.";
+    // (The replay of the print gives way to saving: it never holds a print up.)
+    if (jobs_.busy() && !checkingRisk()) return "Wait for the current task to finish.";
     return "";
 }
 
@@ -2562,8 +2585,8 @@ void App::ejectDrive() {
 }
 
 bool App::canEject() const {
-    // Not while a file is being written; the collisions check gives way.
-    return !jobs_.busy() || checkingCollisions();
+    // Not while a file is being written; the background checks give way.
+    return !jobs_.busy() || checkingCollisions() || checkingRisk();
 }
 
 void App::ejectDrive(const std::string& path) {
@@ -2653,8 +2676,10 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     const auto& res = doc_->layers.result;
     const int index = doc_->layers.current >= 0 ? doc_->layers.current : static_cast<int>(res->biggest);
     const bool below = doc_->layers.show_below;
+    // With "Show risk": what may not print in its colours (once the print has been replayed).
+    const RiskReport* replay = layers_risk_ ? risk() : nullptr;
     if (layer_tex_ && layer_tex_result_ == res && layer_tex_index_ == index && layer_tex_below_ == below &&
-        layer_tex_w_ == max_w && layer_tex_h_ == max_h) {
+        layer_tex_w_ == max_w && layer_tex_h_ == max_h && layer_tex_risk_.get() == replay) {
         if (image) *image = &layer_image_;
         return layer_tex_;
     }
@@ -2663,15 +2688,29 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     crop.min = crop.min - fruit::Vec3{3, 3, 0};
     crop.max = crop.max + fruit::Vec3{3, 3, 0};
     layer_image_ = drawLayer(*res->layers, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
+    // The replay's layers start at the model's first; the height correction's copies of it come before.
+    RiskLayerPaint paint;
+    if (replay && replay->result)
+        paint = paintRiskLayer(*replay->result, std::max(0, index - static_cast<int>(res->base_layers)), layer_image_);
+    static const RiskBand kBands[3] = {RiskBand::May, RiskBand::Likely, RiskBand::VeryLikely};
     std::vector<unsigned char> rgba(layer_image_.lit.size() * 4, 0);
     for (std::size_t i = 0; i < layer_image_.lit.size(); ++i) {
         const unsigned lit = layer_image_.lit[i];
         const unsigned under = layer_image_.below.empty() ? 0 : layer_image_.below[i];
         // Lit pixels white; the layer below, where this one is dark, in dim blue-grey.
-        const unsigned g = lit + (255 - lit) * under * 0x48 / (255 * 255);
-        rgba[i * 4 + 0] = static_cast<unsigned char>(std::min(255u, g));
-        rgba[i * 4 + 1] = static_cast<unsigned char>(std::min(255u, lit + (255 - lit) * under * 0x52 / (255 * 255)));
-        rgba[i * 4 + 2] = static_cast<unsigned char>(std::min(255u, lit + (255 - lit) * under * 0x66 / (255 * 255)));
+        unsigned c[3] = {lit + (255 - lit) * under * 0x48 / (255 * 255), lit + (255 - lit) * under * 0x52 / (255 * 255),
+                         lit + (255 - lit) * under * 0x66 / (255 * 255)};
+        // What of the lit part may not print: in its band's colour, the likeliest on top.
+        if (paint.any && lit > 0)
+            for (int b = 2; b >= 0; --b) {
+                if (paint.cover[b].empty() || paint.cover[b][i] == 0) continue;
+                const unsigned part = std::min<unsigned>(paint.cover[b][i], lit);
+                const unsigned rgb = riskColour(kBands[b]);
+                const unsigned band[3] = {(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255};
+                for (int k = 0; k < 3; ++k) c[k] -= std::min(c[k], part * (255 - band[k]) / 255);
+                break;
+            }
+        for (int k = 0; k < 3; ++k) rgba[i * 4 + static_cast<std::size_t>(k)] = static_cast<unsigned char>(std::min(255u, c[k]));
         rgba[i * 4 + 3] = 255;
     }
     Renderer::freeTexture(layer_tex_);
@@ -2679,6 +2718,7 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     layer_tex_result_ = res;
     layer_tex_index_ = index;
     layer_tex_below_ = below;
+    layer_tex_risk_ = replay ? risk_report_ : nullptr;
     layer_tex_w_ = max_w;
     layer_tex_h_ = max_h;
     if (image) *image = &layer_image_;
@@ -2807,7 +2847,7 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     // ⌘↩: the Job panel's main button (Make supports, Slice…).
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job &&
-        (!jobs_.busy() || checkingCollisions())) {
+        (!jobs_.busy() || checkingCollisions() || checkingRisk())) {
         const MainButton mb = mainButton(doc_.get());
         if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
             supportsNow();
@@ -2905,6 +2945,7 @@ void App::keys() {
 void App::frame() {
     maintain();
     if (!placing()) startCollisionCheck();  // with several parts: do they overlap? (after the work above)
+    if (!placing()) startRiskCheck();       // with supports: what may not print? (after both)
     // Scripted captures keep the drive list they set up: the machine's own
     // drives would change the pictures.
     if (screen_ == Screen::Job && step_ == Step::Print && !opts_.deterministic) {

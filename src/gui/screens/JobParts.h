@@ -76,6 +76,20 @@ void partMenu(App& app, Document& doc);
 // several and the tool acts on that one: "Move · bracket 2".
 std::string toolTitleFor(const Document& doc, const char* title, bool on_part);
 
+// A row of the Job panel's Checks: a mark, a title and a line under it.
+enum class Tick { Ok, Warn, Error, Todo };
+void checkLine(const char* id, Tick t, const char* title, const std::string& detail);
+
+// What may not print (Risk.h, RiskParts.cpp): the row in the Checks with its
+// list of places; the Risk view's legend, and its marks and the picked
+// place's card over the 3D view; the status bar's chip; and the row under
+// Layers' "Before you save".
+void riskChecks(App& app, Document& doc);
+float riskLegend(App& app, ImVec2 at);  // drawn from `at`, on one line; how wide it came out
+void riskOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+void riskChip(App& app);
+void riskBeforeSave(App& app);
+
 // Supports: the tool's panel, the checks and problems (in the Job panel),
 // the view's marks, and the pill choosing what the view shows.
 void supportsPanel(App& app, Document& doc);

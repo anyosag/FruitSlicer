@@ -59,6 +59,11 @@
 
 namespace fruit {
 
+// A contact smaller than this (mm²: under that of a 0.2 mm tip, 0.031 mm²)
+// is a sliver where two outlines barely meet. One with nothing at risk above
+// it may snap and nothing comes of it: it is not listed as a weak place.
+inline constexpr double kSliverContact = 0.02;
+
 // Where a support's tip touches the model, and how big the tip is.
 struct TipContact {
     Vec3 at;
@@ -206,8 +211,28 @@ struct WeakSpot {
     double load = 0;         // mm² of layer pulling on it at its worst
     double near = 0;         // a tip: how much of that was thin, fresh model near it (the rest is its share of the piece)
     double holds = 0;        // mm² of layer at which half of such joints break
+    // mm³ of the model that goes with it: the average over the replays in
+    // which this joint let go (0 where it is still held another way); all of
+    // a part that starts in mid-air; 0 for a skin.
+    double lost_volume = 0;
     int at_layer = -1;       // the layer printing at its worst
     int count = 1;           // joints of the same kind within reach that this one stands for
+};
+
+// One support tip that touches the model, and the most it is ever pulled by.
+struct TipRisk {
+    Vec3 at;                 // where it touches the model, printer coordinates
+    int contact = -1;        // its place in StabilityInput::tips; -1 for a tip nobody told us about
+    bool foot = false;       // turned upside down: a support stands on the model with it
+    double chance = 0;       // that it lets go
+    double lost_chance = 0;  // that the part half a millimetre above it is not on the finished print
+    double lost_volume = 0;  // mm³ of the model that goes with it, as WeakSpot::lost_volume
+    double closeness = 0;
+    double area = 0;         // mm² it touches the model with
+    double load = 0;         // mm² of layer pulling on it at its worst
+    double near = 0;         // how much of that was thin, fresh model near it
+    double holds = 0;        // mm² of layer at which half of such tips let go
+    int at_layer = -1;       // the layer printing at its worst (-1: never pulled)
 };
 
 struct StabilityStats {
@@ -234,6 +259,7 @@ struct StabilityResult {
     std::vector<std::vector<int>> in_layer;     // part indices, layer by layer
     std::vector<std::vector<SkinBand>> skins;  // by layer, rising chance within a part
     std::vector<WeakSpot> spots;               // what would lose part of the print first, then the likeliest
+    std::vector<TipRisk> tips;                 // every tip that touches the model, lowest first
     std::vector<float> closeness_by_layer;     // the weakest joint while each layer prints
     StabilityStats stats;
 
