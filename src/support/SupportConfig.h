@@ -115,8 +115,11 @@ struct SupportConfig {
     // tips by their stiffness. Where a tip would carry more than this many
     // times what it is trusted with, it is made a size bigger where that
     // carries it, else tips are added beside it, and the loads are worked
-    // out again, up to `relief_rounds` times. 0 turns it off. Only when the
-    // planner is asked to (PointGenOptions::relieve).
+    // out again, up to `relief_rounds` times. It stops as soon as no tip is
+    // over, so the rounds are a ceiling: 16, because 8 left tips over on the
+    // user's eye cup with 0.3 mm tips (it took 14) and on their lid (11).
+    // 0 turns it off. Only when the planner is asked to
+    // (PointGenOptions::relieve).
     //
     // 1 with the built-in table, whose numbers are taken as a third of the
     // load at which half of such tips let go. A measured table trusts a tip
@@ -126,7 +129,7 @@ struct SupportConfig {
     // it (calibration's applyProfile): about half the load at which half
     // let go, where about 1 in 200 does.
     double tip_load_limit = 1.0;
-    int relief_rounds = 8;
+    int relief_rounds = 16;
 
     // The model stands on the build plate (no elevation, no raft): parts on
     // the first layer are held by the plate, not by tips.

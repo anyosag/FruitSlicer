@@ -340,4 +340,14 @@ TEST_CASE("each tip's own load: the limit is the planner's setting, and 0 turns 
     SupportConfig spent = fastConfig();
     spent.relief_rounds = 0;
     CHECK(generateSupportPoints(m, spent, ask).points.size() == bare.points.size());
+    // Too few rounds for this cone: it stops with tips still over, and says how many. The planner's own
+    // number of rounds is enough for it, and it uses only as many as it needs.
+    SupportConfig few = fastConfig();
+    few.relief_rounds = 2;
+    const PointGenResult cut_short = generateSupportPoints(m, few, ask);
+    CHECK(cut_short.stats.relief_rounds == 2);
+    CHECK(cut_short.stats.relief_left > 0);
+    CHECK(strict.stats.relief_left == 0);
+    CHECK(strict.stats.relief_rounds > 2);
+    CHECK(strict.stats.relief_rounds < static_cast<size_t>(fastConfig().relief_rounds));
 }

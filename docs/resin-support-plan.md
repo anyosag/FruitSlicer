@@ -322,7 +322,12 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   model over the side of a support that stands on it is that support's foot
   for as long as the support stays sunk in the face, up to 2 mm, and where
   two such supports fuse the later one keeps its foot; the lid then has no
-  flagged tip, and the eye cup at "Most" none).
+  flagged tip, and the eye cup at "Most" none). The planner's rule for each
+  tip's own load also stopped too early on those parts: 8 rounds left 16
+  tips over their limit on the eye cup with 0.3 mm tips (4 of them flagged
+  by the replay) and 6 on the lid; with up to 16 rounds, used only while a
+  tip is still over, it took 14 and 11, none is left over, and the replay
+  flags none of those.
 - **A piece that starts inside the bottom layers stands on the plate
   (2026-11-13).** With no raft, a separate piece whose first layer has its
   underside inside `plate_hold_height` (0.05 mm up with the defaults: the
