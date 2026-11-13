@@ -351,6 +351,26 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   check and the replay, and through the app's own path. Reasoning, not
   printed: how well a piece holds through one layer of resin cured from
   above is not measured.
+- **Supports that would stand on one spot of the model share a support
+  (2026-11-13).** Each tip with no way to the raft got a support of its own
+  standing on the model straight below it, and nothing checked whether
+  another already stood there. Where tips are close (four within 1 mm inside
+  the user's eye cup) their supports stood within 0.3 mm of each other and
+  printed as one, so one 0.4 mm foot was pulled by all of them: the replay
+  had that foot at 27 mm² against the 11 it is trusted with (38 mm² with
+  0.6 mm tips). On the eye cup 36 of 126 supports on the model shared a spot
+  with another like that (85 of 205 at "Most"), on the lid 11 of 158. Now a
+  tip whose support would stand within 0.75 mm of one already standing there
+  joins it (`joinOnModel`: a 45° bridge onto its shaft, or straight across
+  where the support is too short to have one), up to a trunk's six tips, and
+  the foot gets as much contact as its tips have together
+  (`foot_tip` = √Σd²). At 1 mm apart two such supports were found to carry
+  each its own tip's load, so they stay as they are. Eye cup: 126 → 108
+  supports on the model, no foot or tip flagged at the starting values, at
+  "Most", or with 0.3 or 0.6 mm tips; lid 158 → 152, none flagged. Not
+  printed. Still there, under the app's 1 in 20: a short support whose head
+  fuses with a neighbour's can carry part of that neighbour's tip (one foot
+  on the eye cup at twice its load, a chance of 4 %).
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

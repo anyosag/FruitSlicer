@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #include <algorithm>
+#include <cmath>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -366,6 +367,100 @@ TEST_CASE("a ceiling the raft can't be reached from is held from the model below
     std::vector<SupportPoint> built, dropped;
     splitByTree(b.tree, b.points, built, dropped);
     CHECK(dropped.empty());
+}
+
+TEST_CASE("two tips whose supports would stand on one spot of the model share a support and a foot for both", "[tree]") {
+    // A floor and, 6 mm above it, a ceiling, joined by a wall at one end: a tip under the ceiling has no way
+    // to the raft, so its support stands on the floor.
+    TriangleMesh m = makeBox({-20, -20, 0}, {20, 20, 2});
+    m.append(makeBox({-20, -20, 8}, {20, 20, 10}));
+    m.append(makeBox({-20, -20, 2}, {-18, 20, 8}));
+    placeOnPlate(m, {0, 0, 0}, 5.0);  // (already centred: only lifted)
+    auto tip = [](double x, double y, double d = 0.4) {
+        SupportPoint p;
+        p.pos = {x, y, 13.0};  // the ceiling's underside
+        p.normal = {0, 0, -1};
+        p.tip_diameter = d;
+        return p;
+    };
+    const TreeConfig tc;
+    auto onModel = [](const SupportTree& t) {
+        std::vector<const Pillar*> v;
+        for (const Pillar& P : t.pillars)
+            if (P.on_model) v.push_back(&P);
+        return v;
+    };
+    // Two tips 0.3 mm apart and one 6 mm away.
+    {
+        const std::vector<SupportPoint> pts{tip(0, 0), tip(0.3, 0), tip(6, 0)};
+        const SupportTree t = buildSupportTree(m, pts, tc, 0.4);
+        CHECK(t.dropped_points == 0);
+        REQUIRE(t.heads.size() == 3);
+        const auto standing = onModel(t);
+        REQUIRE(standing.size() == 2);  // not three
+        const Pillar& shared = standing[0]->heads.size() == 2 ? *standing[0] : *standing[1];
+        const Pillar& alone = standing[0]->heads.size() == 2 ? *standing[1] : *standing[0];
+        REQUIRE(shared.heads.size() == 2);
+        CHECK(shared.tips == 2);
+        // As much contact as its two 0.4 mm tips have together: 0.4 × √2.
+        CHECK(shared.foot_tip == Approx(0.4 * std::sqrt(2.0)));
+        CHECK(alone.heads.size() == 1);
+        CHECK(alone.foot_tip == Approx(0.4));
+        CHECK(distance(shared.anchor_contact, alone.anchor_contact) > 5);
+        // Both tips are tied to that one foot, and the print holds together.
+        std::vector<SupportPoint> from_raft;
+        std::vector<TiedTip> tied;
+        splitByFooting(t, pts, from_raft, tied);
+        CHECK(from_raft.empty());
+        REQUIRE(tied.size() == 3);
+        std::size_t on_shared = 0;
+        for (const TiedTip& x : tied) on_shared += distance(x.foot, shared.anchor_contact) < 1e-9;
+        CHECK(on_shared == 2);
+        // (Only the floor itself starts in mid-air: it was given no tips here. No piece of a support does.)
+        const ValidationReport v = validateSupported(m, t.mesh(tc), 0.1, 0.02);
+        REQUIRE(v.floating.size() == 1);
+        CHECK(v.floating[0].area == Approx(1600.0).epsilon(1e-3));
+        CHECK(v.small_floating == 0);
+        // One mark where there were two: one warning for the shared support, one for the other.
+        std::size_t marks = 0;
+        for (const Warning& w : t.warnings) marks += w.code == "anchor_on_model";
+        CHECK(marks == 2);
+    }
+    // A bigger tip brings a bigger share: 0.4 and 0.6 mm together stand on √(0.4² + 0.6²).
+    {
+        const std::vector<SupportPoint> pts{tip(0, 0, 0.6), tip(0.3, 0, 0.4)};
+        const SupportTree t = buildSupportTree(m, pts, tc, 0.4);
+        const auto standing = onModel(t);
+        REQUIRE(standing.size() == 1);
+        CHECK(standing[0]->foot_tip == Approx(std::sqrt(0.4 * 0.4 + 0.6 * 0.6)));
+    }
+    // 1.5 mm apart they stand side by side, each on a foot of its own.
+    {
+        const std::vector<SupportPoint> pts{tip(0, 0), tip(1.5, 0)};
+        const SupportTree t = buildSupportTree(m, pts, tc, 0.4);
+        const auto standing = onModel(t);
+        REQUIRE(standing.size() == 2);
+        for (const Pillar* P : standing) {
+            CHECK(P->heads.size() == 1);
+            CHECK(P->foot_tip == Approx(0.4));
+        }
+        CHECK(distance(standing[0]->anchor_contact, standing[1]->anchor_contact) > 0.75);
+    }
+    // Seven tips on one spot: six share a support (a trunk's limit), the seventh stands by itself.
+    {
+        std::vector<SupportPoint> pts;
+        for (int i = 0; i < 7; ++i) pts.push_back(tip(0.08 * i, 0));
+        const SupportTree t = buildSupportTree(m, pts, tc, 0.4);
+        CHECK(t.dropped_points == 0);
+        const auto standing = onModel(t);
+        std::size_t most = 0, tips = 0;
+        for (const Pillar* P : standing) {
+            most = std::max(most, P->heads.size());
+            tips += P->heads.size();
+        }
+        CHECK(tips == 7);
+        CHECK(most == static_cast<std::size_t>(tc.max_tips_per_trunk));
+    }
 }
 
 TEST_CASE("a support never stands on a steep face or brushes a wall on its way down", "[tree]") {

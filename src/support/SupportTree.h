@@ -14,7 +14,9 @@
 // a head with no clear drop and no reachable pillar stands on the model
 // below, however far down that is, on a reversed pinhead as wide as its own
 // tip ("anchor", reported because it marks an upward surface): a spot is
-// never left without a support for want of a way to the raft. Where the
+// never left without a support for want of a way to the raft. A head whose
+// support would stand where another already stands on the model joins that
+// one, and the foot they share is as wide as their tips together. Where the
 // model is too close under a tip for any head, a short column joins the two.
 // Pillars taller than 15 mm are cross-braced, those on the raft with each
 // other and those on the model with each other, but never within the flex
@@ -122,7 +124,9 @@ struct Pillar {
     double lowest_attach = 1e9;  // lowest bridge attachment on the shaft (a merge must start below it)
     Vec3 anchor_contact, anchor_normal;
     // On the model: the diameter of the contact its foot makes there, the
-    // tip's own, so the foot holds what the tip holds.
+    // tip's own, so the foot holds what the tip holds. Where several tips
+    // share the pillar (their supports would have stood on the same spot), as
+    // much contact as those tips have together.
     double foot_tip = 0.4;
 };
 

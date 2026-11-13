@@ -279,6 +279,11 @@ private:
     // across the same face. True when one of them got a head.
     bool supportSmallerOrMoved(const SupportPoint& p, int pi);
     bool attachToPillar(int head);
+    // A support that stands on the model within kSameFootSpot of `foot`, or -1.
+    int standsOnSpot(const Vec3& foot) const;
+    // `head` joins pillar `pillar`, which stands on the model where its own
+    // pillar (from `stand` down) would have stood. False when it can't.
+    bool joinOnModel(int head, int pillar, const Vec3& stand);
     // `top`: where the pillar starts when that isn't the head's junction (a
     // bridge leads there).
     void newPillar(int head, bool on_model, const Vec3& anchor = {}, const Vec3& anchor_n = {},
@@ -448,6 +453,52 @@ bool Builder::attachToPillar(int hi) {
     ++P.bridges;
     ++P.tips;
     P.diameter = std::max(P.diameter, h.spec.shaft_diameter) + 0.1;
+    return true;
+}
+
+// Two supports that stand on the model closer than this (mm, foot to foot)
+// are one in the print: their feet, 0.4 mm contacts that widen to the shaft
+// within 1 mm, fuse just above the surface, and what both hold comes down on
+// one spot. (At 1 mm apart each was found to carry its own tip's load.)
+constexpr double kSameFootSpot = 0.75;
+
+int Builder::standsOnSpot(const Vec3& foot) const {
+    int best = -1;
+    double best_d = kSameFootSpot;
+    for (size_t pi = 0; pi < out_.pillars.size(); ++pi) {
+        const Pillar& P = out_.pillars[pi];
+        if (!P.on_model) continue;
+        const double d = distance(P.anchor_contact, foot);
+        if (d < best_d) {
+            best_d = d;
+            best = static_cast<int>(pi);
+        }
+    }
+    return best;
+}
+
+bool Builder::joinOnModel(int hi, int pi, const Vec3& stand) {
+    const Head& h = out_.heads[hi];
+    Pillar& P = out_.pillars[pi];
+    if (P.tips >= cfg_.max_tips_per_trunk) return false;
+    const double r = h.spec.shaft_diameter / 2;
+    const double d = distance(stand.xy(), P.xy);
+    // Down at 45° onto its shaft. A support too short to have one is head and
+    // foot only: then across, to where its shaft would start.
+    const Vec3 at{P.xy.x, P.xy.y, std::max(stand.z - d, std::min(stand.z, P.bottom))};
+    if (d > 1e-9 && !segmentClear(stand, at, r)) return false;
+    const Vec3 shaft_top{P.xy.x, P.xy.y, std::max(P.top, P.bottom)};
+    if (at.z > shaft_top.z && !segmentClear(shaft_top, at, P.diameter / 2)) return false;
+    if (distance(stand, h.junction) > 1e-9) out_.bridges.push_back({h.junction, stand, h.spec.shaft_diameter});
+    if (distance(stand, at) > 1e-9) out_.bridges.push_back({stand, at, h.spec.shaft_diameter});
+    P.top = std::max(P.top, at.z);
+    P.lowest_attach = std::min(P.lowest_attach, at.z);
+    P.heads.push_back(hi);
+    ++P.bridges;
+    ++P.tips;
+    // The foot is pulled as hard as its tips are together: as much contact as they have.
+    const double mine = std::max(0.4, h.spec.tip_diameter);
+    P.foot_tip = std::sqrt(P.foot_tip * P.foot_tip + mine * mine);
     return true;
 }
 
@@ -681,6 +732,10 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
     // short walk reaches where the shaft clears the model.
     Vec3 stand, foot, foot_n;
     if (modelStand(h.junction, h.spec.shaft_diameter / 2, stand, foot, foot_n)) {
+        // Where another support already stands on that spot, this tip joins
+        // it: two feet on one spot are one foot, and it would carry both
+        // tips on a contact made for one.
+        if (const int there = standsOnSpot(foot); there >= 0 && joinOnModel(hi, there, stand)) return true;
         const bool walked = distance(stand, h.junction) > 1e-9;
         if (walked) out_.bridges.push_back({h.junction, stand, h.spec.shaft_diameter});
         newPillar(hi, true, foot, foot_n, &stand);
