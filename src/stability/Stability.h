@@ -73,6 +73,11 @@ struct TipContact {
     Vec3 at;
     double diameter = 0.4;  // mm
     bool foot = false;      // turned upside down: the tip a support stands on the model with
+    // Only with StabilityInput::standalone_tips: the model's part it touches
+    // (its place in the model's parts), and how long its support is down to
+    // the plate or the raft, mm (0: from where it touches down to the plate).
+    int part = -1;
+    double rod = 0;
 };
 
 struct StabilityConfig {
@@ -122,6 +127,11 @@ struct StabilityConfig {
     // half the cases at this reach, mm.
     double skin_half_reach = 3.82;
 
+    // With StabilityInput::standalone_tips, what each tip stands on: a rod
+    // this wide (mm), its last `head_length` mm narrowing to the tip.
+    double rod_diameter = 1.0;
+    double head_length = 1.2;
+
     double link_grow = 0.02;    // as the planner links layers (mm)
     double speck_area = 0.12;   // unheld parts smaller than this are specks (mm²)
     double pixel_area = 2.7e-4; // one printer pixel (mm²): a part smaller than this is not printed
@@ -159,6 +169,12 @@ struct StabilityInput {
     std::shared_ptr<const IslandGraph> model_graph;
     // The print's cups, if already worked out; otherwise worked out here.
     const HollowReport* hollows = nullptr;
+    // Before there are any supports (the planner's question: what would each
+    // tip carry?): `print` is the model alone, `model` and `model_graph` are
+    // given, and every tip of `tips` stands on the plate on a rod of its own
+    // (TipContact::part and ::rod). Nothing is replayed: only the loads are
+    // worked out.
+    bool standalone_tips = false;
 };
 
 enum class RiskCause : std::uint8_t {
@@ -289,5 +305,21 @@ struct StabilityResult {
 // Reports stages "parts" (unless given), "stress", "skins" and "replays".
 StabilityResult analyzeStability(const StabilityInput& in, const StabilityConfig& cfg,
                                  const JobControl& ctl = JobControl::none());
+
+// The planner's question, asked before there are any supports: what would
+// each of these tips carry at its worst, as the replay shares each layer's
+// pull? The model alone is replayed, every tip standing on the plate on a rod
+// of its own (so a support that would really stand on the model, or share a
+// trunk, is not told apart). One answer per tip, in their order; a tip that
+// touches no part of the model carries nothing.
+struct TipLoad {
+    double load = 0;    // mm² of layer at its worst
+    double near = 0;    // how much of that was thin, fresh model near it
+    double holds = 0;   // mm² of layer at which half of such tips let go
+    int at_layer = -1;  // the layer printing at its worst (-1: never pulled)
+};
+std::vector<TipLoad> standaloneTipLoads(const LayerStack& model, std::shared_ptr<const IslandGraph> parts,
+                                        const std::vector<TipContact>& tips, const StabilityConfig& cfg,
+                                        const JobControl& ctl = JobControl::none());
 
 }  // namespace fruit

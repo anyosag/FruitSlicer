@@ -5,6 +5,7 @@
 
 #include "mesh/Placement.h"
 #include "mesh/Primitives.h"
+#include "stability/Stability.h"
 #include "support/PointGenerator.h"
 #include "support/SupportIO.h"
 
@@ -34,6 +35,23 @@ size_t countCat(const PointGenResult& r, PointCategory c) {
     size_t n = 0;
     for (const auto& p : r.points) n += p.category == c;
     return n;
+}
+
+// The most any tip carries, in multiples of what it is trusted with, as the
+// replay shares each layer's pull (each tip on a rod of its own).
+double mostCarried(const PointGenResult& r, const SupportConfig& cfg) {
+    std::vector<TipContact> tips;
+    for (const auto& p : r.points) {
+        TipContact t;
+        t.at = p.pos;
+        t.diameter = p.tip_diameter;
+        t.part = p.part;
+        tips.push_back(t);
+    }
+    const std::vector<TipLoad> loads = standaloneTipLoads(*r.analysis.layers, r.analysis.islands, tips, stabilityConfig(cfg));
+    double most = 0;
+    for (size_t i = 0; i < loads.size(); ++i) most = std::max(most, loads[i].load / cfg.capacity.capacity(r.points[i].tip_diameter));
+    return most;
 }
 
 }  // namespace
@@ -221,4 +239,105 @@ TEST_CASE("an island tip at a lowest corner faces down and not along a side wall
         }
         CHECK(islands == 1);
     }
+}
+
+TEST_CASE("each tip's own load: asked, no tip carries more than it is trusted with", "[points][relief]") {
+    // A wide cone hanging down: its lowest tips hold the whole of the first layers alone. The capacity
+    // rule is content (the tips of the piece hold each layer together); each tip's own load is not.
+    const TriangleMesh m = placed(makeCone({0, 0, 6}, 6 * std::tan(deg2rad(60)), {0, 0, 0}, 96));
+    const SupportConfig cfg = fastConfig();
+    const PointGenResult before = generateSupportPoints(m, cfg);
+    requireInvariants(before);
+    CHECK(before.stats.relief_rounds == 0);  // not asked: the planner as it was
+    CHECK(mostCarried(before, cfg) > 2.0);
+    PointGenOptions ask;
+    ask.relieve = true;
+    const PointGenResult after = generateSupportPoints(m, cfg, ask);
+    requireInvariants(after);
+    // Within the tenth the rule allows itself.
+    CHECK(mostCarried(after, cfg) <= 1.1 + 1e-9);
+    CHECK(after.stats.relief_left == 0);
+    CHECK(after.stats.relief_rounds >= 1);
+    CHECK(after.stats.relief_added + after.stats.relief_upgraded > 0);
+    CHECK(after.points.size() == before.points.size() + after.stats.relief_added);
+    // What it adds are extra-hold tips, on the underside like the others.
+    CHECK(countCat(after, PointCategory::Capacity) >= countCat(before, PointCategory::Capacity) + after.stats.relief_added);
+    for (const auto& p : after.points) CHECK(p.normal.z < 0);
+    // The same again, tip for tip.
+    const PointGenResult again = generateSupportPoints(m, cfg, ask);
+    REQUIRE(again.points.size() == after.points.size());
+    for (size_t i = 0; i < after.points.size(); ++i) {
+        CHECK(again.points[i].id == after.points[i].id);
+        CHECK(again.points[i].tip_diameter == after.points[i].tip_diameter);
+    }
+}
+
+TEST_CASE("each tip's own load: one size bigger where that carries it, a tip beside one chosen small", "[points][relief]") {
+    const SupportConfig cfg = fastConfig();
+    PointGenOptions ask;
+    ask.relieve = true;
+    auto heavy = [](const PointGenResult& r) {
+        size_t n = 0;
+        for (const auto& p : r.points) n += p.tip_diameter > 0.5;
+        return n;
+    };
+    auto light = [](const PointGenResult& r) {
+        size_t n = 0;
+        for (const auto& p : r.points) n += p.tip_diameter < 0.35;
+        return n;
+    };
+    // A dome: its usual tips carry up to twice what they hold. One size up carries that: no tip is added.
+    {
+        const TriangleMesh m = placed(makeSphere({0, 0, 8}, 8, 48));
+        const PointGenResult before = generateSupportPoints(m, cfg), after = generateSupportPoints(m, cfg, ask);
+        CHECK(mostCarried(before, cfg) > 1.5);
+        CHECK(mostCarried(after, cfg) <= 1.1 + 1e-9);
+        CHECK(after.points.size() == before.points.size());
+        CHECK(after.stats.relief_added == 0);
+        CHECK(after.stats.relief_upgraded > 0);
+        CHECK(heavy(after) == heavy(before) + after.stats.relief_upgraded);
+        // Each says so, for the tip's card in the app.
+        size_t marked = 0;
+        for (const auto& p : after.points) marked += p.enlarged;
+        CHECK(marked == after.stats.relief_upgraded);
+        for (const auto& p : before.points) CHECK_FALSE(p.enlarged);
+    }
+    // A plate: the tips along its rim are small on purpose (beside a sharp edge). Where they carry too
+    // much they stay small, and another tip goes beside them.
+    {
+        const TriangleMesh m = placed(makeBox({0, 0, 0}, {20, 20, 2}));
+        const PointGenResult before = generateSupportPoints(m, cfg), after = generateSupportPoints(m, cfg, ask);
+        requireInvariants(after);
+        CHECK(mostCarried(before, cfg) > 1.1);
+        CHECK(mostCarried(after, cfg) <= 1.1 + 1e-9);
+        CHECK(after.stats.relief_added > 0);
+        CHECK(after.stats.relief_upgraded == 0);
+        CHECK(light(after) >= light(before));
+        CHECK(after.points.size() == before.points.size() + after.stats.relief_added);
+    }
+}
+
+TEST_CASE("each tip's own load: the limit is the planner's setting, and 0 turns the rule off", "[points][relief]") {
+    const TriangleMesh m = placed(makeCone({0, 0, 6}, 6 * std::tan(deg2rad(60)), {0, 0, 0}, 96));
+    PointGenOptions ask;
+    ask.relieve = true;
+    SupportConfig off = fastConfig();
+    off.tip_load_limit = 0;
+    const PointGenResult bare = generateSupportPoints(m, fastConfig()), none = generateSupportPoints(m, off, ask);
+    REQUIRE(none.points.size() == bare.points.size());
+    for (size_t i = 0; i < bare.points.size(); ++i) {
+        CHECK(none.points[i].id == bare.points[i].id);
+        CHECK(none.points[i].tip_diameter == bare.points[i].tip_diameter);
+    }
+    CHECK(none.stats.relief_rounds == 0);
+    // Twice what a tip is trusted with asks for less than once does.
+    SupportConfig twice = fastConfig();
+    twice.tip_load_limit = 2;
+    const PointGenResult lax = generateSupportPoints(m, twice, ask), strict = generateSupportPoints(m, fastConfig(), ask);
+    CHECK(mostCarried(lax, twice) <= 2 * 1.1 + 1e-9);
+    CHECK(lax.stats.relief_added + lax.stats.relief_upgraded < strict.stats.relief_added + strict.stats.relief_upgraded);
+    // No rounds left to work the loads out in: the tips as they were, and how many are over is said.
+    SupportConfig spent = fastConfig();
+    spent.relief_rounds = 0;
+    CHECK(generateSupportPoints(m, spent, ask).points.size() == bare.points.size());
 }

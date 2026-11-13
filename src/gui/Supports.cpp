@@ -107,6 +107,24 @@ std::vector<AdvancedSetting> makeAdvanced() {
                                  x.cfg.capacity.reference_diameter, x.cfg.capacity.capacity(0.2),
                                  x.cfg.capacity.capacity(0.3), x.cfg.capacity.capacity(0.6));
                  }});
+    v.push_back({.group = "Tips", .label = "Each tip's own load", .kind = K::Number, .source = S::Assumption,
+                 .fields = {{"tip_load_limit", "up to", "×", 0, 5, 1,
+                             [](const C& c, const T&) { return c.tip_load_limit; },
+                             [](C& c, T&, double x) { c.tip_load_limit = x; }}},
+                 .help = [](const X& x) {
+                     if (x.cfg.tip_load_limit <= 0)
+                         return std::string("Off: the tips of a piece hold each layer between them, however unevenly "
+                                            "the pull falls on them.");
+                     std::string s = "No tip is planned to carry more than this many times what it holds, as each "
+                                     "layer's pull falls on it. Where one would, it gets a size bigger, or another "
+                                     "tip beside it. Worked out, not checked against a print. 0 turns it off.";
+                     // (A measured table trusts a tip nearer to where it lets go: SupportConfig.h.)
+                     if (!x.cfg.capacity.table.empty())
+                         s += strf(" Starts at %.1f with your resin's measured tips: at the whole of what a "
+                                   "measured tip holds, about 1 in 18 lets go.",
+                                   fruit::kMeasuredTipLoadLimit);
+                     return s;
+                 }});
     v.push_back({.group = "Tips", .label = "Contact depth", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X& x) {
                      if (!x.tc.penetration_table.empty())
@@ -938,6 +956,7 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
             if (const fruit::Transform* t = frames.find(hollow->holes[i].part); t && hollow->placed[i].cavity >= 0)
                 cos.exclusions.push_back({t->apply(hollow->holes[i].at), hollow->placed[i].radius + kHoleMouthMargin});
     }
+    po.relieve = true;  // each tip's own load too (rule 4): tips beside those that would carry too much
     fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, rest);
     // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
     std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });
@@ -1349,7 +1368,8 @@ std::string tipKind(const fruit::SupportPoint& p) {
     return std::string(kind) + fmt(" · %.1f mm", p.tip_diameter);
 }
 
-std::string tipWhy(const fruit::SupportPoint& p) {
+namespace {
+const char* whyByKind(const fruit::SupportPoint& p) {
     switch (p.category) {
         case fruit::PointCategory::Island:
             return "A part starts printing in mid-air here. This tip sits at its lowest point so the first layer of "
@@ -1365,6 +1385,15 @@ std::string tipWhy(const fruit::SupportPoint& p) {
         case fruit::PointCategory::Manual: return "You placed this tip by hand.";
     }
     return "";
+}
+}  // namespace
+
+std::string tipWhy(const fruit::SupportPoint& p) {
+    std::string why = whyByKind(p);
+    // (Not for a tip of your own size: that is yours.)
+    if (p.enlarged && p.category != fruit::PointCategory::Manual)
+        why += " One size bigger than usual: at the usual size it would carry more of the pull than it holds.";
+    return why;
 }
 
 std::string tipNumbers(const fruit::SupportPoint& p, const fruit::SupportConfig& cfg, const fruit::TreeConfig& tc) {
