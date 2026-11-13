@@ -368,9 +368,17 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   each its own tip's load, so they stay as they are. Eye cup: 126 → 108
   supports on the model, no foot or tip flagged at the starting values, at
   "Most", or with 0.3 or 0.6 mm tips; lid 158 → 152, none flagged. Not
-  printed. Still there, under the app's 1 in 20: a short support whose head
-  fuses with a neighbour's can carry part of that neighbour's tip (one foot
-  on the eye cup at twice its load, a chance of 4 %).
+  printed. That left one foot on the eye cup at twice its load (a chance of
+  4 %, under the app's 1 in 20): two tips whose heads ended 0.13 mm apart.
+  The first had walked 3 mm to a pillar on the raft; that pillar was then
+  full and the second tip's own walk was 0.05 mm short of its gap to the
+  model, so it stood on the model, fused to the first one's junction, and
+  being 3 mm tall against 30 it took both tips' pull and part of two more
+  that fuse in through the bridge. Now a tip whose junction lies within
+  0.25 mm of the junction of a head with a way to the raft shares that
+  junction and goes down with it (`shareJunction`, tried last before
+  standing on the model, up to a trunk's six tips): the eye cup has 107
+  supports on the model and no foot over 1.5 times what it is trusted with.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

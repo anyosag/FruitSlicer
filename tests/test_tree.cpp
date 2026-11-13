@@ -463,6 +463,64 @@ TEST_CASE("two tips whose supports would stand on one spot of the model share a 
     }
 }
 
+TEST_CASE("a tip whose junction lies in another's goes down with it instead of standing on the model", "[tree]") {
+    // A ceiling over a floor that ends 3 mm from the tips, with two thin walls between floor and ceiling that
+    // leave a corridor 1.4 mm wide towards the floor's edge. The first tip's support walks down that corridor
+    // (0.7 mm to each wall, a hair more than it needs) to a pillar past the edge. The second tip is 0.12 mm
+    // beside the first: too near one wall to walk the corridor, and with no other way to the raft.
+    TriangleMesh m = makeBox({-20, -20, 0}, {3, 20, 2});           // floor
+    m.append(makeBox({-20, -20, 8}, {20, 20, 10}));                // ceiling
+    m.append(makeBox({-20, -20, 2}, {-18, 20, 8}));                // the wall that joins them
+    m.append(makeBox({0.5, 0.70, 2}, {2.5, 1.10, 8}));             // the corridor's two walls
+    m.append(makeBox({0.5, -1.10, 2}, {2.5, -0.70, 8}));
+    placeOnPlate(m, {0, 0, 0}, 5.0);
+    auto tip = [](double y) {
+        SupportPoint p;
+        p.pos = {0, y, 13.0};
+        p.normal = {0, 0, -1};
+        p.tip_diameter = 0.4;
+        return p;
+    };
+    const TreeConfig tc;
+    // Alone, the second tip stands on the floor: that is the case this is about.
+    {
+        const SupportTree t = buildSupportTree(m, {tip(0.12)}, tc, 0.4);
+        REQUIRE(t.pillars.size() == 1);
+        CHECK(t.pillars[0].on_model);
+    }
+    // After the first, it shares the first one's junction and its way down: nothing stands on the floor.
+    const std::vector<SupportPoint> pts{tip(0), tip(0.12)};
+    const SupportTree t = buildSupportTree(m, pts, tc, 0.4);
+    CHECK(t.dropped_points == 0);
+    REQUIRE(t.heads.size() == 2);
+    CHECK(distance(t.heads[0].junction, t.heads[1].junction) < 0.25);
+    REQUIRE(t.pillars.size() == 1);
+    const Pillar& P = t.pillars[0];
+    CHECK_FALSE(P.on_model);
+    CHECK(P.xy.x > 3.6);  // past the floor's edge, with its gap
+    CHECK(P.heads.size() == 2);
+    CHECK(P.tips == 2);
+    for (const Warning& w : t.warnings) CHECK(w.code != "anchor_on_model");
+    // Both reach the raft, and no piece of the supports starts in mid-air (the floor does: it has no tips here).
+    std::vector<SupportPoint> from_raft;
+    std::vector<TiedTip> tied;
+    splitByFooting(t, pts, from_raft, tied);
+    CHECK(from_raft.size() == 2);
+    CHECK(tied.empty());
+    const ValidationReport v = validateSupported(m, t.mesh(tc), 0.1, 0.02);
+    REQUIRE(v.floating.size() == 1);
+    CHECK(v.floating[0].area > 900);
+    CHECK(v.small_floating == 0);
+    // A tip 0.6 mm beside the first is not in its junction: it stands on the floor as before.
+    {
+        const SupportTree apart = buildSupportTree(m, {tip(0), tip(-0.6)}, tc, 0.4);
+        std::size_t standing = 0;
+        for (const Pillar& Q : apart.pillars) standing += Q.on_model;
+        CHECK(apart.heads.size() == 2);
+        CHECK(standing <= 1);
+    }
+}
+
 TEST_CASE("a support never stands on a steep face or brushes a wall on its way down", "[tree]") {
     // The same cap with a thin fin and a steep cone on its floor, both under
     // the ceiling: supports that would graze the fin or land on the cone's

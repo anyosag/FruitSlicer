@@ -470,8 +470,10 @@ Each point gets:
   than 60°. A tip whose support would stand within 0.75 mm of one that
   already stands there joins that support, and their shared foot is as wide
   as their tips together (two feet on one spot would print as one, carrying
-  both tips on a contact made for one). That case is reported because it
-  marks an upper surface
+  both tips on a contact made for one). And a tip whose head ends in the
+  very place another head does (their junctions within 0.25 mm), when that
+  one has a way to the raft, goes down with it instead of standing on the
+  model. Standing on the model is reported because it marks an upper surface
   (`anchor_drop` limits how far down the model may be; 0 turns it off);
 - a gap to the model everywhere but at the tip: shafts, bridges, braces and
   feet stay 0.15 mm clear of it. A pillar's foot flares to 3 mm where it

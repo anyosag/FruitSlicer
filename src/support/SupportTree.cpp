@@ -279,6 +279,10 @@ private:
     // across the same face. True when one of them got a head.
     bool supportSmallerOrMoved(const SupportPoint& p, int pi);
     bool attachToPillar(int head);
+    // `head`'s junction lies in the junction of a head that has a way down to
+    // the raft (the two are one ball in the print): it shares that junction
+    // and that way down. False when there is no such head.
+    bool shareJunction(int head);
     // A support that stands on the model within kSameFootSpot of `foot`, or -1.
     int standsOnSpot(const Vec3& foot) const;
     // `head` joins pillar `pillar`, which stands on the model where its own
@@ -421,6 +425,36 @@ bool Builder::placeStub(const SupportPoint& p, int point) {
     m << "no room for a support head: a " << gap << " mm column from the model just below holds the tip; leaves a "
       << "small mark there";
     warn("anchor_on_model", m.str(), hit->point);
+    return true;
+}
+
+// Two junctions closer than this (mm) are one ball in the print: a head whose
+// junction is that near another's stands in the same place.
+constexpr double kSameJunction = 0.25;
+
+bool Builder::shareJunction(int hi) {
+    const Head& h = out_.heads[hi];
+    int with = -1, on = -1;
+    double nearest = kSameJunction;
+    for (size_t pi = 0; pi < out_.pillars.size(); ++pi) {
+        const Pillar& P = out_.pillars[pi];
+        if (P.on_model || P.tips >= cfg_.max_tips_per_trunk) continue;
+        for (int g : P.heads) {
+            const double d = distance(out_.heads[static_cast<size_t>(g)].junction, h.junction);
+            if (g != hi && d < nearest) {
+                nearest = d;
+                with = g;
+                on = static_cast<int>(pi);
+            }
+        }
+    }
+    if (with < 0) return false;
+    // (That head's way down is known to be clear; this one adds nothing to it but the step across.)
+    const Vec3 to = out_.heads[static_cast<size_t>(with)].junction;
+    if (nearest > 1e-9) out_.bridges.push_back({h.junction, to, h.spec.shaft_diameter});
+    Pillar& P = out_.pillars[static_cast<size_t>(on)];
+    P.heads.push_back(hi);
+    ++P.tips;
     return true;
 }
 
@@ -728,6 +762,11 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
         warn("foot_near_model", m.str(), {h.junction.x, h.junction.y, out_.raft_top});
         return true;
     }
+    // Its junction lies in the junction of a head that has a way down: a
+    // support standing on the model here would print fused to that one, and
+    // being the shorter and stiffer of the two it would be pulled by both
+    // tips on a foot made for one. It goes down the same way instead.
+    if (shareJunction(hi)) return true;
     // Stand on the model below: straight down, or on the nearest spot a
     // short walk reaches where the shaft clears the model.
     Vec3 stand, foot, foot_n;
