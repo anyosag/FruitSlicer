@@ -64,9 +64,28 @@ first when there are unsaved changes. The Orient step scores how the model sits 
 tips, biggest layer, height, layers short of hold), lets you pick the sides
 people will see, and searches 65 directions for better ways to stand it,
 compared side by side with how it sits now; using one is undoable. The
-Supports step generates tips and the support tree with the usual tip size,
-spacing and trunk merging you choose (faces that need tips are tinted
-first), shows the run's stages with Cancel, and then the tree in 3D with
+Supports step generates tips and the support tree from three quick
+controls, named for what they set rather than for an outcome (the planner
+has rules that place tips, and the part decides which rule applies, so a
+"hold" or "amount" dial is dead wherever another rule decides). **How many**
+has five stops; the middle is the resin's own values ("Starting values"
+until a resin measures them), and the others move the lean angle together
+with what would otherwise block it: towards More the spacing and the
+short-ledge rule (a 1 mm ledge over 1 mm is itself 45°, so a lower angle
+alone adds almost nothing), towards Fewer how close a tip sits to a free
+fresh edge. A lighter stop never keeps more tips than the stop above it.
+Under the stops the panel shows the tips this job would get at each,
+counted in the background, and says when a stop changes nothing here.
+**Tip size** (0.3, 0.4, 0.6 mm) is the usual tip; the sizes for spots in
+mid-air and near edges move with it, so it reaches every tip. **Look
+further for a way down** lets a blocked support walk 30 mm instead of 15
+before it stands on the model (more resin; routes that long are not printed
+yet). Trunks and braces, once a slider, is a row under Advanced settings,
+next to a Tip spacing row that can also set tips wider apart than the
+borrowed reach. Jobs saved with the three sliders these replaced (Hold,
+Amount, Sturdiness) open with the same settings, written as the tip size
+and values of their own. Faces that need tips are tinted
+first; the run shows its stages with Cancel, and then the tree in 3D with
 three views (Supports, Tips only, Why), why any tip you click is there, the
 checks (nothing starts in mid-air, the raft comes off in one piece, no
 support stands on the model) and a drawer of things to review. Faces that

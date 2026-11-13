@@ -4,6 +4,7 @@
 // The Supports step's work, off the UI thread: plan tips, build the tree,
 // check the result, and say what needs a look. No UI here.
 
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <map>
@@ -30,20 +31,26 @@ namespace gui {
 
 class Document;
 
-// The quick support sliders have five stops each (1 to 5). The middle stop of
-// Hold and Amount, and stop 2 of Sturdiness, are FruitSlicer's own values (the
-// resin's, where it measured them): a job left there plans what it always did.
+// The quick support controls: How many (five stops, 1 to 5), Tip size and
+// Look further. How many's middle stop is the resin's own values (FruitSlicer's
+// starting ones until a resin measures them): a job left there plans what it
+// always did. Trunks and braces has five stops too, as a row on the Advanced
+// page, the second FruitSlicer's own. Hold is from jobs saved with the three
+// sliders these replaced: nothing sets it now.
 inline constexpr int kQuickStops = 5;
-inline constexpr int kHoldDefault = 3, kAmountDefault = 3, kSturdyDefault = 2;
+inline constexpr int kHowManyCentre = 3, kSturdyDefault = 2, kHoldDefault = 3;
 
 // What the Supports step lets you choose before generating.
 struct SupportChoices {
-    int usual_tip = 2;     // tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm: the resin's usual tip
-    double density = 1.0;  // 1 = normal spacing; up to 2 = closer together (old jobs; the Amount slider adds to it)
+    // Tip size, a tip class: 1 = 0.3 mm, 2 = 0.4 mm (default), 3 = 0.6 mm (0 = 0.2 mm, in old jobs only).
+    // The sizes for spots in mid-air and near edges sit as many sizes above or below as it is from the resin's.
+    int usual_tip = 2;
+    double density = 1.0;  // 1 = normal spacing; up to 2 = closer together (old jobs; How many adds to it)
     bool full_raft = false;  // one solid raft under all the supports, instead of a pad under each
-    bool merge = true;     // neighbouring supports join into trunks (old jobs; Sturdiness can turn it off too)
-    // The quick support sliders' stops (see applyQuick).
-    int hold = kHoldDefault, amount = kAmountDefault, sturdy = kSturdyDefault;
+    bool merge = true;     // neighbouring supports join into trunks (old jobs; Trunks and braces can turn it off too)
+    int how_many = kHowManyCentre;  // How many: 1 (Fewest) to 5 (Most)
+    bool look_further = false;      // a support looks further for a way down before it stands on the model
+    int hold = kHoldDefault;        // old jobs: the Hold slider's end stops scaled how much a tip is counted on to hold
     // Values set on the advanced page, by field key (see advancedSettings());
     // every other value is FruitSlicer's own.
     std::map<std::string, double> advanced;
@@ -66,41 +73,50 @@ int nearestTipClass(const fruit::SupportConfig& cfg, int standard_class);
 int usualTipFor(const nlohmann::json& profile);
 int standardTipClass(const fruit::SupportConfig& cfg, int cls);
 
-// ---- Quick support: three sliders over the planner's own settings ----
+// ---- Quick support: how many tips, how big, and how far a support looks for a way down ----
+// The controls are named for what they set, not for an outcome: the planner
+// has no "hold" or "amount" to turn, only rules that place tips, and which
+// rule decides depends on the part.
 
-enum class QuickSlider { Hold, Amount, Sturdiness };
-// What one slider shows: its label, the words at its ends, the word and the
-// caption for its stop (what that stop sets, with the real values).
-struct QuickInfo {
-    const char* label;
-    const char* left;
-    const char* right;
-    std::string word;
-    std::string caption;
-    int stop = 1;
-    int normal = 1;  // the resin's stop
-};
-int& quickStop(SupportChoices& c, QuickSlider s);
-int quickStop(const SupportChoices& c, QuickSlider s);
-const char* quickWord(QuickSlider s, int stop);  // stop 1..5
-// The slider as `c` has it (stop clamped to 1..5), with the caption of that stop.
-QuickInfo quickInfo(QuickSlider s, const SupportChoices& c);
-// The caption for `stop` of slider `s`, the other sliders as `c` has them.
-std::string quickCaption(QuickSlider s, int stop, const SupportChoices& c);
-// What the sliders set. The usual tip class (0 = 0.2 ... 3 = 0.6 mm) for Hold:
-// the resin's usual tip, one class either way across the stops (a usual tip
-// set on the advanced page stays); how far to scale "how much a tip holds"
-// (Hold's ends); the lean angle's shift and the spacing for Amount.
-int quickTipClass(const SupportChoices& c);
-double quickCapacityScale(int hold_stop);
-double quickAngleShift(int amount_stop);  // degrees added to the "faces that need tips" angle
-double quickDensity(int amount_stop);     // times the job's tip spacing
-// Sets the trunk and brace values for the Sturdiness stop on `tc`.
+// How many. The stops move the rules together, so that each one changes
+// something on most parts: the lean past which a face needs tips (and, towards
+// More, the short-ledge rule with it: a ledge of 1 mm over 1 mm is itself 45°,
+// so a lower angle alone gives almost nothing), the spacing (More and Most)
+// and how close a tip sits to a free fresh edge (Fewer and Fewest).
+// The stop's word: "Fewest" ... "Most"; the centre's says whose values they are.
+const char* howManyWord(int stop, const SupportChoices& c);
+// What `stop` sets, with the real values, the other choices as `c` has them.
+std::string howManyCaption(int stop, const SupportChoices& c);
+double howManyAngleShift(int stop);  // degrees added to the "faces that need tips" angle
+double howManyDensity(int stop);     // times the job's tip spacing
+double howManyEdgeReach(int stop);   // times "a tip within" of a free fresh edge
+// Whether the centre's values are a resin's measured ones (else FruitSlicer's starting values).
+bool howManyMeasured(const SupportChoices& c);
+// Tip size: what the other two sizes are with it, in words.
+std::string tipSizeCaption(const SupportChoices& c);
+// Look further: a blocked support walks up to this far for a way down, mm,
+// before it stands on the model. Long slanted routes are soft: not printed yet.
+inline constexpr double kLookFurtherRoute = 30.0;
+std::string lookFurtherCaption(const SupportChoices& c);
+// Trunks and braces: the key of its row on the Advanced page (a stop, 1 to
+// 5: presets over the trunk and brace values, which rows of their own override).
+inline constexpr const char* kSturdyKey = "sturdiness";
+// Sets the trunk and brace values for the stop on `tc`; the stop those values
+// are, as far as they tell; and what `c` has, in words.
 void applySturdiness(int stop, fruit::TreeConfig& tc);
-// Whether any slider, or the older spacing and merge choices, is off the resin's values.
+int sturdinessOf(const fruit::TreeConfig& tc);
+std::string sturdinessCaption(const SupportChoices& c);
+// Old jobs: how far Hold's end stops scale "how much a tip holds".
+double quickCapacityScale(int hold_stop);
+// Whether a quick control, or an older spacing, merge or hold choice, is off the resin's values.
 bool quickChanged(const SupportChoices& c);
-// Puts the sliders (and the older spacing and merge choices) back.
+// Puts them back.
 void resetQuick(SupportChoices& c);
+// A job saved with the three sliders these controls replaced (Hold, Amount,
+// Sturdiness, stops 1 to 5; 3, 3, 2 with none): the same planner and tree
+// settings as it had, written as the usual tip and values of the job's own
+// on the Advanced page. `c` holds the rest of the job's choices already.
+void convertOldQuick(SupportChoices& c, int hold, int amount, int sturdy);
 
 // ---- The advanced page: every value the planner and tree builder use ----
 
@@ -160,7 +176,7 @@ std::string advancedValueText(const AdvancedSetting& s, const fruit::SupportConf
 // ---- A resin's own support values, set on the Resins page ----
 // Kept in the resin's profile under this key, by advanced field key, so a
 // job that copies the profile keeps them. They apply over the measured
-// values and under the quick sliders; a job's own advanced values win.
+// values and under the quick controls; a job's own advanced values win.
 inline constexpr const char* kResinOwnKey = "yours";
 // The settings a job on a resin with this profile starts with (its usual tip too).
 SupportChoices resinChoices(const nlohmann::json& profile);
@@ -281,6 +297,12 @@ struct SupportPlan {
 int plateHeldLayers(double held_mm);
 SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
+// How many tips each stop of How many would give this job (1 to 5, the other
+// choices as `c` has them): what generate() would end with, hand edits
+// included, without building the supports.
+std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
+                                               const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
+                                               const std::vector<TipEdit>& edits = {});
 // Everything after the tips: the tree, its checks and the problems. Used
 // when a saved job comes back with its tips.
 SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,

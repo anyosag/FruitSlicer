@@ -647,7 +647,7 @@ void App::maintain() {
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
     // The background checks (the Collisions check with several parts, the replay of the print) give way: the
     // work below cancels them, and they start again after.
-    const auto busy = [this] { return jobs_.busy() && !checkingCollisions() && !checkingRisk(); };
+    const auto busy = [this] { return jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips(); };
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result
         // and height correction.
@@ -897,6 +897,10 @@ void App::generateSupports() {
                 return;
             }
             SupportState& s = d->supports;
+            if (s.result) {
+                s.before_tips = s.result->tips;
+                s.before_ml = s.result->support_ml;
+            }
             s.result = std::make_shared<const SupportResult>(std::move(*out));
             s.result_revision = rev;
             s.result_settings = settings;
@@ -933,6 +937,70 @@ void App::endLift() {
     if (doc_ && doc_->dragging()) doc_->endDrag();
 }
 
+// ---- How many tips each stop of How many would give ----
+
+namespace {
+const char* const kTipCountJob = "Counting tips";
+}
+
+std::optional<App::TipCountKey> App::tipCountKey() const {
+    if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports || tip_editing_ || !doc_->fits()) return std::nullopt;
+    TipCountKey k{doc_->revision(), doc_->supportSettings(), doc_->supports.choices, doc_->supports.edits};
+    k.choices.how_many = kHowManyCentre;
+    return k;
+}
+
+const std::array<std::size_t, kQuickStops>* App::tipCountsByStop() const {
+    const auto key = tipCountKey();
+    return key && tip_counts_for_ && *tip_counts_for_ == *key ? &tip_counts_ : nullptr;
+}
+
+bool App::countingTips() const { return jobs_.busy() && jobs_.progress().name == kTipCountJob; }
+
+void App::finishTipCounts() {
+    jobs_.wait();  // whatever is running, and any check set aside that is still stopping
+    startTipCounts();
+    if (countingTips()) jobs_.wait();
+}
+
+void App::startTipCounts() {
+    const auto key = tipCountKey();
+    const bool due = key && !(tip_counts_for_ && *tip_counts_for_ == *key);
+    if (countingTips()) {
+        // One being made for a job that has changed since, or with the Supports step left: it stops.
+        if (!due || !(tip_counts_tried_ && *tip_counts_tried_ == *key)) jobs_.cancel();
+        return;
+    }
+    if (!due || (tip_counts_tried_ && *tip_counts_tried_ == *key)) return;
+    if (jobs_.busy() || jobs_.stopping()) return;  // the work running now comes first; one at a time in the background
+    tip_counts_tried_ = key;
+    const int generation = ++tip_counts_generation_;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<std::array<std::size_t, kQuickStops>>();
+    std::weak_ptr<Document> target = doc_;
+    // It gives way: making the supports, or anything else, doesn't wait for it.
+    jobs_.startGivingWay(
+        kTipCountJob,
+        [snap, out](const fruit::JobControl& ctl) {
+            *out = gui::tipCounts(*snap, snap->supports.choices, snap->visibleInPrinter(), ctl, snap->supports.edits);
+        },
+        [this, target, out, key, generation](std::exception_ptr err) {
+            if (!target.lock()) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                    if (generation == tip_counts_generation_) tip_counts_tried_.reset();  // counted again when wanted
+                } catch (const std::exception& e) {
+                    log::info(std::string("tip counts: ") + e.what());
+                }
+                return;
+            }
+            tip_counts_ = *out;
+            tip_counts_for_ = key;
+        });
+}
+
 void App::setHeightCorrection(double mm) {
     // The job's own print setting (a script's; people set it with the resin).
     if (doc_) doc_->print.settings.height_correction = std::clamp(std::round(mm * 100) / 100, 0.0, fruit::kMaxHeightCorrection);
@@ -964,9 +1032,10 @@ void App::setAdvanced(const std::string& key, double value) {
                 SupportChoices none;
                 none.resin = c.resin;
                 none.profile = c.profile;
-                none.hold = c.hold;  // the quick sliders' values are part of what the row reads as
-                none.amount = c.amount;
-                none.sturdy = c.sturdy;
+                none.usual_tip = c.usual_tip;  // the quick controls' values are part of what the row reads as
+                none.how_many = c.how_many;
+                none.look_further = c.look_further;
+                none.hold = c.hold;
                 const double own = f.get(supportConfig(doc_->placement(), none), treeConfig(none));
                 if (std::abs(v - own) < 1e-9) c.advanced.erase(key);
                 else c.advanced[key] = v;
@@ -2847,7 +2916,7 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     // ⌘↩: the Job panel's main button (Make supports, Slice…).
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job &&
-        (!jobs_.busy() || checkingCollisions() || checkingRisk())) {
+        (!jobs_.busy() || checkingCollisions() || checkingRisk() || countingTips())) {
         const MainButton mb = mainButton(doc_.get());
         if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
             supportsNow();
@@ -2945,7 +3014,8 @@ void App::keys() {
 void App::frame() {
     maintain();
     if (!placing()) startCollisionCheck();  // with several parts: do they overlap? (after the work above)
-    if (!placing()) startRiskCheck();       // with supports: what may not print? (after both)
+    if (!placing()) startTipCounts();       // on the Supports step: how many tips at each stop? (after both)
+    if (!placing()) startRiskCheck();       // with supports: what may not print? (after all of it)
     // Scripted captures keep the drive list they set up: the machine's own
     // drives would change the pictures.
     if (screen_ == Screen::Job && step_ == Step::Print && !opts_.deterministic) {

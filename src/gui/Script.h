@@ -50,7 +50,7 @@
 //   {"side": "front" | "back" | "left" | "right" | "top" | "bottom"}
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
-//   {"quick": {"hold": 1-5, "amount": 1-5, "sturdy": 1-5}} (the quick support sliders) {"raft": bool} {"raft_type": "pads" | "full"} {"lift": 1-10 mm} {"height_correction": 0-0.5 mm} (with no raft) {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
+//   {"quick": {"how_many": 1-5, "tip": 0.3 | 0.4 | 0.6, "look_further": bool}} (the quick support controls) {"raft": bool} {"raft_type": "pads" | "full"} {"lift": 1-10 mm} {"height_correction": 0-0.5 mm} (with no raft) {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
 //   {"supports_view": "supports" | "tips" | "why" | "risk"} {"select_tip": index} {"problems": bool}
 //   {"risk": "wait" | "show"} lets the replay of the print finish, or shows the Risk view ("Show them on the model")
 //   {"risk_place": n} picks the n-th place that may not print (1-based; 0: none) {"risk_layer": n} its "Go to layer"

@@ -313,8 +313,8 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
         }
         ImGui::NewLine();
     }
-    text("The quick sliders on the Supports panel set these too, where they differ. A value you set here wins over "
-         "them.",
+    text("How many, Tip size and Look further on the Supports panel set some of these too. A value you set here wins "
+         "over them.",
          fonts().regular, size::Help, col::TextMuted);
     ImGui::Dummy(ImVec2(0, 6));
 

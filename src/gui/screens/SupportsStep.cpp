@@ -72,25 +72,93 @@ bool stopSlider(const char* id, int* v, int lo, int hi, bool* activated = nullpt
     return moved;
 }
 
-// One quick support slider: label and word, the slider, the end words and a
-// caption of what the stop sets.
-void quickSlider(App& app, const SupportChoices& choices, QuickSlider which) {
-    const QuickInfo q = quickInfo(which, choices);
-    ImGui::PushID(q.label);
+// How many: the slider, the tips this job would get at each stop under its
+// stops, and what the stop sets.
+void howMany(App& app, const SupportChoices& choices) {
+    ImGui::PushID("how_many");
+    const int stop = std::clamp(choices.how_many, 1, kQuickStops);
     const float y = ImGui::GetCursorPosY();
-    text(q.label, fonts().semibold, size::Body, col::Text);
-    rightText(q.word.c_str(), fonts().semibold, size::Help, q.stop == q.normal ? col::TextSecondary : col::Accent, y);
-    int v = q.stop;
+    text("How many", fonts().semibold, size::Body, col::Text);
+    rightText(howManyWord(stop, choices), fonts().semibold, size::Help,
+              stop == kHowManyCentre ? col::TextSecondary : col::Accent, y);
+    // Where the slider puts its stops (as stopSlider draws them).
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x, r = 9;
+    int v = stop;
     if (stopSlider("##stop", &v, 1, kQuickStops)) {
         SupportChoices c = choices;
-        quickStop(c, which) = v;
+        c.how_many = v;
         app.setSupportChoices(c);
     }
     const float ey = ImGui::GetCursorPosY();
-    text(q.left, fonts().regular, size::Label, col::TextMuted);
-    rightText(q.right, fonts().regular, size::Label, col::TextMuted, ey);
-    text(q.caption.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    text("Fewer", fonts().regular, size::Label, col::TextMuted);
+    rightText("More", fonts().regular, size::Label, col::TextMuted, ey);
+    // Under each stop, the tips it would give this job (counted in the background).
+    const auto* counts = app.tipCountsByStop();
+    {
+        ImGui::PushFont(fonts().regular, size::Label);
+        const float row_y = ImGui::GetCursorScreenPos().y;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        for (int i = 0; i < kQuickStops; ++i) {
+            const std::string n = counts ? thousands((*counts)[static_cast<std::size_t>(i)]) : std::string("…");
+            const float tw = ImGui::CalcTextSize(n.c_str()).x;
+            const float cx = p.x + r + (w - 2 * r) * static_cast<float>(i) / (kQuickStops - 1);
+            const float x = std::clamp(cx - tw / 2, p.x, p.x + w - tw);
+            dl->AddText(ImVec2(std::round(x), row_y), i + 1 == stop && counts ? col::Text : col::TextMuted, n.c_str());
+        }
+        ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight() + 4));
+        ImGui::PopFont();
+        if (ImGui::IsItemHovered()) tooltip("The tips this job would get at each stop.");
+    }
+    std::string caption = howManyCaption(stop, choices);
+    if (counts && stop != kHowManyCentre &&
+        (*counts)[static_cast<std::size_t>(stop - 1)] == (*counts)[kHowManyCentre - 1])
+        caption += strf(" On this job that changes nothing: %s tips, as in the middle.",
+                        thousands((*counts)[static_cast<std::size_t>(stop - 1)]).c_str());
+    text(caption.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::PopID();
+}
+
+// Tip size: the usual tip, as buttons; the other two sizes move with it.
+void tipSize(App& app, const SupportChoices& choices) {
+    static const char* const names[] = {"0.2", "0.3", "0.4", "0.6"};
+    ImGui::PushID("tip_size");
+    const int now = std::clamp(choices.usual_tip, 0, 3);
+    const float y = ImGui::GetCursorPosY();
+    text("Tip size", fonts().semibold, size::Body, col::Text);
+    rightText(strf("%s mm", names[now]).c_str(), fonts().semibold, size::Help,
+              now == usualTipFor(choices.profile) ? col::TextSecondary : col::Accent, y);
+    ImGui::Dummy(ImVec2(0, 2));
+    // 0.2 mm is offered only to a job that has it (an older one).
+    for (int cls = now == 0 ? 0 : 1; cls <= 3; ++cls) {
+        if (segmentButton(names[cls], cls == now) && cls != now) {
+            SupportChoices c = choices;
+            c.usual_tip = cls;
+            app.setSupportChoices(c);
+        }
+        ImGui::SameLine(0, 4);
+    }
+    ImGui::SameLine(0, 6);
+    ImGui::AlignTextToFramePadding();
+    text("mm", fonts().regular, size::Body, col::TextSecondary);
+    ImGui::Dummy(ImVec2(0, 2));
+    text(tipSizeCaption(choices).c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    ImGui::PopID();
+}
+
+// Look further: a support walks further for a way down before it stands on the model.
+void lookFurther(App& app, const SupportChoices& choices) {
+    bool on = choices.look_further;
+    if (ImGui::Checkbox("##look_further", &on)) {
+        SupportChoices c = choices;
+        c.look_further = on;
+        app.setSupportChoices(c);
+    }
+    ImGui::SameLine(0, 10);
+    ImGui::BeginGroup();
+    text("Look further for a way down", fonts().semibold, size::Body, col::Text);
+    text(lookFurtherCaption(choices).c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    ImGui::EndGroup();
 }
 
 // With no raft: the height added under the model. It is a print setting of
@@ -250,6 +318,18 @@ void statusArea(App& app, Document& doc) {
     stat(thousands(r.tips), "tips", 0);
     stat(thousands(r.trunks), "trunks", 1);
     stat(strf("%.1f ml", r.support_ml), "support resin", 2);
+    // The tips by size, how many supports stand on the model, and what the run before this one gave.
+    std::string sizes;
+    for (const auto& [d, n] : r.tip_sizes)
+        sizes += (sizes.empty() ? "" : " · ") + strf("%s × %g", thousands(n).c_str(), d) + (sizes.empty() ? " mm" : "");
+    ImGui::Dummy(ImVec2(0, 2));
+    if (!sizes.empty()) text(sizes.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+    if (r.on_model > 0)
+        text(strf("%s stand on the model", thousands(r.on_model).c_str()).c_str(), fonts().regular, size::Help,
+             col::TextSecondary, true);
+    if (s.before_ml >= 0 && (s.before_tips != r.tips || std::abs(s.before_ml - r.support_ml) >= 0.05))
+        text(strf("Before: %s tips · %.1f ml", thousands(s.before_tips).c_str(), s.before_ml).c_str(), fonts().regular,
+             size::Help, col::TextMuted, true);
     endCard();
     (void)app;
 }
@@ -270,11 +350,13 @@ void controlsPanel(App& app, Document& doc) {
         }
     }
     ImGui::Dummy(ImVec2(0, 4));
-    for (const QuickSlider q : {QuickSlider::Hold, QuickSlider::Amount, QuickSlider::Sturdiness}) {
-        // Each slider reads the choices as they are now, so a move earlier in the frame shows.
-        quickSlider(app, doc.supports.choices, q);
-        ImGui::Dummy(ImVec2(0, 4));
-    }
+    // Each control reads the choices as they are now, so a change earlier in the frame shows.
+    howMany(app, doc.supports.choices);
+    ImGui::Dummy(ImVec2(0, 8));
+    tipSize(app, doc.supports.choices);
+    ImGui::Dummy(ImVec2(0, 8));
+    lookFurther(app, doc.supports.choices);
+    ImGui::Dummy(ImVec2(0, 4));
     onThePlate(app, doc);
 }
 

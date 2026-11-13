@@ -416,7 +416,8 @@ void mainArea(App& app, Document* doc) {
         if (linkButton("Cancel")) app.jobs().cancel();
         return;
     }
-    const bool busy = app.jobs().busy() && !app.checkingCollisions() && !app.checkingRisk();  // the checks give way to it
+    // The background checks give way to it.
+    const bool busy = app.jobs().busy() && !app.checkingCollisions() && !app.checkingRisk() && !app.countingTips();
     if (!mb.enabled || (busy && doc)) {
         // Greyed: what it would do, and (in the note above) why not yet.
         const ImVec2 p = ImGui::GetCursorScreenPos();

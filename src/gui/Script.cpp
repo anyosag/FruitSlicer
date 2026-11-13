@@ -565,13 +565,16 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 app.generateSupports();
             }
         } else if (step.contains("quick")) {
-            // {"quick": {"hold": 1-5, "amount": 1-5, "sturdy": 1-5}}: the quick support sliders' stops
+            // {"quick": {"how_many": 1-5, "tip": 0.3 | 0.4 | 0.6, "look_further": bool}}: the quick support controls
             if (!app.document()) throw std::runtime_error("quick: no model open");
             SupportChoices c = app.document()->supports.choices;
             const auto& q = step["quick"];
-            if (q.contains("hold")) c.hold = std::clamp(q["hold"].get<int>(), 1, kQuickStops);
-            if (q.contains("amount")) c.amount = std::clamp(q["amount"].get<int>(), 1, kQuickStops);
-            if (q.contains("sturdy")) c.sturdy = std::clamp(q["sturdy"].get<int>(), 1, kQuickStops);
+            if (q.contains("how_many")) c.how_many = std::clamp(q["how_many"].get<int>(), 1, kQuickStops);
+            if (q.contains("tip")) {
+                const double mm = q["tip"].get<double>();
+                c.usual_tip = mm < 0.35 ? 1 : mm < 0.5 ? 2 : 3;
+            }
+            if (q.contains("look_further")) c.look_further = q["look_further"].get<bool>();
             app.setSupportChoices(c);
         } else if (step.contains("scroll_panel")) {
             app.scrollToolPanel(step["scroll_panel"].get<std::string>() == "end");

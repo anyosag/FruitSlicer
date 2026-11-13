@@ -247,8 +247,15 @@ public:
     bool checkingRisk() const;
     const std::string* riskProblem() const;  // why the replay of these supports stopped, if it failed (else null)
     void finishRisk();                // scripts and tests: starts the replay if it is due and waits for it
-    // A script's shot: both background checks (collisions, then this) run to
-    // their end first, so a picture never depends on how fast they were.
+    // How many tips each stop of How many would give the job as it is: the
+    // Supports panel shows them under the stops. Null while they are being
+    // counted, and once the job has changed since. The count starts by itself
+    // on the Supports step and gives way to any other work.
+    const std::array<std::size_t, kQuickStops>* tipCountsByStop() const;
+    bool countingTips() const;
+    void finishTipCounts();           // scripts and tests: starts the count if it is due and waits for it
+    // A script's shot: the background checks (collisions, the tip counts, then
+    // this) run to their end first, so a picture never depends on how fast they were.
     // Nothing happens while other work is running: a script waits for that itself.
     void settleChecks();
     // The place picked in the Checks list or in the view (its place in
@@ -654,6 +661,19 @@ private:
     bool layers_risk_ = false;
     int risk_goto_layer_ = -1;  // a layer of the replay to show once the layers are cut
     void startRiskCheck();
+    // What the tip counts are for: the job as it was, How many left out (its stops are what is counted).
+    struct TipCountKey {
+        int revision = -1;
+        std::int64_t settings = -1;
+        SupportChoices choices;
+        std::vector<TipEdit> edits;
+        bool operator==(const TipCountKey&) const = default;
+    };
+    std::optional<TipCountKey> tip_counts_for_, tip_counts_tried_;  // counted for; started for (it may have been cancelled)
+    std::array<std::size_t, kQuickStops> tip_counts_{};
+    int tip_counts_generation_ = 0;
+    std::optional<TipCountKey> tipCountKey() const;  // none: no counts wanted now
+    void startTipCounts();
     void forgetJobTools();  // another job is open: what the tools kept was for the one before
     ShapeState shape_;
     void runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,

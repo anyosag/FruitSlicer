@@ -520,13 +520,16 @@ void topPill(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
     if (app.step() == Step::Model)
         for (const Part& part : doc->parts()) patched = patched || part.check().repair.patch_faces > 0;
     const char* hint = nullptr;
+    std::string hint_text;
     if (app.editingTips()) {
         hint = app.tipTool() == App::TipTool::Add    ? "Click the model to add a tip · [ and ] change the selected tip's size"
                : app.tipTool() == App::TipTool::Zone ? "Click the model to keep tips away from there"
                                                      : "Click a tip to select it · drag it to move it · Delete removes it · "
                                                        "[ and ] change its size";
     } else if (app.step() == Step::Supports && !doc->supports.result) {
-        hint = "Faces that need tips are tinted: they lean more than 45° from upright.";
+        hint_text = strf("Faces that need tips are tinted: they lean more than %.0f° from upright.",
+                         supportConfig(doc->placement(), doc->supports.choices).critical_angle_deg);
+        hint = hint_text.c_str();
     } else if (hollow && !doc->hollow.choices.auto_holes) {
         hint = "Click on the model to put a hole there.";
     } else if (app.step() == Step::Model && app.toolPanelOpen() && app.tool() == Tool::Measure) {

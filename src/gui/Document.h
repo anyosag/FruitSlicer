@@ -59,6 +59,9 @@ struct SupportState {
     int result_revision = -1;           // what it was made for: the parts as they were,
     std::int64_t result_settings = -1;  // and Document::supportSettings()
     int selected_tip = -1;                      // index into result->points
+    // What the supports made before `result` came to, for the panel's "Before" line (ml < 0: none).
+    std::size_t before_tips = 0;
+    double before_ml = -1;
 
     // Made for this placement, these picks and these choices. Made with no
     // raft for another count of the model's layers in the bottom layers, they

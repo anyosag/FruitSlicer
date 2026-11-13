@@ -373,7 +373,9 @@ TEST_CASE("Advanced settings: unique keys, ranges that hold the values in use, a
             CHECK(f.get(supportConfig(p, c), treeConfig(c)) == Approx(f.hi));
         }
     }
-    CHECK(rows == 32);  // the 31 on the canvas board "Supports · advanced", and "Where a part starts"
+    // The 31 on the canvas board "Supports · advanced", "Where a part starts", and the two that came from the
+    // Supports panel: "Tip spacing" and "Trunks and braces".
+    CHECK(rows == 34);
     // The usual tip size lives in the choices themselves.
     SupportChoices big;
     big.usual_tip = 3;

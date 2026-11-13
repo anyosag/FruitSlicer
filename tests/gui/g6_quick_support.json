@@ -5,11 +5,11 @@
     {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
     {"step": "supports"}, {"view": "below"}, {"shot": "g6_defaults"},
     {"scroll_panel": "end"}, {"frames": 6}, {"shot": "g6_defaults_end"}, {"scroll_panel": "start"},
-    {"quick": {"hold": 5, "amount": 1, "sturdy": 4}}, {"lift": 8}, {"shot": "g6_changed"},
+    {"quick": {"how_many": 1, "tip": 0.6, "look_further": true}}, {"lift": 8}, {"shot": "g6_changed"},
     {"quick_reset": true}, {"shot": "g6_reset"},
-    {"quick": {"hold": 1, "amount": 4, "sturdy": 1}},
+    {"quick": {"how_many": 4, "tip": 0.3}},
     {"supports": "generate"}, {"wait": "jobs"}, {"view": "angled"}, {"shot": "g6_made"},
-    {"quick": {"hold": 3, "amount": 5}}, {"shot": "g6_out_of_date"},
+    {"quick": {"how_many": 5}}, {"shot": "g6_out_of_date"},
     {"raft": false}, {"supports": "generate"}, {"wait": "jobs"}, {"scroll_panel": "end"}, {"frames": 6}, {"shot": "g6_raft_off"},
     {"height_correction": 0.15}, {"scroll_panel": "end"}, {"frames": 6}, {"shot": "g6_height_correction"}
   ]

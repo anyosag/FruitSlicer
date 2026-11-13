@@ -26,6 +26,10 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// The quick support controls a job's choices are written for: 1 (or none) was
+// three sliders, Hold, Amount and Sturdiness; 2 is How many, Tip size and Look further.
+constexpr int kQuickControls = 2;
+
 // 2: the model can sit anywhere on the plate ("placement"/"offset"). A job
 // whose model is centred is still written as 1, which older FruitSlicers
 // open; a moved one as 2, which they refuse rather than open it centred
@@ -286,12 +290,13 @@ void saveJob(const std::string& path, const Document& doc) {
         j["selected"] = doc.partIndex(doc.selectedId());
     }
     const SupportChoices& c = doc.supports.choices;
-    json sup = {{"choices", {{"usual_tip", c.usual_tip}, {"density", c.density}, {"merge", c.merge},
-                             {"advanced", c.advanced}}}};
-    // The quick sliders only when off the resin's stops, so a job left at its
-    // defaults is saved as it always was.
-    if (c.hold != kHoldDefault || c.amount != kAmountDefault || c.sturdy != kSturdyDefault)
-        sup["choices"]["quick"] = {{"hold", c.hold}, {"amount", c.amount}, {"sturdy", c.sturdy}};
+    // "controls" says these are How many, Tip size and Look further: a job
+    // without it was saved with the three sliders they replaced ("quick").
+    json sup = {{"choices", {{"controls", kQuickControls}, {"usual_tip", c.usual_tip}, {"density", c.density},
+                             {"merge", c.merge}, {"advanced", c.advanced}}}};
+    if (c.how_many != kHowManyCentre) sup["choices"]["how_many"] = c.how_many;
+    if (c.look_further) sup["choices"]["look_further"] = true;
+    if (c.hold != kHoldDefault) sup["choices"]["hold"] = c.hold;
     if (c.full_raft) sup["choices"]["full_raft"] = true;  // only when on, so older jobs save as they did
     if (c.hinge) sup["choices"]["hinge"] = fruit::hingeName(*c.hinge);
     // The resin's name and a copy of its measured values: the job keeps them.
@@ -464,15 +469,19 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.merge = cj.value("merge", true);
     c.full_raft = cj.value("full_raft", false);
     c.advanced = cj.value("advanced", std::map<std::string, double>{});
-    if (cj.contains("quick") && cj["quick"].is_object()) {  // jobs from before the sliders have none
-        const json& q = cj["quick"];
-        c.hold = std::clamp(q.value("hold", kHoldDefault), 1, kQuickStops);
-        c.amount = std::clamp(q.value("amount", kAmountDefault), 1, kQuickStops);
-        c.sturdy = std::clamp(q.value("sturdy", kSturdyDefault), 1, kQuickStops);
-    }
     if (cj.contains("hinge") && cj["hinge"].is_string()) c.hinge = fruit::parseHinge(cj["hinge"].get<std::string>());
     c.resin = cj.value("resin", std::string());
     if (cj.contains("profile") && cj["profile"].is_object()) c.profile = cj["profile"];
+    if (cj.value("controls", 1) >= kQuickControls) {
+        c.how_many = std::clamp(cj.value("how_many", kHowManyCentre), 1, kQuickStops);
+        c.look_further = cj.value("look_further", false);
+        c.hold = std::clamp(cj.value("hold", kHoldDefault), 1, kQuickStops);
+    } else {
+        // Saved with the Hold, Amount and Sturdiness sliders (or before them: 3, 3, 2): the same settings,
+        // as the controls of now and values of the job's own.
+        const json q = cj.contains("quick") && cj["quick"].is_object() ? cj["quick"] : json::object();
+        convertOldQuick(c, q.value("hold", 3), q.value("amount", 3), q.value("sturdy", kSturdyDefault));
+    }
     doc->supports.edits = editsFrom(*doc, sj.value("edits", json::array()));
     if (j.contains("hollow")) {
         const json& hj = j["hollow"];

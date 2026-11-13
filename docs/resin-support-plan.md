@@ -298,6 +298,30 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   parts has a wall beside it; on a lid lying on a shallow curved face all 86
   low heads stand in the wedge between the plate and that face, become plain
   columns and are reported, with the advice to use a raft.
+- **Quick controls named for what they set (2026-11-13).** The Supports
+  panel had three five-stop sliders named after outcomes (Hold, Amount,
+  Sturdiness). Measured through the app's own logic on seven placements:
+  Hold reached 0 of 10 tips on a part laid flat and 21 of 72 on the demo
+  bracket (it set only the usual tip; mid-air and edge tips have their own
+  sizes) while its caption named a size no tip had; its end stops also scaled
+  what a tip is counted on to hold, which gave 18, 27, 23, 21, 24 tips across
+  its five stops on a tilted bracket; Amount's lighter half only moved the
+  lean angle and changed nothing on flat parts, and on the bracket tilted 45°
+  all five stops gave the same 22 tips, because the short-ledge rule (1 mm
+  over 1 mm, itself 45°) kept every newly included face without tips;
+  Sturdiness never changed a tip. Now: **How many** (the angle, with the
+  ledge rule and the spacing towards More and the fresh-edge reach towards
+  Fewer; a lighter stop keeps the fewer of its own plan and the stop
+  above's), **Tip size** (the usual tip, the other two sizes moving with it)
+  and **Look further** (a 30 mm search for a way down: supports standing on
+  the model go from 114 to 8 on an eye cup, for 18% more resin). The panel
+  shows this job's tips under each stop (`tipCounts`, counted in the
+  background). Tips per stop, Fewest to Most: bracket 56 / 68 / 72 / 91 /
+  109; bracket at 45° 22 / 22 / 22 / 71 / 79. Jobs saved with the sliders
+  convert to the same planner and tree settings (`convertOldQuick`, checked
+  for all 125 combinations). The stop sizes are arbitrary until a plate is
+  printed; the lighter stops relax the fresh-edge rule, which is itself
+  unmeasured.
 - **A column where no head fits (2026-11-12).** F-01's island (inside the
   lid's threaded bore, 0.5 mm above another face) could not take a head in any
   direction, so the lid always had one part starting in mid-air. A straight

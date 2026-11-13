@@ -33,13 +33,20 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     fruit::SupportChoices ch;
     ch.layer_height = kLayerHeight;
     ch.on_plate = p.on_plate;
-    ch.density = c.density * quickDensity(c.amount);
+    ch.density = c.density * howManyDensity(c.how_many);
     ch.hinge = c.hinge;
-    // Built-in values, then the resin's measured ones, then the quick sliders
-    // (nothing at their resin stops), then the job's own choices.
+    // Built-in values, then the resin's measured ones, then the quick controls
+    // (nothing at the resin's own), then the job's own values.
     fruit::resolveSettings(c.profile.is_object() ? &c.profile : nullptr, ch, cfg, &tc);
     applyResinValues(c.profile, cfg, tc);
-    cfg.default_tip = nearestTipClass(cfg, quickTipClass(c));
+    // Tip size: the usual tip, and with it the sizes for spots in mid-air and
+    // near edges, as many sizes up or down as it is from the resin's (as far
+    // as the sizes go).
+    const int last = static_cast<int>(cfg.tip_classes.size()) - 1;
+    cfg.default_tip = nearestTipClass(cfg, c.usual_tip);
+    const int shift = cfg.default_tip - nearestTipClass(cfg, usualTipFor(c.profile));
+    cfg.minima_tip = std::clamp(cfg.minima_tip + shift, 0, last);
+    cfg.edge_tip = std::clamp(cfg.edge_tip + shift, 0, last);
     tc.merge_pillars = c.merge;
     if (c.full_raft && tc.raft == fruit::RaftStyle::Pads) tc.raft = fruit::RaftStyle::Full;  // none stays none
     if (const double k = quickCapacityScale(c.hold); k != 1.0) {
@@ -48,9 +55,21 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
         else
             for (auto& [d, cap] : cfg.capacity.table) cap *= k;
     }
-    if (const double a = quickAngleShift(c.amount); a != 0.0)
-        cfg.critical_angle_deg = std::clamp(cfg.critical_angle_deg + a, 20.0, 70.0);
-    applySturdiness(c.sturdy, tc);
+    // How many. An angle of the job's own (the Advanced page) stays, and the ledge with it.
+    const int stop = clampStop(c.how_many);
+    if (const double a = howManyAngleShift(stop); a != 0.0 && !c.advanced.count("critical_angle")) {
+        const double was = cfg.critical_angle_deg;
+        cfg.critical_angle_deg = std::clamp(was + a, 20.0, 70.0);
+        // Towards More the short-ledge rule moves with the angle: a ledge is
+        // an angle too (its reach over the height it is measured against), and
+        // left alone it would keep most of the newly included faces without tips.
+        if (a < 0) {
+            const double rad = 3.14159265358979323846 / 180.0;
+            cfg.self_supported_reach *= std::tan(cfg.critical_angle_deg * rad) / std::tan(was * rad);
+        }
+    }
+    cfg.skin_reach *= howManyEdgeReach(stop);
+    if (c.look_further) tc.max_route_length = std::max(tc.max_route_length, kLookFurtherRoute);
     applyAdvanced(c.advanced, cfg, tc);
 }
 
@@ -134,11 +153,19 @@ std::vector<AdvancedSetting> makeAdvanced() {
     v.push_back({.group = "Where tips go", .label = "Tip reach", .kind = K::Fixed, .source = S::Borrowed,
                  .help = [](const X& x) {
                      return strf("Distance one tip covers: %.1f mm right above it, growing to %.1f mm 40 mm higher. "
-                                 "The Amount slider on the Supports panel brings tips closer.",
+                                 "How many on the Supports panel, and the row below, bring tips closer.",
                                  x.cfg.coverage.radius(0), x.cfg.coverage.radius(40));
                  },
                  .text = [](const X& x) {
                      return strf("%.1f → %.1f mm", x.cfg.coverage.radius(0), x.cfg.coverage.radius(40));
+                 }});
+    v.push_back({.group = "Where tips go", .label = "Tip spacing", .kind = K::Number, .source = S::Borrowed,
+                 .fields = {{"spacing", "×", "as dense", 0.5, 2.5, 2,
+                             [](const C& c, const T&) { return c.coverage.density; },
+                             [](C& c, T&, double x) { c.coverage.density = x; }}},
+                 .help = [](const X&) {
+                     return std::string("1 is the reach above. More brings tips closer together; less than 1 lets "
+                                        "them stand wider apart than that reach, which nothing has measured.");
                  }});
     v.push_back({.group = "Where tips go", .label = "Spots in mid-air", .kind = K::Number, .source = S::Borrowed,
                  .fields = {{"island_one", "1 tip ≤", "", 0.5, 5, 1,
@@ -224,6 +251,16 @@ std::vector<AdvancedSetting> makeAdvanced() {
                      return std::string("Supports keep this clear of the model everywhere except at the tip.");
                  }});
     // ---- Pillars and trunks ----
+    // First of the rows it presets, so that a value of their own wins over it.
+    v.push_back({.group = "Pillars and trunks", .label = "Trunks and braces", .kind = K::Number, .source = S::Default,
+                 .fields = {{kSturdyKey, "stop", "of 5", 1, 5, 0,
+                             [](const C&, const T& t) { return double(sturdinessOf(t)); },
+                             [](C&, T& t, double x) { applySturdiness(int(std::lround(x)), t); }}},
+                 .help = [](const X& x) {
+                     return sturdinessCaption(x.choices) +
+                            " 1 is single pillars with no braces; 5 has the most of both. A row below with a value "
+                            "of its own wins.";
+                 }});
     v.push_back({.group = "Pillars and trunks", .label = "Heads per pillar", .kind = K::Number, .source = S::Default,
                  .fields = {{"heads_per_pillar", "up to", "", 1, 6, 0,
                              [](const C&, const T& t) { return double(t.max_heads_per_pillar); },
@@ -261,8 +298,8 @@ std::vector<AdvancedSetting> makeAdvanced() {
                              [](C&, T& t, double x) { t.max_merge_distance = x; }}},
                  .help = [](const X& x) {
                      if (!x.tc.merge_pillars)
-                         return std::string("Off: merging is turned off by the Sturdiness slider on the Supports "
-                                            "panel. A value here still sets how far tips reach if it is turned on.");
+                         return std::string("Off: this job's pillars stay single (Trunks and braces above, at 1). "
+                                            "A value here still sets how far tips reach if they join.");
                      return strf("Up to %d tips share one trunk, never thicker than %.1f mm.", x.tc.max_tips_per_trunk,
                                  x.tc.max_trunk_diameter);
                  }});
@@ -657,59 +694,99 @@ fruit::TreeConfig treeConfig(const SupportChoices& c) {
 
 // ---- Quick support ----
 
-namespace {
-
-struct QuickWords {
-    const char* label;
-    const char* left;
-    const char* right;
-    const char* words[kQuickStops];
-    int normal;
-};
-
-const QuickWords& quickWords(QuickSlider s) {
-    static const QuickWords hold{"Hold", "Easy to snap off", "Strong", {"Gentle", "Light", "Normal", "Firm", "Strong"},
-                                 kHoldDefault};
-    static const QuickWords amount{"Amount", "Fewer tips", "More tips", {"Fewest", "Fewer", "Normal", "More", "Most"},
-                                   kAmountDefault};
-    static const QuickWords sturdy{
-        "Sturdiness", "Light", "Sturdy", {"Lightest", "Light", "Normal", "Sturdy", "Sturdiest"}, kSturdyDefault};
-    return s == QuickSlider::Hold ? hold : s == QuickSlider::Amount ? amount : sturdy;
+const char* howManyWord(int stop, const SupportChoices& c) {
+    static const char* words[kQuickStops] = {"Fewest", "Fewer", "", "More", "Most"};
+    stop = clampStop(stop);
+    if (stop == kHowManyCentre) return howManyMeasured(c) ? "As measured" : "Starting values";
+    return words[stop - 1];
 }
 
-}  // namespace
-
-int& quickStop(SupportChoices& c, QuickSlider s) {
-    return s == QuickSlider::Hold ? c.hold : s == QuickSlider::Amount ? c.amount : c.sturdy;
+bool howManyMeasured(const SupportChoices& c) {
+    // What the stops move, as a resin's plates measure it: the lean angle and the tips' reach.
+    if (!c.profile.is_object()) return false;
+    for (const char* key : {"critical_angle_deg", "coverage_curve"})
+        if (c.profile.contains(key) && !c.profile[key].is_null()) return true;
+    return false;
 }
 
-int quickStop(const SupportChoices& c, QuickSlider s) {
-    return clampStop(s == QuickSlider::Hold ? c.hold : s == QuickSlider::Amount ? c.amount : c.sturdy);
+double howManyAngleShift(int stop) {
+    static const double a[kQuickStops] = {10, 5, 0, -5, -10};
+    return a[clampStop(stop) - 1];
 }
 
-const char* quickWord(QuickSlider s, int stop) { return quickWords(s).words[clampStop(stop) - 1]; }
+double howManyDensity(int stop) {
+    static const double d[kQuickStops] = {1.0, 1.0, 1.0, 1.25, 1.5};
+    return d[clampStop(stop) - 1];
+}
 
-int quickTipClass(const SupportChoices& c) {
-    // A usual tip set on the advanced page stays; otherwise one class either
-    // way from the resin's, as far as FruitSlicer's own sizes (0.2 to 0.6 mm) go.
-    if (c.usual_tip != usualTipFor(c.profile)) return c.usual_tip;
-    static const int shift[kQuickStops] = {-1, -1, 0, 1, 1};
-    return std::clamp(c.usual_tip + shift[clampStop(c.hold) - 1], 0, 3);
+double howManyEdgeReach(int stop) {
+    static const double k[kQuickStops] = {1.5, 1.25, 1.0, 1.0, 1.0};
+    return k[clampStop(stop) - 1];
+}
+
+std::string howManyCaption(int stop, const SupportChoices& choices) {
+    stop = clampStop(stop);
+    SupportChoices c = choices, mid = choices;
+    c.how_many = stop;
+    mid.how_many = kHowManyCentre;
+    fruit::SupportConfig cfg, cfg0;
+    fruit::TreeConfig tc, tc0;
+    resolve(fruit::Placement{}, c, cfg, tc);
+    resolve(fruit::Placement{}, mid, cfg0, tc0);
+    const double reach = cfg.coverage.radius(0), reach0 = cfg0.coverage.radius(0);
+    std::string out;
+    if (stop == kHowManyCentre) {
+        out = strf("Faces leaning more than %.0f° get tips, no spot more than %.1f mm from one.", cfg.critical_angle_deg,
+                   reach);
+        out += howManyMeasured(c) ? " As measured for this resin." : " Starting values: not measured for this resin.";
+    } else if (stop > kHowManyCentre) {
+        out = strf("Faces leaning more than %.0f° get tips", cfg.critical_angle_deg);
+        const double closer = reach0 > 0 ? (1 - reach / reach0) * 100 : 0;
+        out += closer > 0.5 ? strf(", no spot more than %.1f mm from one (%.0f%% closer).", reach, closer) : ".";
+    } else {
+        out = strf("Only faces leaning more than %.0f° get tips", cfg.critical_angle_deg);
+        out += cfg.skin_reach > cfg0.skin_reach + 1e-9
+                   ? strf("; a free edge gets one within %.1f mm, not %.1f.", cfg.skin_reach, cfg0.skin_reach)
+                   : ".";
+    }
+    if (c.advanced.count("critical_angle")) out += " The angle is set on the Advanced page.";
+    return out;
+}
+
+std::string tipSizeCaption(const SupportChoices& c) {
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    resolve(fruit::Placement{}, c, cfg, tc);
+    const auto size = [&](int cls) { return cfg.tip_classes[static_cast<std::size_t>(cls)].diameter; };
+    const double usual = size(cfg.default_tip), air = size(cfg.minima_tip), edge = size(cfg.edge_tip);
+    if (std::abs(air - usual) < 1e-9 && std::abs(edge - usual) < 1e-9) return "Every tip is this size.";
+    if (std::abs(air - usual) < 1e-9) return strf("%.1f mm near edges and visible faces.", edge);
+    if (std::abs(edge - usual) < 1e-9) return strf("%.1f mm where a part starts in mid-air.", air);
+    return strf("%.1f mm where a part starts in mid-air, %.1f mm near edges and visible faces.", air, edge);
+}
+
+std::string lookFurtherCaption(const SupportChoices& choices) {
+    SupportChoices c = choices;
+    const double now = treeConfig(c).max_route_length;
+    if (c.advanced.count("route"))
+        return strf("Set on the Advanced page: a support looks up to %.0f mm for a way down before it stands on "
+                    "the model.",
+                    now);
+    c.look_further = false;
+    const double near = treeConfig(c).max_route_length;
+    c.look_further = true;
+    const double far = treeConfig(c).max_route_length;
+    if (!choices.look_further)
+        return strf("Off: a support with no way down within %.0f mm stands on the model, on a small second tip.",
+                    near);
+    return strf("On: a support looks up to %.0f mm for a way down before it stands on the model. More resin; "
+                "routes that long are not printed yet.",
+                far);
 }
 
 double quickCapacityScale(int hold_stop) {
     static const double k[kQuickStops] = {1.25, 1.0, 1.0, 1.0, 0.8};
     return k[clampStop(hold_stop) - 1];
-}
-
-double quickAngleShift(int amount_stop) {
-    static const double a[kQuickStops] = {15, 5, 0, -5, -10};
-    return a[clampStop(amount_stop) - 1];
-}
-
-double quickDensity(int amount_stop) {
-    static const double d[kQuickStops] = {1.0, 1.0, 1.0, 1.25, 1.5};
-    return d[clampStop(amount_stop) - 1];
 }
 
 void applySturdiness(int stop, fruit::TreeConfig& tc) {
@@ -742,90 +819,69 @@ void applySturdiness(int stop, fruit::TreeConfig& tc) {
     }
 }
 
+int sturdinessOf(const fruit::TreeConfig& tc) {
+    if (!tc.merge_pillars && tc.brace_min_height >= 500) return 1;
+    if (tc.max_tips_per_trunk >= 10) return 5;
+    if (tc.max_tips_per_trunk >= 8) return 4;
+    return tc.brace_min_height <= 10 ? 3 : kSturdyDefault;
+}
+
+std::string sturdinessCaption(const SupportChoices& c) {
+    const fruit::TreeConfig tc = treeConfig(c);
+    std::string out = tc.merge_pillars ? strf("Pillars within %.0f mm join into trunks up to %.1f mm thick",
+                                              tc.max_merge_distance, tc.max_trunk_diameter)
+                                       : std::string("Single pillars, no trunks");
+    out += tc.brace_min_height >= 500 ? std::string(", no braces.")
+                                      : strf(", braces on pillars taller than %.0f mm, every %.0f mm, %.1f mm thick.",
+                                             tc.brace_min_height, tc.brace_step, tc.brace_diameter);
+    return out;
+}
+
 bool quickChanged(const SupportChoices& c) {
-    return c.hold != kHoldDefault || c.amount != kAmountDefault || c.sturdy != kSturdyDefault || c.density != 1.0 ||
-           !c.merge;
+    return c.how_many != kHowManyCentre || c.usual_tip != usualTipFor(c.profile) || c.look_further ||
+           c.hold != kHoldDefault || c.density != 1.0 || !c.merge;
 }
 
 void resetQuick(SupportChoices& c) {
+    c.how_many = kHowManyCentre;
+    c.usual_tip = usualTipFor(c.profile);
+    c.look_further = false;
     c.hold = kHoldDefault;
-    c.amount = kAmountDefault;
-    c.sturdy = kSturdyDefault;
     c.density = 1.0;
     c.merge = true;
 }
 
-std::string quickCaption(QuickSlider s, int stop, const SupportChoices& choices) {
-    stop = clampStop(stop);
-    SupportChoices c = choices;
-    quickStop(c, s) = stop;
-    fruit::SupportConfig cfg;
-    fruit::TreeConfig tc;
-    resolve(fruit::Placement{}, c, cfg, tc);
-    switch (s) {
-        case QuickSlider::Hold: {
-            const double d = cfg.tip_classes[static_cast<std::size_t>(cfg.default_tip)].diameter;
-            const bool own_tip = c.usual_tip != usualTipFor(c.profile);
-            const bool counted = !c.advanced.count("capacity");
-            const long pct = std::lround(std::abs(quickCapacityScale(stop) - 1.0) * 100);
-            std::string out = strf("%.1f mm tips", d);
-            if (own_tip) out += " (set on the Advanced page)";
-            switch (stop) {
-                case 1:
-                    out += counted ? strf(", each counted on to hold %ld%% more layer, so fewer. Snaps off clean: for "
-                                          "small, light parts.",
-                                          pct)
-                                   : ". Snaps off clean: for small, light parts.";
-                    break;
-                case 2: out += ". Smaller marks."; break;
-                case 3:
-                    out += c.profile.is_object() && c.profile.contains("default_tip_diameter")
-                               ? ", as measured for this resin."
-                               : ", FruitSlicer's usual size.";
-                    break;
-                case 4: out += ". Holds more; bigger marks."; break;
-                default:
-                    out += counted ? strf(", each counted on to hold %ld%% less layer, so more of them. For heavy "
-                                          "parts; leaves more marks.",
-                                          pct)
-                                   : ". For heavy parts; leaves more marks.";
-                    break;
-            }
-            return out;
-        }
-        case QuickSlider::Amount: {
-            const double dens = cfg.coverage.density;
-            std::string out = dens > 1.001 ? strf("Tips %.0f%% closer together", (1 - 1 / std::sqrt(dens)) * 100)
-                                           : std::string("Normal spacing");
-            const char* get = dens > 1.001 ? "them" : "tips";
-            out += stop <= 2 ? strf("; only faces leaning past %.0f° get tips.", cfg.critical_angle_deg)
-                             : strf("; faces leaning past %.0f° get %s.", cfg.critical_angle_deg, get);
-            if (stop == 1) out += " Fewest tips, the least to clean off.";
-            if (stop == 5) out += " Safest, the most to clean off.";
-            if (c.advanced.count("critical_angle")) out += " The angle is set on the Advanced page.";
-            return out;
-        }
-        case QuickSlider::Sturdiness: {
-            std::string out = tc.merge_pillars
-                                  ? strf("Pillars within %.0f mm join into trunks up to %.1f mm thick",
-                                         tc.max_merge_distance, tc.max_trunk_diameter)
-                                  : std::string("Single pillars, no trunks");
-            out += tc.brace_min_height >= 500
-                       ? std::string(", no braces.")
-                       : strf(", braces on pillars taller than %.0f mm, every %.0f mm.", tc.brace_min_height,
-                              tc.brace_step);
-            if (stop == 1) out += " Least resin, easiest to clean.";
-            if (stop == 5) out += " For tall or heavy parts.";
-            return out;
-        }
+void convertOldQuick(SupportChoices& c, int hold, int amount, int sturdy) {
+    // What the three sliders set (their stops 1 to 5).
+    static const int tip_shift[kQuickStops] = {-1, -1, 0, 1, 1};
+    static const double angle_shift[kQuickStops] = {15, 5, 0, -5, -10};
+    static const double density[kQuickStops] = {1.0, 1.0, 1.0, 1.25, 1.5};
+    hold = clampStop(hold);
+    amount = clampStop(amount);
+    // The job's values before any slider or value of its own: its resin's.
+    SupportChoices plain = c;
+    plain.usual_tip = usualTipFor(c.profile);
+    plain.how_many = kHowManyCentre;
+    plain.look_further = false;
+    plain.advanced.clear();
+    const fruit::SupportConfig was = supportConfig(fruit::Placement{}, plain);
+    // Hold moved the usual tip a size, unless the job had set its own; its end
+    // stops also scaled what a tip is counted on to hold, which `hold` still does.
+    if (c.usual_tip == usualTipFor(c.profile)) c.usual_tip = std::clamp(c.usual_tip + tip_shift[hold - 1], 0, 3);
+    c.hold = hold == 1 || hold == kQuickStops ? hold : kHoldDefault;
+    // The other two sizes stayed where they were, whatever the usual tip.
+    if (c.usual_tip != usualTipFor(c.profile)) {
+        if (!c.advanced.count("minima_tip")) c.advanced["minima_tip"] = standardTipClass(was, was.minima_tip);
+        if (!c.advanced.count("edge_tip")) c.advanced["edge_tip"] = standardTipClass(was, was.edge_tip);
     }
-    return "";
-}
-
-QuickInfo quickInfo(QuickSlider s, const SupportChoices& c) {
-    const QuickWords& w = quickWords(s);
-    const int stop = quickStop(c, s);
-    return QuickInfo{w.label, w.left, w.right, w.words[stop - 1], quickCaption(s, stop, c), stop, w.normal};
+    // Amount moved the lean angle (the ledge rule stayed) and the spacing.
+    if (amount != 3 && !c.advanced.count("critical_angle"))
+        c.advanced["critical_angle"] = std::clamp(was.critical_angle_deg + angle_shift[amount - 1], 20.0, 70.0);
+    c.density *= density[amount - 1];
+    c.how_many = kHowManyCentre;
+    c.look_further = false;
+    // Sturdiness is Trunks and braces now, a row on the Advanced page with the same stops.
+    if (clampStop(sturdy) != kSturdyDefault && !c.advanced.count(kSturdyKey)) c.advanced[kSturdyKey] = clampStop(sturdy);
 }
 
 const std::vector<std::string>& supportStages() {
@@ -896,8 +952,11 @@ int plateHeldLayers(double held_mm) {
     return std::max(0, static_cast<int>(std::ceil((held_mm - 1e-9) / kLayerHeight)));
 }
 
-SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
-                     const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+namespace {
+
+// The planner's own tips for these choices, as they are.
+SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     fruit::SupportConfig cfg;
     fruit::TreeConfig tc;
     const fruit::Placement& p = doc.placement();
@@ -943,6 +1002,45 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
     std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });
     return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits, std::move(hollow),
                        pg.held_layers_min, pg.held_layers_max};
+}
+
+// The plan to keep for a stop of How many below the centre, given the one
+// kept for the stop above. That stop asks for more, so its plan is right for
+// this one too; and the planner, placing tips one at a time, now and then
+// ends up with a tip or two more under looser rules. So: whichever has fewer.
+bool keepsOwn(const SupportPlan& own, const SupportPlan& above) { return own.points.size() <= above.points.size(); }
+
+}  // namespace
+
+SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
+                     const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+    const int stop = clampStop(c.how_many);
+    if (stop >= kHowManyCentre) return planTipsAt(doc, c, visible, ctl, edits);
+    const double share = 1.0 / (kHowManyCentre - stop + 1);
+    SupportPlan own = planTipsAt(doc, c, visible, ctl.sub(0.0, share), edits);
+    SupportChoices up = c;
+    up.how_many = stop + 1;
+    SupportPlan above = planTips(doc, up, visible, ctl.sub(share, 1.0), edits);
+    return keepsOwn(own, above) ? own : above;
+}
+
+std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
+                                               const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
+                                               const std::vector<TipEdit>& edits) {
+    std::array<std::size_t, kQuickStops> tips{};
+    std::array<SupportPlan, kQuickStops> kept;
+    // The centre first, then down from it, so each lighter stop has the one above to compare with.
+    const int order[kQuickStops] = {kHowManyCentre, 2, 1, 4, 5};
+    for (int i = 0; i < kQuickStops; ++i) {
+        const int stop = order[i];
+        const auto at = static_cast<std::size_t>(stop - 1);
+        SupportChoices one = c;
+        one.how_many = stop;
+        kept[at] = planTipsAt(doc, one, visible, ctl.sub(i / double(kQuickStops), (i + 1) / double(kQuickStops)), edits);
+        if (stop < kHowManyCentre && !keepsOwn(kept[at], kept[at + 1])) kept[at] = kept[at + 1];
+        tips[at] = applyEdits(kept[at].points, edits, doc.frames()).size();
+    }
+    return tips;
 }
 
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
