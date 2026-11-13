@@ -1024,6 +1024,12 @@ SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::
                 cos.exclusions.push_back({t->apply(hollow->holes[i].at), hollow->placed[i].radius + kHoleMouthMargin});
     }
     po.relieve = true;  // each tip's own load too (rule 4): tips beside those that would carry too much
+    // ...worked out with the supports those tips would get: one that stands on the model is short and stiff.
+    const double min_raft = fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight);
+    const fruit::JobControl quiet = rest.silent();
+    po.support_lengths = [&](const std::vector<fruit::SupportPoint>& pts) {
+        return fruit::supportLengthsOnModel(doc.placed(), pts, tc, min_raft, quiet);
+    };
     fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, rest);
     // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
     std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });

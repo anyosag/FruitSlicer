@@ -395,7 +395,21 @@ Points are chosen bottom-up so that
    measured value ("Edges with nothing behind them" under Advanced settings;
    0 turns it off). It adds little on most models (a lid 462 to 494 tips, a
    cup 318 to 320, a ball none) and most where a wide flat face prints
-   level, which is the hardest thing to hold.
+   level, which is the hardest thing to hold;
+5. **each tip's own load**: the rules above ask that a piece's tips hold each
+   layer between them, not what any one of them carries. So, last, the pull
+   of every layer is shared out among the tips as the replay of the print
+   shares it (thin, fresh model hangs from the tips near each patch of it, a
+   stiff piece from all its tips by how stiff their supports are), and a tip
+   that would carry more than it is trusted with gets a size bigger, or tips
+   beside it, until none does (up to 16 rounds; "Each tip's own load" under
+   Advanced settings, `--tip-limit`; 0 turns it off; 0.7 with a resin's
+   measured tips). A support that stands on the model a little way below is
+   many times stiffer than one that reaches the raft, and of two tips beside
+   each other the stiffer is pulled more, so the supports are routed once
+   for the tips planned so far and the lengths of those that stand on the
+   model go into the sharing. Worked out, not checked against a print. A lid
+   went from 494 to 644 tips with it, a cup from 320 to 342.
 
 Placement is a cost-weighted greedy set cover (cosmetic keep-out regions and
 sharp edges cost more), followed by pruning that re-checks coverage and

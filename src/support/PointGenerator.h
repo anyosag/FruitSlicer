@@ -22,6 +22,7 @@
 // (gain / cost; cost penalises cosmetic regions and sharp edges), then
 // reverse-delete pruning that re-checks coverage and capacity.
 
+#include <functional>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -100,6 +101,16 @@ struct PointGenOptions {
     // loads are worked out afresh each round (the model, layer by layer), so
     // the orientation search and the checks leave it off.
     bool relieve = false;
+    // For that rule: how long the support under each of the tips given would
+    // be, in their order (mm, from the tip down to where the support stands;
+    // 0: it reaches the raft or the plate, or is not known). Asked once, for
+    // the tips as planned before the rule changes any. A support that stands
+    // on the model a little way below is many times stiffer than one that
+    // reaches the raft, and of two tips beside each other the stiffer is
+    // pulled more: without this every support is taken to reach the plate,
+    // and such a tip's load is read too low (supportLengthsOnModel in
+    // SupportTree.h answers it from the tree those tips would get).
+    std::function<std::vector<double>(const std::vector<SupportPoint>&)> support_lengths;
     CoverStrategy strategy = CoverStrategy::Greedy;
     std::vector<SupportPoint> manual;  // pinned user points (snapped to the surface)
     const CosmeticSpec* cosmetic = nullptr;

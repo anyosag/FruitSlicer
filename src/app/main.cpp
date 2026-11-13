@@ -489,6 +489,12 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     cfg.coverage.density = popts.density;
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
+    tc.merge_pillars = !o.no_merge;
+    if (o.raft == "none") tc.raft = RaftStyle::None;
+    else if (o.raft == "full") tc.raft = RaftStyle::Full;
+    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads, full or none");
+    // The raft must cover the long-exposure layers at this layer height.
+    const double min_raft = minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h);
     std::shared_ptr<const LayerStack> layers;  // the planner's, reused by the check of dropped tips
     if (!o.points_in.empty()) {
         pts = pointsFromJson(points_file);
@@ -498,6 +504,8 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
         PointGenOptions opts;
         opts.cosmetic = &cosmetic;
         opts.relieve = true;
+        // (Each tip's own load is worked out with the supports the tips would get.)
+        opts.support_lengths = [&](const std::vector<SupportPoint>& p) { return supportLengthsOnModel(mesh, p, tc, min_raft); };
         const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
         pts = res.points;
         layers = res.analysis.layers;
@@ -518,12 +526,6 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
         pj["source"] = path;
         std::ofstream(o.out + ".points.json") << pj.dump(1) << "\n";
     }
-    tc.merge_pillars = !o.no_merge;
-    if (o.raft == "none") tc.raft = RaftStyle::None;
-    else if (o.raft == "full") tc.raft = RaftStyle::Full;
-    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads, full or none");
-    // The raft must cover the long-exposure layers at this layer height.
-    const double min_raft = minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h);
     const SupportTree tree = buildSupportTree(mesh, pts, tc, min_raft);
     const TriangleMesh sup = tree.mesh(tc);
     {
@@ -640,6 +642,11 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
     cfg.coverage.density = popts.density;
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
+    tc.merge_pillars = !o.no_merge;
+    if (o.raft == "none") tc.raft = RaftStyle::None;
+    else if (o.raft == "full") tc.raft = RaftStyle::Full;
+    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads, full or none");
+    const double min_raft = minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h);
     std::vector<SupportPoint> pts;
     std::shared_ptr<const LayerStack> model_layers;
     std::shared_ptr<const IslandGraph> model_parts;
@@ -652,6 +659,7 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
         PointGenOptions opts;
         opts.cosmetic = &cosmetic;
         opts.relieve = true;
+        opts.support_lengths = [&](const std::vector<SupportPoint>& p) { return supportLengthsOnModel(mesh, p, tc, min_raft); };
         const PointGenResult res = generateSupportPoints(mesh, cfg, opts);
         pts = res.points;
         model_layers = res.analysis.layers;
@@ -662,12 +670,7 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
                          {"rounds_of_working_out_loads", res.stats.relief_rounds},
                          {"tips_still_over_their_load", res.stats.relief_left}};
     }
-    tc.merge_pillars = !o.no_merge;
-    if (o.raft == "none") tc.raft = RaftStyle::None;
-    else if (o.raft == "full") tc.raft = RaftStyle::Full;
-    else if (o.raft != "pads") throw std::runtime_error("--raft must be pads, full or none");
-    const SupportTree tree =
-        buildSupportTree(mesh, pts, tc, minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h));
+    const SupportTree tree = buildSupportTree(mesh, pts, tc, min_raft);
     const TriangleMesh sup = tree.mesh(tc);
     const LayerStack sup_layers = sup.empty() ? LayerStack{} : sliceModel(sup, layer_h);
     const LayerStack print = sup.empty() ? *model_layers : unionLayers(*model_layers, sup_layers);
@@ -797,11 +800,12 @@ int cmdABPlate(const std::string& path, const PlacementOpts& place, double layer
     cfg.coverage.density = popts.density;
     TreeConfig tc;
     applySettings(popts.gen, cfg, &tc, r);
+    const double min_raft = minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h);
     PointGenOptions popt;
     popt.relieve = true;
+    popt.support_lengths = [&](const std::vector<SupportPoint>& p) { return supportLengthsOnModel(mesh, p, tc, min_raft); };
     const PointGenResult res = generateSupportPoints(mesh, cfg, popt);
-    const SupportTree tree =
-        buildSupportTree(mesh, res.points, tc, minRaftThickness(printer.bottom_layers, printer.transition_layers, layer_h));
+    const SupportTree tree = buildSupportTree(mesh, res.points, tc, min_raft);
     const TriangleMesh sup = tree.mesh(tc);
     ABPlateOptions ao;
     ao.copies = o.copies;

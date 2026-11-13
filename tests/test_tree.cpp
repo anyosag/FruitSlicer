@@ -463,6 +463,34 @@ TEST_CASE("two tips whose supports would stand on one spot of the model share a 
     }
 }
 
+TEST_CASE("how long a support is, for the planner: only where it stands on the model", "[tree]") {
+    // A ceiling 6 mm over a floor that ends at x = 3, joined by a wall at the far end.
+    TriangleMesh m = makeBox({-20, -20, 0}, {3, 20, 2});
+    m.append(makeBox({-20, -20, 8}, {20, 20, 10}));
+    m.append(makeBox({-20, -20, 2}, {-18, 20, 8}));
+    placeOnPlate(m, {0, 0, 0}, 5.0);
+    auto tip = [](double x, double y) {
+        SupportPoint p;
+        p.pos = {x, y, 13.0};
+        p.normal = {0, 0, -1};
+        p.tip_diameter = 0.4;
+        return p;
+    };
+    const TreeConfig tc;
+    // Over the floor, far from its edge: it stands on the floor. Past the edge: it reaches the raft.
+    // Two 0.3 mm apart over the floor: they share a support and a foot.
+    const std::vector<SupportPoint> pts{tip(-10, 0), tip(12, 0), tip(-10, 8), tip(-9.7, 8)};
+    const std::vector<double> len = supportLengthsOnModel(m, pts, tc, 0.4);
+    REQUIRE(len.size() == 4);
+    // 6 mm from the ceiling down to the floor, and what its 0.4 mm foot gives: as 1.0 × 1.0 / 0.4 = 2.5 mm of shaft.
+    CHECK(len[0] == Approx(6.0 + 2.5).margin(0.01));
+    CHECK(len[1] == 0);
+    // The shared foot is wider (0.4 × √2), so it gives less.
+    CHECK(len[2] == Approx(6.0 + 1.0 / (0.4 * std::sqrt(2.0))).margin(0.01));
+    CHECK(len[3] == Approx(len[2]));
+    CHECK(supportLengthsOnModel(m, {}, tc, 0.4).empty());
+}
+
 TEST_CASE("a tip whose junction lies in another's goes down with it instead of standing on the model", "[tree]") {
     // A ceiling over a floor that ends 3 mm from the tips, with two thin walls between floor and ceiling that
     // leave a corridor 1.4 mm wide towards the floor's edge. The first tip's support walks down that corridor

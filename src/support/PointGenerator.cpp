@@ -185,6 +185,7 @@ private:
     void finalize();
     // Rule 4: tips beside those that would carry more than they are trusted with.
     void relieve();
+    SupportPoint pointOf(const Tip& t) const;
     // The spot for a tip beside tip `ti`, within `reach` of it: where the
     // model's underside is furthest from every tip (-1: none).
     int reliefSpot(int ti, double reach) const;
@@ -1270,21 +1271,8 @@ void Generator::finalize() {
         warn("uncovered", m.str(), -1, {});
     }
 
-    for (const Tip& t : tips_) {
-        if (t.removed) continue;
-        SupportPoint p;
-        p.pos = t.pos;
-        p.normal = t.normal;
-        p.tip_diameter = t.diameter;
-        p.category = t.cat;
-        p.pinned = t.pinned;
-        p.layer = t.layer;
-        p.part = t.part;
-        p.cost = t.cost;
-        p.enlarged = t.enlarged;
-        p.id = stablePointId(t.pos, t.cat);
-        result_.points.push_back(p);
-    }
+    for (const Tip& t : tips_)
+        if (!t.removed) result_.points.push_back(pointOf(t));
     std::stable_sort(result_.points.begin(), result_.points.end(), [](const SupportPoint& a, const SupportPoint& b) {
         if (a.pos.z != b.pos.z) return a.pos.z < b.pos.z;
         if (a.pos.x != b.pos.x) return a.pos.x < b.pos.x;
@@ -1330,9 +1318,40 @@ int Generator::reliefSpot(int ti, double reach) const {
     return own >= 0 ? own : other;
 }
 
+SupportPoint Generator::pointOf(const Tip& t) const {
+    SupportPoint p;
+    p.pos = t.pos;
+    p.normal = t.normal;
+    p.tip_diameter = t.diameter;
+    p.category = t.cat;
+    p.pinned = t.pinned;
+    p.layer = t.layer;
+    p.part = t.part;
+    p.cost = t.cost;
+    p.enlarged = t.enlarged;
+    p.id = stablePointId(t.pos, t.cat);
+    return p;
+}
+
 void Generator::relieve() {
     PointGenStats& st = result_.stats;
     if (!opts_.relieve || check_ || !(cfg_.tip_load_limit > 0) || cfg_.relief_rounds <= 0) return;
+    // How long each tip's support will be, where the caller can say (by tip;
+    // 0: down to the plate). Asked once, for the tips as they are planned
+    // now; for a tip this rule adds, see below.
+    std::vector<double> rod(tips_.size(), 0.0);
+    if (opts_.support_lengths) {
+        std::vector<SupportPoint> pts;
+        std::vector<size_t> of;
+        for (size_t ti = 0; ti < tips_.size(); ++ti)
+            if (!tips_[ti].removed) {
+                pts.push_back(pointOf(tips_[ti]));
+                of.push_back(ti);
+            }
+        const std::vector<double> len = opts_.support_lengths(pts);
+        if (len.size() == pts.size())
+            for (size_t i = 0; i < of.size(); ++i) rod[of[i]] = std::max(0.0, len[i]);
+    }
     const StabilityConfig sc = stabilityConfig(cfg_);
     // (The parts are this planner's own until it hands them on: lent, not given.)
     const std::shared_ptr<const IslandGraph> parts(std::shared_ptr<const IslandGraph>(), &graph_);
@@ -1350,6 +1369,7 @@ void Generator::relieve() {
             c.at = t.pos;
             c.diameter = t.diameter;
             c.part = t.part;
+            c.rod = rod[ti];
             contacts.push_back(c);
         }
         if (live.empty()) break;
@@ -1410,6 +1430,11 @@ void Generator::relieve() {
                 const int id = addTip(si, PointCategory::Capacity, true);
                 eased.resize(tips_.size(), 0);
                 const Vec3 at = tips_[static_cast<size_t>(id)].pos;
+                // It stands as the tip it is put beside does, if that one stands on the model and the
+                // model is under this one too; else it reaches the plate.
+                rod.resize(tips_.size(), 0.0);
+                const double beside = rod[static_cast<size_t>(o.tip)];
+                if (beside > 0 && tree_.anyHit({at.x, at.y, at.z - 0.05}, {0, 0, -1}, beside + 1.0)) rod[static_cast<size_t>(id)] = beside;
                 tip_grid_.query(at.xy(), reach, [&](int tj) {
                     if (tj != o.tip && distance(tips_[static_cast<size_t>(tj)].pos, at) <= reach) eased[static_cast<size_t>(tj)] = 1;
                 });

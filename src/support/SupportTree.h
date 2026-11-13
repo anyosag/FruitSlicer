@@ -176,6 +176,17 @@ SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<Suppor
                              const TreeConfig& cfg, double min_raft_thickness,
                              const JobControl& ctl = JobControl::none());
 
+// For the planner's rule on each tip's own load (PointGenOptions::support_lengths):
+// how long the support under each of `points` would be if the tree were built
+// for them now, in their order (mm). Only where it would stand on the model:
+// from the tip down to its foot, and as much again as the narrow foot gives
+// (a foot is a second tip; it gives like head_length × shaft / foot of plain
+// shaft). 0 for a tip whose support reaches the raft or the plate, and for
+// one that gets none.
+std::vector<double> supportLengthsOnModel(const TriangleMesh& model, const std::vector<SupportPoint>& points,
+                                          const TreeConfig& cfg, double min_raft_thickness,
+                                          const JobControl& ctl = JobControl::none());
+
 // `points` as passed to buildSupportTree, split into the tips that got a head
 // and those the tree dropped (for checkDroppedTips).
 void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& points, std::vector<SupportPoint>& built,

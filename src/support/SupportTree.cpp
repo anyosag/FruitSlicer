@@ -870,6 +870,28 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
 
 double tipPenetration(double tip_d, const TreeConfig& cfg) { return penetrationFor(tip_d, cfg); }
 
+std::vector<double> supportLengthsOnModel(const TriangleMesh& model, const std::vector<SupportPoint>& points,
+                                          const TreeConfig& cfg, double min_raft_thickness, const JobControl& ctl) {
+    std::vector<double> len(points.size(), 0.0);
+    if (points.empty()) return len;
+    const SupportTree tree = buildSupportTree(model, points, cfg, min_raft_thickness, ctl);
+    auto at = [&](int head) -> double* {
+        const int pt = tree.heads[static_cast<size_t>(head)].point;
+        return pt >= 0 && static_cast<size_t>(pt) < len.size() ? &len[static_cast<size_t>(pt)] : nullptr;
+    };
+    for (const Pillar& P : tree.pillars) {
+        if (!P.on_model) continue;
+        const double foot = P.foot_tip > 0 ? cfg.head_length * P.diameter / P.foot_tip : 0.0;
+        for (int h : P.heads)
+            if (double* l = at(h)) *l = std::max(0.0, tree.heads[static_cast<size_t>(h)].contact.z - P.anchor_contact.z) + foot;
+    }
+    // A short column from the model just below: tip to where it lands.
+    for (size_t h = 0; h < tree.heads.size(); ++h)
+        if (tree.heads[h].stub)
+            if (double* l = at(static_cast<int>(h))) *l = distance(tree.heads[h].contact, tree.heads[h].junction);
+    return len;
+}
+
 void splitByTree(const SupportTree& tree, const std::vector<SupportPoint>& points, std::vector<SupportPoint>& built,
                  std::vector<SupportPoint>& dropped) {
     std::vector<char> has_head(points.size(), 0);

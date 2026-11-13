@@ -379,6 +379,28 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   junction and goes down with it (`shareJunction`, tried last before
   standing on the model, up to a trunk's six tips): the eye cup has 107
   supports on the model and no foot over 1.5 times what it is trusted with.
+- **The planner asks how long each support will be (2026-11-13).** The rule
+  for each tip's own load took every support as reaching the plate. A support
+  that stands on the model a little way below is many times stiffer, and
+  the stiffer of two tips beside each other is pulled more: on the lid with
+  0.3 mm tips one tip at the top, on a support standing 15 mm down beside
+  neighbours whose supports reach the raft 58 mm down, carried 13 mm² against
+  the 6 it is trusted with (a chance of 7 %), though the planner had it
+  within its limit. A look straight down does not say which it will be: no
+  tip with nothing below it stood on the model, but of those with the model
+  below about half reached the raft all the same (245 of 403 on the lid).
+  Routing the supports does, and takes 2 to 4 s of the 13 to 21 s the
+  supports take. So the planner now asks once, before the rule changes any
+  tip, how long the support under each would be
+  (`PointGenOptions::support_lengths`, answered by `supportLengthsOnModel`:
+  the tree for those tips; tip to foot, plus what the narrow foot gives, for
+  one that stands on the model; 0 for one that reaches the raft, which is
+  as before). A tip the rule adds is taken to stand as the tip it is put
+  beside where the model is under it too, else to reach the plate. Lid with
+  0.3 mm tips: that tip is no longer flagged (995 tips, were 996); lid 644
+  (641), eye cup 371 as it was, 564 at "Most", 362 with 0.6 mm tips, 607
+  (601) with 0.3 mm: nothing flagged on any. Making the supports takes 2 to
+  6 s longer on those parts. Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

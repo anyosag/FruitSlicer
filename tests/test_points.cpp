@@ -39,13 +39,15 @@ size_t countCat(const PointGenResult& r, PointCategory c) {
 
 // The most any tip carries, in multiples of what it is trusted with, as the
 // replay shares each layer's pull (each tip on a rod of its own).
-double mostCarried(const PointGenResult& r, const SupportConfig& cfg) {
+// `short_near`, `rod`: the supports of the tips within 5 mm of that point are `rod` mm long (the others reach the plate).
+double mostCarried(const PointGenResult& r, const SupportConfig& cfg, const Vec3* short_near = nullptr, double rod = 0) {
     std::vector<TipContact> tips;
     for (const auto& p : r.points) {
         TipContact t;
         t.at = p.pos;
         t.diameter = p.tip_diameter;
         t.part = p.part;
+        if (short_near && distance(p.pos, *short_near) < 5.0) t.rod = rod;
         tips.push_back(t);
     }
     const std::vector<TipLoad> loads = standaloneTipLoads(*r.analysis.layers, r.analysis.islands, tips, stabilityConfig(cfg));
@@ -315,6 +317,68 @@ TEST_CASE("each tip's own load: one size bigger where that carries it, a tip bes
         CHECK(light(after) >= light(before));
         CHECK(after.points.size() == before.points.size() + after.stats.relief_added);
     }
+}
+
+TEST_CASE("each tip's own load: tips whose supports are short and stiff are pulled more than their neighbours", "[points][relief]") {
+    // A plate on its tips, 30 mm up. As planned, with every support taken to reach the plate, no tip carries
+    // too much.
+    const TriangleMesh m = placed(makeBox({0, 0, 0}, {30, 30, 2}), 30.0);
+    const SupportConfig cfg = fastConfig();
+    PointGenOptions ask;
+    ask.relieve = true;
+    const PointGenResult plain = generateSupportPoints(m, cfg, ask);
+    requireInvariants(plain);
+    REQUIRE(mostCarried(plain, cfg) <= 1.1 + 1e-9);
+    // Say something stands 2 mm under the plate's middle, so the supports of the tips within 5 mm of it are
+    // 2 mm long and the others 30. Then that plan will not do: a short support is many times stiffer, and the
+    // thin plate around hangs from those few.
+    const Vec3 middle{0, 0, 30};
+    auto isShort = [&](const Vec3& at) { return distance(at, middle) < 5.0; };
+    CHECK(mostCarried(plain, cfg, &middle, 2.0) > 1.5);
+
+    // The planner asks how long the supports will be: once, about the tips as they are before this rule.
+    int asked = 0;
+    std::vector<SupportPoint> about;
+    ask.support_lengths = [&](const std::vector<SupportPoint>& pts) {
+        ++asked;
+        about = pts;
+        std::vector<double> len(pts.size(), 0.0);
+        for (size_t i = 0; i < pts.size(); ++i)
+            if (isShort(pts[i].pos)) len[i] = 2.0;
+        return len;
+    };
+    const PointGenResult told = generateSupportPoints(m, cfg, ask);
+    requireInvariants(told);
+    CHECK(asked == 1);
+    const PointGenResult before = generateSupportPoints(m, cfg);  // without the rule
+    REQUIRE(about.size() == before.points.size());
+    std::vector<uint64_t> a, b;
+    for (const auto& p : about) a.push_back(p.id);
+    for (const auto& p : before.points) b.push_back(p.id);
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    CHECK(a == b);
+    // Told so, it puts more tips there, and that plan holds. (A tip it adds is taken to stand as the one it
+    // is put beside only where the model is under it too. Here nothing is, so it takes the added ones as
+    // reaching the plate, which asks for more of them than the 2 mm supports they would get.)
+    std::size_t there_told = 0, there_plain = 0;
+    for (const auto& p : told.points) there_told += isShort(p.pos);
+    for (const auto& p : plain.points) there_plain += isShort(p.pos);
+    CHECK(there_told > there_plain);
+    CHECK(mostCarried(told, cfg, &middle, 2.0) <= 1.1 + 1e-9);
+
+    // Lengths of 0 (every support reaches the raft) change nothing, and an answer of the wrong length is not used.
+    auto same = [&](const PointGenResult& x) {
+        REQUIRE(x.points.size() == plain.points.size());
+        for (size_t i = 0; i < x.points.size(); ++i) {
+            CHECK(x.points[i].id == plain.points[i].id);
+            CHECK(x.points[i].tip_diameter == plain.points[i].tip_diameter);
+        }
+    };
+    ask.support_lengths = [](const std::vector<SupportPoint>& pts) { return std::vector<double>(pts.size(), 0.0); };
+    same(generateSupportPoints(m, cfg, ask));
+    ask.support_lengths = [](const std::vector<SupportPoint>&) { return std::vector<double>(3, 2.0); };
+    same(generateSupportPoints(m, cfg, ask));
 }
 
 TEST_CASE("each tip's own load: the limit is the planner's setting, and 0 turns the rule off", "[points][relief]") {
