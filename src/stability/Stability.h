@@ -64,6 +64,10 @@ namespace fruit {
 // it may snap and nothing comes of it: it is not listed as a weak place.
 inline constexpr double kSliverContact = 0.02;
 
+// Less of the model than this (mm³) going with a joint that lets go is not
+// counted as losing any of it.
+inline constexpr double kCountsAsLost = 0.1;
+
 // Where a support's tip touches the model, and how big the tip is.
 struct TipContact {
     Vec3 at;
@@ -227,6 +231,10 @@ struct TipRisk {
     double chance = 0;       // that it lets go
     double lost_chance = 0;  // that the part half a millimetre above it is not on the finished print
     double lost_volume = 0;  // mm³ of the model that goes with it, as WeakSpot::lost_volume
+    // The same averaged over every replay: what it costs per print. When the
+    // tips let go one after another, the model falls with whichever went
+    // last, so over many replays every one of them carries a little of it.
+    double lost_per_print = 0;
     double closeness = 0;
     double area = 0;         // mm² it touches the model with
     double load = 0;         // mm² of layer pulling on it at its worst
@@ -245,6 +253,10 @@ struct StabilityStats {
     // Model volume whose chance of not printing is at least 1, 5, 20 and 50 %.
     double at_risk[4] = {0, 0, 0, 0};
     double expected_loss = 0;         // mm³: volume × chance, summed
+    // The share of replays in which part of the model (kCountsAsLost or
+    // more) went with tips that let go, and how much on average in those.
+    double tips_cost_chance = 0;
+    double tips_cost_volume = 0;      // mm³
     double whole_chance = 1;          // share of replays in which less than 1 mm³ of the model was lost
     double worst_closeness = 0;
     int replays = 0;

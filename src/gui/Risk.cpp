@@ -45,10 +45,6 @@ const char* phrase(RiskPlace::Kind k, RiskBand b) {
             static const char* w[3] = {"May break", "Likely to break", "Very likely to break"};
             return w[i];
         }
-        case RiskPlace::Kind::Tip: {
-            static const char* w[3] = {"May let go", "Likely to let go", "Very likely to let go"};
-            return w[i];
-        }
         case RiskPlace::Kind::Tips: {
             static const char* w[3] = {"May let go", "Some are likely to let go", "Some are very likely to let go"};
             return w[i];
@@ -116,16 +112,7 @@ void findRiskPlaces(const fruit::StabilityResult& res, double usable, RiskReport
         const bool loses = s.lost_volume >= kRiskLosesModel;
         switch (s.cause) {
             case fruit::RiskCause::Tip:
-                // One that lets go while the model stays held is one of "the tips", below.
-                if (!loses) continue;
-                p.kind = RiskPlace::Kind::Tip;
-                p.title = "Tip with too much on it" + up;
-                p.holds = amount(s.load) + " mm² of layer on a " + fmt("%.1f", tipWidth(s.area)) +
-                          " mm tip, trusted with " + amount(s.holds * usable);
-                p.why = s.near >= 0.5 * s.load ? "the thin, fresh model next to it pulls on it alone"
-                                               : "its share of the whole piece is more than a tip of its size is trusted with";
-                p.if_goes = "about " + amount(s.lost_volume) + " mm³ of the model goes with it";
-                break;
+                continue;  // one of "the tips", below: they are one place together
             case fruit::RiskCause::Support:
                 p.kind = RiskPlace::Kind::Support;
                 p.title = "Thin support" + up;
@@ -183,23 +170,37 @@ void findRiskPlaces(const fruit::StabilityResult& res, double usable, RiskReport
         places.push_back(std::move(p));
     }
 
-    // The tips. Every one that may let go is coloured in the view; those the
-    // model stays held without are one place together.
+    // The tips: every one that may let go is coloured in the view, and they
+    // are one place together. When they let go one after another the model
+    // falls with whichever went last, so what goes with them is said for all
+    // of them, as the replays had it: how often, and how much then.
+    const bool cost = res.stats.tips_cost_chance >= kRiskShownFrom && res.stats.tips_cost_volume >= kRiskLosesModel;
+    auto shows = [&](const fruit::TipRisk& t, bool over_trust) {
+        if (riskBand(t.chance) == RiskBand::None) return false;
+        // A tip that only grazes the model, with nothing going with it: it may
+        // snap and nothing comes of it (the replay does not list it either).
+        if (t.area < fruit::kSliverContact && t.lost_volume < kRiskLosesModel) return false;
+        return !over_trust || t.load > kRiskTipOverTrust * t.holds * usable;
+    };
+    bool over_trust = true;
+    {
+        bool any = false;
+        for (const fruit::TipRisk& t : res.tips) any = any || shows(t, true);
+        // None carries more than it is trusted with, yet model goes with them: they go at their rated loads.
+        if (!any && cost) over_trust = false;
+    }
     RiskPlace group;
     group.kind = RiskPlace::Kind::Tips;
     double lo = 1e300, hi = 0;  // what they carry, in multiples of what each is trusted with
     int first = -1, last = -1;
-    const fruit::TipRisk* worst = nullptr;
+    const fruit::TipRisk* worst = nullptr;   // the likeliest to let go
+    const fruit::TipRisk* costly = nullptr;  // the one the model most often goes with
     for (const fruit::TipRisk& t : res.tips) {
-        const RiskBand band = riskBand(t.chance);
-        if (band == RiskBand::None) continue;
-        // A tip that only grazes the model, with nothing going with it: it may
-        // snap and nothing comes of it (the replay does not list it either).
-        if (t.area < fruit::kSliverContact && t.lost_volume < kRiskLosesModel) continue;
-        out.tips.push_back({t.at, tipWidth(t.area), band});
-        if (t.lost_volume >= kRiskLosesModel) continue;
+        if (!shows(t, over_trust)) continue;
+        out.tips.push_back({t.at, tipWidth(t.area), riskBand(t.chance)});
         ++group.tips;
         if (!worst || t.chance > worst->chance) worst = &t;
+        if (t.lost_per_print > 0 && (!costly || t.lost_per_print > costly->lost_per_print)) costly = &t;
         const double trusted = t.holds * usable;
         if (trusted > 0) {
             lo = std::min(lo, t.load / trusted);
@@ -209,24 +210,50 @@ void findRiskPlaces(const fruit::StabilityResult& res, double usable, RiskReport
         last = std::max(last, t.at_layer);
     }
     if (worst) {
+        const fruit::TipRisk* lead = cost && costly ? costly : worst;
         group.band = riskBand(worst->chance);
         group.chance = worst->chance;
-        group.at = worst->at;
-        group.layer = worst->at_layer;
+        group.at = lead->at;
+        group.layer = lead->at_layer;
+        group.lost_mm3 = cost ? res.stats.tips_cost_volume : 0.0;
         const bool one = group.tips == 1;
-        group.title = one ? "1 tip may let go" : fmt("%.0f tips may let go", group.tips);
-        group.brief = std::string(phrase(group.kind, group.band)) + " · the model stays held";
+        const int b = bandIndex(group.band);
+        if (one) {
+            static const char* t1[3] = {"1 tip may let go", "1 tip is likely to let go", "1 tip is very likely to let go"};
+            group.title = t1[b];
+        } else {
+            static const char* more[3] = {"", ", some likely", ", some very likely"};
+            group.title = fmt("%.0f tips may let go", group.tips) + more[b];
+        }
+        static const char* one_phrase[3] = {"May let go", "Likely to let go", "Very likely to let go"};
+        const std::string how = one ? one_phrase[b] : phrase(group.kind, group.band);
+        group.brief = how + " · " +
+                      (cost ? amount(group.lost_mm3) + (one ? " mm³ may go with it" : " mm³ may go with them")
+                            : std::string("the model stays held"));
         const std::string times = hi - lo < 0.05 ? fmt("about %.1f times", hi) : fmt("%.1f to %.1f times", lo, hi);
         group.holds = (one ? "it carries " : "each carries ") + times + " what a tip of its size is trusted with";
         group.when = first == last ? whenText(std::max(0, first), h)
                                    : fmt("while layers %.0f to %.0f print", first + 1.0, last + 1.0);
-        group.why = "the layers over them pull harder than these tips are trusted to hold";
-        group.if_goes = one ? "the tips around it take its load, and the model stays held"
-                            : "the tips around them take their load, and the model stays held";
-        // (For the headline: the same numbers, as whole sentences.)
-        group.note = (one ? "It carries " : "They carry ") + times +
-                     (one ? " what it is trusted with. The model stays held without it."
-                          : " what they are trusted with. The model stays held without them.");
+        group.why = one ? "the layers over it pull harder than this tip is trusted to hold"
+                        : "the layers over them pull harder than these tips are trusted to hold";
+        if (cost) {
+            const double n = std::max(1.0, std::round(res.stats.tips_cost_chance * res.stats.replays));
+            group.if_goes = fmt("in %.0f of %.0f replays part of the model went with ", n, res.stats.replays) +
+                            (one ? "it" : "them") + ": about " + amount(group.lost_mm3) + " mm³";
+            // Said outright where it is the only finding: how likely, and whether it is all of the model.
+            static const char* comes_off[3] = {" may come off its tips", " is likely to come off its tips",
+                                               " is very likely to come off its tips"};
+            const bool whole = group.lost_mm3 >= 0.9 * res.stats.model_volume && res.stats.model_volume > 0;
+            group.headline = std::string(whole ? "The whole model" : "Part of the model") +
+                             comes_off[std::max(0, bandIndex(riskBand(res.stats.tips_cost_chance)))];
+        } else {
+            group.if_goes = one ? "the tips around it take its load, and the model stays held"
+                                : "the tips around them take their load, and the model stays held";
+            // (For the headline: the same numbers, as whole sentences.)
+            group.note = (one ? "It carries " : "They carry ") + times +
+                         (one ? " what it is trusted with. The model stays held without it."
+                              : " what they are trusted with. The model stays held without them.");
+        }
         places.push_back(std::move(group));
     }
 
@@ -270,10 +297,16 @@ RiskHeadline riskHeadline(const RiskReport& r) {
         return hl;
     }
     hl.ok = false;
-    if (r.places_found == 1 && r.places.front().kind == RiskPlace::Kind::Tips) {
+    if (r.places_found == 1 && r.places.front().kind == RiskPlace::Kind::Tips &&
+        r.places.front().lost_mm3 < kRiskLosesModel) {
         hl.tips_only = true;
         hl.title = r.places.front().title;
         hl.detail = r.places.front().note;
+        return hl;
+    }
+    if (r.places_found == 1 && !r.places.front().headline.empty()) {
+        hl.title = r.places.front().headline;
+        hl.detail = replayed + " Pick it to see it on the model.";
         return hl;
     }
     hl.title = r.places_found == 1 ? "1 place may not print" : fmt("%.0f places may not print", static_cast<double>(r.places_found));

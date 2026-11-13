@@ -214,16 +214,41 @@ bool inPaths(const Paths& ps, const Vec2& p) {
     return count > 0;
 }
 
-// Everything within r of a part: the part, and a band of width r along each
-// of its outlines. (Growing the outline and shrinking the holes is the same
-// thing on paper, but a hole shrunk past closing leaves inside-out scraps
-// behind; a band along a line has no such trouble.)
+// How far `p` is from the outline `path` (closed).
+double distanceToOutline(const Vec2& p, const Path& path) {
+    double best = kInf;
+    for (size_t i = 0; i < path.size(); ++i) {
+        const Vec2 a = toVec(path[i]), b = toVec(path[(i + 1) % path.size()]);
+        const Vec2 ab = b - a;
+        const double len2 = dot(ab, ab);
+        const double t = len2 > 0 ? std::clamp(dot(p - a, ab) / len2, 0.0, 1.0) : 0.0;
+        best = std::min(best, norm(p - (a + ab * t)));
+    }
+    return best;
+}
+
+// Everything within r of a part: its outline grown by r, less what of each
+// hole stays further than r from that hole's own edge. Shrinking a hole past
+// where it closes leaves an inside-out scrap behind (growing the part with
+// its holes in one go does, and so does a band along the hole's edge), so a
+// hole too narrow to hold such a point is left out before it is shrunk, and
+// what comes back is kept only where it really is that far from the edge.
 Paths grownBy(const ExPolygon& e, double r) {
-    Paths all = e.toPaths();
-    const Paths band = Clipper2Lib::InflatePaths(all, r * kScale, Clipper2Lib::JoinType::Round,
-                                                 Clipper2Lib::EndType::Joined, 2.0, 0.01 * kScale);
-    all.insert(all.end(), band.begin(), band.end());
-    return unionNonZero(all);
+    const Paths outer = offset(Paths{e.contour}, r);
+    Paths left;
+    for (const Path& h : e.holes) {
+        const Vec2 size = bbox(h).size();
+        if (std::min(size.x, size.y) <= 2 * r) continue;
+        Path solid = h;
+        if (area(solid) < 0) std::reverse(solid.begin(), solid.end());
+        for (const ExPolygon& piece : toExPolygons(offset(Paths{solid}, -r))) {
+            Vec2 in;
+            if (!pointInside(piece, in) || distanceToOutline(in, h) < r - 0.01) continue;
+            const Paths ps = piece.toPaths();
+            left.insert(left.end(), ps.begin(), ps.end());
+        }
+    }
+    return left.empty() ? outer : difference(outer, left);
 }
 
 // ---------------------------------------------------------------- the print's parts
@@ -467,8 +492,9 @@ private:
     std::vector<int> run_of_, run_best_;
     std::vector<char> run_contact_;  // the run ends in a tip (or is a support's foot on the model)
     std::vector<Worst> worst_;        // by link
-    // By link: mm³ of the model lost with it, averaged over the replays in which it let go.
-    std::vector<float> lost_with_;
+    // By link: mm³ of the model lost with it, averaged over the replays in which it let go, and over all of them.
+    std::vector<float> lost_with_, lost_per_print_;
+    double tips_cost_chance_ = 0, tips_cost_volume_ = 0;
     std::vector<Seen> seen_;          // by link, then layer
     std::vector<int> worst_link_;     // by part: its most loaded joint
     mutable std::vector<float> by_layer_;  // each layer written by the one thread replaying it
@@ -2102,6 +2128,8 @@ void Analysis::findSkins() {
 void Analysis::runReplays() {
     whole_ = 1;
     lost_with_.assign(links_.size(), 0.0f);
+    lost_per_print_.assign(links_.size(), 0.0f);
+    tips_cost_chance_ = tips_cost_volume_ = 0;
     const int replays = std::max(cfg_.replays, 0);
     out_.stats.replays = replays;
 
@@ -2256,6 +2284,8 @@ void Analysis::runReplays() {
     // By joint: the replays in which it let go, and the model that went with it then (mm³, summed).
     std::vector<int> let_go(nc, 0), lost_by;
     std::vector<double> went_with(nc, 0);
+    int tips_cost = 0;          // replays in which part of the model went with tips
+    double tips_cost_sum = 0;   // and how much, summed over those
 
     for (int r = 0; r < replays; ++r) {
         if ((r & 15) == 0) ctl_.step("replays", static_cast<double>(r) / replays);
@@ -2393,12 +2423,13 @@ void Analysis::runReplays() {
                 queue.insert(queue.end(), pc.kids.begin(), pc.kids.end());
             }
         }
-        double model_lost = 0;  // mm³
+        double model_lost = 0, with_tips = 0;  // mm³
         for (size_t q = 0; q < lost_list.size(); ++q) {
             const int id = lost_list[q];
             if (model_[id]) {
                 model_lost += area_[id] * h_;
                 went_with[lost_by[q]] += area_[id] * h_;
+                if (tip_group_[cand[lost_by[q]].link] >= 0) with_tips += area_[id] * h_;
             }
             ++counts[id];
             for (int child : part_[id].children) {
@@ -2417,12 +2448,20 @@ void Analysis::runReplays() {
             }
         }
         whole += model_lost < kWorthLosing;
+        if (with_tips >= kCountsAsLost) {
+            ++tips_cost;
+            tips_cost_sum += with_tips;
+        }
     }
     whole_ = static_cast<double>(whole) / replays;
+    tips_cost_chance_ = static_cast<double>(tips_cost) / replays;
+    tips_cost_volume_ = tips_cost > 0 ? tips_cost_sum / tips_cost : 0.0;
     for (int id = 0; id < n_; ++id)
         out_.parts[id].lost_chance = held_[id] ? static_cast<float>(static_cast<double>(counts[id]) / replays) : 1.0f;
-    for (int c = 0; c < nc; ++c)
+    for (int c = 0; c < nc; ++c) {
         if (let_go[c] > 0) lost_with_[cand[c].link] = static_cast<float>(went_with[c] / let_go[c]);
+        lost_per_print_[cand[c].link] = static_cast<float>(went_with[c] / replays);
+    }
     ctl_.step("replays", 1);
 }
 
@@ -2591,6 +2630,7 @@ void Analysis::listTips() {
         t.holds = l.holds;
         t.lost_chance = lostAbove(l.child);
         t.lost_volume = lost_with_[i];
+        t.lost_per_print = lost_per_print_[i];
         if (w.step >= 0) {
             t.closeness = w.u;
             t.chance = breakChance(w.u, steep_);
@@ -2612,6 +2652,8 @@ void Analysis::summarise() {
     s.layers = static_cast<size_t>(layers_);
     s.parts = static_cast<size_t>(n_);
     s.whole_chance = whole_;
+    s.tips_cost_chance = tips_cost_chance_;
+    s.tips_cost_volume = tips_cost_volume_;
     const double limits[4] = {0.01, 0.05, 0.2, 0.5};
     s.tips = tips_found_;
     for (float u : by_layer_) s.worst_closeness = std::max<double>(s.worst_closeness, u);

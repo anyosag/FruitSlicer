@@ -81,6 +81,9 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
         }
         j["tips_that_may_let_go"] = at_risk;
         j["worst_tip_chance"] = worst;
+        // How often part of the model went with tips that let go, and how much then.
+        j["chance_model_goes_with_tips"] = r.stats.tips_cost_chance;
+        j["model_gone_with_tips_then_mm3"] = r.stats.tips_cost_volume;
         // Each of them (the first forty), the likeliest first.
         std::vector<const TipRisk*> order;
         for (const TipRisk& t : r.tips)
@@ -99,6 +102,7 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
                             {"half_let_go_at_mm2", t->holds},
                             {"while_printing_layer", t->at_layer},
                             {"model_lost_with_it_mm3", t->lost_volume},
+                            {"model_lost_with_it_per_print_mm3", t->lost_per_print},
                             {"chance_lost_above", t->lost_chance}});
         }
         j["tips_at_risk"] = std::move(tips);

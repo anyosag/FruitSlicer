@@ -121,61 +121,138 @@ TEST_CASE("Risk: a wide cap on a thin stem is a place, in plain words, with what
     CHECK(r.lost_mm3[2] >= 144.0);
 }
 
-TEST_CASE("Risk: tips that may let go are one place while the model stays held; one that only grazes it is left out",
-          "[gui][risk]") {
+TEST_CASE("Risk: the tips that may let go are one place; one that only grazes the model is left out", "[gui][risk]") {
     fruit::StabilityResult res;
     res.layer_height = kH;
     res.stats.replays = 500;
-    auto tip = [](double x, double area, double chance, double load, double holds, double lost, int layer) {
+    auto tip = [](double x, double area, double chance, double load, double holds, int layer) {
         fruit::TipRisk t;
         t.at = {x, 0, 6};
         t.area = area;
         t.chance = chance;
         t.load = load;
         t.holds = holds;
-        t.lost_volume = lost;
         t.at_layer = layer;
         return t;
     };
     const double holds = 33.3, usable = 1.0 / 3;  // a 0.4 mm tip with the borrowed table: trusted with 11.1 mm²
-    res.tips.push_back(tip(0, 0.126, 0.30, 30.0, holds, 0, 160));  // may let go; the model stays held
-    res.tips.push_back(tip(2, 0.126, 0.72, 36.0, holds, 0, 200));  // very likely; the model stays held
-    res.tips.push_back(tip(4, 0.126, 0.01, 12.0, holds, 0, 120));  // not worth showing
-    res.tips.push_back(tip(6, 0.002, 1.00, 4.0, 0.5, 0, 300));     // only grazes the model, and nothing goes with it
-    res.tips.push_back(tip(8, 0.126, 0.25, 28.0, holds, 3.0, 180));  // takes 3 mm³ of the model with it
+    res.tips.push_back(tip(0, 0.126, 0.30, 30.0, holds, 160));  // likely
+    res.tips.push_back(tip(2, 0.126, 0.72, 36.0, holds, 200));  // very likely
+    res.tips.push_back(tip(4, 0.126, 0.01, 12.0, holds, 120));  // not worth showing
+    res.tips.push_back(tip(6, 0.002, 1.00, 4.0, 0.5, 300));     // only grazes the model, and nothing goes with it
+    res.tips.push_back(tip(8, 0.126, 0.25, 28.0, holds, 180));  // likely
     RiskReport r;
     findRiskPlaces(res, usable, r);
-    // Coloured in the view: the two, and the one that takes model with it. Not the grazing one.
+    // Coloured in the view: the three. Not the grazing one, nor the one under 1 in 20.
     REQUIRE(r.tips.size() == 3);
     CHECK(r.tips[0].band == RiskBand::Likely);
     CHECK(r.tips[1].band == RiskBand::VeryLikely);
     CHECK(r.tips[2].band == RiskBand::Likely);
     CHECK(r.tips[0].diameter == Approx(0.4));
-    // One place for the two the model stays held without. (The one that takes model with it is a place of
-    // its own, from the replay's list of weak places: none was given here.)
+    // One place for all of them; the model stays held without them.
     REQUIRE(r.places.size() == 1);
     const RiskPlace& p = r.places.front();
     CHECK(p.kind == RiskPlace::Kind::Tips);
-    CHECK(p.tips == 2);
+    CHECK(p.tips == 3);
     CHECK(p.band == RiskBand::VeryLikely);
-    CHECK(p.title == "2 tips may let go");
+    CHECK(p.title == "3 tips may let go, some very likely");
     CHECK(p.brief == "Some are very likely to let go · the model stays held");
-    CHECK(p.holds == "each carries 2.7 to 3.2 times what a tip of its size is trusted with");
+    CHECK(p.holds == "each carries 2.5 to 3.2 times what a tip of its size is trusted with");
     CHECK(p.when == "while layers 161 to 201 print");
+    CHECK(p.if_goes == "the tips around them take their load, and the model stays held");
     CHECK(p.at.x == Approx(2));  // at the likeliest
     CHECK(p.layer == 200);
+    CHECK(p.lost_mm3 == 0);
     const RiskHeadline h = riskHeadline(r);
     CHECK_FALSE(h.ok);
     CHECK(h.tips_only);
-    CHECK(h.title == "2 tips may let go");
-    CHECK(h.detail == "They carry 2.7 to 3.2 times what they are trusted with. The model stays held without them.");
+    CHECK(h.title == "3 tips may let go, some very likely");
+    CHECK(h.detail == "They carry 2.5 to 3.2 times what they are trusted with. The model stays held without them.");
+
+    // In 2 replays of 5 part of the model went with them, most often with the last of the three: the place
+    // says so, stands at that tip, and is no longer "only tips".
+    res.stats.tips_cost_chance = 0.4;
+    res.stats.tips_cost_volume = 16;
+    res.tips[4].lost_per_print = 5.5;
+    res.tips[0].lost_per_print = 0.9;
+    RiskReport costly;
+    findRiskPlaces(res, usable, costly);
+    REQUIRE(costly.places.size() == 1);
+    const RiskPlace& c = costly.places.front();
+    CHECK(c.tips == 3);
+    CHECK(c.lost_mm3 == Approx(16));
+    CHECK(c.brief == "Some are very likely to let go · 16 mm³ may go with them");
+    CHECK(c.if_goes == "in 200 of 500 replays part of the model went with them: about 16 mm³");
+    CHECK(c.at.x == Approx(8));
+    CHECK(c.layer == 180);
+    const RiskHeadline ch = riskHeadline(costly);
+    CHECK_FALSE(ch.tips_only);
+    CHECK(ch.title == "Part of the model is likely to come off its tips");
+    CHECK(ch.detail == "The print was replayed layer by layer, 500 times. Pick it to see it on the model.");
+    // When what goes is all of the model, it is said so.
+    res.stats.model_volume = 17;
+    res.stats.tips_cost_chance = 0.9;
+    RiskReport all;
+    findRiskPlaces(res, usable, all);
+    CHECK(riskHeadline(all).title == "The whole model is very likely to come off its tips");
+    res.stats.model_volume = 0;
+
     // One alone is said as one.
+    res.stats.tips_cost_chance = 0;
+    res.stats.tips_cost_volume = 0;
     res.tips.erase(res.tips.begin() + 1, res.tips.end());
+    res.tips[0].lost_per_print = 0;
     RiskReport one;
     findRiskPlaces(res, usable, one);
     REQUIRE(one.places.size() == 1);
-    CHECK(one.places.front().title == "1 tip may let go");
+    CHECK(one.places.front().title == "1 tip is likely to let go");
+    CHECK(one.places.front().brief == "Likely to let go · the model stays held");
     CHECK(riskHeadline(one).detail == "It carries about 2.7 times what it is trusted with. The model stays held without it.");
+}
+
+TEST_CASE("Risk: with a measured table, a tip at just what it is trusted with is not news", "[gui][risk]") {
+    // A fitted table trusts a tip with 0.7 of the load at which half let go: there about 1 in 18 already does.
+    fruit::StabilityResult res;
+    res.layer_height = kH;
+    res.stats.replays = 500;
+    const double holds = 7.5, usable = 0.7;  // trusted with 5.25 mm²
+    auto tip = [&](double x, double times_trusted) {
+        fruit::TipRisk t;
+        t.at = {x, 0, 6};
+        t.area = 0.126;
+        t.holds = holds;
+        t.load = times_trusted * holds * usable;
+        t.closeness = t.load / holds;
+        t.chance = fruit::breakChance(t.closeness, 7);
+        t.at_layer = 100;
+        return t;
+    };
+    res.tips.push_back(tip(0, 1.0));   // at its rated load: 5.6 %
+    res.tips.push_back(tip(2, 1.05));  // a little over: still not shown
+    CHECK(res.tips[0].chance > kRiskShownFrom);
+    RiskReport quiet;
+    findRiskPlaces(res, usable, quiet);
+    CHECK(quiet.tips.empty());
+    CHECK(quiet.places.empty());
+    CHECK(riskHeadline(quiet).ok);
+    // Clearly over: shown.
+    res.tips.push_back(tip(4, 1.3));
+    RiskReport over;
+    findRiskPlaces(res, usable, over);
+    REQUIRE(over.tips.size() == 1);
+    REQUIRE(over.places.size() == 1);
+    CHECK(over.places.front().tips == 1);
+    CHECK(over.places.front().holds == "it carries about 1.3 times what a tip of its size is trusted with");
+    // But when the model goes with tips that are all at their rated loads, they are shown: all of them.
+    res.tips.pop_back();
+    res.stats.tips_cost_chance = 0.3;
+    res.stats.tips_cost_volume = 40;
+    RiskReport falls;
+    findRiskPlaces(res, usable, falls);
+    REQUIRE(falls.places.size() == 1);
+    CHECK(falls.places.front().tips == 2);
+    CHECK(falls.places.front().lost_mm3 == Approx(40));
+    CHECK_FALSE(riskHeadline(falls).tips_only);
 }
 
 TEST_CASE("Risk: the paint covers the surface of what would be lost, and nothing else", "[gui][risk]") {

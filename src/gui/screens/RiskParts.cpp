@@ -145,6 +145,7 @@ void riskChecks(App& app, Document& doc) {
         checkLine("risk", Tick::Todo, "Nothing likely to be lost in printing",
                   why                  ? "Not checked: the replay of the print stopped (" + *why + ")."
                   : app.checkingRisk() ? std::string("Not checked yet: replaying the print now.")
+                  : app.editingTips()  ? std::string("Not checked while you edit tips: the print is replayed when you are done.")
                                        : std::string("Not checked yet."));
         return;
     }

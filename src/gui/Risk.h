@@ -32,15 +32,18 @@ inline constexpr double kRiskShownFrom = 0.05, kRiskLikelyFrom = 0.2, kRiskVeryL
 RiskBand riskBand(double chance);
 unsigned riskColour(RiskBand b);  // 0xRRGGBB (None: 0)
 
-// Less of the model than this going with a tip counts as the model staying held (mm³).
-inline constexpr double kRiskLosesModel = 0.1;
+// Less of the model than this going with a place counts as the model staying held (mm³).
+inline constexpr double kRiskLosesModel = fruit::kCountsAsLost;
+// A tip shows when it carries clearly more than it is trusted with: this many
+// times that load. (A fitted table trusts a tip with a load at which about 1
+// in 18 already lets go, so a tip at just its rated load is not news.)
+inline constexpr double kRiskTipOverTrust = 1.1;
 
 // One place worth a look.
 struct RiskPlace {
     enum class Kind {
         ThinPlace,  // the model's own cross-section, pulled apart or bent
-        Tip,        // a tip that takes part of the model with it
-        Tips,       // every tip that may let go while the model stays held: one place for all of them
+        Tips,       // every tip that may let go: one place for all of them, with what goes with them
         Skin,       // a fresh layer reaching past what holds it
         MidAir,     // starts with nothing under it
         Sliver,     // held by less than a tip's width of contact
@@ -51,12 +54,15 @@ struct RiskPlace {
     double chance = 0;
     std::string title;  // "Thin place, 22.8 mm up"
     std::string brief;  // "Very likely to break · 160 mm³ would be lost"
+    // What the Checks row says when this is the only place and "1 place may
+    // not print" would say too little ("": nothing of its own).
+    std::string headline;
     // The card's rows: what it holds, when it is at its worst, why, and what
     // goes with it. `note`: what is not known about it ("" for most).
     std::string holds, when, why, if_goes, note;
     fruit::Vec3 at;       // printer coordinates
     int layer = -1;       // the layer printing when it is at its worst (0-based, from the model's first; -1: none)
-    double lost_mm3 = 0;  // of the model, when it goes
+    double lost_mm3 = 0;  // of the model, when it goes (Tips: in the replays in which model went with them)
     int tips = 0;         // Tips: how many
 };
 
@@ -87,7 +93,7 @@ struct RiskReport {
 // The Checks row: green with nothing to show, else what to look at.
 struct RiskHeadline {
     bool ok = true;
-    bool tips_only = false;  // only tips may let go, and the model stays held
+    bool tips_only = false;  // only tips may let go, and the model stays held without them
     std::string title, detail;
 };
 RiskHeadline riskHeadline(const RiskReport& r);

@@ -479,6 +479,11 @@ TEST_CASE("two tips share: when one lets go the other takes its load", "[stabili
         CHECK(tip.lost_volume < volume);
     }
     CHECK(r.tips[0].lost_volume + r.tips[1].lost_volume > 0);
+    // The block went with its tips as often as both let go, all of it each time; over many prints each tip
+    // carries its part of that.
+    CHECK(r.stats.tips_cost_chance == Approx(both).margin(0.03));
+    CHECK(r.stats.tips_cost_volume == Approx(volume));
+    CHECK(r.tips[0].lost_per_print + r.tips[1].lost_per_print == Approx(r.stats.tips_cost_chance * volume).epsilon(1e-4));
 }
 
 TEST_CASE("joints one after the other: lost if any of them breaks, and only what hangs from it", "[stability]") {
@@ -553,6 +558,11 @@ TEST_CASE("a lobe on one tip is lost when the tip lets go, even though it joins 
     CHECK(at(r, 20, {10, 2}).at_layer >= 40);
     CHECK(at(r, 20, {10, 2}).load > 16);
     CHECK(at(r, 20, {10, 2}).load < 26);
+    // The lobe went with its tip in that share of the replays: all 16 mm³ of it.
+    CHECK(r.stats.tips_cost_chance == Approx(p).margin(0.03));
+    CHECK(r.stats.tips_cost_volume == Approx(16 * 20 * kH));
+    REQUIRE(r.tips.size() == 1);
+    CHECK(r.tips[0].lost_per_print == Approx(r.stats.tips_cost_chance * 16 * 20 * kH).epsilon(1e-4));
 }
 
 TEST_CASE("supports fused into a block against the model are not one giant tip", "[stability]") {
@@ -812,6 +822,35 @@ TEST_CASE("a ring growing a little each layer has no skin out of reach", "[stabi
     for (const auto& layer : r.skins) CHECK(layer.empty());
     CHECK(r.spots.empty());
     CHECK(r.chanceAt(30, {1.8, 0}) == 0);
+}
+
+TEST_CASE("a hole closing a little each layer has no skin out of reach", "[stability]") {
+    // A block with a hole through it that closes like a cone, at 45°: the
+    // roof of a hollow, or the top of a drain hole. Each layer reaches one
+    // layer's height into the hole, held all round.
+    Build b(60);
+    for (int L = 0; L < 60; ++L) {
+        b.part(L, L + 1, rect(-10, -10, 10, 10));
+        const double r = 2.0 - kH * std::max(0, L - 10);
+        if (r > 0.02) b.part(L, L + 1, ring({0, 0}, r, 96, true));
+    }
+    const StabilityResult r = b.run(StabilityConfig{});
+    for (int L = 0; L < 60; ++L) CHECK(r.skins[static_cast<size_t>(L)].empty());
+    for (const WeakSpot& s : r.spots) CHECK(s.cause != RiskCause::Skin);
+    CHECK(r.chanceAt(30, {5, 5}) == 0);
+
+    // A wide hole roofed over in one layer is another matter: its middle is out of reach of its edge.
+    Build flat(30);
+    for (int L = 0; L < 30; ++L) {
+        flat.part(L, L + 1, rect(-12, -12, 12, 12));
+        if (L < 20) flat.part(L, L + 1, ring({0, 0}, 8, 96, true));
+    }
+    const StabilityResult f = flat.run(StabilityConfig{});
+    REQUIRE(!f.skins[20].empty());
+    // What is out of reach lies in the middle of the roof, not along its edge.
+    CHECK(f.chanceAt(20, {0, 0}) > 0.5);
+    CHECK(f.chanceAt(20, {7.5, 0}) == 0);
+    CHECK(f.skins[21].empty());
 }
 
 TEST_CASE("a scrap smaller than a printer pixel is not a part of the print", "[stability]") {
