@@ -56,9 +56,15 @@ percentage, or ×25.4 for models drawn in inches), rotation, and whether it
 stands raised on supports or flat on the plate. Edits undo with ⌘Z, and ⌘/
 lists the shortcuts. **⌘S saves the job** (a `.fruitjob` file): the model's
 own copy, how it is placed and stands, the support settings and tips, and
-the print settings (with the SatelLite file's header, if one gave them).
-Opening a job brings its supports back as they were. Home lists recent
-jobs; if a job's model file has moved, the job still opens from its copy
+the print settings (with the SatelLite file's header, if one gave them),
+and a small picture of how it sits. Opening a job brings its supports back
+as they were. Home shows the open job with its next step (**Continue**),
+recent jobs as cards with that picture, their state, parts, tips and
+support volume, and **Before you print**: what FruitSlicer has checked and
+what it hasn't (the printer, where the print settings come from, the image
+orientation check, and whether the support values are measured on your
+resin or still the starting ones). With nothing open it offers the demo
+bracket. If a job's model file has moved, the job still opens from its copy
 (or you point it at the file). Closing or opening something else asks
 first when there are unsaved changes. The Orient step scores how the model sits (tips, island
 tips, biggest layer, height, layers short of hold), lets you pick the sides

@@ -3,9 +3,10 @@
 #pragma once
 // Saved jobs (.fruitjob): a zip holding job.json, the job's own copy of each
 // part's mesh (model.bin for a job with one part, else part-1.bin,
-// part-2.bin...) and, when a SatelLite file gave the print settings, that
-// file's header (sample-header.bin). The tips are kept, so supports come
-// back as they were without planning them again. No UI here.
+// part-2.bin...), when a SatelLite file gave the print settings that
+// file's header (sample-header.bin), and a picture of the job as it sat
+// (picture.bin, for Home). The tips are kept, so supports come back as they
+// were without planning them again. No UI here.
 
 #include <cstdint>
 #include <memory>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "Document.h"
+#include "JobPicture.h"
 #include "core/JobControl.h"
 #include "printer/PrinterProfile.h"
 
@@ -49,11 +51,20 @@ int relinkParts(Document& doc, const std::string& was, const std::string& now, f
 // What changed since the last save, in words ("generated supports", ...).
 std::vector<std::string> changesSince(const JobStamp& saved, const JobStamp& now);
 
+// The picture kept in a saved job (empty for a job saved before pictures
+// were kept, or a file that doesn't read).
+JobPicture loadJobPicture(const std::string& path);
+
 // The jobs opened or saved lately, newest first.
 struct RecentJob {
     std::string path, name;
     std::string state;  // e.g. "supports ready"
     std::string when;   // local date and time, "2026-11-07 14:05"
+    // As it was saved (jobs remembered before these were kept have none):
+    int parts = 0;           // 0: not known
+    bool on_plate = false;   // standing on the plate, no raft
+    long tips = -1;          // with supports up to date; -1: none, or not known
+    double support_ml = -1;  // the same
 };
 std::vector<RecentJob> loadRecentJobs(const std::string& file);
 void rememberJob(const std::string& file, const RecentJob& job, std::size_t keep = 8);

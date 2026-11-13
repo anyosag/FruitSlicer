@@ -79,7 +79,9 @@ set(app_sources
   AppShape.cpp
   screens/ShapeToolPanels.cpp
   Icons.cpp
+  Home.cpp
   JobFile.cpp
+  JobPicture.cpp
   Jobs.cpp
   Layers.cpp
   Log.cpp

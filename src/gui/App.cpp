@@ -25,6 +25,7 @@
 
 #include "Dialogs.h"
 #include "Format.h"
+#include "Home.h"
 #include "Icons.h"
 #include "Log.h"
 #include "Measure.h"
@@ -83,6 +84,8 @@ App::~App() {
     Renderer::freeTexture(layer_tex_);
     Renderer::freeTexture(orient_tex_[0]);
     Renderer::freeTexture(orient_tex_[1]);
+    Renderer::freeTexture(open_picture_.tex);
+    for (auto& [path, p] : job_pictures_) Renderer::freeTexture(p.tex);
 }
 
 bool App::initGraphics(std::string* error) {
@@ -244,6 +247,56 @@ void App::saveJobTo(const std::string& path, std::function<void()> then) {
         });
 }
 
+void App::continueJob() {
+    if (!doc_) return;
+    const ContinueTo c = continueTo(*doc_);
+    // While other work runs, only the place: making supports waits for it.
+    if (c.make_supports && !jobs_.busy()) supportsNow();
+    else goToStep(c.step);
+}
+
+void App::openDemo() {
+    const std::filesystem::path dir = std::filesystem::path(dataFolder()) / "demo";
+    const std::string path = (dir / "bracket.stl").string();
+    try {
+        std::filesystem::create_directories(dir);
+        fruit::writeStl(path, demoModel());
+    } catch (const std::exception& e) {
+        showError("The demo bracket didn't open", e.what());
+        return;
+    }
+    openPath(path);
+}
+
+unsigned App::openJobPicture() {
+    if (!doc_ || doc_->partCount() == 0) return 0;
+    const SupportState& s = doc_->supports;
+    const void* sup = s.result && s.fresh(doc_->revision(), doc_->supportSettings()) ? s.result.get() : nullptr;
+    // Another job, any edit or other supports draw it again.
+    const std::weak_ptr<const Document>& was = open_picture_.doc;
+    const bool same_job = !was.owner_before(doc_) && !doc_.owner_before(was) && !was.expired();
+    if (open_picture_.tex == 0 || !same_job || open_picture_.stamp != doc_->revision() || open_picture_.supports != sup) {
+        Renderer::freeTexture(open_picture_.tex);
+        const JobPicture p = jobPicture(*doc_);
+        open_picture_ = {p.empty() ? 0u : renderer_.uploadRgba(p.w, p.h, p.rgba), doc_->revision(), doc_, sup};
+    }
+    return open_picture_.tex;
+}
+
+unsigned App::recentJobPicture(const RecentJob& j) {
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(j.path, ec);
+    if (ec) return 0;
+    const std::int64_t stamp = static_cast<std::int64_t>(t.time_since_epoch().count());
+    HomePicture& hp = job_pictures_[j.path];
+    if (hp.stamp != stamp) {
+        Renderer::freeTexture(hp.tex);
+        const JobPicture p = loadJobPicture(j.path);
+        hp = {p.empty() ? 0u : renderer_.uploadRgba(p.w, p.h, p.rgba), stamp, {}, nullptr};
+    }
+    return hp.tex;
+}
+
 void App::remember(const Document& d) {
     if (d.job_path.empty()) return;
     RecentJob r;
@@ -252,6 +305,12 @@ void App::remember(const Document& d) {
     const auto& s = d.supports;
     r.state = d.layersFresh() ? "layers cut" : s.fresh(d.revision(), d.supportSettings()) ? "supports ready"
                                                                                                     : "placed";
+    r.parts = static_cast<int>(d.partCount());
+    r.on_plate = d.partCount() > 0 && d.placement().on_plate;
+    if (s.result && s.fresh(d.revision(), d.supportSettings())) {
+        r.tips = static_cast<long>(s.result->tips);
+        r.support_ml = s.result->support_ml;
+    }
     if (opts_.deterministic) {
         r.when = "today";
     } else {

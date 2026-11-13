@@ -5,6 +5,7 @@
 // and the 3D view. Everything here runs on the UI thread. Buttons, keys and
 // scripts all go through the same commands below.
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -97,6 +98,13 @@ public:
     void saveJobAs();  // ask where (⇧⌘S)
     void saveJobTo(const std::string& path, std::function<void()> then = {});
     const std::vector<RecentJob>& recentJobs() const { return recent_; }
+    // Home (canvas board "Home · redesign"): the open job's next step
+    // (Continue), the demo bracket, and pictures of how each job sits, as
+    // textures (0 while there is none). A saved job's comes from its file.
+    void continueJob();
+    void openDemo();
+    unsigned openJobPicture();
+    unsigned recentJobPicture(const RecentJob& j);
     // Runs `then` now, or once "Save … before closing?" is answered.
     void leaveJob(std::function<void()> then);
     struct UnsavedDialog {
@@ -719,6 +727,14 @@ private:
     bool printer_hosts_loaded_ = false;
     std::shared_ptr<void> mock_printer_;      // scripts only
     std::vector<RecentJob> recent_;
+    struct HomePicture {
+        unsigned tex = 0;
+        std::int64_t stamp = 0;          // the job file's time of change, or the open job's revision
+        std::weak_ptr<const Document> doc;  // the open job it shows
+        const void* supports = nullptr;  // and its supports, when up to date
+    };
+    HomePicture open_picture_;
+    std::map<std::string, HomePicture> job_pictures_;  // by job file
     UnsavedDialog unsaved_;
     RelinkDialog relink_;
     bool quit_ = false;

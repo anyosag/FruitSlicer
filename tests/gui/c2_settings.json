@@ -17,6 +17,7 @@
     {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
     {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
-    {"step": "print"}, {"shot": "c2_new_job_print"}
+    {"step": "print"}, {"shot": "c2_new_job_print"},
+    {"screen": "home"}, {"shot": "c2_home"}
   ]
 }

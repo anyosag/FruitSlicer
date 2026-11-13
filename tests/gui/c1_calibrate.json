@@ -13,6 +13,7 @@
     {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
     {"step": "supports"}, {"supports": "generate"}, {"wait": "jobs"},
     {"step": "layers"}, {"frames": 2}, {"wait": "jobs"},
-    {"step": "print"}, {"exposures": [2.5, 30]}, {"shot": "c1_print_confirmed"}
+    {"step": "print"}, {"exposures": [2.5, 30]}, {"shot": "c1_print_confirmed"},
+    {"screen": "home"}, {"shot": "c1_home"}
   ]
 }

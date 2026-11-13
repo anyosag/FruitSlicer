@@ -376,6 +376,10 @@ void saveJob(const std::string& path, const Document& doc) {
         ok = ok && mz_zip_writer_add_mem(&z, file.c_str(), bytes.data(), bytes.size(), MZ_DEFAULT_COMPRESSION);
     if (ok && !sample.empty())
         ok = mz_zip_writer_add_mem(&z, "sample-header.bin", sample.data(), sample.size(), MZ_DEFAULT_COMPRESSION);
+    // How it sits, for Home's card.
+    const std::vector<std::uint8_t> picture = pictureBytes(jobPicture(doc));
+    if (ok && !picture.empty())
+        ok = mz_zip_writer_add_mem(&z, "picture.bin", picture.data(), picture.size(), MZ_DEFAULT_COMPRESSION);
     ok = mz_zip_writer_finalize_archive(&z) && ok;
     ok = mz_zip_writer_end(&z) && ok;
     if (!ok) {
@@ -637,6 +641,13 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     return out;
 }
 
+JobPicture loadJobPicture(const std::string& path) {
+    Zip zip;
+    if (!mz_zip_reader_init_file(&zip.z, path.c_str(), 0)) return {};
+    zip.open = true;
+    return pictureFrom(zip.read("picture.bin", false));
+}
+
 std::vector<RecentJob> loadRecentJobs(const std::string& file) {
     std::ifstream in(file);
     if (!in) return {};
@@ -645,7 +656,9 @@ std::vector<RecentJob> loadRecentJobs(const std::string& file) {
         std::vector<RecentJob> out;
         for (const auto& e : j.value("jobs", json::array()))
             if (e.is_object() && !e.value("path", "").empty())
-                out.push_back({e.value("path", ""), e.value("name", ""), e.value("state", ""), e.value("when", "")});
+                out.push_back({e.value("path", ""), e.value("name", ""), e.value("state", ""), e.value("when", ""),
+                               e.value("parts", 0), e.value("on_plate", false), e.value("tips", -1L),
+                               e.value("support_ml", -1.0)});
         return out;
     } catch (const std::exception&) {
         return {};
@@ -658,7 +671,9 @@ void rememberJob(const std::string& file, const RecentJob& job, std::size_t keep
     jobs.insert(jobs.begin(), job);
     if (jobs.size() > keep) jobs.resize(keep);
     json arr = json::array();
-    for (const auto& r : jobs) arr.push_back({{"path", r.path}, {"name", r.name}, {"state", r.state}, {"when", r.when}});
+    for (const auto& r : jobs)
+        arr.push_back({{"path", r.path}, {"name", r.name}, {"state", r.state}, {"when", r.when}, {"parts", r.parts},
+                       {"on_plate", r.on_plate}, {"tips", r.tips}, {"support_ml", r.support_ml}});
     const fs::path p(file);
     if (p.has_parent_path()) fs::create_directories(p.parent_path());
     const std::string tmp = file + ".tmp";
