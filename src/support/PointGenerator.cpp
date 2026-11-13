@@ -508,6 +508,19 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
         comp_[find(part)].plate = true;
         return;
     }
+    if (cfg_.on_plate) {
+        // A separate piece that starts inside the bottom layers: their long
+        // exposures cure the resin under it through to the plate, as they do
+        // under a face that starts there (processOverhang), so it stands on
+        // the plate too. One that starts just above them is in mid-air: the
+        // tips are right for a held height on this side of it only.
+        const bool held = layers().layerBottom(L) < cfg_.plate_hold_height - 1e-9;
+        held_tight_.note(held, L), held_loose_.note(held, L);
+        if (held) {
+            comp_[find(part)].plate = true;
+            return;
+        }
+    }
     if (inTrap(L - 1, toVec(P.shape.contour.front())) || inTrap(L - 1, P.box.center())) {
         ++cavity_skipped_;
         comp_[find(part)].exempt = true;

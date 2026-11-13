@@ -561,7 +561,8 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     r["tree_warnings"] = counts;
     if (!o.no_validate) {
         const ValidationReport v = validateSupported(mesh, sup, layer_h, cfg.link_grow, cfg.absorb_island_area,
-                                                     printer.pixelX() * printer.pixelY());
+                                                     printer.pixelX() * printer.pixelY(), JobControl::none(),
+                                                     cfg.on_plate ? cfg.plate_hold_height : 0.0);
         json fl = json::array();
         for (const auto& f : v.floating)
             if (fl.size() < 20) fl.push_back({{"layer", f.layer}, {"z", f.z}, {"area_mm2", f.area}, {"at", {f.at.x, f.at.y}}});
@@ -590,6 +591,7 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
             if (at.size() < 20) at.push_back({p.x, p.y, p.z});
         r["validation"] = {{"layers", v.layers},
                            {"plate_contacts", v.first_layer_islands},
+                           {"held_by_plate_above_first_layer", v.plate_held},
                            {"floating_islands", v.floating.size()},
                            {"small_floating_islands", v.small_floating},
                            {"subpixel_slivers", v.subpixel},

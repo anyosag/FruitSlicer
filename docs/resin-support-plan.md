@@ -283,9 +283,10 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   print settings (bottom layers, layer height, height correction), the
   planner reports the counts of held layers its tips are right for
   (`PointGenResult::held_layers_min/max`: a layer counts where a piece
-  standing on the plate would get tips or a flat-face warning, and, only
-  when another piece floats, where it has any newly exposed underside, whose
-  spots for extra hold can thin that piece's), and supports
+  standing on the plate would get tips or a flat-face warning, where a
+  separate piece starts above the first layer, and, only when another piece
+  floats, where one that stands has any newly exposed underside, whose spots
+  for extra hold can thin that piece's), and supports
   made with no raft go out of date when the job's count leaves that range,
   not before (`SupportState::fresh`, `Document::supportSettings`). A plain
   block is never out of date for it; a shelf 0.15 mm up is once its own layer
@@ -293,8 +294,8 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   user's resin (27.5 s for 6 layers, then a ramp to 1.5 s over 6 more at
   0.03 mm) the first few of them would still cure through to the plate for
   any plausible light depth, the last ones would not. Islands that
-  start that low still get tips, because the mid-air check does not know the
-  plate holds them. Measured on the same parts: no head on the user's rack
+  start that low got tips at first, because the mid-air check did not know
+  the plate holds them; they stand on the plate now (below). Measured on the same parts: no head on the user's rack
   parts has a wall beside it; on a lid lying on a shallow curved face all 86
   low heads stand in the wedge between the plate and that face, become plain
   columns and are reported, with the advice to use a raft.
@@ -313,13 +314,34 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   smaller (0.4, 0.3 mm), then up to 1.5 mm across the same face, before it is
   dropped: the eye cup at How many "Most" and at Tip size 0.6 mm no longer
   has a spot that blocks saving (one tip moved 0.5 mm; nine built at 0.4 mm).
-  Not printed. Not done: a piece that starts inside the bottom layers on the
-  plate still gets tips (the force model's replay also takes only the first
-  layer as standing on the plate, so all three would have to change together);
-  and replaying the real supports to relieve tips: on the user's parts it
+  Not printed. Not done: replaying the real supports to relieve tips: on the
+  user's parts it
   found 2 small island tips over their limit (1 to 2 % chance), and its "90 %
   likely" tip on the lid is the foot of a support standing on a 60° slope,
   which the replay counts as a separate tiny tip.
+- **A piece that starts inside the bottom layers stands on the plate
+  (2026-11-13).** With no raft, a separate piece whose first layer has its
+  underside inside `plate_hold_height` (0.05 mm up with the defaults: the
+  second layer) was given tips, counted as starting in mid-air, and called
+  unheld by the replay, while a face of a standing piece at the same height
+  was left to the plate. The reasoning is the same for both: the bottom
+  layers' long exposures cure the resin under it through to the plate. Now
+  all three take it as standing on the plate: the planner
+  (`processIsland`: no tips, and its layer counts for the held range, so
+  supports made with no raft go out of date when a change to the bottom
+  layers moves such a piece in or out); the mid-air check
+  (`validateLayers` / `validateSupported` take the held height, 0 on a raft,
+  and report such pieces as `plate_held`); and the replay
+  (`StabilityConfig::plate_hold_height`, set by `stabilityConfig` with no
+  raft only: such a part is fixed like the first layer, what prints on it
+  pulls on it as on a column on the plate, and fresh skin in those layers is
+  not judged, which also covers a wide face that starts there). A piece that
+  starts in the first layer above that height (0.1 mm with the defaults) is
+  in mid-air as before, and with a raft nothing changes. Tested on a block
+  with a small piece beside it at 0.05, 0.1 and 0.2 mm, in the planner, the
+  check and the replay, and through the app's own path. Reasoning, not
+  printed: how well a piece holds through one layer of resin cured from
+  above is not measured.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

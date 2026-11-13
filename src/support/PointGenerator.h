@@ -79,8 +79,10 @@ struct PointGenResult {
     // plate_hold_height that holds at least `held_layers_min` of the lowest
     // layers and at most `held_layers_max` (a layer is held when its
     // underside is below that height). A layer counts where a piece that
-    // stands on the plate would get tips or a flat-face warning; when another
-    // piece floats, also where it has any newly exposed underside. 0 and the
+    // stands on the plate would get tips or a flat-face warning, and where a
+    // separate piece starts above the first layer (held, it stands on the
+    // plate; not held, it starts in mid-air); when another piece floats, also
+    // where one that stands has any newly exposed underside. 0 and the
     // largest int when no layer counts: then that height changes nothing.
     int held_layers_min = 0, held_layers_max = std::numeric_limits<int>::max();
 };

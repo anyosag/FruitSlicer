@@ -8,15 +8,16 @@
 namespace fruit {
 
 ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh& supports, double layer_height,
-                                   double link_grow, double small_area, double pixel_area, const JobControl& ctl) {
+                                   double link_grow, double small_area, double pixel_area, const JobControl& ctl,
+                                   double plate_hold_height) {
     TriangleMesh all = model;
     all.append(supports);
     const LayerStack ls = sliceModel(all, layer_height, nullptr, 0, ctl.sub(0, 0.8));
-    return validateLayers(ls, link_grow, small_area, pixel_area, ctl.sub(0.8, 1));
+    return validateLayers(ls, link_grow, small_area, pixel_area, ctl.sub(0.8, 1), plate_hold_height);
 }
 
 ValidationReport validateLayers(const LayerStack& ls, double link_grow, double small_area, double pixel_area,
-                                const JobControl& ctl) {
+                                const JobControl& ctl, double plate_hold_height) {
     ctl.step("islands", 0);
     const IslandGraph g(ls, link_grow);
     ctl.report("islands", 1);
@@ -27,6 +28,11 @@ ValidationReport validateLayers(const LayerStack& ls, double link_grow, double s
         const LayerPart& p = g.part(id);
         if (p.layer == 0) {
             ++r.first_layer_islands;
+            continue;
+        }
+        // Inside the bottom layers of a print with no raft: cured through to the plate (the planner's rule).
+        if (ls.layerBottom(static_cast<size_t>(p.layer)) < plate_hold_height - 1e-9) {
+            ++r.plate_held;
             continue;
         }
         if (p.area < pixel_area) ++r.subpixel;

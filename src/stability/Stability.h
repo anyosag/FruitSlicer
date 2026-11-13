@@ -132,6 +132,14 @@ struct StabilityConfig {
     double rod_diameter = 1.0;
     double head_length = 1.2;
 
+    // With no raft: a part that starts in a layer whose underside is below
+    // this height stands on the plate, as the first layer does, and fresh
+    // skin in those layers is not judged: the bottom layers' long exposures
+    // cure what they print through to the plate (the planner's
+    // SupportConfig::plate_hold_height; REASONING, not measured). 0 on a
+    // raft: only the first layer stands on the plate.
+    double plate_hold_height = 0;
+
     double link_grow = 0.02;    // as the planner links layers (mm)
     double speck_area = 0.12;   // unheld parts smaller than this are specks (mm²)
     double pixel_area = 2.7e-4; // one printer pixel (mm²): a part smaller than this is not printed

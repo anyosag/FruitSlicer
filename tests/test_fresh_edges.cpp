@@ -11,7 +11,9 @@
 
 #include "mesh/Placement.h"
 #include "mesh/Primitives.h"
+#include "stability/Stability.h"
 #include "support/PointGenerator.h"
+#include "support/SupportValidator.h"
 
 using namespace fruit;
 using Catch::Approx;
@@ -234,6 +236,102 @@ TEST_CASE("on the plate, nothing within the first layers' height gets a tip", "[
     std::size_t under_shelf = 0;
     for (const auto& p : generateSupportPoints(lifted, raft).points) under_shelf += std::abs(p.pos.z - 5.1) < 0.2;
     CHECK(under_shelf > 0);
+}
+
+TEST_CASE("on the plate, a separate piece that starts inside the bottom layers stands on the plate too", "[points][plate]") {
+    // A block on the plate and, apart from it, a small piece whose underside is `up` mm above the plate.
+    // (Placed, the two are centred on the plate: the block from x = -15 to 5, the piece from 9 to 15.)
+    auto build = [](double up) {
+        TriangleMesh m = makeBox({0, 0, 0}, {20, 10, 8});
+        m.append(makeBox({24, 2, up}, {30, 8, 6}));
+        placeOnPlate(m, {0, 0, 0}, 0.0);
+        return m;
+    };
+    const TriangleMesh no_supports;
+    SupportConfig cfg;
+    cfg.layer_height = 0.05;
+    cfg.on_plate = true;  // the plate holds 0.1 mm: the first two layers
+    auto midAir = [&](const TriangleMesh& m, const SupportConfig& c) {
+        return validateSupported(m, no_supports, 0.05, c.link_grow, 0.12, 2.7e-4, JobControl::none(),
+                                 c.on_plate ? c.plate_hold_height : 0.0);
+    };
+    // The replay of the model as it is, with no supports: what it calls held.
+    auto replay = [](const PointGenResult& r, const SupportConfig& c) {
+        StabilityInput in;
+        in.print = in.model = r.analysis.layers.get();
+        in.model_graph = r.analysis.islands;
+        StabilityConfig sc = stabilityConfig(c);
+        sc.replays = 20;
+        return analyzeStability(in, sc);
+    };
+
+    // One layer up (0.05 mm): the planner gives it no tips, nothing is in mid-air, the replay calls it held.
+    {
+        const TriangleMesh m = build(0.05);
+        const PointGenResult plan = generateSupportPoints(m, cfg);
+        CHECK(plan.points.empty());
+        CHECK(plan.warnings.empty());
+        CHECK(plan.held_layers_min == 2);  // its layer, the second, must stay held for that
+        const ValidationReport v = midAir(m, cfg);
+        CHECK(v.floating.empty());
+        CHECK(v.plate_held == 1);
+        CHECK(v.first_layer_islands == 1);
+        const StabilityResult r = replay(plan, cfg);
+        CHECK(r.stats.unheld == 0);
+        const int piece = r.partAt(40, {12, 0});
+        REQUIRE(piece >= 0);
+        CHECK(r.parts[static_cast<size_t>(piece)].held);
+        CHECK(r.parts[static_cast<size_t>(piece)].lost_chance == 0);
+        for (const WeakSpot& s : r.spots) CHECK(s.cause != RiskCause::Unheld);
+    }
+    // At 0.2 mm it is above them: tips under it as before, in mid-air without them, unheld in the replay.
+    {
+        const TriangleMesh m = build(0.2);
+        const PointGenResult plan = generateSupportPoints(m, cfg);
+        REQUIRE_FALSE(plan.points.empty());
+        for (const auto& p : plan.points) {
+            CHECK(p.pos.x > 8);
+            CHECK(p.pos.z == Approx(0.2).margin(0.06));
+        }
+        CHECK(plan.held_layers_max == 4);  // holding its layer, the fifth, would change that
+        const ValidationReport v = midAir(m, cfg);
+        CHECK(v.floating.size() == 1);
+        CHECK(v.plate_held == 0);
+        CHECK(replay(plan, cfg).stats.unheld == 1);
+    }
+    // The first layer above the held height (0.1 mm) is not held either.
+    {
+        const TriangleMesh m = build(0.1);
+        CHECK_FALSE(generateSupportPoints(m, cfg).points.empty());
+        CHECK(midAir(m, cfg).floating.size() == 1);
+    }
+    // With nothing held but the first layer, the low piece gets tips again.
+    {
+        SupportConfig off = cfg;
+        off.plate_hold_height = 0;
+        const TriangleMesh m = build(0.05);
+        const PointGenResult plan = generateSupportPoints(m, off);
+        CHECK_FALSE(plan.points.empty());
+        CHECK(plan.held_layers_max == 1);
+        CHECK(midAir(m, off).floating.size() == 1);
+        CHECK(replay(plan, off).stats.unheld == 1);
+    }
+    // On a raft nothing changes: the same piece, 5 mm up with the block, starts in mid-air and gets tips.
+    {
+        TriangleMesh m = makeBox({0, 0, 0}, {20, 10, 8});
+        m.append(makeBox({24, 2, 0.05}, {30, 8, 6}));
+        placeOnPlate(m, {0, 0, 0}, 5.0);
+        SupportConfig raft;
+        raft.layer_height = 0.05;
+        const PointGenResult plan = generateSupportPoints(m, raft);
+        std::size_t under_piece = 0;
+        for (const auto& p : plan.points) under_piece += p.pos.x > 8;
+        CHECK(under_piece > 0);
+        CHECK(plan.held_layers_min == 0);
+        CHECK(plan.held_layers_max == std::numeric_limits<int>::max());
+        CHECK(midAir(m, raft).floating.size() == 2);  // the block and the piece: no supports here
+        CHECK(replay(plan, raft).stats.unheld == 2);
+    }
 }
 
 TEST_CASE("on the plate, a wall that only leans counts for the held height once another piece floats", "[points][plate]") {

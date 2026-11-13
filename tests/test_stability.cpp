@@ -458,6 +458,78 @@ TEST_CASE("a part that starts in mid-air is unheld, and so is what prints on it 
     CHECK(r.stats.at_risk[3] == Approx((16 * 10 + 0.04) * kH));
 }
 
+TEST_CASE("with no raft, what starts inside the bottom layers stands on the plate", "[stability][plate]") {
+    // A block on the plate and, apart from it, a piece that starts `from` layers up.
+    auto beside = [](int from) {
+        Build b(40);
+        b.part(0, 40, rect(0, 0, 10, 10));
+        b.part(from, 40, rect(14, 0, 18, 4));
+        return b;
+    };
+    StabilityConfig held;
+    held.plate_hold_height = 0.1;  // the first two layers of 0.05 mm
+    // One layer up, inside that height: held all the way, as the same piece from the first layer is.
+    {
+        Build b = beside(1), from_plate = beside(0);
+        const StabilityResult r = b.run(held), r0 = from_plate.run(held);
+        for (int L = 1; L < 40; ++L) {
+            const PartRisk& p = at(r, L, {16, 2});
+            CHECK(p.held);
+            CHECK(p.cause != RiskCause::Unheld);
+            CHECK(p.lost_chance == 0);
+        }
+        CHECK(at(r, 1, {16, 2}).closeness == 0);  // on the plate, like the block's first layer
+        // What prints on it pulls on it as on a column that stands on the plate.
+        for (int L = 2; L < 40; ++L) {
+            CHECK(at(r, L, {16, 2}).stress == Approx(1.0));
+            CHECK(at(r, L, {16, 2}).closeness == Approx(at(r0, L, {16, 2}).closeness));
+        }
+        CHECK(r.stats.unheld == 0);
+        CHECK(r.chanceAt(1, {16, 2}) == 0);
+        CHECK(r.chanceAt(30, {16, 2}) == 0);
+        CHECK(r.spots.empty());
+        CHECK(r.stats.whole_chance == 1);
+    }
+    // Two layers up, just above it: in mid-air, as before.
+    {
+        Build b = beside(2);
+        const StabilityResult r = b.run(held);
+        CHECK_FALSE(at(r, 2, {16, 2}).held);
+        CHECK(at(r, 20, {16, 2}).cause == RiskCause::Unheld);
+        CHECK(r.stats.unheld == 1);
+        CHECK(r.chanceAt(20, {16, 2}) == 1);
+    }
+    // On a raft only the first layer stands on the plate: one layer up is mid-air.
+    {
+        Build b = beside(1);
+        const StabilityResult r = b.run(StabilityConfig{});
+        CHECK_FALSE(at(r, 1, {16, 2}).held);
+        CHECK(r.stats.unheld == 1);
+    }
+    // A wide shelf on the block that starts inside the height is cured onto the plate too (the planner gives
+    // it no tips): it is not judged as fresh skin. Above it, it is.
+    auto shelf = [](int from) {
+        Build b(30);
+        b.part(0, 30, rect(0, 0, 4, 4));
+        b.part(from, from + 2, rect(0, 0, 24, 4));
+        return b;
+    };
+    held.skin_half_reach = 3.0;
+    held.bulk_factor = 100;  // so the block's own joints are no part of it
+    {
+        Build low = shelf(1), high = shelf(2);
+        const StabilityResult r = low.run(held), above = high.run(held);
+        CHECK(r.skins[1].empty());
+        CHECK(r.chanceAt(1, {20, 2}) == 0);
+        CHECK_FALSE(above.skins[2].empty());
+        CHECK(above.chanceAt(2, {20, 2}) >= 0.89);
+        StabilityConfig raft = held;
+        raft.plate_hold_height = 0;
+        Build again = shelf(1);
+        CHECK_FALSE(again.run(raft).skins[1].empty());
+    }
+}
+
 TEST_CASE("a fresh skin fails past its reach and not within it", "[stability]") {
     Build b(22);
     b.part(0, 20, rect(-1, -1, 1, 1));
@@ -984,6 +1056,14 @@ TEST_CASE("the same answer whatever the number of threads, and from run to run",
     }
     CHECK(a.closeness_by_layer == c.closeness_by_layer);
     CHECK(a.spots.size() == c.spots.size());
+}
+
+TEST_CASE("the planner's height held by the plate carries over, with no raft only", "[stability][plate]") {
+    SupportConfig cfg;
+    cfg.plate_hold_height = 0.15;
+    CHECK(stabilityConfig(cfg).plate_hold_height == 0);  // on a raft
+    cfg.on_plate = true;
+    CHECK(stabilityConfig(cfg).plate_hold_height == Approx(0.15));
 }
 
 TEST_CASE("the planner's settings carry over", "[stability]") {

@@ -386,7 +386,8 @@ private:
     double tipHolds(double diameter) const { return cfg_.capacity.capacity(diameter) / usable_; }
     double hingeFactor(const Vec2& xy) const;
     int layerOf(int n) const { return part_[n].layer; }
-    bool ground(int n) const { return layerOf(n) == 0 || (!stub_.empty() && stub_[n]); }
+    // Fixed: on the plate, or a standalone tip's stub on its rod.
+    bool ground(int n) const { return plate_[n] || (!stub_.empty() && stub_[n]); }
 
     const StabilityInput& in_;
     const StabilityConfig& cfg_;
@@ -418,6 +419,10 @@ private:
     std::vector<Vec2> centre_;
     std::vector<double> area_, lit_, perimeter_;  // lit_: the area the film pulls on
     std::vector<char> model_, held_;
+    // By part: stands on the plate. Every part of the first layer, and with
+    // no raft a part that starts inside the bottom layers (cfg_.plate_hold_height).
+    std::vector<char> plate_;
+    int plate_layers_ = 1;  // how many layers start inside that height (the first always does)
 
     std::vector<int> link_begin_;  // links of part n: [link_begin_[n], link_begin_[n + 1])
     std::vector<Link> links_;
@@ -610,6 +615,12 @@ void Analysis::buildParts() {
         if (support_graph_ && static_cast<size_t>(L) < support_graph_->layerCount())
             for (int i : support_graph_->partsInLayer(static_cast<size_t>(L))) in_layer_[L].push_back(nm + i);
     }
+    plate_layers_ = 1;
+    while (plate_layers_ < layers_ && all.layerBottom(static_cast<size_t>(plate_layers_)) < cfg_.plate_hold_height - 1e-9)
+        ++plate_layers_;
+    plate_.assign(n_, 0);
+    for (int L = 0; L < plate_layers_; ++L)
+        for (int id : in_layer_[L]) plate_[id] = L == 0 || part_[id].parents.empty();
     stub_.clear();
     stub_k_.clear();
     stub_tip_.clear();
@@ -708,7 +719,7 @@ void Analysis::buildParts() {
     for (int L = 0; L < layers_; ++L)
         for (int id : in_layer_[L]) {
             if (model_[id] || area_[id] < cfg_.pixel_area) continue;
-            rooted[id] = L == 0;
+            rooted[id] = plate_[id];
             for (size_t j = 0; j < part_[id].parents.size() && !rooted[id]; ++j) rooted[id] = rooted[part_[id].parents[j]];
         }
     if (model) parallelFor(static_cast<size_t>(layers_), cfg_.threads, [&](size_t L) {
@@ -788,7 +799,7 @@ void Analysis::buildParts() {
     for (int L = 0; L < layers_; ++L)
         for (int id : in_layer_[L]) {
             if (area_[id] < cfg_.pixel_area) continue;
-            if (L == 0) {
+            if (plate_[id]) {
                 held_[id] = 1;
                 continue;
             }
@@ -893,7 +904,7 @@ void Analysis::buildBodies() {
             } else {
                 mine = static_cast<int>(bodies_.size());
                 bodies_.push_back({-1, L});
-                char on_plate = L == 0;
+                char on_plate = plate_[id];
                 for (int r : roots) on_plate = on_plate || grounded_[r];
                 grounded_.push_back(on_plate);
                 top.push_back(mine);
@@ -1343,7 +1354,7 @@ void Analysis::buildSheets() {
         // The layer's sheets, piece by piece (as the pieces stand with this layer on).
         sheets.clear();
         for (int id : in_layer_[L]) {
-            if (!held_[id] || !model_[id]) continue;
+            if (!held_[id] || !model_[id] || plate_[id]) continue;  // (on the plate: fixed, not a sheet)
             const int body = bodyAt(id, L);
             if (slot_layer[body] != L) {
                 slot_layer[body] = L;
@@ -1651,7 +1662,8 @@ void Analysis::step(int k, Scratch& st) const {
                 st.tip_more[tips_[t]] = st.tip_foot[tips_[t]] = st.tip_back[tips_[t]] = 0;
             }
         for (int i : plate_joints_)
-            if (const int slot = slotOf(links_[i].child); slot >= 0) st.groups[slot].plate.push_back(i);
+            if (layerOf(links_[i].child) <= k)
+                if (const int slot = slotOf(links_[i].child); slot >= 0) st.groups[slot].plate.push_back(i);
     };
     for (int id : in_layer_[k])
         if (held_[id] && model_[id]) group(bodyAt(id, k)).tops.push_back(id);
@@ -1680,7 +1692,7 @@ void Analysis::step(int k, Scratch& st) const {
         if (g.tips.empty()) continue;  // stands on the plate alone, or on nothing
         st.reach.clear();
         for (int i : g.tips) st.reach.push_back({tipAt(i), (k - group_low_[tip_group_[i]] + 1) * h_, std::log(links_[i].k)});
-        for (int i : g.plate) st.reach.push_back({links_[i].c, k * h_, std::log(links_[i].area)});
+        for (int i : g.plate) st.reach.push_back({links_[i].c, (k - layerOf(links_[i].parent)) * h_, std::log(links_[i].area)});
         const size_t nt = g.tips.size(), nh = st.reach.size();
         st.weight.assign(nh, 0);
         // A pull at x, where the model straight under it is `solid` mm thick
@@ -2166,7 +2178,7 @@ void Analysis::findSkins() {
         reach[j] = cfg_.skin_half_reach * std::pow(-std::log2(1 - chances[j]), 1 / (2 * steep_));
     if (!(cfg_.skin_half_reach > 0)) return;
     parallelFor(static_cast<size_t>(layers_), cfg_.threads, [&](size_t L) {
-        if (L == 0) return;
+        if (L < static_cast<size_t>(plate_layers_)) return;  // cured onto the plate: nothing there to form in mid-air
         for (int id : in_layer_[L]) {
             if (!held_[id] || !model_[id]) continue;
             const Part& p = part_[id];
@@ -2271,7 +2283,7 @@ void Analysis::runReplays() {
                 if (nroots < 8) roots[nroots++] = r;
                 else more.push_back(r);
             };
-            if (L == 0) add(find(0));
+            if (plate_[id]) add(find(0));
             for (int i = link_begin_[id]; i < link_begin_[id + 1]; ++i) {
                 if (links_[i].kind == Kind::Dead || cand_of[i] >= 0) continue;
                 add(find(home[links_[i].parent]));
@@ -2814,6 +2826,7 @@ StabilityConfig stabilityConfig(const SupportConfig& cfg) {
     s.plate_half = cfg.plate_half;
     s.link_grow = cfg.link_grow;
     s.speck_area = cfg.absorb_island_area;
+    s.plate_hold_height = cfg.on_plate ? cfg.plate_hold_height : 0.0;
     // A fitted table is 0.7 of the load at which half the tips let go. The
     // built-in table has no such load behind it: its numbers are borrowed.
     // They are taken here as a third of that load, a usual margin for a

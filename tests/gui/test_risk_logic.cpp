@@ -306,6 +306,56 @@ TEST_CASE("Risk: a layer's picture is painted where its print would be lost", "[
     CHECK_FALSE(paintRiskLayer(res, 100000, grid).any);
 }
 
+TEST_CASE("No raft: a separate piece that starts inside the bottom layers stands on the plate", "[gui][risk][plate]") {
+    // A block and, apart from it, a small piece whose underside is `up` mm above the plate.
+    auto job = [](double up) {
+        fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {20, 10, 8});
+        m.append(fruit::makeBox({24, 2, up}, {30, 8, 6}));
+        const auto path = std::filesystem::temp_directory_path() / "risk_test_plate_piece.stl";
+        fruit::writeStl(path.string(), m);
+        auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+        std::filesystem::remove(path);
+        fruit::Placement p = doc->placement();
+        p.on_plate = true;
+        doc->edit(p);
+        return doc;
+    };
+    auto midAirRow = [](const SupportResult& s) {
+        for (const SupportCheck& c : s.checks)
+            if (c.title == "No part starts in mid-air") return c.ok;
+        FAIL("no mid-air row");
+        return false;
+    };
+    // 0.05 mm up, in the second layer: the printer's four bottom layers print two of the model's (0.1 mm).
+    {
+        const auto doc = job(0.05);
+        const SupportResult sup = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+        CHECK(sup.cfg.plate_hold_height == Approx(0.1));
+        CHECK(sup.tips == 0);  // the planner: nothing for a tip to hold
+        CHECK(sup.validation.floating.empty());  // the mid-air check
+        CHECK(sup.validation.plate_held == 1);
+        CHECK(midAirRow(sup));
+        const RiskReport r = checkRisk(*doc, sup, fruit::JobControl::none());  // the replay
+        REQUIRE(r.result != nullptr);
+        CHECK(r.result->stats.unheld == 0);
+        for (const RiskPlace& p : r.places) CHECK(p.kind != RiskPlace::Kind::MidAir);
+        CHECK(riskHeadline(r).ok);
+    }
+    // 0.2 mm up, above them: tips under it, and with them nothing in mid-air.
+    {
+        const auto doc = job(0.2);
+        const SupportResult sup = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+        CHECK(sup.tips > 0);
+        CHECK(sup.validation.plate_held == 0);
+        CHECK(sup.validation.floating.empty());
+        CHECK(midAirRow(sup));
+        const RiskReport r = checkRisk(*doc, sup, fruit::JobControl::none());
+        REQUIRE(r.result != nullptr);
+        CHECK(r.result->stats.unheld == 0);
+        CHECK(r.result->stats.tips > 0);
+    }
+}
+
 TEST_CASE("Risk: the demo bracket on its own supports is replayed, the same every time", "[gui][risk][slow]") {
     const auto doc = bracket();
     const SupportResult sup = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());

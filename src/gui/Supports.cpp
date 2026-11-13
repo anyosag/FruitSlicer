@@ -1359,14 +1359,17 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
         }
     }
     const double pixel = doc.printer.pixelX() * doc.printer.pixelY();
+    // With no raft, what starts inside the bottom layers stands on the plate, as the planner has it.
+    const double plate_holds = p.on_plate ? r.cfg.plate_hold_height : 0.0;
     if (r.hollow) {
         // The hollowed model's own layers with the supports': nothing floats.
         const fruit::LayerStack print =
             fruit::unionLayers(*r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9)));
-        r.validation = fruit::validateLayers(print, r.cfg.link_grow, r.cfg.absorb_island_area, pixel, ctl.sub(0.9, 1.0));
+        r.validation = fruit::validateLayers(print, r.cfg.link_grow, r.cfg.absorb_island_area, pixel, ctl.sub(0.9, 1.0),
+                                             plate_holds);
     } else {
         r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
-                                                r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0));
+                                                r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0), plate_holds);
     }
 
     // Counts.

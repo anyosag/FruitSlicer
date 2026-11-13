@@ -375,7 +375,10 @@ Points are chosen bottom-up so that
    and a tip there would only print as part of the model (reasoning, not
    measured). The transition layers after them are not counted, because
    their exposure falls to the normal one. A separate piece that starts that
-   low still gets its tips;
+   low is held the same way, so it counts as standing on the plate: it gets
+   no tips, the check for parts in mid-air passes it, and the replay of the
+   print takes it as held. One that starts just above those layers is in
+   mid-air and gets its tips;
 4. **fresh edges**: where a layer reaches more than 0.5 mm past the layer
    before it, that part is one cured skin with nothing behind it: the first
    layer of a flat face, the ends of the sliver a tilted face starts as, the
@@ -519,8 +522,9 @@ Safety checks and options:
   there carry extra demand (`--peel-bias`, default 0.25; the right value is
   unmeasured).
 - **`--on-plate`.** Prints flat-backed parts standing on the build plate, with
-  no elevation and no raft. The base is held by the plate, so only overhangs
-  get tips.
+  no elevation and no raft. The base is held by the plate, and so is what
+  starts inside the bottom layers (a face or a separate piece), so only
+  overhangs above them get tips.
 
 ![Supports generated for the armadillo in its best orientation](docs/armadillo_supported_preview.png)
 

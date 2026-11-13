@@ -490,7 +490,10 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
     // the planner asks of each tip, not how strong a tip is.
     SupportChoices choices = sup.choices;
     choices.hold = kHoldDefault;
-    const fruit::StabilityConfig cfg = fruit::stabilityConfig(supportConfig(doc.placement(), choices));
+    fruit::SupportConfig planner = supportConfig(doc.placement(), choices);
+    // With no raft: what the bottom layers print of the model stands on the plate, as these supports were made for.
+    planner.plate_hold_height = sup.cfg.plate_hold_height;
+    const fruit::StabilityConfig cfg = fruit::stabilityConfig(planner);
     r.borrowed = cfg.capacity.table.empty();
     ctl.step("stress", 0.2);
     auto res = std::make_shared<fruit::StabilityResult>(fruit::analyzeStability(in, cfg, ctl.sub(0.2, 0.9)));

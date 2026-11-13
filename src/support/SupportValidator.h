@@ -16,6 +16,7 @@ namespace fruit {
 struct ValidationReport {
     size_t layers = 0;
     size_t first_layer_islands = 0;  // raft pieces / bases on the plate
+    size_t plate_held = 0;           // pieces that start above the first layer, inside the height the plate holds
     struct Floating { int layer; double z; double area; Vec2 at; };
     std::vector<Floating> floating;  // islands above the first layer, larger than `small_area`
     size_t small_floating = 0;       // islands below `small_area` (absorbed / skipped by design)
@@ -25,14 +26,18 @@ struct ValidationReport {
 
 // `small_area`: islands below this are expected (the point generator skips
 // islands that merge with the model almost at once); larger ones are failures.
+// `plate_hold_height`: with no raft, what starts in a layer whose underside
+// is below this height is held by the plate (SupportConfig::plate_hold_height;
+// 0 on a raft: only the first layer is).
 // Reports stages "slice" and "islands".
 ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh& supports, double layer_height,
                                    double link_grow, double small_area = 0.12, double pixel_area = 2.7e-4,
-                                   const JobControl& ctl = JobControl::none());
+                                   const JobControl& ctl = JobControl::none(), double plate_hold_height = 0);
 
 // The same check on layers already cut: a hollowed model's together with its
 // supports'. Reports stage "islands".
 ValidationReport validateLayers(const LayerStack& layers, double link_grow, double small_area = 0.12,
-                                double pixel_area = 2.7e-4, const JobControl& ctl = JobControl::none());
+                                double pixel_area = 2.7e-4, const JobControl& ctl = JobControl::none(),
+                                double plate_hold_height = 0);
 
 }  // namespace fruit

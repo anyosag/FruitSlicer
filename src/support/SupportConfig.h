@@ -142,7 +142,10 @@ struct SupportConfig {
     // well: the plate holds them, and a tip there would only print as part of
     // the model. The transition layers after them are not counted: their
     // exposure falls to the normal one, so the last of them no longer reach
-    // the plate. REASONING, not measured.
+    // the plate. A separate piece that starts inside that height is held the
+    // same way: it counts as standing on the plate, in the planner, in the
+    // mid-air check (SupportValidator) and in the replay of the print
+    // (stability). REASONING, not measured.
     double plate_hold_height = 0.1;
 
     // Tilt release: extra peel demand towards the side away from the hinge.
