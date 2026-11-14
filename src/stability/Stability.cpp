@@ -494,6 +494,8 @@ private:
     // And how far each of those points is from thick model in its own part
     // (mm; none: infinite). Thin model next to thick model hangs from that.
     std::vector<std::vector<float>> away_;
+    // The points themselves (samplePart's, by model part), made once.
+    std::vector<std::vector<Vec2>> spread_;
     std::vector<char> head_;  // by joint: part of the head under a tip, whose strength is the tip's
     std::vector<char> sliver_;  // by joint: smaller than the smallest tip
     std::vector<int> down_, foot_, weakest_;
@@ -1217,6 +1219,7 @@ void Analysis::buildRods() {
 void Analysis::buildDepths() {
     depth_.assign(static_cast<size_t>(models_), {});
     away_.assign(static_cast<size_t>(models_), {});
+    spread_.assign(static_cast<size_t>(models_), {});
     BBox2 box;
     for (int id = 0; id < models_; ++id) box.extend(part_[id].box);
     if (box.empty()) return;
@@ -1277,7 +1280,8 @@ void Analysis::buildDepths() {
                     ++k;
                     continue;
                 }
-                const std::vector<Vec2>& points = sampled[static_cast<size_t>(c)][k++];
+                spread_[static_cast<size_t>(id)] = std::move(sampled[static_cast<size_t>(c)][k++]);
+                const std::vector<Vec2>& points = spread_[static_cast<size_t>(id)];
                 std::vector<std::uint16_t>& out = depth_[id];
                 out.resize(points.size());
                 for (size_t j = 0; j < points.size(); ++j) {
@@ -1572,7 +1576,6 @@ struct Analysis::Scratch {
     };
     std::vector<Foot> feet;
     std::vector<int> foot_links;  // the joints supports stand on the model with, as they are pulled this layer
-    std::vector<Vec2> points;
     struct Reach {
         Vec2 at;
         double below, lnk;  // how far under the newest layer it touches the model (mm), ln of its stiffness
@@ -1791,9 +1794,9 @@ void Analysis::step(int k, Scratch& st) const {
             }
         };
         for (int id : g.tops) {
-            samplePart(id, st.points);
-            const double each = pull_[id] / static_cast<double>(st.points.size());
-            for (size_t j = 0; j < st.points.size(); ++j) share(st.points[j], each, depth_[id][j] * h_, away_[id][j]);
+            const std::vector<Vec2>& points = spread_[static_cast<size_t>(id)];
+            const double each = pull_[id] / static_cast<double>(points.size());
+            for (size_t j = 0; j < points.size(); ++j) share(points[j], each, depth_[id][j] * h_, away_[id][j]);
         }
         // A cup pulls on the ring around it: as thick as that is at its thickest.
         for (const Cup& c : cups_[k])
