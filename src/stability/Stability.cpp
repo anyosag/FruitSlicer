@@ -2384,9 +2384,84 @@ void Analysis::runReplays() {
         for (int e = high_begin[c]; e < high_begin[c + 1] && highs[e].step <= k; ++e) top = highs[e].u;
         return top;
     };
+    // What a joint that let go would have carried had it held: it passes on
+    // all of it, at every layer after, not only what it carried when it went
+    // (the pieces it held go on growing). The loads are shared in proportion,
+    // so what a joint has been given is a sum of the own loads of the joints
+    // that let go before it (each own load as worked out with everything
+    // there), each times the share of it that came this way; a share too
+    // small to matter (or one past the most kept) is kept at what it was
+    // when given. mm² of layer.
+    constexpr double kTracked = 0.02;  // a share under this is kept at what it was
+    constexpr size_t kMostTracked = 8;
+    struct Given {
+        std::vector<std::pair<int, double>> from;  // a joint that let go, the share of its own load
+        double fixed = 0;
+    };
+    std::vector<double> xi(nc);  // each joint's strength in this replay, as a multiple of its median
+    std::vector<Given> given(nc);
+    std::vector<int> given_list;
+    auto own = [&](int c, int k) { return loadBy(c, k) * cand[c].holds; };
+    auto carriesAt = [&](int c, int k) {
+        const Given& g = given[c];
+        double f = own(c, k) + g.fixed;
+        for (const auto& [s, share] : g.from) f += share * own(s, k);
+        return f;
+    };
+    // Joint x let go at layer k, and c takes `share` of all it carried.
+    auto pass = [&](int x, int c, double share, int k) {
+        Given& g = given[c];
+        if (g.from.empty() && g.fixed == 0) given_list.push_back(c);
+        if (share < kTracked) {
+            g.fixed += share * carriesAt(x, k);
+            return;
+        }
+        g.fixed += share * given[x].fixed;
+        auto add = [&](int s, double w) {
+            for (auto& [t, v] : g.from)
+                if (t == s) {
+                    v += w;
+                    return;
+                }
+            g.from.push_back({s, w});
+        };
+        add(x, share);
+        for (const auto& [s, w] : given[x].from) add(s, share * w);
+        if (g.from.size() > kMostTracked) {
+            std::sort(g.from.begin(), g.from.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+            for (size_t i = kMostTracked; i < g.from.size(); ++i) g.fixed += g.from[i].second * own(g.from[i].first, k);
+            g.from.resize(kMostTracked);
+        }
+    };
+    // The first layer, from `from` on, at which joint c with all it was given is loaded past its strength.
+    std::vector<std::pair<int, double>> rises;
+    auto firstOverAll = [&](int c, int from) {
+        const Given& g = given[c];
+        if (g.from.empty()) return firstOver(c, xi[c] - g.fixed / cand[c].holds, from);
+        double load = g.fixed;
+        rises.clear();
+        auto track = [&](int s, double w) {
+            double before = 0;
+            for (int e = high_begin[s]; e < high_begin[s + 1]; ++e) {
+                const double v = w * highs[e].u * cand[s].holds;
+                if (highs[e].step <= from) load += v - before;
+                else rises.push_back({highs[e].step, v - before});
+                before = v;
+            }
+        };
+        track(c, 1.0);
+        for (const auto& [s, w] : g.from) track(s, w);
+        const double limit = xi[c] * cand[c].holds;
+        if (load > limit) return from;
+        std::sort(rises.begin(), rises.end());
+        for (const auto& [k, more] : rises) {
+            load += more;
+            if (load > limit) return k;
+        }
+        return kNever;
+    };
 
     std::vector<int> counts(n_, 0), lost_stamp(n_, -1), lost_list;
-    std::vector<double> xi(nc), moved_on(nc);
     std::vector<int> when(nc);
     std::vector<char> broken(nc), gone(nc), listed(nc);
     std::vector<int> node_of(pieces.size(), -1), node_stamp(pieces.size(), -1);
@@ -2414,10 +2489,11 @@ void Analysis::runReplays() {
         if ((r & 15) == 0) ctl_.step("replays", static_cast<double>(r) / replays);
         Rng rng(cfg_.seed * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(r) * 0xD1B54A32D192ED03ULL + 1);
         due.clear();
+        for (int c : given_list) given[c] = {};
+        given_list.clear();
         for (int c = 0; c < nc; ++c) {
             // A strength with the curve's own spread, 1 at the middle.
             xi[c] = std::pow(-std::log2(1 - rng.unit()), 1 / steep_);
-            moved_on[c] = 0;
             broken[c] = gone[c] = 0;
             when[c] = cand[c].holds > 0 ? firstOver(c, xi[c], 0) : kNever;
             listed[c] = when[c] != kNever;
@@ -2491,7 +2567,7 @@ void Analysis::runReplays() {
                         upstream[e.to] = 1;
                         queue.push_back(e.to);
                     }
-            auto carries = [&](int c) { return (loadBy(c, k) + moved_on[c]) * cand[c].holds; };
+            auto carries = [&](int c) { return carriesAt(c, k); };
             const double moved = carries(x);
             if (!(moved > 0)) continue;
             // In proportion to what each was carrying, and, as a layer's pull
@@ -2518,8 +2594,8 @@ void Analysis::runReplays() {
             if (!(sum > 0)) continue;
             for (const auto& [c, w] : takers) {
                 if (w == 0) continue;
-                moved_on[c] += moved * (w / sum) / cand[c].holds;
-                when[c] = firstOver(c, xi[c] - moved_on[c], k);
+                pass(x, c, w / sum, k);
+                when[c] = firstOverAll(c, k);
                 if (when[c] != kNever && !listed[c]) {
                     listed[c] = 1;
                     due.push_back(c);

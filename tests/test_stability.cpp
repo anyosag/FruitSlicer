@@ -35,12 +35,12 @@ Path ring(const Vec2& c, double r, int n = 96, bool hole = false) {
 // model's; `print` gets everything.
 struct Build {
     LayerStack print, model, supports;
-    explicit Build(int layers) {
+    explicit Build(int layers, double h = kH) {
         for (LayerStack* s : {&print, &model, &supports}) {
-            s->layer_height = kH;
+            s->layer_height = h;
             s->slices.resize(static_cast<size_t>(layers));
             s->sample_z.resize(static_cast<size_t>(layers));
-            for (int i = 0; i < layers; ++i) s->sample_z[static_cast<size_t>(i)] = (i + 0.5) * kH;
+            for (int i = 0; i < layers; ++i) s->sample_z[static_cast<size_t>(i)] = (i + 0.5) * h;
         }
     }
     void add(int from, int to, const Path& p, bool is_model) {
@@ -632,6 +632,44 @@ TEST_CASE("two tips share: when one lets go the other takes its load", "[stabili
     CHECK(r.stats.tips_cost_chance == Approx(both).margin(0.03));
     CHECK(r.stats.tips_cost_volume == Approx(volume));
     CHECK(r.tips[0].lost_per_print + r.tips[1].lost_per_print == Approx(r.stats.tips_cost_chance * volume).epsilon(1e-4));
+}
+
+TEST_CASE("a tip that lets go passes on what it would have carried later too, not only what it carried then",
+          "[stability]") {
+    // A stiff block on a small tip A (x = -3) and a big tip B (x = +3), each sharing by the lever rule.
+    // Layers 20-29 (36 mm², middle at x = -0.5): A carries 21 of its 15.9 and lets go at once; B takes
+    // all 36 of its 63.4 and holds. Layers 30-39 (72 mm², middle at 0): with A there each would carry 36.
+    // A is gone, so B carries all 72 and lets go. Passing on only the 21 A carried when it went would
+    // leave B at 36 + 21 = 57 and the block held.
+    const double holds_a = 11.1 / 0.7, holds_b = 4 * 11.1 / 0.7;
+    Build b(40);
+    b.support(0, 20, rect(-3.2, -0.2, -2.8, 0.2));
+    b.support(0, 20, rect(2.6, -0.4, 3.4, 0.4));
+    b.part(20, 30, rect(-5, -2, 4, 2));
+    b.part(30, 40, rect(-9, -2, 9, 2));
+    StabilityConfig cfg = stiffBlock();
+    cfg.bulk_factor = 100;   // only the tips can break
+    cfg.steepness = 1000;    // every strength all but exactly where half let go
+    cfg.replays = 200;
+    const StabilityResult r = b.run(cfg, {{{-3, 0, 1.0}, 0.4}, {{3, 0, 1.0}, 0.8}});
+    REQUIRE(r.tips.size() == 2);
+    CHECK(r.tips[0].holds == Approx(holds_a));
+    CHECK(r.tips[1].holds == Approx(holds_b));
+    // Each tip's own load, with the other there.
+    CHECK(r.tips[0].load == Approx(36).epsilon(1e-6));
+    CHECK(r.tips[1].load == Approx(36).epsilon(1e-6));
+    CHECK(at(r, 20, {0, 0}).lost_chance == Approx(1));
+    CHECK(at(r, 35, {0, 0}).lost_chance == Approx(1));
+    CHECK(r.stats.tips_cost_chance == Approx(1));
+    // Where the block never grows past what B holds alone, B keeps it.
+    Build c(40);
+    c.support(0, 20, rect(-3.2, -0.2, -2.8, 0.2));
+    c.support(0, 20, rect(2.6, -0.4, 3.4, 0.4));
+    c.part(20, 30, rect(-5, -2, 4, 2));
+    c.part(30, 40, rect(-6, -2, 6, 2));  // 48 mm²: B alone at 48 of its 63.4
+    const StabilityResult held = c.run(cfg, {{{-3, 0, 1.0}, 0.4}, {{3, 0, 1.0}, 0.8}});
+    CHECK(at(held, 35, {0, 0}).lost_chance == 0);
+    CHECK(held.stats.tips_cost_chance == 0);
 }
 
 TEST_CASE("joints one after the other: lost if any of them breaks, and only what hangs from it", "[stability]") {
