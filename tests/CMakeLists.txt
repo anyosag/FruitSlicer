@@ -50,4 +50,9 @@ if(FRUIT_BUILD_APP)
   target_include_directories(fruit_gui_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/gui)
   target_link_libraries(fruit_gui_tests PRIVATE fruit_core fruit_net fruit_net_mock fruit_licences miniz Catch2::Catch2WithMain)
   catch_discover_tests(fruit_gui_tests)
+  if(APPLE)
+    add_test(NAME "macOS: Finder knows a .fruitjob file as a FruitSlicer job"
+      COMMAND ${CMAKE_COMMAND} "-DPLIST=$<TARGET_BUNDLE_CONTENT_DIR:fruitslicer_app>/Info.plist"
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/macos/check_document_types.cmake)
+  endif()
 endif()

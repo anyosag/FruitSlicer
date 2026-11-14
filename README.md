@@ -58,7 +58,10 @@ lists the shortcuts. **⌘S saves the job** (a `.fruitjob` file): the model's
 own copy, how it is placed and stands, the support settings and tips, and
 the print settings (with the SatelLite file's header, if one gave them),
 and a small picture of how it sits. Opening a job brings its supports back
-as they were. Home shows the open job with its next step (**Continue**),
+as they were. On macOS, Finder knows a `.fruitjob` file as a FruitSlicer
+job, shows it with FruitSlicer's document icon, and opens it in the app on
+a double-click (STL, OBJ and 3MF files list FruitSlicer under Open With).
+Home shows the open job with its next step (**Continue**),
 recent jobs as cards with that picture, their state, parts, tips and
 support volume, and **Before you print**: what FruitSlicer has checked and
 what it hasn't (the printer, where the print settings come from, the image

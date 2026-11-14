@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 FruitSlicer contributors
+#
+# The built app's Info.plist tells macOS that a .fruitjob file is a FruitSlicer
+# job, and that FruitSlicer owns it: Finder shows it as one, with the app's
+# document icon, and a double-click opens it in the app.
+#   cmake -DPLIST=<FruitSlicer.app/Contents/Info.plist> -P check_document_types.cmake
+execute_process(COMMAND plutil -convert json -o - "${PLIST}" OUTPUT_VARIABLE json RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "plutil could not read ${PLIST}")
+endif()
+string(JSON app GET "${json}" CFBundleIdentifier)
+set(job "${app}.job")
+
+# The type, declared by the app: its extension and what Finder calls it.
+string(JSON n ERROR_VARIABLE none LENGTH "${json}" UTExportedTypeDeclarations)
+if(none)
+  message(FATAL_ERROR "the app declares no file types of its own (no UTExportedTypeDeclarations)")
+endif()
+set(declared FALSE)
+math(EXPR last "${n} - 1")
+foreach(i RANGE ${last})
+  string(JSON id GET "${json}" UTExportedTypeDeclarations ${i} UTTypeIdentifier)
+  if(id STREQUAL job)
+    string(JSON ext GET "${json}" UTExportedTypeDeclarations ${i} UTTypeTagSpecification public.filename-extension 0)
+    string(JSON what GET "${json}" UTExportedTypeDeclarations ${i} UTTypeDescription)
+    if(NOT ext STREQUAL "fruitjob" OR NOT what STREQUAL "FruitSlicer job")
+      message(FATAL_ERROR "${job} is declared for .${ext} as \"${what}\"")
+    endif()
+    set(declared TRUE)
+  endif()
+endforeach()
+if(NOT declared)
+  message(FATAL_ERROR "the app does not declare ${job}")
+endif()
+
+# The app owns it, as an editor, with the icon macOS draws from the app's.
+string(JSON n LENGTH "${json}" CFBundleDocumentTypes)
+set(owned FALSE)
+math(EXPR last "${n} - 1")
+foreach(i RANGE ${last})
+  string(JSON types ERROR_VARIABLE none GET "${json}" CFBundleDocumentTypes ${i} LSItemContentTypes)
+  if(none)
+    continue()
+  endif()
+  string(JSON first GET "${types}" 0)
+  if(first STREQUAL job)
+    string(JSON rank GET "${json}" CFBundleDocumentTypes ${i} LSHandlerRank)
+    string(JSON role GET "${json}" CFBundleDocumentTypes ${i} CFBundleTypeRole)
+    string(JSON icon GET "${json}" CFBundleDocumentTypes ${i} CFBundleTypeIconSystemGenerated)
+    if(NOT rank STREQUAL "Owner" OR NOT role STREQUAL "Editor" OR NOT icon EQUAL 1)
+      message(FATAL_ERROR "${job}: rank ${rank}, role ${role}, system icon ${icon}")
+    endif()
+    set(owned TRUE)
+  endif()
+endforeach()
+if(NOT owned)
+  message(FATAL_ERROR "no document type of the app opens ${job}")
+endif()
+message(STATUS ".fruitjob: ${job}, owned by ${app}")

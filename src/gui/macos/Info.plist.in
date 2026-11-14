@@ -34,8 +34,46 @@
   <string>FruitSlicer finds your printer on the local network and sends print files to it over Wi-Fi.</string>
   <key>NSRemovableVolumesUsageDescription</key>
   <string>FruitSlicer saves print files to the USB stick you take to the printer.</string>
+  <!-- A job file (.fruitjob) is FruitSlicer's own: Finder shows it as a
+       FruitSlicer job, with a document icon macOS draws from the app's, and
+       opens it here. It is a zip inside, but not one to be unpacked. -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.job</string>
+      <key>UTTypeDescription</key>
+      <string>FruitSlicer job</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.content</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>fruitjob</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
   <key>CFBundleDocumentTypes</key>
   <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>FruitSlicer job</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.job</string>
+      </array>
+      <key>CFBundleTypeIconSystemGenerated</key>
+      <integer>1</integer>
+    </dict>
     <dict>
       <key>CFBundleTypeName</key>
       <string>3D model</string>
