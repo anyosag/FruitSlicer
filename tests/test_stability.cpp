@@ -322,6 +322,57 @@ TEST_CASE("a thin slab is held patch by patch; a tall block by all its tips toge
     CHECK(at(tall, 21, {2, 0}).stress < 1.5);
 }
 
+TEST_CASE("a wide thin slab on a grid of tips: each tip holds its own square of it", "[stability]") {
+    // One layer of slab, 30 by 30 mm, on tips 2.7 mm apart that do not line up with how a part's
+    // pull is sampled. Away from the edges, by symmetry, each tip holds 2.7 × 2.7 = 7.29 mm².
+    const double s = 2.7;
+    Build b(21);
+    std::vector<TipContact> tips;
+    for (int i = -5; i <= 5; ++i)
+        for (int j = -5; j <= 5; ++j) {
+            b.support(0, 20, rect(i * s - 0.2, j * s - 0.2, i * s + 0.2, j * s + 0.2));
+            tips.push_back({{i * s, j * s, 1.0}, 0.4});
+        }
+    b.part(20, 21, rect(-15, -15, 15, 15));
+    const StabilityResult r = b.run(StabilityConfig{}, tips);
+    double lo = 1e9, hi = 0;
+    for (const TipRisk& t : r.tips)
+        if (std::abs(t.at.x) < 3 * s + 0.1 && std::abs(t.at.y) < 3 * s + 0.1) {
+            lo = std::min(lo, t.load);
+            hi = std::max(hi, t.load);
+        }
+    INFO("interior tips carry " << lo << " to " << hi);
+    CHECK(lo == Approx(s * s).epsilon(0.05));
+    CHECK(hi == Approx(s * s).epsilon(0.05));
+}
+
+TEST_CASE("a thin slab beside a thick rib narrower than the slab's sampling: the same however it is sampled",
+          "[stability]") {
+    // A rib 0.6 mm wide and 3 mm tall stands on the plate; one layer of slab, 20 mm deep, is printed
+    // over it and over tips, one of them 1 mm beside the rib. The slab between the rib and that tip hangs
+    // from the rib. Moving the slab's far edge (by 0.7 mm, 14 mm from the tip) moves the grid its pull is
+    // shared out from: what the tip beside the rib carries must not change.
+    auto beside = [](double far_edge) {
+        Build b(61);
+        b.part(0, 60, rect(-0.3, -10, 0.3, 10));
+        std::vector<TipContact> tips;
+        for (const Vec2& t : std::vector<Vec2>{{1.0, 0}, {-10, -5}, {-10, 5}, {10, -5}, {10, 5}, {1.0, -6}, {1.0, 6}}) {
+            b.support(0, 60, rect(t.x - 0.2, t.y - 0.2, t.x + 0.2, t.y + 0.2));
+            tips.push_back({{t.x, t.y, 3.0}, 0.4});
+        }
+        b.part(60, 61, rect(-15, -10, far_edge, 10));
+        const StabilityResult r = b.run(StabilityConfig{}, tips);
+        for (const TipRisk& t : r.tips)
+            if (t.contact == 0) return t.load;
+        return -1.0;
+    };
+    const double a = beside(15), b = beside(15.7), c = beside(16.4);
+    INFO("the tip beside the rib carries " << a << ", " << b << " and " << c);
+    CHECK(a > 0);
+    CHECK(b == Approx(a).epsilon(0.03));
+    CHECK(c == Approx(a).epsilon(0.03));
+}
+
 TEST_CASE("one more tip under a thin slab takes load off the tips around it", "[stability]") {
     auto corner = [](bool fifth, double* middle) {
         Build c(21);

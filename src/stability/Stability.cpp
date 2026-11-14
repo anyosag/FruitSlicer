@@ -475,7 +475,9 @@ private:
         while (bodies_[x].up >= 0 && bodies_[bodies_[x].up].born <= k) x = bodies_[x].up;
         return x;
     }
-    void samplePart(int id, std::vector<Vec2>& out) const;
+    // Points spread evenly over a part (the middles of equal cells across its box that lie in it); `cell`, if
+    // given, is told the cells' size.
+    void samplePart(int id, std::vector<Vec2>& out, Vec2* cell = nullptr) const;
     // Support parts inside a plain rod (one part below, which has only this
     // one above): a load goes straight to the rod's foot.
     std::vector<int> rests_;  // by part: how many joints rest on it
@@ -494,9 +496,20 @@ private:
     std::vector<std::vector<std::uint16_t>> depth_;
     // And how far each of those points is from thick model in its own part
     // (mm; none: infinite). Thin model next to thick model hangs from that.
-    std::vector<std::vector<float>> away_;
-    // The points themselves (samplePart's, by model part), made once.
+    // The points themselves (samplePart's, by model part), made once, and
+    // the size of the cells they are the middles of.
     std::vector<std::vector<Vec2>> spread_;
+    std::vector<Vec2> spread_cell_;
+    // How far each point of a part is from thick model of that part (mm), on
+    // a grid of the depth lattice's own points (every `stride`-th of them),
+    // in hundredths of a mm; none at all where the part has no thick model.
+    struct Away {
+        int i0 = 0, r0 = 0, nx = 0, ny = 0, stride = 1;
+        std::vector<std::uint16_t> d;
+    };
+    std::vector<Away> away_;
+    Vec2 lattice_min_;
+    double awayAt(int part, const Vec2& x) const;
     std::vector<char> head_;  // by joint: part of the head under a tip, whose strength is the tip's
     std::vector<char> sliver_;  // by joint: smaller than the smallest tip
     std::vector<int> down_, foot_, weakest_;
@@ -1221,18 +1234,20 @@ void Analysis::buildDepths() {
     depth_.assign(static_cast<size_t>(models_), {});
     away_.assign(static_cast<size_t>(models_), {});
     spread_.assign(static_cast<size_t>(models_), {});
+    spread_cell_.assign(static_cast<size_t>(models_), {});
     BBox2 box;
     for (int id = 0; id < models_; ++id) box.extend(part_[id].box);
     if (box.empty()) return;
     const double g = 0.25;
+    lattice_min_ = box.min;
     const Vec2 size = box.size();
     const int nx = static_cast<int>(std::ceil(size.x / g)) + 1, ny = static_cast<int>(std::ceil(size.y / g)) + 1;
     struct Run {
-        int row, from, to;
+        int row, from, to, part;
     };
     const auto cells = static_cast<size_t>(nx) * static_cast<size_t>(ny);
     std::vector<std::uint16_t> deep(cells, 0);
-    std::vector<int> last(cells, -2);
+    std::vector<int> last(cells, -2), owner(cells, -1);
     std::vector<float> grid;
     const int chunk = 64;
     std::vector<std::vector<Run>> runs(chunk);
@@ -1252,7 +1267,7 @@ void Analysis::buildDepths() {
                     ++k;
                     continue;
                 }
-                samplePart(id, pts[k++]);
+                samplePart(id, pts[k++], &spread_cell_[static_cast<size_t>(id)]);
                 const Part& p = part_[id];
                 const Paths ps = p.poly().toPaths();
                 const int r0 = std::max(0, static_cast<int>(std::floor((p.box.min.y - box.min.y) / g - 0.5)));
@@ -1261,7 +1276,7 @@ void Analysis::buildDepths() {
                     for (const auto& [t0, t1] : lineSpans(ps, {box.min.x, box.min.y + (r + 0.5) * g}, {1.0, 0.0})) {
                         const int from = std::max(0, static_cast<int>(std::ceil(t0 / g - 0.5)));
                         const int to = std::min(nx - 1, static_cast<int>(std::floor(t1 / g - 0.5)));
-                        if (to >= from) out.push_back({r, from, to});
+                        if (to >= from) out.push_back({r, from, to, id});
                     }
             }
         });
@@ -1274,6 +1289,7 @@ void Analysis::buildDepths() {
                     const size_t at = static_cast<size_t>(r.row) * static_cast<size_t>(nx) + static_cast<size_t>(i);
                     deep[at] = last[at] == L - 1 ? static_cast<std::uint16_t>(std::min(65535, deep[at] + 1)) : 1;
                     last[at] = L;
+                    owner[at] = r.part;
                 }
             size_t k = 0;
             for (int id : in_layer_[L]) {
@@ -1300,53 +1316,72 @@ void Analysis::buildDepths() {
                             }
                     out[j] = std::max<std::uint16_t>(best, 1);
                 }
-                // How far each point is from thick model: across the points'
-                // own grid (the one samplePart lays over the part's box).
-                std::vector<float>& far = away_[id];
-                far.assign(points.size(), std::numeric_limits<float>::infinity());
+                // How far every point of the part is from thick model of the
+                // part: on the lattice itself (every second or third point of
+                // it on a large part), so that a thick wall narrower than the
+                // points the pull is shared from is not missed.
                 const Part& p = part_[id];
-                const Vec2 size = p.box.size();
-                const double cell = std::clamp(std::sqrt(std::max(area_[id], 0.0)) / 12, 0.3, 1.5);
-                const int gx = std::max(1, static_cast<int>(std::ceil(size.x / cell))), gy = std::max(1, static_cast<int>(std::ceil(size.y / cell)));
-                const double sx = size.x / gx, sy = size.y / gy, sd = std::hypot(sx, sy);
+                const int i0 = std::max(0, static_cast<int>(std::floor((p.box.min.x - box.min.x) / g)) - 1);
+                const int i1 = std::min(nx - 1, static_cast<int>(std::floor((p.box.max.x - box.min.x) / g)) + 1);
+                const int r0 = std::max(0, static_cast<int>(std::floor((p.box.min.y - box.min.y) / g)) - 1);
+                const int r1 = std::min(ny - 1, static_cast<int>(std::floor((p.box.max.y - box.min.y) / g)) + 1);
+                const int stride = std::max(1, static_cast<int>(std::ceil(std::sqrt((i1 - i0 + 1.0) * (r1 - r0 + 1.0) / 16384))));
+                const int gx = (i1 - i0) / stride + 1, gy = (r1 - r0) / stride + 1;
+                const double step = g * stride, diag = step * std::sqrt(2.0);
                 grid.assign(static_cast<size_t>(gx) * static_cast<size_t>(gy), std::numeric_limits<float>::infinity());
-                auto cellOf = [&](const Vec2& q) {
-                    const int ix = std::clamp(static_cast<int>((q.x - p.box.min.x) / (sx > 0 ? sx : 1)), 0, gx - 1);
-                    const int iy = std::clamp(static_cast<int>((q.y - p.box.min.y) / (sy > 0 ? sy : 1)), 0, gy - 1);
-                    return static_cast<size_t>(iy) * static_cast<size_t>(gx) + static_cast<size_t>(ix);
-                };
                 bool any = false;
-                for (size_t j = 0; j < points.size(); ++j)
-                    if (out[j] * h_ >= cfg_.slab) {
-                        grid[cellOf(points[j])] = 0;
+                const auto thick = static_cast<std::uint16_t>(std::max(1.0, std::ceil(cfg_.slab / h_ - 1e-9)));
+                for (int r = r0; r <= r1; ++r)
+                    for (int i = i0; i <= i1; ++i) {
+                        const size_t at = static_cast<size_t>(r) * static_cast<size_t>(nx) + static_cast<size_t>(i);
+                        if (last[at] != L || owner[at] != id || deep[at] < thick) continue;
+                        grid[static_cast<size_t>((r - r0) / stride) * static_cast<size_t>(gx) + static_cast<size_t>((i - i0) / stride)] = 0;
                         any = true;
                     }
                 if (!any) continue;
-                auto relax = [&](int ix, int iy, int dx, int dy, double step) {
+                auto relax = [&](int ix, int iy, int dx, int dy, double d) {
                     const int jx = ix + dx, jy = iy + dy;
                     if (jx < 0 || jx >= gx || jy < 0 || jy >= gy) return;
                     float& here = grid[static_cast<size_t>(iy) * static_cast<size_t>(gx) + static_cast<size_t>(ix)];
-                    const float there = grid[static_cast<size_t>(jy) * static_cast<size_t>(gx) + static_cast<size_t>(jx)] + static_cast<float>(step);
+                    const float there = grid[static_cast<size_t>(jy) * static_cast<size_t>(gx) + static_cast<size_t>(jx)] + static_cast<float>(d);
                     if (there < here) here = there;
                 };
                 for (int iy = 0; iy < gy; ++iy)
                     for (int ix = 0; ix < gx; ++ix) {
-                        relax(ix, iy, -1, 0, sx);
-                        relax(ix, iy, 0, -1, sy);
-                        relax(ix, iy, -1, -1, sd);
-                        relax(ix, iy, 1, -1, sd);
+                        relax(ix, iy, -1, 0, step);
+                        relax(ix, iy, 0, -1, step);
+                        relax(ix, iy, -1, -1, diag);
+                        relax(ix, iy, 1, -1, diag);
                     }
                 for (int iy = gy - 1; iy >= 0; --iy)
                     for (int ix = gx - 1; ix >= 0; --ix) {
-                        relax(ix, iy, 1, 0, sx);
-                        relax(ix, iy, 0, 1, sy);
-                        relax(ix, iy, 1, 1, sd);
-                        relax(ix, iy, -1, 1, sd);
+                        relax(ix, iy, 1, 0, step);
+                        relax(ix, iy, 0, 1, step);
+                        relax(ix, iy, 1, 1, diag);
+                        relax(ix, iy, -1, 1, diag);
                     }
-                for (size_t j = 0; j < points.size(); ++j) far[j] = grid[cellOf(points[j])];
+                Away& a = away_[id];
+                a.i0 = i0;
+                a.r0 = r0;
+                a.nx = gx;
+                a.ny = gy;
+                a.stride = stride;
+                a.d.resize(grid.size());
+                for (size_t c = 0; c < grid.size(); ++c)
+                    a.d[c] = std::isfinite(grid[c]) ? static_cast<std::uint16_t>(std::min(65534.0, std::round(grid[c] * 100.0))) : 65535;
             }
         }
     }
+}
+
+double Analysis::awayAt(int part, const Vec2& x) const {
+    const Away& a = away_[static_cast<size_t>(part)];
+    if (a.d.empty()) return kInf;
+    const double g = 0.25;
+    const int ix = std::clamp((static_cast<int>(std::floor((x.x - lattice_min_.x) / g)) - a.i0) / a.stride, 0, a.nx - 1);
+    const int iy = std::clamp((static_cast<int>(std::floor((x.y - lattice_min_.y) / g)) - a.r0) / a.stride, 0, a.ny - 1);
+    const std::uint16_t v = a.d[static_cast<size_t>(iy) * static_cast<size_t>(a.nx) + static_cast<size_t>(ix)];
+    return v == 65535 ? kInf : v / 100.0;
 }
 
 // The model's layers as a network (see Group), worked out once from the
@@ -1583,6 +1618,14 @@ struct Analysis::Scratch {
     };
     std::vector<Reach> reach;
     std::vector<double> weight;
+    // The holds of one piece on a grid, to find those near a point without going through all of them.
+    struct Grid {
+        Vec2 min;
+        double cell = 1;
+        int nx = 0, ny = 0;
+        std::vector<int> first, list;  // by cell: where its holds start in `list`
+    } grid;
+    std::vector<int> near;  // the holds near the point being shared out
     // What each tip's own give draws (it is a spring), as last worked out.
     std::vector<double> tip_more, group_more;
     std::vector<int> more_stamp;
@@ -1602,12 +1645,13 @@ struct Analysis::Scratch {
 
 // Points spread evenly over a part, for sharing its pull out: the middles of
 // equal cells across its box that lie in it.
-void Analysis::samplePart(int id, std::vector<Vec2>& out) const {
+void Analysis::samplePart(int id, std::vector<Vec2>& out, Vec2* cell) const {
     out.clear();
     const Part& p = part_[id];
     const Vec2 size = p.box.size();
     const double g = std::clamp(std::sqrt(std::max(area_[id], 0.0)) / 12, 0.3, 1.5);
     const int nx = std::max(1, static_cast<int>(std::ceil(size.x / g))), ny = std::max(1, static_cast<int>(std::ceil(size.y / g)));
+    if (cell) *cell = {size.x / nx, size.y / ny};
     for (int iy = 0; iy < ny; ++iy)
         for (int ix = 0; ix < nx; ++ix) {
             const Vec2 q{p.box.min.x + (ix + 0.5) * size.x / nx, p.box.min.y + (iy + 0.5) * size.y / ny};
@@ -1733,6 +1777,45 @@ void Analysis::step(int k, Scratch& st) const {
         for (int i : g.plate) st.reach.push_back({links_[i].c, (k - layerOf(links_[i].parent)) * h_, std::log(links_[i].area)});
         const size_t nt = g.tips.size(), nh = st.reach.size();
         st.weight.assign(nh, 0);
+        double lnk_most = -kInf;
+        for (const Scratch::Reach& r : st.reach) lnk_most = std::max(lnk_most, r.lnk);
+        // The holds on a grid of about 1 mm (no more than 4,096 cells).
+        Scratch::Grid& grid = st.grid;
+        {
+            BBox2 box;
+            for (const Scratch::Reach& r : st.reach) box.extend(r.at);
+            const Vec2 size = box.size();
+            grid.cell = std::max({1.0, std::sqrt(size.x * size.y / 4096), std::max(size.x, size.y) / 4096});
+            grid.min = box.min;
+            grid.nx = static_cast<int>(size.x / grid.cell) + 1;
+            grid.ny = static_cast<int>(size.y / grid.cell) + 1;
+            grid.first.assign(static_cast<size_t>(grid.nx) * static_cast<size_t>(grid.ny) + 1, 0);
+            auto cellOf = [&](const Vec2& q) {
+                const int ix = std::clamp(static_cast<int>((q.x - grid.min.x) / grid.cell), 0, grid.nx - 1);
+                const int iy = std::clamp(static_cast<int>((q.y - grid.min.y) / grid.cell), 0, grid.ny - 1);
+                return static_cast<size_t>(iy) * static_cast<size_t>(grid.nx) + static_cast<size_t>(ix);
+            };
+            for (const Scratch::Reach& r : st.reach) ++grid.first[cellOf(r.at) + 1];
+            for (size_t c = 1; c < grid.first.size(); ++c) grid.first[c] += grid.first[c - 1];
+            grid.list.assign(nh, 0);
+            std::vector<int> fill(grid.first.begin(), grid.first.end() - 1);
+            for (size_t j = 0; j < nh; ++j) grid.list[static_cast<size_t>(fill[cellOf(st.reach[j].at)]++)] = static_cast<int>(j);
+        }
+        // Every hold whose cell comes within `r` of x (and maybe a few more).
+        auto around = [&](const Vec2& x, double r, std::vector<int>& out) {
+            out.clear();
+            const int x0 = std::max(0, static_cast<int>(std::floor((x.x - r - grid.min.x) / grid.cell)));
+            const int x1 = std::min(grid.nx - 1, static_cast<int>(std::floor((x.x + r - grid.min.x) / grid.cell)));
+            const int y0 = std::max(0, static_cast<int>(std::floor((x.y - r - grid.min.y) / grid.cell)));
+            const int y1 = std::min(grid.ny - 1, static_cast<int>(std::floor((x.y + r - grid.min.y) / grid.cell)));
+            for (int iy = y0; iy <= y1; ++iy)
+                for (int ix = x0; ix <= x1; ++ix) {
+                    const size_t c = static_cast<size_t>(iy) * static_cast<size_t>(grid.nx) + static_cast<size_t>(ix);
+                    for (int e = grid.first[c]; e < grid.first[c + 1]; ++e) out.push_back(grid.list[static_cast<size_t>(e)]);
+                }
+        };
+        std::vector<int> all(nh);
+        for (size_t j = 0; j < nh; ++j) all[j] = static_cast<int>(j);
         // A pull at x, where the model straight under it is `solid` mm thick
         // and thick model of the same part is `away` mm off.
         auto share = [&](const Vec2& x, double pull, double solid, double away) {
@@ -1745,11 +1828,35 @@ void Analysis::step(int k, Scratch& st) const {
                 return stiff || st.reach[j].below <= solid + 0.6 + std::sqrt(d2);
             };
             double inv = 0;
+            const std::vector<int>* holds = &all;
             if (!stiff) {
-                double nearest = kInf;
-                for (size_t j = 0; j < nt; ++j) {
-                    const double d2 = norm2(st.reach[j].at - x);
-                    if (d2 < nearest && under(j, d2)) nearest = d2;
+                // The nearest tip that can hold it: ring by ring of the grid
+                // until no nearer one can be left.
+                double nearest = kInf, lnk_nearest = 0;
+                const int cx = static_cast<int>(std::floor((x.x - grid.min.x) / grid.cell));
+                const int cy = static_cast<int>(std::floor((x.y - grid.min.y) / grid.cell));
+                const int rings = std::max({cx + 1, grid.nx - cx, cy + 1, grid.ny - cy, 1});
+                for (int ring = 0; ring <= rings; ++ring) {
+                    // The cells `ring` cells away from x's, square-wise: every
+                    // hold not yet seen is further than ring - 1 cells off.
+                    if (ring >= 2 && nearest <= (ring - 1) * grid.cell * (ring - 1) * grid.cell) break;
+                    for (int iy = cy - ring; iy <= cy + ring; ++iy) {
+                        if (iy < 0 || iy >= grid.ny) continue;
+                        const bool edge = iy == cy - ring || iy == cy + ring;
+                        for (int ix = cx - ring; ix <= cx + ring; ix += edge ? 1 : std::max(1, 2 * ring)) {
+                            if (ix < 0 || ix >= grid.nx) continue;
+                            const size_t c = static_cast<size_t>(iy) * static_cast<size_t>(grid.nx) + static_cast<size_t>(ix);
+                            for (int e = grid.first[c]; e < grid.first[c + 1]; ++e) {
+                                const size_t j = static_cast<size_t>(grid.list[static_cast<size_t>(e)]);
+                                if (j >= nt) continue;
+                                const double d2 = norm2(st.reach[j].at - x);
+                                if (d2 < nearest && under(j, d2)) {
+                                    nearest = d2;
+                                    lnk_nearest = st.reach[j].lnk;
+                                }
+                            }
+                        }
+                    }
                 }
                 if (!(nearest < kInf)) return;
                 const double thick = solid / std::max(cfg_.slab, 1e-6), far = nearest / (reach2 > 0 ? reach2 : 1e-12);
@@ -1760,17 +1867,24 @@ void Analysis::step(int k, Scratch& st) const {
                 if (!(pull > 0) && !(pull < 0)) return;
                 const double len = std::max(0.3, cfg_.share_reach * std::pow(solid, 0.75));
                 inv = 1 / (3.2 * len * len);
+                // Holds further than this weigh under e^-25 of the nearest tip, so nothing.
+                const double reach = std::sqrt(std::max(0.0, lnk_most - (lnk_nearest - nearest * inv) + 25) / inv);
+                if (reach < grid.cell * (grid.nx + grid.ny)) {
+                    around(x, reach, st.near);
+                    holds = &st.near;
+                }
             }
             double top = -kInf;
-            for (size_t j = 0; j < nh; ++j) {
-                const Scratch::Reach& r = st.reach[j];
+            for (int j : *holds) {
+                const Scratch::Reach& r = st.reach[static_cast<size_t>(j)];
                 const double d2 = norm2(r.at - x);
-                st.weight[j] = under(j, d2) ? r.lnk - d2 * inv : -kInf;
-                top = std::max(top, st.weight[j]);
+                st.weight[static_cast<size_t>(j)] = under(static_cast<size_t>(j), d2) ? r.lnk - d2 * inv : -kInf;
+                top = std::max(top, st.weight[static_cast<size_t>(j)]);
             }
             if (!(top > -kInf)) return;
             M3 hold{};
-            for (size_t j = 0; j < nh; ++j) {
+            for (int jj : *holds) {
+                const size_t j = static_cast<size_t>(jj);
                 const double w = st.weight[j] - top > -25 ? std::exp(st.weight[j] - top) : 0.0;
                 st.weight[j] = w;
                 if (w == 0) continue;
@@ -1789,8 +1903,9 @@ void Analysis::step(int k, Scratch& st) const {
             g.given.n += pull;
             g.given.mx += pull * (x.x - origin_.x);
             g.given.my += pull * (x.y - origin_.y);
-            for (size_t j = 0; j < nt; ++j) {
-                if (st.weight[j] == 0) continue;
+            for (int jj : *holds) {
+                const size_t j = static_cast<size_t>(jj);
+                if (j >= nt || st.weight[j] == 0) continue;
                 const Vec2 d = st.reach[j].at - x;
                 const double f = pull * st.weight[j] * (mv.w + mv.gx * d.x + mv.gy * d.y);
                 giveTip(g.tips[j], f);
@@ -1801,8 +1916,31 @@ void Analysis::step(int k, Scratch& st) const {
         };
         for (int id : g.tops) {
             const std::vector<Vec2>& points = spread_[static_cast<size_t>(id)];
+            const Vec2 cell = spread_cell_[static_cast<size_t>(id)];
             const double each = pull_[id] / static_cast<double>(points.size());
-            for (size_t j = 0; j < points.size(); ++j) share(points[j], each, depth_[id][j] * h_, away_[id][j]);
+            for (size_t j = 0; j < points.size(); ++j) {
+                const double solid = depth_[id][j] * h_;
+                // Where thin model hangs from the tips nearest it, the share
+                // changes within a few tenths of a mm, finer than the points
+                // are spread: such a point's cell is shared out as a few
+                // points of its own, no further apart than that length (at
+                // most 8 by 8).
+                int n = 1;
+                if (!stiff) {
+                    const double len = std::max(0.3, cfg_.share_reach * std::pow(solid, 0.75));
+                    n = std::clamp(static_cast<int>(std::ceil(std::max(cell.x, cell.y) / len - 1e-9)), 1, 8);
+                }
+                if (n == 1) {
+                    share(points[j], each, solid, awayAt(id, points[j]));
+                    continue;
+                }
+                const double part = each / (n * n);
+                for (int a = 0; a < n; ++a)
+                    for (int c = 0; c < n; ++c) {
+                        const Vec2 q{points[j].x + ((a + 0.5) / n - 0.5) * cell.x, points[j].y + ((c + 0.5) / n - 0.5) * cell.y};
+                        share(q, part, solid, awayAt(id, q));
+                    }
+            }
         }
         // A cup pulls on the ring around it: as thick as that is at its thickest.
         for (const Cup& c : cups_[k])
