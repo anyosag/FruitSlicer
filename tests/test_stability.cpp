@@ -692,6 +692,32 @@ TEST_CASE("a tip that takes over another's load still carries its own, however s
     CHECK(at(r, 25, {0, 0}).lost_chance == Approx(1));
 }
 
+TEST_CASE("a stiff piece that loses a tip hangs from the others by the lever rule", "[stability]") {
+    // A stiff bar on three tips in a line, 4 mm apart, as stiff as each other: each carries a third.
+    // The end tip at x = -4 is weak and lets go at once. The bar's middle is over the middle tip, so
+    // that tip now carries all of it and the far one nothing (a rigid body on two springs). Shared out
+    // by what each was carrying instead, the middle tip would carry half, and hold.
+    auto bar = [](double first_x) {
+        Build b(30);
+        for (double x : {-4.0, 0.0, 4.0}) b.support(0, 20, rect(x - 0.4, -0.4, x + 0.4, 0.4));
+        b.part(20, 30, rect(-9, -2, 9, 2));  // 72 mm²: 24 on each
+        StabilityConfig cfg = stiffBlock();
+        cfg.bulk_factor = 100;  // only the tips can break
+        cfg.steepness = 1000;   // every strength all but exactly where half let go
+        cfg.replays = 200;
+        // The weak tip (holds 15.9) and two that hold 63.4 each, all touching with 0.64 mm².
+        return b.run(cfg, {{{first_x, 0, 1.0}, 0.4}, {{first_x == -4 ? 0.0 : -4.0, 0, 1.0}, 0.8}, {{4, 0, 1.0}, 0.8}});
+    };
+    // The weak one at the end: the middle one goes to 72 of its 63.4, then the last to all of it.
+    const StabilityResult end = bar(-4);
+    REQUIRE(end.tips.size() == 3);
+    for (const TipRisk& t : end.tips) CHECK(t.load == Approx(24).epsilon(1e-6));
+    CHECK(at(end, 25, {0, 0}).lost_chance == Approx(1));
+    // The weak one in the middle: the two ends take half each, 48 of their 63.4, and hold.
+    const StabilityResult middle = bar(0);
+    CHECK(at(middle, 25, {0, 0}).lost_chance == 0);
+}
+
 TEST_CASE("joints one after the other: lost if any of them breaks, and only what hangs from it", "[stability]") {
     // A support, its tip, then a thin stem under a cap.
     Build b(40);

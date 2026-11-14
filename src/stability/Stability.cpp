@@ -2295,6 +2295,11 @@ void Analysis::runReplays() {
     std::stable_sort(cand.begin(), cand.end(), [](const Breakable& a, const Breakable& b) { return a.link < b.link; });
     for (size_t c = 0; c < cand.size(); ++c) cand_of[cand[c].link] = static_cast<int>(c);
     const int nc = static_cast<int>(cand.size());
+    // Where a joint holds: a tip at its pin, any other at the middle of its area.
+    auto placeOf = [&](int c) {
+        const int i = cand[c].link;
+        return tip_group_[i] >= 0 ? group_at_[tip_group_[i]] : links_[i].c;
+    };
     // The joints of each tip, to let go together.
     std::vector<std::vector<int>> of_tip(group_holds_.size());
     for (int c = 0; c < nc; ++c)
@@ -2576,9 +2581,16 @@ void Analysis::runReplays() {
             auto carries = [&](int c) { return carriesAt(c, k); };
             const double moved = carries(x);
             if (!(moved > 0)) continue;
-            // In proportion to what each was carrying, and, as a layer's pull
-            // is shared, more to the ones near the joint that went.
-            const Vec2 here = links_[cand[x].link].c;
+            // As a layer's pull is shared: the joints that take it over hold
+            // like springs, each as stiff as what it was carrying says and
+            // more so the nearer it is to the joint that went, under a piece
+            // that is stiff within that reach. So they share the load where it
+            // was by the lever rule: a joint on the far side of the others
+            // from it takes less, and one between it and the rest takes more
+            // (a block on three tips in a line that loses an end one hangs
+            // from the middle one). The far side is not let off: what lets go
+            // makes nothing else safer.
+            const Vec2 here = placeOf(x);
             const double over = (k - layerOf(cand[x].child) + 1) * h_;
             const double len = std::max(0.3, cfg_.share_reach * std::pow(over, 0.75));
             const double inv = cfg_.share_reach < 1e5 ? 1 / (3.2 * len * len) : 0.0;
@@ -2588,19 +2600,27 @@ void Analysis::runReplays() {
                 for (const Edge& e : adj[v]) {
                     if (e.up || upstream[e.to] || !(cand[e.cand].holds > 0)) continue;
                     const double w = std::log(std::max(carries(e.cand), 1e-9 * cand[e.cand].holds)) -
-                                     norm2(links_[cand[e.cand].link].c - here) * inv;
+                                     norm2(placeOf(e.cand) - here) * inv;
                     takers.emplace_back(e.cand, w);
                     top = std::max(top, w);
                 }
             double sum = 0;
+            M3 hold{};
             for (auto& [c, w] : takers) {
                 w = w - top > -25 ? std::exp(w - top) : 0.0;
                 sum += w;
+                const Vec2 d = placeOf(c) - here;
+                if (w > 0) addTo(hold, springAt(w, d.x, d.y));
             }
             if (!(sum > 0)) continue;
+            Move mv;
+            const bool lever = settle(hold, {1, 0, 0}, mv);
             for (const auto& [c, w] : takers) {
                 if (w == 0) continue;
-                pass(x, c, w / sum, k);
+                const Vec2 d = placeOf(c) - here;
+                const double share = lever ? w * (mv.w + mv.gx * d.x + mv.gy * d.y) : w / sum;
+                if (!(share > 0)) continue;
+                pass(x, c, share, k);
                 when[c] = firstOverAll(c, k);
                 if (when[c] != kNever && !listed[c]) {
                     listed[c] = 1;
