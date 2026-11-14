@@ -401,6 +401,20 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   (641), eye cup 371 as it was, 564 at "Most", 362 with 0.6 mm tips, 607
   (601) with 0.3 mm: nothing flagged on any. Making the supports takes 2 to
   6 s longer on those parts. Not printed.
+- **Edge tips no smaller than 0.3 mm from Tip size (2026-11-14).** Tip
+  size 0.3 mm moved the tips near edges and visible faces down to 0.2 mm.
+  How much a 0.2 mm tip holds is not measured (the built-in table scales it
+  by area, about a quarter of a 0.4 mm tip, and the planner adds tips on
+  that), it is about 14 × 10 pixels on the Saturn 4 Ultra 16K's screen, and
+  Phrozen's guide for Aqua Hyperfine, the user's resin, gives 0.3 mm as the
+  smallest support that prints in it without bending or breaking (a tall pin
+  test, so for a tip only indirect). So until a tips plate is fitted, a
+  smaller Tip size keeps edge tips at 0.3 mm (never above the usual tip),
+  and the caption says why; the Advanced page, a value saved with the resin
+  and a fitted table still set 0.2 mm. Tips where a part starts in mid-air
+  still take whatever fits a narrow spot. At Tip size 0.3 mm the user's lid
+  has 704 tips instead of 995, the eye cup 594 instead of 607, the demo
+  bracket 87 as before; nothing flagged by the replay on any. Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

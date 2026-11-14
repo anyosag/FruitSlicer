@@ -29,7 +29,17 @@ std::string fmt(const char* f, double a = 0, double b = 0) {
 
 int clampStop(int stop) { return std::clamp(stop, 1, kQuickStops); }
 
-void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportConfig& cfg, fruit::TreeConfig& tc) {
+// With FruitSlicer's own strengths (no tips plate fitted for the resin), how
+// much a tip smaller than 0.3 mm holds is not measured, and Phrozen gives
+// 0.3 mm as the smallest support that prints in its Aqua Hyperfine resin
+// (its user guide). So a smaller Tip size does not take the tips near edges
+// and visible faces below 0.3 mm, nor below the usual tip: a size of the
+// resin's own, the Advanced page, or a fitted table decide otherwise.
+constexpr int kSmallestShiftedEdgeTip = 1;  // FruitSlicer's own sizes: 0.3 mm
+
+// `edge_held`: set when that kept the edge tips bigger than Tip size alone would have.
+void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportConfig& cfg, fruit::TreeConfig& tc,
+             bool* edge_held = nullptr) {
     fruit::SupportChoices ch;
     ch.layer_height = kLayerHeight;
     ch.on_plate = p.on_plate;
@@ -46,7 +56,14 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     cfg.default_tip = nearestTipClass(cfg, c.usual_tip);
     const int shift = cfg.default_tip - nearestTipClass(cfg, usualTipFor(c.profile));
     cfg.minima_tip = std::clamp(cfg.minima_tip + shift, 0, last);
+    const int edge_was = cfg.edge_tip;
     cfg.edge_tip = std::clamp(cfg.edge_tip + shift, 0, last);
+    bool held = false;
+    if (cfg.capacity.table.empty() && shift < 0) {
+        const int floor = std::min({edge_was, nearestTipClass(cfg, kSmallestShiftedEdgeTip), cfg.default_tip});
+        held = cfg.edge_tip < floor;
+        cfg.edge_tip = std::max(cfg.edge_tip, floor);
+    }
     tc.merge_pillars = c.merge;
     if (c.full_raft && tc.raft == fruit::RaftStyle::Pads) tc.raft = fruit::RaftStyle::Full;  // none stays none
     if (const double k = quickCapacityScale(c.hold); k != 1.0) {
@@ -71,6 +88,7 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     cfg.skin_reach *= howManyEdgeReach(stop);
     if (c.look_further) tc.max_route_length = std::max(tc.max_route_length, kLookFurtherRoute);
     applyAdvanced(c.advanced, cfg, tc);
+    if (edge_held) *edge_held = held && !c.advanced.count("edge_tip");
 }
 
 using C = fruit::SupportConfig;
@@ -776,7 +794,8 @@ std::string howManyCaption(int stop, const SupportChoices& choices) {
 std::string tipSizeCaption(const SupportChoices& c) {
     fruit::SupportConfig cfg;
     fruit::TreeConfig tc;
-    resolve(fruit::Placement{}, c, cfg, tc);
+    bool edge_held = false;
+    resolve(fruit::Placement{}, c, cfg, tc, &edge_held);
     const auto size = [&](int cls) { return cfg.tip_classes[static_cast<std::size_t>(cls)].diameter; };
     const double usual = size(cfg.default_tip), air = size(cfg.minima_tip), edge = size(cfg.edge_tip);
     std::string out =
@@ -786,6 +805,10 @@ std::string tipSizeCaption(const SupportChoices& c) {
                                          : strf("%.1f mm where a part starts in mid-air, %.1f mm near edges and "
                                                 "visible faces.",
                                                 air, edge);
+    if (edge_held)
+        out += strf(" Edges and visible faces keep %.1f mm tips: how much a smaller tip holds isn't measured for this "
+                    "resin.",
+                    size(cfg.edge_tip));
     // "Each tip's own load" (the Advanced page) changes sizes after that.
     if (cfg.tip_load_limit > 0) out += " A tip that would carry too much gets a size bigger, or another beside it.";
     return out;

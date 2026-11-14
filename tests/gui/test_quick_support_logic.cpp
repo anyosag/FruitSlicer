@@ -165,7 +165,14 @@ TEST_CASE("Quick support: a resin's measured values are the middle, and the stop
     CHECK(quickChanged(smaller));
     CHECK(tipSize(smaller) == Approx(0.4));
     CHECK(tipSizes(smaller)[1] < resins[1] + 1e-9);
-    CHECK(tipSizes(smaller)[2] < resins[2]);
+    // This resin's tips plate isn't fitted (no capacity table): its edge tips stay 0.3 mm.
+    CHECK(resins[2] == Approx(0.3));
+    CHECK(tipSizes(smaller)[2] == Approx(0.3));
+    // With a fitted table its own sizes decide, the smallest included.
+    SupportChoices fitted = c;
+    fitted.profile["capacity_table"] = {{0.2, 2.5}, {0.3, 2.5}, {0.4, 5.2}, {0.6, 10.5}};
+    fitted.usual_tip = 2;
+    CHECK(tipSizes(fitted)[2] == Approx(0.2));
 }
 
 TEST_CASE("Quick support: every position's planner values", "[gui][supports][quick]") {
@@ -197,11 +204,20 @@ TEST_CASE("Quick support: every position's planner values", "[gui][supports][qui
     CHECK(supportConfig(fruit::Placement{}, at(9)).critical_angle_deg == Approx(35));
     CHECK(supportConfig(fruit::Placement{}, at(-4)).critical_angle_deg == Approx(55));
 
-    // Tip size: the usual tip, and the other two with it, as far as the sizes go.
-    CHECK(tipSizes(at(3, 1)) == std::array<double, 3>{0.3, 0.4, 0.2});
+    // Tip size: the usual tip, and the other two with it, as far as the sizes go. With FruitSlicer's own
+    // strengths the tips near edges go no smaller than 0.3 mm (nor than the usual tip): how much a 0.2 mm
+    // tip holds isn't measured.
+    CHECK(tipSizes(at(3, 1)) == std::array<double, 3>{0.3, 0.4, 0.3});
     CHECK(tipSizes(at(3, 2)) == std::array<double, 3>{0.4, 0.6, 0.3});
     CHECK(tipSizes(at(3, 3)) == std::array<double, 3>{0.6, 0.6, 0.4});
     CHECK(tipSizes(at(3, 0)) == std::array<double, 3>{0.2, 0.3, 0.2});  // an older job's 0.2 mm
+    // 0.2 mm near edges is still there for whoever asks for it: on the Advanced page, or as the resin's own.
+    SupportChoices asked = at(3, 1);
+    asked.advanced["edge_tip"] = 0;
+    CHECK(tipSizes(asked) == std::array<double, 3>{0.3, 0.4, 0.2});
+    SupportChoices resin_own = at(3, 1);
+    resin_own.profile = {{kResinOwnKey, {{"edge_tip", 0}}}};
+    CHECK(tipSizes(resin_own)[2] == Approx(0.2));
     CHECK(quickChanged(at(3, 1)));
     CHECK(quickChanged(at(3, 3)));
 
@@ -305,7 +321,13 @@ TEST_CASE("Quick support: captions and words state the real values", "[gui][supp
     CHECK_THAT(tipSizeCaption(at(3, 2)), ContainsSubstring("0.6 mm where a part starts in mid-air"));
     CHECK_THAT(tipSizeCaption(at(3, 2)), ContainsSubstring("0.3 mm near edges"));
     CHECK_THAT(tipSizeCaption(at(3, 1)), ContainsSubstring("0.4 mm where a part starts in mid-air"));
-    CHECK_THAT(tipSizeCaption(at(3, 1)), ContainsSubstring("0.2 mm near edges"));
+    CHECK_THAT(tipSizeCaption(at(3, 1)), ContainsSubstring("Edges and visible faces keep 0.3 mm tips"));
+    CHECK_THAT(tipSizeCaption(at(3, 1)), ContainsSubstring("isn't measured for this resin"));
+    CHECK_THAT(tipSizeCaption(at(3, 2)), !ContainsSubstring("keep"));
+    SupportChoices edges_set = at(3, 1);
+    edges_set.advanced["edge_tip"] = 0;
+    CHECK_THAT(tipSizeCaption(edges_set), ContainsSubstring("0.2 mm near edges"));
+    CHECK_THAT(tipSizeCaption(edges_set), !ContainsSubstring("keep"));
     CHECK_THAT(tipSizeCaption(at(3, 3)), ContainsSubstring("0.4 mm near edges"));
 
     CHECK_THAT(lookFurtherCaption(at(3, 2, false)), ContainsSubstring("within 15 mm"));

@@ -86,7 +86,11 @@ fresh edge. A lighter stop never keeps more tips than the stop above it.
 Under the stops the panel shows the tips this job would get at each,
 counted in the background, and says when a stop changes nothing here.
 **Tip size** (0.3, 0.4, 0.6 mm) is the usual tip; the sizes for spots in
-mid-air and near edges move with it, so it reaches every tip. **Look
+mid-air and near edges move with it, so it reaches every tip. Edge tips go
+no smaller than 0.3 mm that way until the resin's tips plate is fitted:
+how much a 0.2 mm tip holds isn't measured (Phrozen gives 0.3 mm as the
+smallest support that prints in its Aqua Hyperfine), and the Advanced page
+still sets 0.2 mm for whoever wants it. **Look
 further for a way down** lets a blocked support walk 30 mm instead of 15
 before it stands on the model (more resin; routes that long are not printed
 yet). Trunks and braces, once a slider, is a row under Advanced settings,
