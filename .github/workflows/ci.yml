@@ -198,6 +198,8 @@ jobs:
           for arch in arm64 x86_64; do lipo "$APP/Contents/MacOS/FruitSlicer" -verify_arch "$arch"; done
           vtool -show-build "$APP/Contents/MacOS/FruitSlicer"
           plutil -lint "$APP/Contents/Info.plist"
+          # Knows .fruitjob files, but this CI copy never opens them (only FRUIT_OPENS_JOB_FILES builds do).
+          cmake "-DPLIST=$APP/Contents/Info.plist" -DRANK=None -P tests/macos/check_document_types.cmake
           test -f "$APP/Contents/Resources/FruitSlicer.icns"
           ls "$APP/Contents/Resources/Licenses"
           codesign --verify --strict --verbose=2 "$APP"

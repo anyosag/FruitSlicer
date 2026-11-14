@@ -2,15 +2,19 @@
 # Copyright (C) 2026 FruitSlicer contributors
 #
 # The built app's Info.plist tells macOS that a .fruitjob file is a FruitSlicer
-# job, and that FruitSlicer owns it: Finder shows it as one, with the app's
-# document icon, and a double-click opens it in the app.
-#   cmake -DPLIST=<FruitSlicer.app/Contents/Info.plist> -P check_document_types.cmake
+# job: Finder shows it as one, with the app's document icon. The copy built
+# with FRUIT_OPENS_JOB_FILES owns it (a double-click opens it there); any
+# other copy ranks None, so test and CI builds never compete for it.
+#   cmake -DPLIST=<FruitSlicer.app/Contents/Info.plist> [-DRANK=Owner|None] -P check_document_types.cmake
 execute_process(COMMAND plutil -convert json -o - "${PLIST}" OUTPUT_VARIABLE json RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "plutil could not read ${PLIST}")
 endif()
 string(JSON app GET "${json}" CFBundleIdentifier)
 set(job "${app}.job")
+if(NOT RANK)
+  set(RANK Owner)
+endif()
 
 # The type, declared by the app: its extension and what Finder calls it.
 string(JSON n ERROR_VARIABLE none LENGTH "${json}" UTExportedTypeDeclarations)
@@ -34,7 +38,7 @@ if(NOT declared)
   message(FATAL_ERROR "the app does not declare ${job}")
 endif()
 
-# The app owns it, as an editor, with the icon macOS draws from the app's.
+# The app opens it as an editor (with the rank asked for), with the icon macOS draws from the app's.
 string(JSON n LENGTH "${json}" CFBundleDocumentTypes)
 set(owned FALSE)
 math(EXPR last "${n} - 1")
@@ -48,7 +52,7 @@ foreach(i RANGE ${last})
     string(JSON rank GET "${json}" CFBundleDocumentTypes ${i} LSHandlerRank)
     string(JSON role GET "${json}" CFBundleDocumentTypes ${i} CFBundleTypeRole)
     string(JSON icon GET "${json}" CFBundleDocumentTypes ${i} CFBundleTypeIconSystemGenerated)
-    if(NOT rank STREQUAL "Owner" OR NOT role STREQUAL "Editor" OR NOT icon EQUAL 1)
+    if(NOT rank STREQUAL RANK OR NOT role STREQUAL "Editor" OR NOT icon EQUAL 1)
       message(FATAL_ERROR "${job}: rank ${rank}, role ${role}, system icon ${icon}")
     endif()
     set(owned TRUE)
@@ -57,4 +61,4 @@ endforeach()
 if(NOT owned)
   message(FATAL_ERROR "no document type of the app opens ${job}")
 endif()
-message(STATUS ".fruitjob: ${job}, owned by ${app}")
+message(STATUS ".fruitjob: ${job}, rank ${RANK} for ${app}")

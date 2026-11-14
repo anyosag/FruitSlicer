@@ -144,6 +144,13 @@ target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_net fruit_net_moc
 
 if(APPLE)
   set_source_files_properties(macos/FruitSlicer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  # Owner: Finder opens .fruitjob files with this copy. None: it still knows
+  # the type, but never opens it unless asked (see FRUIT_OPENS_JOB_FILES).
+  if(FRUIT_OPENS_JOB_FILES)
+    set(FRUIT_JOB_HANDLER_RANK Owner)
+  else()
+    set(FRUIT_JOB_HANDLER_RANK None)
+  endif()
   set_target_properties(fruitslicer_app PROPERTIES
     OUTPUT_NAME FruitSlicer
     MACOSX_BUNDLE TRUE

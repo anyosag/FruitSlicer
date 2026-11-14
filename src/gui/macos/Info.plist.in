@@ -36,7 +36,8 @@
   <string>FruitSlicer saves print files to the USB stick you take to the printer.</string>
   <!-- A job file (.fruitjob) is FruitSlicer's own: Finder shows it as a
        FruitSlicer job, with a document icon macOS draws from the app's, and
-       opens it here. It is a zip inside, but not one to be unpacked. -->
+       opens it with the copy built with FRUIT_OPENS_JOB_FILES (rank Owner;
+       other copies: None). It is a zip inside, but not one to be unpacked. -->
   <key>UTExportedTypeDeclarations</key>
   <array>
     <dict>
@@ -66,7 +67,7 @@
       <key>CFBundleTypeRole</key>
       <string>Editor</string>
       <key>LSHandlerRank</key>
-      <string>Owner</string>
+      <string>${FRUIT_JOB_HANDLER_RANK}</string>
       <key>LSItemContentTypes</key>
       <array>
         <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.job</string>
