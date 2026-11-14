@@ -672,6 +672,26 @@ TEST_CASE("a tip that lets go passes on what it would have carried later too, no
     CHECK(held.stats.tips_cost_chance == 0);
 }
 
+TEST_CASE("a tip that takes over another's load still carries its own, however small", "[stability]") {
+    // A stiff block (72 mm², its middle at x = -0.5) on a weak tip at x = -3 and a strong one at x = +3:
+    // by the lever rule 42 and 30 mm². The weak one (holds 15.9) lets go at once. The strong one (holds
+    // 63.4) then carries all 72 and lets go too. Its own 30 is under half the load at which 1 in 10,000
+    // such tips let go: it must not be forgotten when the other's 42 comes onto it.
+    Build b(30);
+    b.support(0, 20, rect(-3.4, -0.4, -2.6, 0.4));
+    b.support(0, 20, rect(2.6, -0.4, 3.4, 0.4));
+    b.part(20, 30, rect(-5, -4, 4, 4));
+    StabilityConfig cfg = stiffBlock();
+    cfg.bulk_factor = 100;  // only the tips can break
+    cfg.steepness = 1000;   // every strength all but exactly where half let go
+    cfg.replays = 200;
+    const StabilityResult r = b.run(cfg, {{{-3, 0, 1.0}, 0.4}, {{3, 0, 1.0}, 0.8}});
+    REQUIRE(r.tips.size() == 2);
+    CHECK(r.tips[0].load == Approx(42).epsilon(1e-6));
+    CHECK(r.tips[1].load == Approx(30).epsilon(1e-6));
+    CHECK(at(r, 25, {0, 0}).lost_chance == Approx(1));
+}
+
 TEST_CASE("joints one after the other: lost if any of them breaks, and only what hangs from it", "[stability]") {
     // A support, its tip, then a thin stem under a cap.
     Build b(40);

@@ -1625,11 +1625,16 @@ void Analysis::step(int k, Scratch& st) const {
         // (A head's strength is its tip's. What goes through it is kept only
         // to be passed down its rod afterwards. And a sliver where two
         // outlines barely meet does not speak for the layer.)
+        Worst& w = st.worst[link];
         if (!head_[link]) {
             if (uf > layer_worst && !sliver_[link]) layer_worst = uf;
-            if (uf >= seen_floor_) st.seen.push_back({link, k, uf});
+            // Only a new high on this thread can be a new high of all the
+            // layers (each thread takes its layers in order). A tip's is kept
+            // at any load: when another lets go it may take part of that
+            // one's load, and then its own counts in full.
+            const bool contact = links_[link].kind == Kind::Tip || links_[link].kind == Kind::Foot;
+            if (uf > w.u && (uf >= seen_floor_ || contact)) st.seen.push_back({link, k, uf});
         }
-        Worst& w = st.worst[link];
         if (uf > w.u) {
             w.u = uf;
             w.load = static_cast<float>(load);
