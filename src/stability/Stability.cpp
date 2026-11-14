@@ -24,6 +24,7 @@ constexpr double kSliver = kSliverContact;  // mm²: under the contact of a 0.2 
 constexpr double kListFrom = 0.05;  // a joint is listed from a chance of 1 in 20
 constexpr double kWorthLosing = 1.0;  // mm³ of model: less than this lost still counts as printed whole
 constexpr double kBorrowedMargin = 1.0 / 3;  // a borrowed limit, as a share of where half fail
+constexpr double kFittedMargin = 0.7;        // a fitted one, as `fruitslicer fit` writes it
 constexpr double kLen = 10.0;      // mm: a sheet's slope is counted as its rise over this length
 constexpr size_t kMaxSheets = 16;  // more parts of one piece in one layer than this are taken as one stiff sheet
 // mm: how far up a support that stands on the model may still be sunk in the face it stands on. On a face
@@ -2944,10 +2945,14 @@ StabilityConfig stabilityConfig(const SupportConfig& cfg) {
     // The planner's tip reach on a flat face is a reach it trusts in the same
     // way. A skin's stress goes with the square of its reach, so the reach at
     // which half fail is that one over the root of the trusted share. The
-    // job's own spacing choice does not change what the resin spans.
+    // job's own spacing choice does not change what the resin spans. The
+    // tips plate does not measure that reach: it stays borrowed, with a
+    // borrowed margin, until a spacing plate is fitted (its curve is then
+    // the resin's own), whatever was fitted for the tips.
     CoverageModel reach = cfg.coverage;
     reach.density = 1.0;
-    s.skin_half_reach = reach.radius(0) / std::sqrt(s.usable_fraction);
+    const bool reach_fitted = cfg.coverage.curve != CoverageModel{}.curve;
+    s.skin_half_reach = reach.radius(0) / std::sqrt(reach_fitted ? kFittedMargin : kBorrowedMargin);
     return s;
 }
 

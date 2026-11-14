@@ -1174,8 +1174,14 @@ TEST_CASE("the planner's settings carry over", "[stability]") {
     CHECK(s.capacity.capacity(0.6) == Approx(30.0));
     // A fitted table is 0.7 of where half let go, as `fit` writes it.
     CHECK(s.usable_fraction == Approx(0.7));
-    // The reach is the resin's, not the job's spacing choice.
-    CHECK(s.skin_half_reach == Approx(3.2 / std::sqrt(0.7)));
+    // The reach is the resin's, not the job's spacing choice. The tips plate does not measure it: with only
+    // the tips fitted it is still the borrowed reach, with the borrowed margin...
+    CHECK(s.skin_half_reach == Approx(3.2 * std::sqrt(3.0)));
+    // ...and with a spacing plate fitted, the fitted reach with the fitted margin.
+    cfg.coverage.curve = {{0.0, 2.5}, {40.0, 5.0}};
+    CHECK(stabilityConfig(cfg).skin_half_reach == Approx(2.5 / std::sqrt(0.7)));
+    cfg.capacity.table.clear();
+    CHECK(stabilityConfig(cfg).skin_half_reach == Approx(2.5 / std::sqrt(0.7)));
     // The built-in table is borrowed: taken as a third of where half let go.
     const StabilityConfig built_in = stabilityConfig(SupportConfig{});
     CHECK(built_in.usable_fraction == Approx(1.0 / 3));
