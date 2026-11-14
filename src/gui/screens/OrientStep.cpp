@@ -53,8 +53,8 @@ std::string sidesText(const App& app) {
 void orientPanel(App& app, Document& doc) {
     const OrientState& o = doc.orient();
     groupLabel("Find a good rotation");
-    text("Searching tries 64 directions plus this one, then runs the full tip planner on the best 6 and shows you "
-         "the three that beat how it sits now.",
+    text("Searching tries 64 directions plus this one, plans tips for the best 6, then makes their supports and "
+         "replays each print. It shows you up to three that beat how it sits now and may lose no more of it.",
          fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 2));
     {
