@@ -4,6 +4,8 @@
 
 #include <numeric>
 
+#include "core/Parallel.h"
+
 namespace fruit {
 
 namespace {
@@ -17,7 +19,7 @@ struct Hollow {
 
 }  // namespace
 
-HollowReport analyzeHollows(const LayerStack& layers, double min_area, double min_volume) {
+HollowReport analyzeHollows(const LayerStack& layers, double min_area, double min_volume, unsigned threads) {
     const size_t n = layers.size();
     HollowReport report;
     report.trap_regions.assign(n, {});
@@ -25,7 +27,9 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
     std::vector<Hollow> hollows;
     std::vector<std::vector<int>> by_layer(n);
     std::vector<Paths> filled(n);  // material + enclosed holes (outer contours only)
-    for (size_t L = 0; L < n; ++L) {
+    // Each layer on its own (in parallel), then numbered in layer order.
+    std::vector<std::vector<Hollow>> holes_in(n);
+    parallelFor(n, threads, [&](size_t L) {
         Paths outers;
         for (const ExPolygon& e : toExPolygons(layers.slices[L])) {
             outers.push_back(e.contour);
@@ -34,12 +38,17 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
                 std::reverse(pos.begin(), pos.end());
                 const double a = area(pos);
                 if (a < 1e-6) continue;
-                by_layer[L].push_back(static_cast<int>(hollows.size()));
-                hollows.push_back({static_cast<int>(L), {pos}, bbox(pos), a});
+                holes_in[L].push_back({static_cast<int>(L), {pos}, bbox(pos), a});
             }
         }
         filled[L] = unionNonZero(outers);
-    }
+    });
+    for (size_t L = 0; L < n; ++L)
+        for (Hollow& h : holes_in[L]) {
+            by_layer[L].push_back(static_cast<int>(hollows.size()));
+            hollows.push_back(std::move(h));
+        }
+    holes_in.clear();
     // Union-find over hollows overlapping between adjacent layers.
     std::vector<int> uf(hollows.size());
     std::iota(uf.begin(), uf.end(), 0);
@@ -53,7 +62,9 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
         if (L < 0 || L >= static_cast<long>(n)) return true;
         return std::abs(area(difference(h.shape, filled[L]))) > 1e-4;
     };
-    for (size_t i = 0; i < hollows.size(); ++i) {
+    // The geometry for each hollow in parallel; the joins after, in order.
+    std::vector<std::vector<int>> joins(hollows.size());
+    parallelFor(hollows.size(), threads, [&](size_t i) {
         const Hollow& h = hollows[i];
         open_below[i] = outsideAt(h, h.layer - 1);
         open_above[i] = outsideAt(h, h.layer + 1);
@@ -61,9 +72,11 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
             for (int j : by_layer[h.layer + 1]) {
                 const Hollow& g = hollows[j];
                 if (!h.box.overlaps(g.box)) continue;
-                if (std::abs(area(intersection(h.shape, g.shape))) > 1e-4) uf[find(static_cast<int>(i))] = find(j);
+                if (std::abs(area(intersection(h.shape, g.shape))) > 1e-4) joins[i].push_back(j);
             }
-    }
+    });
+    for (size_t i = 0; i < hollows.size(); ++i)
+        for (int j : joins[i]) uf[find(static_cast<int>(i))] = find(j);
     struct Acc {
         bool below = false, above = false;
         int first = 1 << 30, last = -1;

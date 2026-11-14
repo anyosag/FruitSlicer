@@ -30,7 +30,8 @@ struct LayerPart {
 class IslandGraph {
 public:
     IslandGraph() = default;
-    IslandGraph(const LayerStack& layers, double link_grow_mm);
+    // On up to `threads` threads (0 = all cores); the graph is the same however many.
+    IslandGraph(const LayerStack& layers, double link_grow_mm, unsigned threads = 0);
 
     const std::vector<LayerPart>& parts() const { return parts_; }
     const LayerPart& part(int id) const { return parts_[id]; }

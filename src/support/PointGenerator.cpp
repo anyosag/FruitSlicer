@@ -929,7 +929,7 @@ void Generator::setup() {
     }
     layers_p_ = layers_ptr_.get();
     ctl_.step("islands", 0);
-    graph_ = IslandGraph(layers(), cfg_.link_grow);
+    graph_ = IslandGraph(layers(), cfg_.link_grow, opts_.slice_threads);
     ctl_.step("islands", 1);
     edges_ = SharpEdgeIndex(mesh_, cfg_.sharp_edge_angle_deg);
     costf_.cosmetic = opts_.cosmetic;
@@ -939,7 +939,7 @@ void Generator::setup() {
     costf_.edge_margin = cfg_.edge_margin;
     minima_ = findMinima(mesh_);
     minima_normal_ = minimumNormals(mesh_, minima_);
-    hollows_ = analyzeHollows(layers());
+    hollows_ = analyzeHollows(layers(), 0.5, 1.0, opts_.slice_threads);
     ctl_.check();
     traps_.assign(layers().size(), {});
     for (size_t L = 0; L < layers().size(); ++L) {
