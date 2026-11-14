@@ -1229,18 +1229,26 @@ void Analysis::buildDepths() {
     const auto cells = static_cast<size_t>(nx) * static_cast<size_t>(ny);
     std::vector<std::uint16_t> deep(cells, 0);
     std::vector<int> last(cells, -2);
-    std::vector<Vec2> points;
     std::vector<float> grid;
     const int chunk = 64;
     std::vector<std::vector<Run>> runs(chunk);
+    std::vector<std::vector<std::vector<Vec2>>> sampled(chunk);  // by layer in the chunk: each model part's samplePart
     for (int first = 0; first < layers_; first += chunk) {
         const int count = std::min(chunk, layers_ - first);
-        // Which lattice points are in the model, layer by layer...
+        // Which lattice points are in the model, layer by layer (and the
+        // points spread over each part, for below)...
         parallelFor(static_cast<size_t>(count), cfg_.threads, [&](size_t c) {
             std::vector<Run>& out = runs[c];
             out.clear();
+            std::vector<std::vector<Vec2>>& pts = sampled[c];
+            pts.resize(in_layer_[first + static_cast<int>(c)].size());
+            size_t k = 0;
             for (int id : in_layer_[first + static_cast<int>(c)]) {
-                if (!model_[id]) continue;
+                if (!model_[id]) {
+                    ++k;
+                    continue;
+                }
+                samplePart(id, pts[k++]);
                 const Part& p = part_[id];
                 const Paths ps = p.poly().toPaths();
                 const int r0 = std::max(0, static_cast<int>(std::floor((p.box.min.y - box.min.y) / g - 0.5)));
@@ -1263,9 +1271,13 @@ void Analysis::buildDepths() {
                     deep[at] = last[at] == L - 1 ? static_cast<std::uint16_t>(std::min(65535, deep[at] + 1)) : 1;
                     last[at] = L;
                 }
+            size_t k = 0;
             for (int id : in_layer_[L]) {
-                if (!model_[id]) continue;
-                samplePart(id, points);
+                if (!model_[id]) {
+                    ++k;
+                    continue;
+                }
+                const std::vector<Vec2>& points = sampled[static_cast<size_t>(c)][k++];
                 std::vector<std::uint16_t>& out = depth_[id];
                 out.resize(points.size());
                 for (size_t j = 0; j < points.size(); ++j) {
