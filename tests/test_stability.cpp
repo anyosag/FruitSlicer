@@ -718,6 +718,64 @@ TEST_CASE("a stiff piece that loses a tip hangs from the others by the lever rul
     CHECK(at(middle, 25, {0, 0}).lost_chance == 0);
 }
 
+TEST_CASE("the same print in thinner layers: the same loads and chances", "[stability][layers]") {
+    // Each shape is drawn in mm and cut at 0.05 and at 0.025 mm.
+    auto layers = [](double mm, double h) { return static_cast<int>(std::lround(mm / h)); };
+    for (bool whole : {false, true}) {
+        // A slab 0.5 mm thick on four tips 4 mm apart, off to one side; and a block 5 mm tall on tips
+        // 10 mm apart. With the supports whole, each tip sunk 0.1 mm into the model.
+        auto piece = [&](double h, double tips_at, const Path& outline, double thick) {
+            const double top = 1.0 + thick;
+            Build b(layers(top, h), h);
+            std::vector<TipContact> tips;
+            for (double x : {-tips_at, tips_at})
+                for (double y : {-tips_at * 0.75, tips_at * 0.75}) {
+                    b.support(0, layers(whole ? 1.1 : 1.0, h), rect(x - 0.2, y - 0.2, x + 0.2, y + 0.2));
+                    tips.push_back({{x, y, 1.0}, 0.4});
+                }
+            b.part(layers(1.0, h), layers(top, h), outline);
+            const StabilityResult r = whole ? b.runWhole(StabilityConfig{}, tips) : b.run(StabilityConfig{}, tips);
+            std::vector<double> out;
+            for (const TipRisk& t : r.tips) out.push_back(t.load);
+            out.push_back(*std::max_element(r.closeness_by_layer.begin(), r.closeness_by_layer.end()));
+            return out;
+        };
+        for (int which = 0; which < 2; ++which) {
+            const Path outline = which == 0 ? rect(-3, -2.5, 4.5, 2.5) : rect(-6, -6, 10, 6);
+            const double at = which == 0 ? 2 : 5, thick = which == 0 ? 0.5 : 5;
+            const std::vector<double> coarse = piece(0.05, at, outline, thick), fine = piece(0.025, at, outline, thick);
+            REQUIRE(coarse.size() == 5);
+            REQUIRE(fine.size() == coarse.size());
+            for (size_t i = 0; i < coarse.size(); ++i) {
+                INFO("supports whole " << whole << ", piece " << which << ", value " << i);
+                CHECK(fine[i] == Approx(coarse[i]).epsilon(0.005));
+            }
+        }
+    }
+    // A cap on a stem: the stem breaks once, whatever the layers.
+    auto cap = [&](double h) {
+        Build b(layers(1.5, h), h);
+        b.part(0, layers(1.0, h), rect(-0.5, -0.5, 0.5, 0.5));
+        b.part(layers(1.0, h), layers(1.5, h), rect(-5, -5, 5, 5));
+        StabilityConfig cfg;
+        cfg.replays = 4000;
+        const StabilityResult r = b.run(cfg);
+        return std::pair{at(r, layers(0.5, h), {0, 0}).closeness, at(r, layers(1.25, h), {3, 3}).lost_chance};
+    };
+    const auto [u05, lost05] = cap(0.05);
+    const auto [u025, lost025] = cap(0.025);
+    CHECK(u025 == Approx(u05).epsilon(1e-6));
+    CHECK(lost025 == Approx(lost05).margin(0.03));
+    // A post leaning 0.2 mm in every mm: the textbook stress at its foot.
+    auto post = [&](double h) {
+        const int n = layers(3.0, h);
+        Build b(n, h);
+        for (int L = 0; L < n; ++L) b.part(L, L + 1, rect(L * h * 0.2, 0, L * h * 0.2 + 1, 2));
+        return at(b.run(StabilityConfig{}), layers(0.5, h), {0.6, 1}).stress;
+    };
+    CHECK(post(0.025) == Approx(post(0.05)).epsilon(0.01));
+}
+
 TEST_CASE("joints one after the other: lost if any of them breaks, and only what hangs from it", "[stability]") {
     // A support, its tip, then a thin stem under a cap.
     Build b(40);
