@@ -13,6 +13,7 @@
 #include "Format.h"
 #include "Orient.h"
 #include "Print.h"
+#include "core/Parallel.h"
 #include "support/CosmeticField.h"
 #include "support/PointGenerator.h"
 #include "support/SupportSettings.h"
@@ -1072,12 +1073,23 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     const int stop = clampStop(c.how_many);
     if (stop >= kHowManyCentre) return planTipsAt(doc, c, visible, ctl, edits);
-    const double share = 1.0 / (kHowManyCentre - stop + 1);
-    SupportPlan own = planTipsAt(doc, c, visible, ctl.sub(0.0, share), edits);
-    SupportChoices up = c;
-    up.how_many = stop + 1;
-    SupportPlan above = planTips(doc, up, visible, ctl.sub(share, 1.0), edits);
-    return keepsOwn(own, above) ? own : above;
+    // This stop's plan and each one above it up to the centre: none depends on
+    // another, so they are made side by side. (The placed model is made once,
+    // here, not by each of them at once.)
+    const int n = kHowManyCentre - stop + 1;
+    std::vector<SupportPlan> plans(static_cast<std::size_t>(n));
+    doc.placed();
+    fruit::parallelFor(plans.size(), static_cast<unsigned>(n), [&](std::size_t i) {
+        SupportChoices one = c;
+        one.how_many = stop + static_cast<int>(i);
+        plans[i] = planTipsAt(doc, one, visible, ctl.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n), edits);
+    });
+    // From the centre down, each stop keeps its own plan or the one kept for the stop above.
+    for (int i = n - 2; i >= 0; --i) {
+        const auto at = static_cast<std::size_t>(i);
+        if (!keepsOwn(plans[at], plans[at + 1])) plans[at] = plans[at + 1];
+    }
+    return std::move(plans.front());
 }
 
 std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
@@ -1085,14 +1097,20 @@ std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const Suppor
                                                const std::vector<TipEdit>& edits) {
     std::array<std::size_t, kQuickStops> tips{};
     std::array<SupportPlan, kQuickStops> kept;
-    // The centre first, then down from it, so each lighter stop has the one above to compare with.
+    // Every stop's own plan, side by side (none depends on another)...
     const int order[kQuickStops] = {kHowManyCentre, 2, 1, 4, 5};
+    doc.placed();
+    fruit::parallelFor(kQuickStops, kQuickStops, [&](std::size_t i) {
+        const int stop = order[i];
+        SupportChoices one = c;
+        one.how_many = stop;
+        kept[static_cast<std::size_t>(stop - 1)] =
+            planTipsAt(doc, one, visible, ctl.sub(i / double(kQuickStops), (i + 1) / double(kQuickStops)), edits);
+    });
+    // ...then the centre first, then down from it, so each lighter stop has the one above to compare with.
     for (int i = 0; i < kQuickStops; ++i) {
         const int stop = order[i];
         const auto at = static_cast<std::size_t>(stop - 1);
-        SupportChoices one = c;
-        one.how_many = stop;
-        kept[at] = planTipsAt(doc, one, visible, ctl.sub(i / double(kQuickStops), (i + 1) / double(kQuickStops)), edits);
         if (stop < kHowManyCentre && !keepsOwn(kept[at], kept[at + 1])) kept[at] = kept[at + 1];
         tips[at] = applyEdits(kept[at].points, edits, doc.frames()).size();
     }
