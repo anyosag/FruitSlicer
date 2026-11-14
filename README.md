@@ -16,7 +16,7 @@ behind it, and the milestone plan are in
 | M0.5 — calibration plates (tips, spacing, islands) with manifests and result sheets | done |
 | M1 — support-point generator (coverage through material + capacity + islands), points JSON with persistent manual edits, preview renderer | done (calibration still needed) |
 | M2 — heads (collision-aware), pillars with 45° bridges and diagonal ground routes, bracing outside the flex zone, one-piece pad raft, model+supports STL, floating-island validation | phase 1 done |
-| M3 — orientation search (two-stage: mesh proxies over 64 directions, full generator on the 6 best) | done |
+| M3 — orientation search (mesh proxies over 64 directions, full generator on the 6 best, then their supports and a replay of the print) | done |
 | M5 (part) — branching: nearby pillars merge into trunks below the flex zone | done |
 | Calibration loop: `fit` result sheets → resin profile → `--profile` | done |
 | Safety: suction-cup / resin-trap warnings, no supports in closed cavities, no-trap bracing, hinge bias, on-plate mode | done |
@@ -73,6 +73,16 @@ first when there are unsaved changes. The Orient step scores how the model sits 
 tips, biggest layer, height, layers short of hold), lets you pick the sides
 people will see, and searches 65 directions for better ways to stand it,
 compared side by side with how it sits now; using one is undoable. The
+best 6 and how it sits now then get the supports the Supports step would
+make and a replay of their print (the same as the Risk view's), four at a
+time: what the replay finds ranks them first (the likeliest place that may
+not print, then how much of the model may be lost), and a way that may lose
+more than now is never offered, however few tips it needs. Their tip counts
+are the supports' own: the planner alone leaves out the tips it adds where
+one tip would carry too much, and for the demo bracket's tilted finalists it
+counted only a third to a quarter of the tips their supports have. This
+makes the search slower: about 10 s on the bracket, and 100 s on a lid with
+about 640 tips, where it took 13 s before. The
 Supports step generates tips and the support tree from three quick
 controls, named for what they set rather than for an outcome (the planner
 has rules that place tips, and the part decides which rule applies, so a

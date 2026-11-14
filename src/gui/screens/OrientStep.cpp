@@ -92,6 +92,10 @@ void orientPanel(App& app, Document& doc) {
                        : "…");
         keyValue("Height", fresh ? strf("%.1f mm", o.now.top) : "…");
         keyValue("Layers short of hold", v(o.now.short_of_hold));
+        if (fresh && o.now.risk.checked)
+            keyValue("May not print", o.now.risk.places == 0 ? std::string("Nothing")
+                                                              : strf("%zu %s", o.now.risk.places,
+                                                                     o.now.risk.places == 1 ? "place" : "places"));
         if (!fresh) text("Scoring how it sits…", fonts().regular, size::Help, col::TextMuted);
     }
     ImGui::Dummy(ImVec2(0, 8));
@@ -221,6 +225,13 @@ void optionCard(App& app, const char* id, const char* title, const OrientOption&
     metric("Short of hold", strf("%zu %s", m.short_of_hold, m.short_of_hold == 1 ? "layer" : "layers"),
            now ? d(m.short_of_hold, now->short_of_hold) : 0, now ? signedCount(d(m.short_of_hold, now->short_of_hold)) : "",
            x0, y + 88);
+    if (m.risk.checked) {
+        // What the replay of its print finds: places that may not print.
+        const bool cmp = now && now->risk.checked;
+        const double dp = cmp ? d(m.risk.places, now->risk.places) : 0;
+        metric("May not print", m.risk.places == 0 ? std::string("Nothing") : strf("%zu %s", m.risk.places, m.risk.places == 1 ? "place" : "places"),
+               dp, cmp ? signedCount(dp) : "", x1, y + 88);
+    }
     ImGui::SetCursorPos(ImVec2(x0, y + 140));
     text(op.summary.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 4));
@@ -255,8 +266,9 @@ void orientResults(App& app, Document& doc, ImVec2 size) {
     const float cw = ImGui::CalcTextSize("Change what counts").x + 32;
     ImGui::PopFont();
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - cw - 24);
-    text(strf("Searched %d directions%s and planned tips for the best %d. Each option is compared with how it sits "
-              "now. Nothing changes until you pick one, and you can undo.",
+    text(strf("Searched %d directions%s, planned tips for the best %d, then made their supports and replayed the "
+              "print layer by layer to see what may not print. Ways that may lose more than now are left out. Nothing "
+              "changes until you pick one, and you can undo.",
               r.directions, took.c_str(), r.finalists)
              .c_str(),
          fonts().regular, size::Body, col::TextSecondary, true);

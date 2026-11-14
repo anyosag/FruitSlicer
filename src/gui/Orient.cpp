@@ -3,12 +3,15 @@
 #include "Orient.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
+#include <future>
 #include <cmath>
 #include <cstdio>
 
 #include "Document.h"
+#include "Placing.h"
 #include "Print.h"
 #include "mesh/ModelCheck.h"
 #include "support/CosmeticField.h"
@@ -57,6 +60,9 @@ std::vector<fruit::Vec3> visibleInPrinter(const std::vector<fruit::Vec3>& model_
 
 namespace {
 
+// Finalists given supports and replayed at the same time.
+constexpr std::size_t kReplayLanes = 4;
+
 std::size_t layersFor(double top) { return static_cast<std::size_t>(std::ceil(top / kLayerHeight - 1e-9)); }
 
 // The rotation, turned about the vertical in 15° steps until it fits the
@@ -81,6 +87,70 @@ std::string fmt(const char* f, double a, double b = 0) {
 }
 
 }  // namespace
+
+bool saferThan(const OrientRisk& a, const OrientRisk& b) {
+    if (!a.checked || !b.checked) return false;
+    if (a.worst != b.worst) return a.worst < b.worst;
+    return a.worst != RiskBand::None && a.lost_mm3 < 0.8 * b.lost_mm3;
+}
+
+std::string riskWords(const OrientRisk& r) {
+    if (!r.checked) return "";
+    if (r.places == 0) return "nothing likely to be lost";
+    return r.places == 1 ? std::string("1 place may not print") : fmt("%.0f places may not print", static_cast<double>(r.places));
+}
+
+namespace {
+
+// The selected part of `doc` on its own, standing as `p` has it.
+Document alone(const Document& doc, const fruit::Placement& p) {
+    Document one(doc);
+    const int keep = doc.selectedId();
+    for (const Part& q : doc.parts())
+        if (q.id() != keep) one.removePart(q.id());
+    one.select(keep);
+    one.place(p);
+    return one;
+}
+
+// The supports the Supports step would make for `one` with `choices`, and
+// what the replay of its print finds with them.
+OrientRisk replayOf(const Document& one, const SupportChoices& choices, const std::vector<fruit::Vec3>& visible_model,
+                    OrientMetrics& m, const fruit::JobControl& ctl) {
+    const fruit::Placement& p = one.placement();
+    const std::vector<fruit::Vec3> visible = visibleInPrinter(visible_model, p);
+    const SupportResult sup = generate(one, choices, visible, ctl.sub(0.0, 0.6));
+    const RiskReport r = checkRisk(one, sup, ctl.sub(0.6, 1.0), false);
+    m.tips = sup.points.size();
+    m.island_tips = sup.island_tips;
+    fruit::CosmeticSpec cos;
+    cos.visible_from = visible;
+    fruit::CostField cf;
+    cf.cosmetic = &cos;
+    m.cosmetic_tips = 0;
+    for (const auto& pt : sup.points) m.cosmetic_tips += cf.isCosmetic(pt.pos, pt.normal);
+    OrientRisk out;
+    out.checked = true;
+    std::size_t tips_only = 0;
+    for (const RiskPlace& place : r.places) {
+        if (place.kind == RiskPlace::Kind::Tips && place.lost_mm3 < kRiskLosesModel) {
+            ++tips_only;  // the model stays held without them
+            continue;
+        }
+        out.worst = std::max(out.worst, place.band);
+    }
+    out.places = r.places_found - std::min(tips_only, r.places_found);
+    out.tips = r.tips.size();
+    out.lost_mm3 = r.result ? r.result->stats.expected_loss : 0;
+    return out;
+}
+
+}  // namespace
+
+OrientRisk riskFor(const Document& doc, const fruit::Placement& p, const std::vector<fruit::Vec3>& visible_model,
+                   OrientMetrics& m, const fruit::JobControl& ctl) {
+    return replayOf(alone(doc, p), doc.supports.choices, visible_model, m, ctl);
+}
 
 OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visible_model,
                       const fruit::JobControl& ctl) {
@@ -113,7 +183,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     OrientSearch s;
     const fruit::Placement& p = doc.placement();
     s.now.rotation_deg = p.rotation_deg;
-    s.now.m = measure(doc, visible_model, ctl.sub(0.0, 0.12));
+    s.now.m = measure(doc, visible_model, ctl.sub(0.0, 0.04));
 
     // Search the model at its chosen scale, unrotated: the results are then
     // the placement's rotation angles.
@@ -135,18 +205,21 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     o.elevation = p.lift();
     o.visible_from = visible;
     o.keep_points = false;
-    const auto results = fruit::searchOrientations(m, o, ctl.sub(0.12, 0.95));
+    const auto results = fruit::searchOrientations(m, o, ctl.sub(0.04, 0.3));
     s.directions = o.directions + 1;
-    const fruit::OrientationResult* input = nullptr;
-    for (const auto& r : results) {
-        s.finalists += r.evaluated && !r.is_input;  // how it sits now is planned too, but is not a finalist
-        if (r.is_input) input = &r;
-    }
+    for (const auto& r : results) s.finalists += r.evaluated && !r.is_input;  // how it sits now is planned too, but is not a finalist
+    // Every finalist, and how it sits now, gets the supports the Supports
+    // step would make and a replay of its print.
+    struct Finalist {
+        OrientOption op;
+        double score = 0;  // the planner's ranking (lower is better)
+    };
+    std::vector<Finalist> fin;
     for (const auto& r : results) {
         if (!r.evaluated || r.is_input) continue;
-        if (input && input->evaluated && r.score >= input->score) continue;  // not better than now
-        if (s.options.size() == 3) break;
-        OrientOption op;
+        Finalist f;
+        f.score = r.score;
+        OrientOption& op = f.op;
         op.rotation_deg = r.euler_deg;
         op.fits = fitYaw(doc, op.rotation_deg);
         op.m.tips = r.points;
@@ -156,8 +229,93 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
         op.m.biggest_layer = r.peak_layer_area;
         op.m.top = r.height + p.lift();
         op.m.layers = layersFor(op.m.top);
-        op.summary = summarize(op.m, s.now.m);
-        s.options.push_back(std::move(op));
+        fin.push_back(std::move(f));
+    }
+    double now_score = 0;
+    // One run each, side by side: each part copy is made here first (a copy
+    // prepares what it is copied from), then planned and replayed on its own
+    // thread. Progress counts the runs done.
+    struct Run {
+        Document one;
+        OrientMetrics* m;
+    };
+    std::vector<Run> runs;
+    runs.push_back({alone(doc, p), &s.now.m});
+    for (Finalist& f : fin) {
+        if (!f.op.fits) continue;
+        fruit::Placement q = p;
+        q.rotation_deg = f.op.rotation_deg;
+        runs.push_back({alone(doc, slidOnto(doc.part().mesh(), q, doc.printer)), &f.op.m});
+    }
+    {
+        // A few at a time: each holds its model's and supports' layers (about
+        // half a gigabyte on a 60 mm part), and each already uses several cores.
+        std::atomic<std::size_t> next{0}, done{0};
+        const fruit::JobControl quiet = ctl.silent();
+        const std::size_t lanes = std::min<std::size_t>(runs.size(), kReplayLanes);
+        std::vector<std::future<void>> work;
+        for (std::size_t lane = 0; lane < lanes; ++lane)
+            work.push_back(std::async(std::launch::async, [&] {
+                for (std::size_t i; (i = next++) < runs.size();) {
+                    Run& run = runs[i];
+                    run.m->risk = replayOf(run.one, doc.supports.choices, visible_model, *run.m, quiet);
+                    ctl.report("orient.replay",
+                               0.3 + 0.67 * static_cast<double>(++done) / static_cast<double>(runs.size()));
+                }
+            }));
+        std::exception_ptr err;
+        for (auto& w : work) {
+            try {
+                w.get();
+            } catch (...) {
+                if (!err) err = std::current_exception();
+            }
+        }
+        if (err) std::rethrow_exception(err);
+    }
+    s.replayed = static_cast<int>(runs.size());
+    // The planner's ranking again, with the supports' own counts where they
+    // were made (the planner alone left out the tips it adds where one tip
+    // would carry too much): tips, those on the sides you'll see, the biggest
+    // layer and the height against the best of them, as the search weighs them.
+    {
+        const fruit::OrientWeights w;
+        double best_tips = 1e300, best_peak = 1e300, best_h = 1e300;
+        auto best = [&](const OrientMetrics& m) {
+            best_tips = std::min(best_tips, static_cast<double>(std::max<std::size_t>(m.tips, 1)));
+            best_peak = std::min(best_peak, std::max(m.biggest_layer, 1e-9));
+            best_h = std::min(best_h, std::max(m.top, 1e-9));
+        };
+        best(s.now.m);
+        for (const Finalist& f : fin) best(f.op.m);
+        auto score = [&](const OrientMetrics& m) {
+            return static_cast<double>(m.tips) / best_tips + w.cosmetic * static_cast<double>(m.cosmetic_tips) / best_tips +
+                   w.peak_area * m.biggest_layer / best_peak + w.height * m.top / best_h +
+                   10.0 * static_cast<double>(m.short_of_hold) / best_tips;
+        };
+        now_score = score(s.now.m);
+        for (Finalist& f : fin) f.score = score(f.op.m);
+    }
+    // Safest first: the likeliest place that takes some of the model with it,
+    // then how much of it goes, then that ranking.
+    std::stable_sort(fin.begin(), fin.end(), [](const Finalist& a, const Finalist& b) {
+        const OrientRisk &x = a.op.m.risk, &y = b.op.m.risk;
+        if (x.checked != y.checked) return x.checked;
+        if (x.worst != y.worst) return x.worst < y.worst;
+        if (x.worst != RiskBand::None && x.lost_mm3 != y.lost_mm3) return x.lost_mm3 < y.lost_mm3;
+        return a.score < b.score;
+    });
+    for (Finalist& f : fin) {
+        const OrientRisk& r = f.op.m.risk;
+        if (saferThan(s.now.m.risk, r)) {  // may lose more of the model: never offered
+            ++s.riskier;
+            continue;
+        }
+        if (s.options.size() == 3) continue;
+        const bool safer = saferThan(r, s.now.m.risk);
+        if (!safer && f.score >= now_score) continue;  // not better than now
+        f.op.summary = summarize(f.op.m, s.now.m);
+        s.options.push_back(std::move(f.op));
     }
     ctl.check();
 
@@ -167,9 +325,20 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
         bool shortest = !s.options.empty();
         for (const auto& op : s.options) shortest = shortest && s.now.m.top < op.m.top - 0.05;
         if (shortest) parts.push_back("Quickest to print, as it stands lowest");
+        if (s.now.m.risk.places > 0) parts.push_back(riskWords(s.now.m.risk));
         if (s.now.m.short_of_hold > 0)
             parts.push_back(fmt("%.0f layers are bigger than their tips can hold", static_cast<double>(s.now.m.short_of_hold)));
-        if (s.options.empty()) s.now.summary = "No other way to stand it does better.";
+        if (s.options.empty() && s.riskier > 0 && s.riskier == static_cast<int>(fin.size()))
+            s.now.summary = fin.size() == 1 ? std::string("The replay of its print finds places that may not print on the "
+                                                          "other way the planner liked.")
+                                            : fmt("The replay of their print finds places that may not print on all %.0f "
+                                                  "other ways the planner liked best.",
+                                                  static_cast<double>(fin.size()));
+        else if (s.options.empty() && s.riskier > 0)
+            s.now.summary = fmt("Of the %.0f other ways the planner liked best, the replay finds places that may not print "
+                                "on %.0f, and the rest do no better.",
+                                static_cast<double>(fin.size()), static_cast<double>(s.riskier));
+        else if (s.options.empty()) s.now.summary = "No other way to stand it does better.";
         else if (parts.empty()) s.now.summary = "Keeps the rotation it has now.";
         else if (parts.size() == 1) s.now.summary = parts[0] + ".";
         else s.now.summary = parts[0] + ", but " + parts[1] + ".";
@@ -241,6 +410,14 @@ Silhouette silhouetteBelow(const fruit::TriangleMesh& placed, double mm_per_px, 
 std::string summarize(const OrientMetrics& o, const OrientMetrics& now) {
     std::vector<std::string> good, bad;
     auto diff = [](std::size_t a, std::size_t b) { return static_cast<double>(a) - static_cast<double>(b); };
+    // What the replay finds comes first.
+    if (saferThan(o.risk, now.risk)) {
+        if (o.risk.places == 0) good.push_back("nothing is likely to be lost in printing");
+        else if (o.risk.worst < now.risk.worst) good.push_back("what may not print is less likely to go");
+        else good.push_back("less of the model is likely to be lost");
+    } else if (saferThan(now.risk, o.risk)) {
+        bad.push_back(riskWords(o.risk));
+    }
     const double islands = diff(o.island_tips, now.island_tips);
     if (islands < 0) good.push_back(fmt("%.0f fewer spots start in mid-air", -islands));
     if (islands > 0) bad.push_back(fmt("%.0f more spots start in mid-air", islands));

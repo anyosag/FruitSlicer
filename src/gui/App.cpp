@@ -809,11 +809,11 @@ void App::findOrientation() {
             o.results = res;
             o.results_revision = rev;
             o.results_settings = settings;
-            if (!o.nowFresh(rev)) {
-                o.now = res->now.m;
-                o.now_revision = rev;
-                o.now_settings = settings;
-            }
+            // How it sits now, as the search found it: with its supports' own
+            // tips and what the replay of its print finds.
+            o.now = res->now.m;
+            o.now_revision = rev;
+            o.now_settings = settings;
             if (d == doc_ && step_ == Step::Orient && d->selectedId() == part) orient_view_ = OrientView::Results;
             log::info("orientation search: " + std::to_string(res->options.size()) + " better options in " +
                       std::to_string(res->seconds) + " s");

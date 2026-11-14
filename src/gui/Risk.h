@@ -101,8 +101,9 @@ RiskHeadline riskHeadline(const RiskReport& r);
 std::string riskStrengthsNote(const RiskReport& r);
 
 // Replays the print for `sup`, the supports of `doc` as it is now. Progress:
-// cutting the layers up to 0.2, the replay up to 0.9, then the paint.
-RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl);
+// cutting the layers up to 0.2, the replay up to 0.9, then the paint
+// (`paint` false: no paint, for the numbers alone).
+RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint = true);
 
 // Its places from the engine's result (checkRisk does this; apart, for tests).
 // `usable` is the share of a tip's half-fail load it is trusted with.

@@ -458,7 +458,7 @@ RiskLayerPaint paintRiskLayer(const fruit::StabilityResult& res, int layer, cons
 
 // ---------------------------------------------------------------- the check
 
-RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl) {
+RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint) {
     const auto t0 = std::chrono::steady_clock::now();
     RiskReport r;
     // The model's layers as they print (hollowed or drilled, where the Hollow
@@ -498,8 +498,10 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
     ctl.step("stress", 0.2);
     auto res = std::make_shared<fruit::StabilityResult>(fruit::analyzeStability(in, cfg, ctl.sub(0.2, 0.9)));
     findRiskPlaces(*res, cfg.usable_fraction, r);
-    ctl.step("paint", 0.9);
-    paintRisk(doc.placed(), *res, r.paint, ctl);
+    if (paint) {
+        ctl.step("paint", 0.9);
+        paintRisk(doc.placed(), *res, r.paint, ctl);
+    }
     r.result = std::move(res);
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     ctl.report("paint", 1.0);

@@ -6,6 +6,9 @@
     {"step": "orient"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient"},
     {"side": "front"}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient_front"},
     {"orient": "find"}, {"wait": "jobs"}, {"shot": "b2_orient_results"},
+    {"open": "@demo-shelf"}, {"unsaved": "discard"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "orient"}, {"frames": 2}, {"wait": "jobs"},
+    {"orient": "find"}, {"wait": "jobs"}, {"shot": "b2_orient_results_shelf"},
     {"use": 1}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient_used"},
     {"undo": 1}, {"frames": 2}, {"wait": "jobs"}, {"shot": "b2_orient_undone"}
   ]

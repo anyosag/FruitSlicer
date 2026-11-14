@@ -14,6 +14,7 @@
 
 using Catch::Approx;
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::StartsWith;
 using namespace gui;
 
 namespace {
@@ -95,15 +96,72 @@ TEST_CASE("Orient: scoring as it sits and searching for better", "[gui][orient][
     const OrientSearch s = search(*doc, {}, fruit::JobControl::none());
     CHECK(s.directions == 65);
     CHECK(s.finalists == 6);  // OrientOptions' default, how it sits now not counted
-    CHECK(s.now.m.tips == now.tips);  // the same planner run, so the numbers compare
+    // How it sits now and every finalist that fits got supports and a replay:
+    // the tips are the supports' own (the planner alone leaves out those it
+    // adds where one tip would carry too much).
+    CHECK(s.now.m.risk.checked);
+    CHECK(s.now.m.tips > 0);
+    CHECK(s.replayed >= 1);
+    CHECK(s.replayed <= 1 + s.finalists);
     CHECK(s.options.size() <= 3);
+    CHECK(static_cast<int>(s.options.size()) + s.riskier <= s.finalists);
     for (const OrientOption& o : s.options) {
         CHECK(o.fits);
+        CHECK(o.m.risk.checked);
+        CHECK_FALSE(saferThan(s.now.m.risk, o.m.risk));  // never one that may lose more than now
         CHECK(o.m.tips > 0);
         CHECK(o.m.biggest_layer > 0);
         CHECK_FALSE(o.summary.empty());
         CHECK(o.below.w == 568);
         CHECK(covered(o.below) > 100);
     }
+    if (s.options.empty() && s.riskier > 0) CHECK_THAT(s.now.summary, ContainsSubstring("may not print"));
     CHECK(covered(s.now.below) > 100);
+    // The same run for how it sits now, alone, gives the same numbers.
+    OrientMetrics again = now;
+    const OrientRisk r = riskFor(*doc, doc->placement(), {}, again, fruit::JobControl::none());
+    CHECK(again.tips == s.now.m.tips);
+    CHECK(r.places == s.now.m.risk.places);
+    CHECK(r.lost_mm3 == Approx(s.now.m.risk.lost_mm3));
+}
+
+TEST_CASE("Orient: what the replay finds ranks first", "[gui][orient]") {
+    auto risk = [](RiskBand worst, std::size_t places, double lost) {
+        OrientRisk r;
+        r.checked = true;
+        r.worst = worst;
+        r.places = places;
+        r.lost_mm3 = lost;
+        return r;
+    };
+    const OrientRisk none = risk(RiskBand::None, 0, 0.002), may = risk(RiskBand::May, 1, 0.4),
+                     may_less = risk(RiskBand::May, 2, 0.2), likely = risk(RiskBand::Likely, 1, 0.1);
+    // A lower band is safer, whatever else.
+    CHECK(saferThan(none, may));
+    CHECK(saferThan(may, likely));
+    CHECK_FALSE(saferThan(likely, may));
+    // In the same band, clearly less of the model lost is safer; a little less is not.
+    CHECK(saferThan(may_less, may));
+    CHECK_FALSE(saferThan(risk(RiskBand::May, 1, 0.35), may));
+    CHECK_FALSE(saferThan(risk(RiskBand::None, 0, 0), none));  // nothing listed: as safe as each other
+    // Not replayed: neither is safer.
+    CHECK_FALSE(saferThan(OrientRisk{}, may));
+    CHECK_FALSE(saferThan(may, OrientRisk{}));
+    CHECK(riskWords(none) == "nothing likely to be lost");
+    CHECK(riskWords(may) == "1 place may not print");
+    CHECK(riskWords(may_less) == "2 places may not print");
+    CHECK(riskWords(OrientRisk{}).empty());
+
+    // The summary leads with it.
+    OrientMetrics now, o;
+    now.tips = o.tips = 100, now.top = o.top = 30;
+    now.risk = may;
+    o.risk = none;
+    CHECK_THAT(summarize(o, now), StartsWith("Nothing is likely to be lost in printing"));
+    o.risk = may_less;
+    CHECK_THAT(summarize(o, now), StartsWith("Less of the model is likely to be lost"));
+    now.risk = likely;
+    o.risk = may;
+    CHECK_THAT(summarize(o, now), StartsWith("What may not print is less likely to go"));
+    CHECK_THAT(summarize(now, o), ContainsSubstring("But 1 place may not print"));
 }
