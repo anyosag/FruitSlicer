@@ -61,11 +61,13 @@ and a small picture of how it sits. Opening a job brings its supports back
 as they were. On macOS, Finder knows a `.fruitjob` file as a FruitSlicer
 job, shows it with FruitSlicer's document icon, and opens it in the app on
 a double-click (STL, OBJ and 3MF files list FruitSlicer under Open With).
-Every copy of the app that runs is registered with Finder under the same
-name, so only the copy you use claims job files: configure it with
+Finder picks the app for a file by its identity and then opens any copy
+with that identity, and every copy that runs is registered with it. So only
+the copy you use is FruitSlicer itself: configure it with
 `-DFRUIT_OPENS_JOB_FILES=ON`, build, and run `lsregister -f` on it once
 (`/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister`).
-Copies built without it, for tests, CI or other branches, never open them.
+Copies built without it, for tests, CI or other branches, are
+`io.github.anyosag.fruitslicer.dev` and leave every file alone.
 Home shows the open job with its next step (**Continue**),
 recent jobs as cards with that picture, their state, parts, tips and
 support volume, and **Before you print**: what FruitSlicer has checked and

@@ -34,62 +34,10 @@
   <string>FruitSlicer finds your printer on the local network and sends print files to it over Wi-Fi.</string>
   <key>NSRemovableVolumesUsageDescription</key>
   <string>FruitSlicer saves print files to the USB stick you take to the printer.</string>
-  <!-- A job file (.fruitjob) is FruitSlicer's own: Finder shows it as a
-       FruitSlicer job, with a document icon macOS draws from the app's, and
-       opens it with the copy built with FRUIT_OPENS_JOB_FILES (rank Owner;
-       other copies: None). It is a zip inside, but not one to be unpacked. -->
-  <key>UTExportedTypeDeclarations</key>
-  <array>
-    <dict>
-      <key>UTTypeIdentifier</key>
-      <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.job</string>
-      <key>UTTypeDescription</key>
-      <string>FruitSlicer job</string>
-      <key>UTTypeConformsTo</key>
-      <array>
-        <string>public.data</string>
-        <string>public.content</string>
-      </array>
-      <key>UTTypeTagSpecification</key>
-      <dict>
-        <key>public.filename-extension</key>
-        <array>
-          <string>fruitjob</string>
-        </array>
-      </dict>
-    </dict>
-  </array>
-  <key>CFBundleDocumentTypes</key>
-  <array>
-    <dict>
-      <key>CFBundleTypeName</key>
-      <string>FruitSlicer job</string>
-      <key>CFBundleTypeRole</key>
-      <string>Editor</string>
-      <key>LSHandlerRank</key>
-      <string>${FRUIT_JOB_HANDLER_RANK}</string>
-      <key>LSItemContentTypes</key>
-      <array>
-        <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.job</string>
-      </array>
-      <key>CFBundleTypeIconSystemGenerated</key>
-      <integer>1</integer>
-    </dict>
-    <dict>
-      <key>CFBundleTypeName</key>
-      <string>3D model</string>
-      <key>CFBundleTypeRole</key>
-      <string>Viewer</string>
-      <key>LSHandlerRank</key>
-      <string>Alternate</string>
-      <key>CFBundleTypeExtensions</key>
-      <array>
-        <string>stl</string>
-        <string>obj</string>
-        <string>3mf</string>
-      </array>
-    </dict>
-  </array>
+  <!-- The files Finder opens with the app: only the copy built with
+     FRUIT_OPENS_JOB_FILES declares them (src/gui/CMakeLists.txt); other
+     copies have their own identity and leave every file alone. -->
+${FRUIT_DOCUMENT_TYPES}
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 FruitSlicer contributors. GNU AGPL v3 or later.</string>
 </dict>

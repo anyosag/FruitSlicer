@@ -15,10 +15,12 @@ endif()
 
 option(FRUIT_BUILD_TESTS "Build unit tests" ON)
 option(FRUIT_BUILD_APP "Build the desktop app (SDL3 + OpenGL + Dear ImGui)" OFF)
-# macOS: every copy of the app that runs is registered with Finder, under the
-# same name, so copies built for tests, CI or other branches would compete for
-# .fruitjob files. Only the copy you use should open them: turn this on for it.
-option(FRUIT_OPENS_JOB_FILES "macOS: this copy is the one Finder opens .fruitjob files with" OFF)
+# macOS: every copy of the app that runs is registered with Finder, and Finder
+# opens a file with any copy of the app that owns it. Only the copy you use
+# should be FruitSlicer itself (and open .fruitjob files): turn this on for it.
+# Copies built without it, for tests, CI or other branches, are FruitSlicer's
+# ".dev" and leave job files alone.
+option(FRUIT_OPENS_JOB_FILES "macOS: this copy is FruitSlicer itself, the one Finder opens .fruitjob files with" OFF)
 
 include(cmake/Dependencies.cmake)
 

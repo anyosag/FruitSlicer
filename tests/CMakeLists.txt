@@ -51,13 +51,8 @@ if(FRUIT_BUILD_APP)
   target_link_libraries(fruit_gui_tests PRIVATE fruit_core fruit_net fruit_net_mock fruit_licences miniz Catch2::Catch2WithMain)
   catch_discover_tests(fruit_gui_tests)
   if(APPLE)
-    if(FRUIT_OPENS_JOB_FILES)
-      set(job_rank Owner)
-    else()
-      set(job_rank None)
-    endif()
-    add_test(NAME "macOS: Finder knows a .fruitjob file as a FruitSlicer job"
-      COMMAND ${CMAKE_COMMAND} "-DPLIST=$<TARGET_BUNDLE_CONTENT_DIR:fruitslicer_app>/Info.plist" -DRANK=${job_rank}
-              -P ${CMAKE_CURRENT_SOURCE_DIR}/macos/check_document_types.cmake)
+    add_test(NAME "macOS: Finder knows a .fruitjob file as a FruitSlicer job, in the copy you use only"
+      COMMAND ${CMAKE_COMMAND} "-DPLIST=$<TARGET_BUNDLE_CONTENT_DIR:fruitslicer_app>/Info.plist"
+              "-DOWNS=$<BOOL:${FRUIT_OPENS_JOB_FILES}>" -P ${CMAKE_CURRENT_SOURCE_DIR}/macos/check_document_types.cmake)
   endif()
 endif()

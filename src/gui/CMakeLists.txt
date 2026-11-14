@@ -144,19 +144,77 @@ target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_net fruit_net_moc
 
 if(APPLE)
   set_source_files_properties(macos/FruitSlicer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-  # Owner: Finder opens .fruitjob files with this copy. None: it still knows
-  # the type, but never opens it unless asked (see FRUIT_OPENS_JOB_FILES).
+  # Finder picks the app for a file by its identity, then any copy with that
+  # identity, so the copy built with FRUIT_OPENS_JOB_FILES is FruitSlicer
+  # itself: it declares the job file type (.fruitjob, "FruitSlicer job", the
+  # document icon macOS draws from the app's) and owns it, and is listed under
+  # Open With for STL, OBJ and 3MF. Every other copy (tests, CI, other
+  # branches) is FruitSlicer's ".dev" and leaves every file alone, so it can
+  # never be the one a double-click opens.
   if(FRUIT_OPENS_JOB_FILES)
-    set(FRUIT_JOB_HANDLER_RANK Owner)
+    set(fruit_bundle_id io.github.anyosag.fruitslicer)
+    set(FRUIT_DOCUMENT_TYPES [=[  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>io.github.anyosag.fruitslicer.job</string>
+      <key>UTTypeDescription</key>
+      <string>FruitSlicer job</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.content</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>fruitjob</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>FruitSlicer job</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>io.github.anyosag.fruitslicer.job</string>
+      </array>
+      <key>CFBundleTypeIconSystemGenerated</key>
+      <integer>1</integer>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>3D model</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>stl</string>
+        <string>obj</string>
+        <string>3mf</string>
+      </array>
+    </dict>
+  </array>]=])
   else()
-    set(FRUIT_JOB_HANDLER_RANK None)
+    set(fruit_bundle_id io.github.anyosag.fruitslicer.dev)
+    set(FRUIT_DOCUMENT_TYPES "")
   endif()
   set_target_properties(fruitslicer_app PROPERTIES
     OUTPUT_NAME FruitSlicer
     MACOSX_BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in
     MACOSX_BUNDLE_BUNDLE_NAME FruitSlicer
-    MACOSX_BUNDLE_GUI_IDENTIFIER io.github.anyosag.fruitslicer
+    MACOSX_BUNDLE_GUI_IDENTIFIER ${fruit_bundle_id}
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     MACOSX_BUNDLE_ICON_FILE FruitSlicer.icns)

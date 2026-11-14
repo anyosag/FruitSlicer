@@ -1,26 +1,43 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 FruitSlicer contributors
 #
-# The built app's Info.plist tells macOS that a .fruitjob file is a FruitSlicer
-# job: Finder shows it as one, with the app's document icon. The copy built
-# with FRUIT_OPENS_JOB_FILES owns it (a double-click opens it there); any
-# other copy ranks None, so test and CI builds never compete for it.
-#   cmake -DPLIST=<FruitSlicer.app/Contents/Info.plist> [-DRANK=Owner|None] -P check_document_types.cmake
+# Finder picks the app for a file by its identity, then opens any copy with
+# that identity. So:
+#  - the copy built with FRUIT_OPENS_JOB_FILES (OWNS=ON) is FruitSlicer itself
+#    (io.github.anyosag.fruitslicer): it declares the job file type (.fruitjob,
+#    "FruitSlicer job") and owns it as an editor, with the document icon macOS
+#    draws from the app's;
+#  - every other copy (OWNS=OFF: tests, CI, other branches) is
+#    io.github.anyosag.fruitslicer.dev and declares no file types at all, so
+#    a double-click never lands on it.
+#   cmake -DPLIST=<FruitSlicer.app/Contents/Info.plist> -DOWNS=ON|OFF -P check_document_types.cmake
 execute_process(COMMAND plutil -convert json -o - "${PLIST}" OUTPUT_VARIABLE json RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "plutil could not read ${PLIST}")
 endif()
 string(JSON app GET "${json}" CFBundleIdentifier)
-set(job "${app}.job")
-if(NOT RANK)
-  set(RANK Owner)
+set(job io.github.anyosag.fruitslicer.job)
+string(JSON n ERROR_VARIABLE no_decl LENGTH "${json}" UTExportedTypeDeclarations)
+string(JSON m ERROR_VARIABLE no_docs LENGTH "${json}" CFBundleDocumentTypes)
+
+if(NOT OWNS)
+  if(NOT app STREQUAL "io.github.anyosag.fruitslicer.dev")
+    message(FATAL_ERROR "a copy built without FRUIT_OPENS_JOB_FILES is ${app}, not io.github.anyosag.fruitslicer.dev")
+  endif()
+  if(NOT no_decl OR NOT no_docs)
+    message(FATAL_ERROR "a copy built without FRUIT_OPENS_JOB_FILES declares file types")
+  endif()
+  message(STATUS "${app}: no file types, as a copy for tests should be")
+  return()
 endif()
 
-# The type, declared by the app: its extension and what Finder calls it.
-string(JSON n ERROR_VARIABLE none LENGTH "${json}" UTExportedTypeDeclarations)
-if(none)
+if(NOT app STREQUAL "io.github.anyosag.fruitslicer")
+  message(FATAL_ERROR "the copy built with FRUIT_OPENS_JOB_FILES is ${app}, not io.github.anyosag.fruitslicer")
+endif()
+if(no_decl)
   message(FATAL_ERROR "the app declares no file types of its own (no UTExportedTypeDeclarations)")
 endif()
+# The type: its extension and what Finder calls it.
 set(declared FALSE)
 math(EXPR last "${n} - 1")
 foreach(i RANGE ${last})
@@ -37,11 +54,12 @@ endforeach()
 if(NOT declared)
   message(FATAL_ERROR "the app does not declare ${job}")
 endif()
-
-# The app opens it as an editor (with the rank asked for), with the icon macOS draws from the app's.
-string(JSON n LENGTH "${json}" CFBundleDocumentTypes)
+# The app owns it, as an editor, with the icon macOS draws from the app's.
+if(no_docs)
+  message(FATAL_ERROR "the app opens no file types (no CFBundleDocumentTypes)")
+endif()
 set(owned FALSE)
-math(EXPR last "${n} - 1")
+math(EXPR last "${m} - 1")
 foreach(i RANGE ${last})
   string(JSON types ERROR_VARIABLE none GET "${json}" CFBundleDocumentTypes ${i} LSItemContentTypes)
   if(none)
@@ -52,7 +70,7 @@ foreach(i RANGE ${last})
     string(JSON rank GET "${json}" CFBundleDocumentTypes ${i} LSHandlerRank)
     string(JSON role GET "${json}" CFBundleDocumentTypes ${i} CFBundleTypeRole)
     string(JSON icon GET "${json}" CFBundleDocumentTypes ${i} CFBundleTypeIconSystemGenerated)
-    if(NOT rank STREQUAL RANK OR NOT role STREQUAL "Editor" OR NOT icon EQUAL 1)
+    if(NOT rank STREQUAL "Owner" OR NOT role STREQUAL "Editor" OR NOT icon EQUAL 1)
       message(FATAL_ERROR "${job}: rank ${rank}, role ${role}, system icon ${icon}")
     endif()
     set(owned TRUE)
@@ -61,4 +79,4 @@ endforeach()
 if(NOT owned)
   message(FATAL_ERROR "no document type of the app opens ${job}")
 endif()
-message(STATUS ".fruitjob: ${job}, rank ${RANK} for ${app}")
+message(STATUS ".fruitjob: ${job}, owned by ${app}")
