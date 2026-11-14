@@ -1385,39 +1385,40 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
         po.layers = r.hollow->layers;
         if (!r.hollow->filling()) po.hollows = &r.hollow->cavities().interior;
     }
+    // The checks below each read the supports as built and nothing else, so
+    // they run side by side; each says what it found as it did one by one.
     // Tips the tree could not build: what only they held has nothing now.
     fruit::DropCheck drops;
-    if (r.tree.dropped_points > 0) {
-        std::vector<fruit::SupportPoint> built, dropped;
-        fruit::splitByTree(r.tree, r.points, built, dropped);
-        drops = fruit::checkDroppedTips(doc.placed(), r.cfg, built, dropped, po, ctl.silent());
-    }
+    std::vector<fruit::SupportPoint> built, dropped;
+    if (r.tree.dropped_points > 0) fruit::splitByTree(r.tree, r.points, built, dropped);
     // Supports that stand on the model tie two places on the print together:
     // they hold a ceiling up, but add nothing to what holds it on the raft.
     std::size_t short_from_raft = 0;
     fruit::Vec3 first_tied{};
-    {
-        std::vector<fruit::SupportPoint> from_raft;
-        std::vector<fruit::TiedTip> tied;
-        fruit::splitByFooting(r.tree, r.points, from_raft, tied);
-        if (!tied.empty()) {
-            short_from_raft = fruit::layersShortOfRaftHold(doc.placed(), r.cfg, from_raft, tied, po, ctl.silent());
-            first_tied = tied.front().tip.pos;
-        }
-    }
+    std::vector<fruit::SupportPoint> from_raft;
+    std::vector<fruit::TiedTip> tied;
+    fruit::splitByFooting(r.tree, r.points, from_raft, tied);
+    if (!tied.empty()) first_tied = tied.front().tip.pos;
     const double pixel = doc.printer.pixelX() * doc.printer.pixelY();
     // With no raft, what starts inside the bottom layers stands on the plate, as the planner has it.
     const double plate_holds = p.on_plate ? r.cfg.plate_hold_height : 0.0;
-    if (r.hollow) {
-        // The hollowed model's own layers with the supports': nothing floats.
-        const fruit::LayerStack print =
-            fruit::unionLayers(*r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9)));
-        r.validation = fruit::validateLayers(print, r.cfg.link_grow, r.cfg.absorb_island_area, pixel, ctl.sub(0.9, 1.0),
-                                             plate_holds);
-    } else {
-        r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
-                                                r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0), plate_holds);
-    }
+    fruit::parallelFor(3, 3, [&](std::size_t which) {
+        if (which == 0 && r.tree.dropped_points > 0)
+            drops = fruit::checkDroppedTips(doc.placed(), r.cfg, built, dropped, po, ctl.silent());
+        if (which == 1 && !tied.empty())
+            short_from_raft = fruit::layersShortOfRaftHold(doc.placed(), r.cfg, from_raft, tied, po, ctl.silent());
+        if (which != 2) return;
+        if (r.hollow) {
+            // The hollowed model's own layers with the supports': nothing floats.
+            const fruit::LayerStack print = fruit::unionLayers(
+                *r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9)));
+            r.validation = fruit::validateLayers(print, r.cfg.link_grow, r.cfg.absorb_island_area, pixel,
+                                                 ctl.sub(0.9, 1.0), plate_holds);
+        } else {
+            r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
+                                                    r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0), plate_holds);
+        }
+    });
 
     // Counts.
     r.tips = r.points.size();
