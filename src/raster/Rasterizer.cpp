@@ -48,7 +48,9 @@ struct Edge {
 // Adds the signed area an edge sweeps into rows [r0, r1) of `acc`
 // (row-major, stride `w`, columns relative to `c0`). Coverage of pixel
 // (r, c) is |prefix sum of acc over the row up to c|.
-void drawEdge(const Edge& e, int r0, int r1, int c0, int w, std::vector<float>& acc) {
+// `spans[r - r0]` gets the columns [first, last] each row was written in.
+void drawEdge(const Edge& e, int r0, int r1, int c0, int w, std::vector<float>& acc,
+              std::vector<std::vector<std::pair<int, int>>>& spans) {
     const double top = std::max(e.v0, static_cast<double>(r0));
     const double bot = std::min(e.v1, static_cast<double>(r1));
     if (bot <= top) return;
@@ -72,6 +74,7 @@ void drawEdge(const Edge& e, int r0, int r1, int c0, int w, std::vector<float>& 
             const double xm = 0.5 * (xa + xb) - ia;
             row[ia] += static_cast<float>(d * (1.0 - xm));
             row[ia + 1] += static_cast<float>(d * xm);
+            spans[static_cast<size_t>(r - r0)].push_back({ia, ia + 1});
         } else {
             // Edge crosses several columns: trapezoid areas per column.
             const double s = 1.0 / (xb - xa);
@@ -90,6 +93,7 @@ void drawEdge(const Edge& e, int r0, int r1, int c0, int w, std::vector<float>& 
                 row[ib - 1] += static_cast<float>(d * (1.0 - a2 - am));
             }
             row[ib] += static_cast<float>(d * am);
+            spans[static_cast<size_t>(r - r0)].push_back({ia, ib});
         }
         u = unext;
     }
@@ -142,32 +146,59 @@ void rasterizeLayer(const Paths& layer, const RasterGrid& g, int aa_levels, cons
 
     emitZeros(static_cast<uint64_t>(r_first) * g.width);
     constexpr int kBand = 64;
-    std::vector<float> acc;
-    std::vector<uint8_t> row(static_cast<size_t>(c1 - c0));
+    const int n = c1 - c0;  // columns of the box
+    // Kept zero between rows: each row clears only what its edges wrote.
+    std::vector<float> acc(static_cast<size_t>(kBand) * w, 0.0f);
+    std::vector<std::vector<std::pair<int, int>>> spans(kBand);
+    std::vector<std::pair<int, int>> merged;
     size_t first_edge = 0;
     for (int r0 = r_first; r0 < r_last; r0 += kBand) {
         const int r1 = std::min(r_last, r0 + kBand);
-        acc.assign(static_cast<size_t>(r1 - r0) * w, 0.0f);
+        for (auto& sp : spans) sp.clear();
         while (first_edge < edges.size() && edges[first_edge].v1 <= r0) ++first_edge;
         for (size_t i = first_edge; i < edges.size() && edges[i].v0 < r1; ++i)
-            if (edges[i].v1 > r0) drawEdge(edges[i], r0, r1, c0, w, acc);
+            if (edges[i].v1 > r0) drawEdge(edges[i], r0, r1, c0, w, acc, spans);
         for (int r = r0; r < r1; ++r) {
-            const float* a = acc.data() + static_cast<size_t>(r - r0) * w;
-            double sum = 0;
-            for (int c = 0; c < c1 - c0; ++c) {
-                sum += a[c];
-                row[c] = quantize(std::abs(sum), aa_levels);
+            float* a = acc.data() + static_cast<size_t>(r - r0) * w;
+            // The columns the edges wrote, in order; between them every
+            // column adds nothing to the running sum, so its value is the
+            // last one's. The same pixels as summing every column, the same
+            // runs (each as long as it goes), cleared after.
+            std::vector<std::pair<int, int>>& sp = spans[static_cast<size_t>(r - r0)];
+            std::sort(sp.begin(), sp.end());
+            merged.clear();
+            for (const auto& x : sp) {
+                if (!merged.empty() && x.first <= merged.back().second + 1) merged.back().second = std::max(merged.back().second, x.second);
+                else merged.push_back(x);
             }
-            // Row = zeros left, the bounding-box span, zeros right.
             emitZeros(static_cast<uint64_t>(c0));
-            int i = 0;
-            while (i < c1 - c0) {
-                int j = i + 1;
-                while (j < c1 - c0 && row[j] == row[i]) ++j;
-                sink(row[i], static_cast<uint32_t>(j - i));
-                i = j;
+            double sum = 0;
+            uint8_t run_v = 0;
+            uint32_t run_n = 0;
+            auto put = [&](uint8_t v, uint32_t k) {
+                if (k == 0) return;
+                if (run_n > 0 && v == run_v) {
+                    run_n += k;
+                    return;
+                }
+                if (run_n > 0) sink(run_v, run_n);
+                run_v = v;
+                run_n = k;
+            };
+            int c = 0;
+            for (const auto& [lo, hi_written] : merged) {
+                if (lo >= n) break;
+                const int hi = std::min(hi_written, n - 1);
+                put(quantize(std::abs(sum), aa_levels), static_cast<uint32_t>(lo - c));  // nothing written: as the column before
+                for (c = lo; c <= hi; ++c) {
+                    sum += a[c];
+                    put(quantize(std::abs(sum), aa_levels), 1);
+                }
             }
+            put(quantize(std::abs(sum), aa_levels), static_cast<uint32_t>(n - c));
+            if (run_n > 0) sink(run_v, run_n);
             emitZeros(static_cast<uint64_t>(g.width - c1));
+            for (const auto& [lo, hi] : merged) std::fill(a + lo, a + hi + 1, 0.0f);
         }
     }
     emitZeros(static_cast<uint64_t>(g.height - r_last) * g.width);
