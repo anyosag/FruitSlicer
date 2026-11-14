@@ -74,13 +74,16 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
     {
         // Tips with a chance of 1 in 20 or more of letting go, and the worst of them.
         std::size_t at_risk = 0;
-        double worst = 0;
+        double worst = 0, expected = 0;
         for (const TipRisk& t : r.tips) {
             at_risk += t.chance >= 0.05;
             worst = std::max(worst, t.chance);
+            expected += t.chance;
         }
         j["tips_that_may_let_go"] = at_risk;
         j["worst_tip_chance"] = worst;
+        // How many tips let go in a print, on average, each judged alone (no load passed on).
+        j["tips_expected_to_let_go"] = expected;
         // How many tips carry more than they are trusted with, by how many times that load
         // (grazing contacts, under kSliverContact, left out).
         {

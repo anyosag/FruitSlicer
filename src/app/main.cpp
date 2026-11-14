@@ -615,10 +615,13 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
 }
 
 struct StabilityCli {
-    std::string points_in, report, picture, raft = "pads";
-    bool no_merge = false;
+    std::string points_in, points_out, report, picture, raft = "pads";
+    bool no_merge = false, all_tips = false;
     int replays = 500;
     double resin = -1, steepness = -1, cup_pull = -1, shape = -1;
+    // The replay's own assumptions, for trying other values on the same supports (the planner keeps its own).
+    double slab = -1, share_reach = -1, skin_reach = -1, tip_margin = -1;
+    long long seed = -1;
     unsigned threads = 0;
 };
 
@@ -664,6 +667,12 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
         pts = res.points;
         model_layers = res.analysis.layers;
         model_parts = res.analysis.islands;
+        if (!o.points_out.empty()) {  // to replay the same supports again with --points
+            json pj = pointsToJson(pts);
+            pj["placement"] = placementJson(place, popts.gen.on_plate, layer_h);
+            pj["source"] = path;
+            std::ofstream(o.points_out) << pj.dump(1) << "\n";
+        }
         r["planning"] = {{"seconds", res.stats.seconds},
                          {"tips_added_beside_overloaded_ones", res.stats.relief_added},
                          {"tips_made_bigger_instead", res.stats.relief_upgraded},
@@ -693,6 +702,11 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
     if (o.steepness > 0) sc.steepness = o.steepness;
     if (o.cup_pull >= 0) sc.cup_pull = o.cup_pull;
     if (o.shape >= 0) sc.shape_effect = o.shape;
+    if (o.slab > 0) sc.slab = o.slab;
+    if (o.share_reach > 0) sc.share_reach = o.share_reach;
+    if (o.skin_reach > 0) sc.skin_half_reach = o.skin_reach;
+    if (o.tip_margin > 0) sc.usable_fraction = o.tip_margin;
+    if (o.seed >= 0) sc.seed = static_cast<std::uint64_t>(o.seed);
     const StabilityResult res = analyzeStability(in, sc);
 
     r["file"] = path;
@@ -701,6 +715,14 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
     r["heads"] = tree.heads.size();
     r["dropped_points"] = tree.dropped_points;
     r["stability"] = stabilityJson(res, sc);
+    if (o.all_tips) {
+        json all = json::array();
+        for (const TipRisk& t : res.tips)
+            all.push_back({{"at", {t.at.x, t.at.y, t.at.z}}, {"upside_down", t.foot}, {"touches_mm2", t.area},
+                           {"load_mm2", t.load}, {"near_mm2", t.near}, {"half_let_go_at_mm2", t.holds},
+                           {"chance", t.chance}, {"layer", t.at_layer}});
+        r["stability"]["every_tip"] = std::move(all);
+    }
     if (!o.picture.empty()) {
         int w = 0, h = 0;
         const std::vector<std::uint8_t> rgb = stabilityPicture(res, w, h);
@@ -1132,6 +1154,17 @@ int main(int argc, char** argv) {
     stability->add_option("--shape-effect", stcli.shape,
                           "0 (default): pull by area alone; 1: thin outlines pull less (Pan et al. 2017)");
     stability->add_option("--threads", stcli.threads, "Worker threads (0 = all cores)");
+    stability->add_option("--save-points", stcli.points_out, "Write the planned points here, to replay the same supports with --points");
+    stability->add_flag("--all-tips", stcli.all_tips, "List every tip in the report, not only those that may let go");
+    stability->add_option("--thin-slab", stcli.slab,
+                          "Replay only: model under a patch this thick (mm) gives half its pull to the tips near it (default 2; NOT MEASURED)");
+    stability->add_option("--share-reach", stcli.share_reach,
+                          "Replay only: how far a patch's pull spreads among tips where the model is 1 mm thick (mm; default 1.8; NOT MEASURED)");
+    stability->add_option("--skin-reach", stcli.skin_reach,
+                          "Replay only: reach at which half of fresh skins fail (mm; default from the planner's tip reach; NOT MEASURED)");
+    stability->add_option("--tip-margin", stcli.tip_margin,
+                          "Replay only: the tip table as a share of the load at which half let go (default 1/3 built-in, 0.7 fitted)");
+    stability->add_option("--seed", stcli.seed, "Replay only: seed of the random strengths (default 1)");
 
     OrientCli ocli;
     auto* orient = app.add_subcommand("orient", "Search build orientations; prints the best --rotate values");
