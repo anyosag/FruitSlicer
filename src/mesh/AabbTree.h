@@ -35,6 +35,12 @@ public:
                                   double t_min = 1e-9) const;
     bool anyHit(const Vec3& origin, const Vec3& dir, double t_max, double t_min = 1e-9) const;
     ClosestPoint closest(const Vec3& p) const;
+    // closest(p).distance < limit, without looking further than it needs to:
+    // the same answer, found sooner (most points are far from the mesh).
+    bool nearerThan(const Vec3& p, double limit) const;
+    // closest(p).distance where that is below `cap`; otherwise some value at
+    // least `cap` (the mesh is no nearer).
+    double distanceBelow(const Vec3& p, double cap) const;
 
     const TriangleMesh* mesh() const { return mesh_; }
 
@@ -45,6 +51,8 @@ private:
         int32_t begin = 0, end = 0;     // face range in order_ for leaves
     };
     int32_t buildNode(int32_t begin, int32_t end, std::vector<Vec3>& centroids, std::vector<BBox3>& boxes);
+    template <class Stop>
+    ClosestPoint search(const Vec3& p, double cap2, Stop stop) const;
 
     const TriangleMesh* mesh_ = nullptr;
     std::vector<Node> nodes_;

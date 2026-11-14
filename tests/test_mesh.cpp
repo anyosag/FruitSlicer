@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <random>
 
 #include "mesh/AabbTree.h"
 #include "mesh/MeshAnalysis.h"
@@ -109,6 +110,32 @@ TEST_CASE("AABB ray casts and closest points", "[mesh]") {
     const ClosestPoint cp = tree.closest({5, 5, 12});
     CHECK(cp.distance == Approx(2));
     CHECK(localThickness(tree, {5, 5, 0}, {0, 0, -1}) == Approx(10).epsilon(1e-6));
+}
+
+TEST_CASE("AABB: nearerThan and distanceBelow answer as closest() does", "[mesh]") {
+    TriangleMesh m = makeSphere({0, 0, 5}, 4, 48);
+    m.append(makeBox({6, -2, 0}, {9, 2, 12}));
+    m.append(makeCylinder({-8, 0, 0}, 1.5, 10, 40));
+    const AabbTree tree(m);
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> x(-14, 14), z(-4, 16), lim(0, 6);
+    int near = 0, far = 0;
+    for (int i = 0; i < 4000; ++i) {
+        const Vec3 p{x(rng), x(rng) * 0.5, z(rng)};
+        const double d = tree.closest(p).distance;
+        // At random limits, and at the distance itself and either side of it.
+        for (const double L : {lim(rng), d, std::nextafter(d, 1e9), std::nextafter(d, -1e9), 0.0}) {
+            const bool n = tree.nearerThan(p, L);
+            CHECK(n == (d < L));
+            near += n;
+            far += !n;
+            const double below = tree.distanceBelow(p, L);
+            if (d < L) CHECK(below == d);
+            else CHECK(below >= L);
+        }
+    }
+    CHECK(near > 1000);
+    CHECK(far > 1000);
 }
 
 TEST_CASE("minima come from the mesh: cone apex, sphere pole, box plateau", "[mesh][analysis]") {

@@ -86,7 +86,7 @@ private:
             const double t = static_cast<double>(i) / n;
             if (t * len < skip_start) continue;
             const Vec3 q = a + (b - a) * t;
-            if (tree_.closest(q).distance < r + cfg_.clearance) return false;
+            if (tree_.nearerThan(q, r + cfg_.clearance)) return false;
         }
         return true;
     }
@@ -120,7 +120,12 @@ private:
         double d = cfg_.base_diameter;
         for (double z = z0; z < z0 + h - 1e-9; z += 0.05) {
             const double t = (z - z0) / h;
-            const double room = tree_.closest({xy.x, xy.y, z}).distance - gap;  // the radius allowed at this height
+            // (Where the model is further than would narrow the foot, the
+            // nearest point need not be found: d stays as it is.)
+            const double cap = d * (1 - t) / 2 + r * t + gap + 1e-6;
+            const double dist = tree_.distanceBelow({xy.x, xy.y, z}, cap);
+            if (dist >= cap) continue;
+            const double room = dist - gap;  // the radius allowed at this height
             d = std::min(d, 2 * (room - r * t) / (1 - t));
         }
         return std::max(0.0, d);
@@ -151,7 +156,7 @@ private:
             const Vec3 d = b - a;
             if (tree_.anyHit(a, d, norm(d))) return false;
         }
-        return tree_.closest(j).distance >= s.shaft_diameter / 2 + cfg_.clearance;
+        return !tree_.nearerThan(j, s.shaft_diameter / 2 + cfg_.clearance);
     }
     // Walk down at 45° from `from` in 16 directions until a clear vertical
     // drop to the raft is found (PrusaSlicer-style ground route search).
