@@ -66,6 +66,33 @@ struct RiskPlace {
     int tips = 0;         // Tips: how many
 };
 
+// ---- The heatmap: every spot of the model in a colour for how likely it is
+// not to print (lost with what breaks under it, or its own skin never forming),
+// or, by HeatOf::Breaks, how likely a break is to start at the joint under it.
+// The replay gives one chance for each island of a layer, and the skins (a
+// fresh layer reaching past what holds it) their own within one: so the
+// colours change from layer to layer, and across a layer only along a skin.
+// The scale runs from "fine" (under about 1 in 500) through 1 in 100, 1 in 20,
+// 1 in 5 and 1 in 2, in kHeatSteps colours.
+inline constexpr int kHeatSteps = 16;
+enum class HeatOf { Lost, Breaks };
+double heatPosition(double chance);   // along the scale: 0 fine .. 1 sure not to print
+int heatStep(double chance);          // 0 (fine) .. kHeatSteps - 1
+unsigned heatColour(double position); // 0xRRGGBB along the scale
+unsigned heatStepColour(int step);    // a step's own colour (step 0: fine)
+// The scale's marks, as its legend names them.
+struct HeatMark {
+    double chance;
+    const char* label;
+};
+const std::vector<HeatMark>& heatMarks();
+// The model's surface by step, printer coordinates. Step 0 is left out: the
+// model is drawn in that colour itself, so only what is warmer is painted.
+struct HeatPaint {
+    fruit::TriangleMesh steps[kHeatSteps];
+    bool any() const;
+};
+
 // A tip to colour in the view.
 struct RiskTip {
     fruit::Vec3 at;
@@ -87,6 +114,9 @@ struct RiskReport {
     double lost_mm3[3] = {0, 0, 0};  // the model's volume that may, is likely and is very likely not to print
     // The model's surface over that volume, in printer coordinates: for the 3D view to paint.
     fruit::TriangleMesh paint[3];
+    // The heatmap, by HeatOf (Lost, Breaks): the surface by step, and each layer's likeliest spot.
+    HeatPaint heat[2];
+    std::vector<float> layer_heat[2];
     double seconds = 0;
 };
 
@@ -121,5 +151,20 @@ struct RiskLayerPaint {
     bool any = false;
 };
 RiskLayerPaint paintRiskLayer(const fruit::StabilityResult& res, int layer, const LayerImage& grid);
+
+// The heatmap of `mesh` (the model's surface, printer coordinates) for the
+// replay `res` (checkRisk does this; apart, for tests).
+void paintHeat(const fruit::TriangleMesh& mesh, const fruit::StabilityResult& res, HeatOf of, HeatPaint& out,
+               const fruit::JobControl& ctl);
+// A layer's picture, as heat: how much of each pixel is print of each step
+// (step 0, the print that is fine, included). `layer` counts from the model's
+// first layer.
+struct RiskLayerHeat {
+    std::vector<std::uint8_t> cover[kHeatSteps];
+    bool any = false;
+};
+RiskLayerHeat heatRiskLayer(const fruit::StabilityResult& res, int layer, const LayerImage& grid, HeatOf of);
+// Each layer's likeliest spot, by the same measure: for the strip beside the layers.
+std::vector<float> heatByLayer(const fruit::StabilityResult& res, HeatOf of);
 
 }  // namespace gui

@@ -203,6 +203,9 @@ float riskLegend(App& app, ImVec2 at) {
         words(why ? "Not checked: the replay of the print stopped."
                   : app.checkingRisk() ? "Replaying the print layer by layer…" : "Not checked yet.",
               col::TextSecondary);
+    } else if (app.riskHeatmap()) {
+        heatScale(dl, ImVec2(x, at.y + 3), 260);
+        x += 260 + 14;
     } else {
         auto item = [&](const char* label, RiskBand b) {
             bandDot(dl, ImVec2(x + 5, y), 4, b);
@@ -216,6 +219,26 @@ float riskLegend(App& app, ImVec2 at) {
     }
     ImGui::PopFont();
     return x - at.x;
+}
+
+void heatScale(ImDrawList* dl, ImVec2 at, float w) {
+    constexpr int kSlices = 64;
+    for (int i = 0; i < kSlices; ++i) {
+        const unsigned c = heatColour((i + 0.5) / kSlices);
+        const float x0 = at.x + w * static_cast<float>(i) / kSlices, x1 = at.x + w * static_cast<float>(i + 1) / kSlices;
+        dl->AddRectFilled(ImVec2(x0, at.y), ImVec2(x1 + 0.5f, at.y + 8),
+                          IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, 255));
+    }
+    ImGui::PushFont(fonts().regular, size::Label);
+    auto mark = [&](double pos, const char* label) {
+        const float tx = at.x + w * static_cast<float>(pos);
+        dl->AddLine(ImVec2(tx, at.y + 8), ImVec2(tx, at.y + 11), col::TextMuted);
+        const float lw = ImGui::CalcTextSize(label).x;
+        dl->AddText(ImVec2(std::clamp(tx - lw / 2, at.x, at.x + w - lw), at.y + 12), col::TextSecondary, label);
+    };
+    mark(0, "fine");
+    for (const HeatMark& m : heatMarks()) mark(heatPosition(m.chance), m.label);
+    ImGui::PopFont();
 }
 
 void riskOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {

@@ -103,6 +103,26 @@ void layerColumn(App& app, Document& doc, float h) {
         const bool big = m == r.biggest;
         dl->AddLine(ImVec2(x + 28, y), ImVec2(x + 40, y), big ? col::Accent : IM_COL32(0xF0, 0x6B, 0x9A, 255), 2);
     }
+    // With the heatmap shown: beside the slider, each layer's likeliest spot in its colour.
+    if (const RiskReport* heat = app.risk(); heat && app.layersRisk() && app.riskHeatmap()) {
+        const std::vector<float>& by = heat->layer_heat[static_cast<std::size_t>(app.riskHeatOf())];
+        const float top = p.y + 7, bottom = p.y + sh - 7;
+        const int rows = std::max(1, static_cast<int>(bottom - top));
+        for (int row = 0; row < rows; ++row) {
+            // The layers this row stands for (layer 1 at the bottom), and the likeliest spot among them.
+            const double f0 = static_cast<double>(row) / rows, f1 = static_cast<double>(row + 1) / rows;
+            const int a = static_cast<int>(std::floor(f0 * (n - 1))), b = std::max(a, static_cast<int>(std::ceil(f1 * (n - 1))));
+            float worst = 0;
+            for (int i = a; i <= b && i < n; ++i) {
+                const int at_replay = i - static_cast<int>(r.base_layers);
+                if (at_replay >= 0 && static_cast<std::size_t>(at_replay) < by.size())
+                    worst = std::max(worst, by[static_cast<std::size_t>(at_replay)]);
+            }
+            const unsigned c = heatStepColour(heatStep(worst));
+            const float yy = bottom - static_cast<float>(row + 1);
+            dl->AddRectFilled(ImVec2(x - 12, yy), ImVec2(x - 6, yy + 1.0f), IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, 255));
+        }
+    }
     // The layer whose pull comes closest to breaking something: on the slider's other side.
     if (riskiest >= 0) {
         const float y = p.y + sh - 7 - (sh - 14) * static_cast<float>(riskiest) / static_cast<float>(std::max(1, n - 1));
@@ -282,6 +302,7 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         ImGui::SameLine(0, 8);
         if (linkButton("Go there")) app.setLayer(static_cast<int>(r.biggest));
     }
+    const float left_end = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;  // where the words above end
     // "Show risk" (once the print has been replayed) and "Show the layer below", right-aligned.
     const RiskReport* replay = app.risk();
     ImGui::PushFont(fonts().regular, size::Body);
@@ -292,10 +313,21 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3, 3));
     if (replay) {
-        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - cw - 16 - rw, y - 3));
+        const float rx = ImGui::GetWindowWidth() - 16 - cw - 16 - rw;
+        ImGui::SetCursorPos(ImVec2(rx, y - 3));
         bool risk = app.layersRisk();
         if (ImGui::Checkbox("Show risk", &risk)) app.setLayersRisk(risk);
         tooltip("Colours what may not print, as the replay of the print found it.");
+        // Shown: the places in their bands, or the heatmap, where there is room for the choice.
+        if (app.layersRisk()) {
+            const float pw = ImGui::CalcTextSize("Places").x + ImGui::CalcTextSize("Heatmap").x + 52;
+            if (rx - 16 - pw > left_end + 16) {
+                ImGui::SetCursorPos(ImVec2(rx - 16 - pw, y - 5));
+                if (segmentButton("Places", !app.riskHeatmap())) app.setRiskHeatmap(false);
+                ImGui::SameLine(0, 4);
+                if (segmentButton("Heatmap", app.riskHeatmap())) app.setRiskHeatmap(true);
+            }
+        }
     }
     ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 16 - cw, y - 3));
     bool below = doc.layers.show_below;
@@ -347,10 +379,18 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
             dl->AddText(ImVec2(x, yl - 7), col::TextSecondary, label);
             x += ImGui::CalcTextSize(label).x + 16;
         };
-        item("prints", IM_COL32(255, 255, 255, 255));
-        item("may not", bandColor(RiskBand::May));
-        item("likely not", bandColor(RiskBand::Likely));
-        item("very likely not", bandColor(RiskBand::VeryLikely));
+        if (app.riskHeatmap()) {
+            heatScale(dl, ImVec2(x, yl - 18), 220);
+            x += 220 + 16;
+            dl->AddText(ImVec2(x, yl - 7), col::TextSecondary,
+                        app.riskHeatOf() == HeatOf::Lost ? "how likely each spot is not to print"
+                                                         : "where a break would start");
+        } else {
+            item("prints", IM_COL32(255, 255, 255, 255));
+            item("may not", bandColor(RiskBand::May));
+            item("likely not", bandColor(RiskBand::Likely));
+            item("very likely not", bandColor(RiskBand::VeryLikely));
+        }
         ImGui::PopFont();
     }
     endPanel();

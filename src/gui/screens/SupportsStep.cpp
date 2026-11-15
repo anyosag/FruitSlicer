@@ -528,6 +528,14 @@ void legend(App& app, const SupportResult& r) {
     if (app.supportsView() == SupportsView::Risk) {
         // What the paint and the tips' colours mean, or that the replay is not done yet.
         ImGui::Dummy(ImVec2(riskLegend(app, at), 28));
+        if (const RiskReport* replay = app.risk(); replay && app.riskHeatmap()) {
+            text(app.riskHeatOf() == HeatOf::Lost
+                     ? "How likely each spot is not to print: lost with what breaks under it, or its own layer "
+                       "not forming."
+                     : "Where a break would start: how likely each layer's joint is to let go first.",
+                 fonts().regular, size::Help, col::TextSecondary, true);
+            text(riskStrengthsNote(*replay).c_str(), fonts().regular, size::Help, col::TextMuted, true);
+        }
         return;
     }
     ImGui::PushFont(fonts().regular, size::Help);
@@ -724,6 +732,19 @@ void supportsViewPill(App& app, Document& doc) {
         if (!first) ImGui::SameLine(0, 4);
         first = false;
         if (segmentButton(label, app.supportsView() == v)) app.setSupportsView(v);
+    }
+    // The Risk view: the places in their three bands, or the heatmap; and what the heatmap is coloured by.
+    if (app.supportsView() == SupportsView::Risk && app.risk()) {
+        if (segmentButton("Places", !app.riskHeatmap())) app.setRiskHeatmap(false);
+        ImGui::SameLine(0, 4);
+        if (segmentButton("Heatmap", app.riskHeatmap())) app.setRiskHeatmap(true);
+        if (app.riskHeatmap()) {
+            ImGui::SameLine(0, 12);
+            if (segmentButton("What would be lost", app.riskHeatOf() == HeatOf::Lost)) app.setRiskHeatOf(HeatOf::Lost);
+            ImGui::SameLine(0, 4);
+            if (segmentButton("Where a break starts", app.riskHeatOf() == HeatOf::Breaks))
+                app.setRiskHeatOf(HeatOf::Breaks);
+        }
     }
     legend(app, *doc.supports.result);
 }

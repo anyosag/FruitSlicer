@@ -86,6 +86,9 @@ void checkLine(const char* id, Tick t, const char* title, const std::string& det
 // Layers' "Before you save".
 void riskChecks(App& app, Document& doc);
 float riskLegend(App& app, ImVec2 at);  // drawn from `at`, on one line; how wide it came out
+// The heatmap's colours, fine to 1 in 2, `w` wide from `at`, with their marks
+// under them: 26 points tall.
+void heatScale(ImDrawList* dl, ImVec2 at, float w);
 void riskOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 void riskChip(App& app);
 void riskBeforeSave(App& app);

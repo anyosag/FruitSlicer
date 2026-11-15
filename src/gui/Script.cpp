@@ -757,6 +757,12 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.showRiskLayer(step["risk_layer"].get<int>() - 1);  // the place's "Go to layer"
         } else if (step.contains("layers_risk")) {
             app.setLayersRisk(step["layers_risk"].get<bool>());
+        } else if (step.contains("risk_heatmap")) {
+            app.setRiskHeatmap(step["risk_heatmap"].get<bool>());  // false: the places, in their three bands
+        } else if (step.contains("risk_colour")) {
+            const std::string by = step["risk_colour"].get<std::string>();
+            if (by != "lost" && by != "breaks") throw std::runtime_error("risk_colour: lost or breaks, not " + by);
+            app.setRiskHeatOf(by == "lost" ? HeatOf::Lost : HeatOf::Breaks);
         } else if (step.contains("select_tip")) {
             app.selectTip(step["select_tip"].get<int>());
         } else if (step.contains("layer")) {

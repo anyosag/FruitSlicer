@@ -60,7 +60,8 @@
 //   {"supports_view": "supports" | "tips" | "why" | "risk"} {"select_tip": index} {"problems": bool}
 //   {"risk": "wait" | "show"} lets the replay of the print finish, or shows the Risk view ("Show them on the model")
 //   {"risk_place": n} picks the n-th place that may not print (1-based; 0: none) {"risk_layer": n} its "Go to layer"
-//   {"layers_risk": bool} Layers' "Show risk"
+//   {"layers_risk": bool} Layers' "Show risk" {"risk_heatmap": bool} the heatmap, or (false) the places in their
+//     bands {"risk_colour": "lost" | "breaks"} what the heatmap is coloured by
 //   {"advanced": "open" | "close" | "reset" | "apply"} {"setting": [key, value]} (keys: advancedSettings())
 //   {"exposures": [normal_s, bottom_s]} {"sample": path | "@demo-sample"} (a 0.03 mm print file)
 //   {"drive": name} adds a stand-in USB drive (a folder) and picks it

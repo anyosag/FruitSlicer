@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 // What may not print: the replay's findings as the screens word, colour and paint them.
 #include <catch2/catch_approx.hpp>
+#include <set>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -304,6 +305,128 @@ TEST_CASE("Risk: a layer's picture is painted where its print would be lost", "[
     // Off the print's layers: nothing.
     CHECK_FALSE(paintRiskLayer(res, -1, grid).any);
     CHECK_FALSE(paintRiskLayer(res, 100000, grid).any);
+}
+
+TEST_CASE("Heatmap: the scale runs fine, 1 in 100, 1 in 20, 1 in 5, 1 in 2, in its colours", "[gui][risk][heat]") {
+    CHECK(heatPosition(0) == 0);
+    CHECK(heatPosition(0.0005) == 0);
+    CHECK(heatPosition(0.01) == Approx(0.22));
+    CHECK(heatPosition(0.05) == Approx(0.45));
+    CHECK(heatPosition(0.2) == Approx(0.68));
+    CHECK(heatPosition(0.5) == Approx(0.88));
+    CHECK(heatPosition(1) == 1);
+    double last = -1;
+    for (double c = 1e-4; c <= 1.0; c *= 1.07) {
+        const double p = heatPosition(c);
+        CHECK(p >= last);
+        last = p;
+    }
+    CHECK(heatStep(0) == 0);
+    CHECK(heatStep(0.001) == 0);  // fine
+    CHECK(heatStep(0.01) > 0);
+    CHECK(heatStep(1) == kHeatSteps - 1);
+    CHECK(heatColour(0) == 0x3E5C8Au);
+    CHECK(heatColour(0.45) == 0xE2C255u);
+    CHECK(heatColour(1) == 0x9E1838u);
+    // Every mark on the legend lies where the scale puts its chance.
+    for (const HeatMark& m : heatMarks()) CHECK(heatPosition(m.chance) > 0);
+}
+
+TEST_CASE("Heatmap: a plain column is fine all over, and nothing is painted on it", "[gui][risk][heat]") {
+    const fruit::TriangleMesh mesh = fruit::makeBox({0, 0, 0}, {5, 5, 4});
+    const fruit::StabilityResult res = replay(mesh);
+    for (HeatOf of : {HeatOf::Lost, HeatOf::Breaks}) {
+        HeatPaint heat;
+        paintHeat(mesh, res, of, heat, fruit::JobControl::none());
+        CHECK_FALSE(heat.any());
+        for (float c : heatByLayer(res, of)) CHECK(heatStep(c) == 0);
+    }
+}
+
+TEST_CASE("Heatmap: the wide cap on a thin stem is hot all over, its stem's foot fine", "[gui][risk][heat]") {
+    const fruit::TriangleMesh mesh = capOnStem(12);
+    const fruit::StabilityResult res = replay(mesh);
+    HeatPaint heat;
+    paintHeat(mesh, res, HeatOf::Lost, heat, fruit::JobControl::none());
+    REQUIRE(heat.any());
+    // The cap is very likely lost: its whole surface is painted, in the steps of 1 in 2 or more.
+    const double cap = 2 * 144.0 + 4 * 12.0 * 1.0;
+    double hot = 0, all = 0;
+    for (int s = 0; s < kHeatSteps; ++s) {
+        CHECK((s > 0 || heat.steps[s].empty()));  // step 0 is the model's own colour, never painted
+        all += surface(heat.steps[s]);
+        if (s >= heatStep(0.5)) hot += surface(heat.steps[s]);
+    }
+    CHECK(hot >= cap - 1e-6);
+    CHECK(all <= surface(mesh) + 1e-6);  // never more than the model's surface
+    // All of it lies on the model, and the stem's foot on the plate is not painted.
+    const fruit::BBox3 box = mesh.bbox();
+    double lowest = 1e9;
+    for (const fruit::TriangleMesh& m : heat.steps)
+        for (const fruit::Vec3& v : m.vertices) {
+            CHECK(v.x >= box.min.x - 1e-9);
+            CHECK(v.x <= box.max.x + 1e-9);
+            CHECK(v.z <= box.max.z + 1e-9);
+            lowest = std::min(lowest, v.z);
+        }
+    CHECK(lowest > 0.0);
+    // Its layers say so too, layer by layer: the cap's hot, the stem's first fine.
+    const std::vector<float> by = heatByLayer(res, HeatOf::Lost);
+    REQUIRE(by.size() == res.in_layer.size());
+    CHECK(heatStep(by[50]) >= heatStep(0.5));
+    CHECK(heatStep(by[0]) == 0);
+    // Where a break would start is somewhere under the cap, in the stem.
+    HeatPaint breaks;
+    paintHeat(mesh, res, HeatOf::Breaks, breaks, fruit::JobControl::none());
+    REQUIRE(breaks.any());
+}
+
+TEST_CASE("Heatmap: a ledge's underside warms along its skin, not all one colour", "[gui][risk][heat]") {
+    // A wide column with a ledge reaching out from its top: the ledge is held, its first layer a skin
+    // reaching past what holds it.
+    fruit::TriangleMesh mesh = fruit::makeBox({0, 0, 0}, {10, 10, 3});
+    mesh.append(fruit::makeBox({0, 0, 3}, {15, 10, 4}));
+    const fruit::StabilityResult res = replay(mesh);
+    const int first = static_cast<int>(std::lround(3.0 / kH));
+    REQUIRE(static_cast<std::size_t>(first) < res.skins.size());
+    INFO("skins in the ledge's first layer: " << res.skins[static_cast<std::size_t>(first)].size());
+    HeatPaint heat;
+    paintHeat(mesh, res, HeatOf::Lost, heat, fruit::JobControl::none());
+    // The steps painted on the ledge's underside (z = 3, beyond the column).
+    std::set<int> under;
+    for (int st = 1; st < kHeatSteps; ++st) {
+        const fruit::TriangleMesh& m = heat.steps[st];
+        for (const fruit::Face& f : m.faces) {
+            const fruit::Vec3 c = (m.vertices[static_cast<std::size_t>(f[0])] + m.vertices[static_cast<std::size_t>(f[1])] +
+                                   m.vertices[static_cast<std::size_t>(f[2])]) / 3.0;
+            if (std::abs(c.z - 3.0) < 1e-6 && c.x > 10.0) under.insert(st);
+        }
+    }
+    REQUIRE_FALSE(res.skins[static_cast<std::size_t>(first)].empty());
+    CHECK(under.size() >= 3);
+}
+
+TEST_CASE("Heatmap: a layer's picture shows the print in its step, fine included", "[gui][risk][heat]") {
+    const fruit::StabilityResult res = replay(capOnStem(12));
+    LayerImage grid;
+    grid.w = 160;
+    grid.h = 160;
+    grid.px = grid.py = 0.1;
+    grid.x_left = -8;
+    grid.y_top = 8;
+    const RiskLayerHeat cap = heatRiskLayer(res, 50, grid, HeatOf::Lost);
+    REQUIRE(cap.any);
+    const int st = heatStep(res.chanceAt(50, {0, 0}));
+    REQUIRE(cap.cover[st].size() == 160u * 160u);
+    double lit = 0;
+    for (std::uint8_t c : cap.cover[st]) lit += c / 255.0;
+    CHECK(lit * 0.01 == Approx(144.0).epsilon(0.02));  // mm²
+    // The stem's first layer is fine, and shown as fine (not left out).
+    const RiskLayerHeat foot = heatRiskLayer(res, 0, grid, HeatOf::Lost);
+    REQUIRE(foot.any);
+    CHECK_FALSE(foot.cover[0].empty());
+    CHECK_FALSE(heatRiskLayer(res, -1, grid, HeatOf::Lost).any);
+    CHECK_FALSE(heatRiskLayer(res, 100000, grid, HeatOf::Lost).any);
 }
 
 TEST_CASE("No raft: a separate piece that starts inside the bottom layers stands on the plate", "[gui][risk][plate]") {
