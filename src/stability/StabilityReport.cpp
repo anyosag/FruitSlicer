@@ -22,6 +22,7 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
     j["unheld_parts"] = s.unheld;
     j["unheld_specks"] = s.unheld_specks;
     j["slivers_not_listed"] = s.slivers;
+    j["layers_with_cup_suction"] = s.cup_layers;
     j["whole_print_chance"] = s.whole_chance;
     j["expected_loss_mm3"] = s.expected_loss;
     j["volume_at_risk_mm3"] = {{"1%", s.at_risk[0]}, {"5%", s.at_risk[1]}, {"20%", s.at_risk[2]}, {"50%", s.at_risk[3]}};
@@ -37,6 +38,7 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
         {"resin_per_mm2_as_multiple_of_tip_contact", cfg.bulk_factor},
         {"steepness", cfg.steepness},
         {"skin_half_reach_mm", cfg.skin_half_reach},
+        {"skin_edge_half_reach_mm", cfg.skin_edge_reach},
         {"cup_pull", cfg.cup_pull},
         {"thin_slab_mm", cfg.slab},
         {"tip_share_reach_mm", cfg.share_reach},

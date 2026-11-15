@@ -1358,8 +1358,12 @@ void Generator::relieve() {
     const std::shared_ptr<const IslandGraph> parts(std::shared_ptr<const IslandGraph>(), &graph_);
     const double limit = cfg_.tip_load_limit;
     const int classes = static_cast<int>(cfg_.tip_classes.size());
-    for (int round = 0; round < cfg_.relief_rounds; ++round) {
-        ctl_.check();
+    struct Over {
+        int tip;
+        double times, load;
+    };
+    // The tips as they are now that carry more than they are trusted with, most over first.
+    auto overNow = [&]() {
         std::vector<int> live;
         std::vector<TipContact> contacts;
         for (size_t ti = 0; ti < tips_.size(); ++ti) {
@@ -1373,19 +1377,22 @@ void Generator::relieve() {
             c.rod = rod[ti];
             contacts.push_back(c);
         }
-        if (live.empty()) break;
-        const std::vector<TipLoad> loads = standaloneTipLoads(layers(), parts, contacts, sc, ctl_.silent(), &kept, &hollows_);
-        struct Over {
-            int tip;
-            double times, load;
-        };
         std::vector<Over> over;
+        if (live.empty()) return over;
+        const std::vector<TipLoad> loads = standaloneTipLoads(layers(), parts, contacts, sc, ctl_.silent(), &kept, &hollows_);
         for (size_t i = 0; i < live.size(); ++i) {
             const double trusted = limit * capacityOf(tips_[live[i]]);
             // (A tenth over is within what this way of working the loads out is good for: with the supports
             // built and replayed in full, a tip's load comes out up to a third either side of it.)
             if (trusted > 0 && loads[i].load > kReliefSlack * trusted) over.push_back({live[i], loads[i].load / trusted, loads[i].load});
         }
+        return over;
+    };
+    bool changed_last = false;  // the last round changed tips nobody has worked the loads out for since
+    for (int round = 0; round < cfg_.relief_rounds; ++round) {
+        ctl_.check();
+        std::vector<Over> over = overNow();
+        changed_last = false;
         st.relief_left = over.size();
         if (over.empty()) break;
         ++st.relief_rounds;
@@ -1444,8 +1451,12 @@ void Generator::relieve() {
             }
             if (got == 0) bigger();  // nowhere to put one
         }
+        changed_last = changed > 0;
         if (changed == 0) break;
     }
+    // Out of rounds with tips just changed: what is still over is what the
+    // tips as they stand now carry.
+    if (changed_last) st.relief_left = overNow().size();
 }
 
 void Generator::checkDropped(const std::vector<int>& cover_count) {

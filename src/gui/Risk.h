@@ -106,6 +106,7 @@ struct RiskReport {
     std::size_t places_found = 0;   // places.size(), and those left off a very long list
     std::vector<RiskTip> tips;      // every tip with a chance of 1 in 20 or more of letting go
     bool borrowed = true;           // the tip strengths are FruitSlicer's own, not measured for this resin
+    bool cups = false;              // a cup open to the vat pulls by suction in some layer
     int replays = 0;
     // By layer: how close the weakest place is to letting go while that layer
     // prints (1: half of such places would), and the layer where it is closest.

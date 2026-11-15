@@ -56,6 +56,23 @@ double mostCarried(const PointGenResult& r, const SupportConfig& cfg, const Vec3
     return most;
 }
 
+// How many tips carry more than a tenth over what they are trusted with (as the planner's rule counts them).
+size_t overTrusted(const PointGenResult& r, const SupportConfig& cfg) {
+    std::vector<TipContact> tips;
+    for (const auto& p : r.points) {
+        TipContact t;
+        t.at = p.pos;
+        t.diameter = p.tip_diameter;
+        t.part = p.part;
+        tips.push_back(t);
+    }
+    const std::vector<TipLoad> loads = standaloneTipLoads(*r.analysis.layers, r.analysis.islands, tips, stabilityConfig(cfg));
+    size_t n = 0;
+    for (size_t i = 0; i < loads.size(); ++i)
+        n += loads[i].load > 1.1 * cfg.tip_load_limit * cfg.capacity.capacity(r.points[i].tip_diameter);
+    return n;
+}
+
 }  // namespace
 
 TEST_CASE("flat-bottomed plate: covered, enough capacity, tips on the underside", "[points]") {
@@ -411,6 +428,8 @@ TEST_CASE("each tip's own load: the limit is the planner's setting, and 0 turns 
     const PointGenResult cut_short = generateSupportPoints(m, few, ask);
     CHECK(cut_short.stats.relief_rounds == 2);
     CHECK(cut_short.stats.relief_left > 0);
+    // What it says is still over is what the tips it stopped with carry, its last round's changes and all.
+    CHECK(cut_short.stats.relief_left == overTrusted(cut_short, few));
     CHECK(strict.stats.relief_left == 0);
     CHECK(strict.stats.relief_rounds > 2);
     CHECK(strict.stats.relief_rounds < static_cast<size_t>(fastConfig().relief_rounds));

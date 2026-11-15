@@ -112,8 +112,8 @@ struct StabilityConfig {
     // A thin slab is held patch by patch by the tips near each patch; a
     // thick piece shares a pull among all that holds it, by stiffness. Where
     // the model under a patch is `slab` mm thick, half of the patch's pull is
-    // given outright to the tips near it (all of it at one layer, a fifth at
-    // twice `slab`). Not measured: an assumption.
+    // given outright to the tips near it (all of it at one layer, a
+    // seventeenth, 6 %, at twice `slab`). Not measured: an assumption.
     double slab = 2.0;
     // How far "near" reaches, mm, where the model under the patch is 1 mm
     // thick; it grows with the 3/4 power of that thickness (a plate on
@@ -124,8 +124,19 @@ struct StabilityConfig {
     double share_reach = 1.8;
 
     // A fresh skin (one layer hanging past what holds it) tears or sags in
-    // half the cases at this reach, mm.
+    // half the cases at this reach, mm. Two cases. Between holds (tips, or
+    // the layer below, on more than one side) the skin is held all round
+    // and bends like a plate: `skin_half_reach`. At a free edge, where the
+    // skin's own outline is nearer than any hold, it hangs off one side and
+    // bends like a ledge, which is harsher: `skin_edge_reach`. stabilityConfig()
+    // sets both from the planner's own reaches (its tip spacing on a flat
+    // face, and the tip it wants within reach of a free edge) over the root of
+    // the trusted share. These defaults go with usable_fraction's: the
+    // built-in reaches (3.2 and 1.6 mm) over √0.7. With the built-in tip
+    // table, whose margin is a third, the app and the CLI use 5.54 and
+    // 2.77 mm. 0: not judged.
     double skin_half_reach = 3.82;
+    double skin_edge_reach = 1.91;
 
     // With StabilityInput::standalone_tips, what each tip stands on: a rod
     // this wide (mm), its last `head_length` mm narrowing to the tip.
@@ -273,6 +284,7 @@ struct StabilityStats {
     std::size_t unheld = 0;           // model parts that start in mid-air, specks left out
     std::size_t unheld_specks = 0;
     std::size_t slivers = 0;          // overloaded joints under 0.02 mm² with nothing at risk above: not listed
+    std::size_t cup_layers = 0;       // layers in which the suction of a cup open to the vat pulls
     double model_volume = 0;          // mm³
     // Model volume whose chance of not printing is at least 1, 5, 20 and 50 %.
     double at_risk[4] = {0, 0, 0, 0};
@@ -281,7 +293,10 @@ struct StabilityStats {
     // more) went with tips that let go, and how much on average in those.
     double tips_cost_chance = 0;
     double tips_cost_volume = 0;      // mm³
-    double whole_chance = 1;          // share of replays in which less than 1 mm³ of the model was lost
+    // The share of replays in which less than 1 mm³ of the model was lost:
+    // with joints that let go, in parts that start in mid-air (lost in every
+    // replay), and in fresh skins (each drawn once a replay, by its bands).
+    double whole_chance = 1;
     double worst_closeness = 0;
     int replays = 0;
     double seconds = 0;

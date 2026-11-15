@@ -415,6 +415,74 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   still take whatever fits a narrow spot. At Tip size 0.3 mm the user's lid
   has 704 tips instead of 995, the eye cup 594 instead of 607, the demo
   bracket 87 as before; nothing flagged by the replay on any. Not printed.
+- **What a review of the replay found, fixed (2026-11-15).** An Opus lead
+  and nine Haiku agents looked for flaws in the replay. The lead checked
+  their 50 findings against the code and kept 15; these are the ones that
+  were confirmed, now fixed:
+  - Fresh skin at a free edge was given the reach of skin held all round.
+    The half-tear reach was the planner's tip spacing over the root of the
+    margin (5.54 mm with the built-in table), so a 0.1 mm ledge 3 mm out
+    with nothing under it was not flagged. Bending theory says that harsher
+    case tears at 0.7 to 1.5 mm. A point nearer the part's own outline than
+    anything that holds it now hangs off one side like a ledge, with its own
+    reach: the planner's skin reach (1.6 mm) over the same root, 2.77 mm
+    (`StabilityConfig::skin_edge_reach`, `--edge-reach`). Skin held all
+    round keeps the spacing's reach. That ledge now shows a spot at a 1 in
+    2 chance at its far edge. Neither reach depends yet on the layer height
+    or the pull, as the formula says it should: the skin's thickness is the
+    cure depth, which the replay does not know.
+  - The whole-print chance in the CLI report left out parts that start in
+    mid-air and fresh skins. It read 1.0 next to a 950 mm³ part that was
+    certain to fall. Now both count: what starts in mid-air in every replay,
+    and each skin drawn once a replay from its bands (one strength for the
+    whole skin, so each band tears as often as its chance says). The app
+    does not show this number.
+  - After a tip lets go, whether the piece over it is stiff or thin (the
+    2026-11-14 rule) was judged by the height printed since then, not by
+    how thick the model over that tip is. A thin frame joined to a post
+    10 mm tall was taken as stiff, and its tips were lost in every replay.
+    Now it is judged by the model standing over the tip, layer on layer
+    (`columnOver`, as `step()` reads the model's thickness under a patch).
+  - When the load of a tip that let go was spread over 50 or more tips,
+    each share was under 0.02, and none of them followed the load as it
+    grew. Now only the smallest shares, under a twentieth of the load
+    together, are kept at what they were given.
+  - A tip touching with between 0.75 and 1 of its face counted as touching
+    with all of it. It now holds as much as touches, with no step. Contact
+    is still summed over all of its layers, which is why a sunk tip, two or
+    three times its face, still counts as whole. A tip whose size nobody
+    gave is still sized by its largest joint, because the sum would count a
+    sunk tip's rings several times over. The planner cannot see this
+    shortfall, because it plans before the supports exist.
+  - A rod's lean was capped at 45°, though the app lets heads lean to 60°:
+    a 60° head was taken as 1.4 times as strong and 4 times as stiff as it
+    is. The cap is now 60°.
+  - A tip that holds nothing (no size) never let go. It now lets go as soon
+    as it is pulled.
+  - An empty model crashed the replay. It now says there is nothing to
+    print.
+  - The CLI no longer runs out-of-range values silently as other values:
+    `--replays 0`, `--tip-margin 2`, `--steepness 0.5` and the rest are
+    refused with their ranges, and 0 now means what each help line says it
+    means.
+  - The planner's count of tips still over their load came from before its
+    last round when it ran out of rounds. It now counts the tips as they
+    are left.
+  - The CLI does not apply values typed on the app's Resins page: only the
+    app knows those settings. It now says so in `profile_notes` and names
+    them.
+  - The Risk card's note named only the borrowed tip strengths. It now also
+    says how far a layer's pull spreads through thin model is a guess.
+    Changing that guess from 2 to 4 mm takes the lid's likeliest tip from
+    under 1 in 100 to more than 1 in 4. Where the print has a cup, the note
+    names the suction as a guess too.
+  - Two header comments were wrong: "a fifth at twice the slab" (it is
+    1/17), and a default skin reach no shipped path uses.
+  - Each fix has a test that fails without it. The skin test now pins its
+    half-way point exactly, instead of "at least a half".
+  Not done: tests that pin the slab's exponent and a seam's later layers.
+  Also not done: a check of an added tip's support length against the
+  model under it, which the lead left as plausible only. Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

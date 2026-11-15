@@ -88,6 +88,7 @@ void sayRepair(const std::string& path, const RepairReport& r) {
 
 TriangleMesh loadPlaced(const std::string& path, const PlacementOpts& o, json* report = nullptr) {
     const LoadedModel m = loadModel(path);
+    if (m.mesh.faceCount() == 0) throw std::runtime_error(path + " has no faces: there is nothing to print");
     sayRepair(path, m.repair);
     if (report) {
         (*report)["shells_flipped"] = m.shells_flipped;
@@ -330,7 +331,17 @@ void applySettings(const GenCli& g, SupportConfig& cfg, TreeConfig* tc, json& r)
     if (!g.hinge.empty()) c.hinge = parseHinge(g.hinge);
     c.peel_bias = g.peel_bias;
     c.on_plate = g.on_plate;
-    const auto notes = resolveSettings(g.profile.empty() ? nullptr : &profile, c, cfg, tc);
+    auto notes = resolveSettings(g.profile.empty() ? nullptr : &profile, c, cfg, tc);
+    // Values typed for the resin on the app's Resins page (kept in the
+    // profile under "yours", by the app's own setting names). Only the app
+    // knows those settings: here they are not used, and the numbers are
+    // worked out without them.
+    if (profile.is_object() && profile.contains("yours") && profile["yours"].is_object() && !profile["yours"].empty()) {
+        std::string names;
+        for (const auto& [k, v] : profile["yours"].items()) names += (names.empty() ? "" : ", ") + k;
+        notes.push_back("This resin has values of its own from the app's Resins page (" + names +
+                        "). They are not used here, only in the app: these numbers are worked out without them.");
+    }
     if (!notes.empty()) r["profile_notes"] = notes;
     if (g.tip_limit >= 0) cfg.tip_load_limit = g.tip_limit;
     if (c.hinge) r["peel"] = {{"hinge", g.hinge}, {"bias", cfg.peel_bias}};
@@ -620,7 +631,7 @@ struct StabilityCli {
     int replays = 500;
     double resin = -1, steepness = -1, cup_pull = -1, shape = -1;
     // The replay's own assumptions, for trying other values on the same supports (the planner keeps its own).
-    double slab = -1, share_reach = -1, skin_reach = -1, tip_margin = -1;
+    double slab = -1, share_reach = -1, skin_reach = -1, edge_reach = -1, tip_margin = -1;
     long long seed = -1;
     unsigned threads = 0;
 };
@@ -698,14 +709,16 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
     StabilityConfig sc = stabilityConfig(cfg);
     sc.replays = o.replays;
     sc.threads = o.threads;
-    if (o.resin > 0) sc.bulk_factor = o.resin;
-    if (o.steepness > 0) sc.steepness = o.steepness;
+    // Each as typed (the options refuse what the replay can't use); -1: not given.
+    if (o.resin >= 0) sc.bulk_factor = o.resin;
+    if (o.steepness >= 0) sc.steepness = o.steepness;
     if (o.cup_pull >= 0) sc.cup_pull = o.cup_pull;
     if (o.shape >= 0) sc.shape_effect = o.shape;
-    if (o.slab > 0) sc.slab = o.slab;
-    if (o.share_reach > 0) sc.share_reach = o.share_reach;
-    if (o.skin_reach > 0) sc.skin_half_reach = o.skin_reach;
-    if (o.tip_margin > 0) sc.usable_fraction = o.tip_margin;
+    if (o.slab >= 0) sc.slab = o.slab;
+    if (o.share_reach >= 0) sc.share_reach = o.share_reach;
+    if (o.skin_reach >= 0) sc.skin_half_reach = o.skin_reach;
+    if (o.edge_reach >= 0) sc.skin_edge_reach = o.edge_reach;
+    if (o.tip_margin >= 0) sc.usable_fraction = o.tip_margin;
     if (o.seed >= 0) sc.seed = static_cast<std::uint64_t>(o.seed);
     const StabilityResult res = analyzeStability(in, sc);
 
@@ -1143,27 +1156,39 @@ int main(int argc, char** argv) {
     stability->add_flag("--no-merge", stcli.no_merge, "Keep one pillar per head cluster (no branching trunks)");
     stability->add_option("--report", stcli.report, "Report JSON (with how close the weakest joint was, layer by layer)");
     stability->add_option("--picture", stcli.picture, "Picture PNG: the print seen through, coloured by chance");
-    stability->add_option("--replays", stcli.replays, "Replays with strengths drawn at random (default 500)");
+    stability->add_option("--replays", stcli.replays, "Replays with strengths drawn at random (default 500; at least 1)")
+        ->check(CLI::Range(1, 1000000));
     stability->add_option("--resin", stcli.resin,
                           "The model's own resin across layers, per mm2, as a multiple of a tip contact's "
-                          "(default 1; NOT MEASURED)");
+                          "(default 1; NOT MEASURED; more than 0)")
+        ->check(CLI::PositiveNumber);
     stability->add_option("--steepness", stcli.steepness,
-                          "How sharply 'holds' turns into 'breaks' (default 7; published 5 to 11)");
+                          "How sharply 'holds' turns into 'breaks' (default 7; published 5 to 11; 1 or more)")
+        ->check(CLI::Range(1.0, 1000.0));
     stability->add_option("--cup-pull", stcli.cup_pull,
-                          "Suction over a cup's opening as a multiple of the pull on resin (default 4; NOT MEASURED)");
+                          "Suction over a cup's opening as a multiple of the pull on resin (default 4; NOT MEASURED; 0: none)")
+        ->check(CLI::NonNegativeNumber);
     stability->add_option("--shape-effect", stcli.shape,
-                          "0 (default): pull by area alone; 1: thin outlines pull less (Pan et al. 2017)");
+                          "0 (default): pull by area alone; 1: thin outlines pull less (Pan et al. 2017)")
+        ->check(CLI::Range(0.0, 1.0));
     stability->add_option("--threads", stcli.threads, "Worker threads (0 = all cores)");
     stability->add_option("--save-points", stcli.points_out, "Write the planned points here, to replay the same supports with --points");
     stability->add_flag("--all-tips", stcli.all_tips, "List every tip in the report, not only those that may let go");
     stability->add_option("--thin-slab", stcli.slab,
-                          "Replay only: model under a patch this thick (mm) gives half its pull to the tips near it (default 2; NOT MEASURED)");
+                          "Replay only: model under a patch this thick (mm) gives half its pull to the tips near it (default 2; NOT MEASURED; more than 0)")
+        ->check(CLI::PositiveNumber);
     stability->add_option("--share-reach", stcli.share_reach,
-                          "Replay only: how far a patch's pull spreads among tips where the model is 1 mm thick (mm; default 1.8; NOT MEASURED)");
+                          "Replay only: how far a patch's pull spreads among tips where the model is 1 mm thick (mm; default 1.8; NOT MEASURED; more than 0)")
+        ->check(CLI::PositiveNumber);
     stability->add_option("--skin-reach", stcli.skin_reach,
-                          "Replay only: reach at which half of fresh skins fail (mm; default from the planner's tip reach; NOT MEASURED)");
+                          "Replay only: reach at which half of fresh skins between holds fail (mm; default from the planner's tip spacing; NOT MEASURED; 0: not judged)")
+        ->check(CLI::NonNegativeNumber);
+    stability->add_option("--edge-reach", stcli.edge_reach,
+                          "Replay only: the same at a free edge, where a skin hangs off one side (mm; default from the planner's skin reach; NOT MEASURED; 0: not judged)")
+        ->check(CLI::NonNegativeNumber);
     stability->add_option("--tip-margin", stcli.tip_margin,
-                          "Replay only: the tip table as a share of the load at which half let go (default 1/3 built-in, 0.7 fitted)");
+                          "Replay only: the tip table as a share of the load at which half let go (default 1/3 built-in, 0.7 fitted; 0.05 to 1)")
+        ->check(CLI::Range(0.05, 1.0));
     stability->add_option("--seed", stcli.seed, "Replay only: seed of the random strengths (default 1)");
 
     OrientCli ocli;

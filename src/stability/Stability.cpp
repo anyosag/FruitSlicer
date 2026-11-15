@@ -1063,20 +1063,22 @@ void Analysis::sizeJoints() {
     // one tip: together they hold what the tip holds, and they let go
     // together. Tips nobody told us about are told apart by their supports
     // (joints along one support are one tip) and sized by the largest of
-    // their joints.
+    // their joints: their size is not known, and a tip sunk into the model
+    // meets it in rings one inside another, so their sum would count it
+    // several times over. (One that grazes a slope in strips beside one
+    // another is undercounted: an error on the cautious side.)
     const int given = static_cast<int>(in_.tips.size());
     tip_group_.assign(links_.size(), -1);
     tip_follows_.assign(links_.size(), 0);
     std::vector<int> ends_in(n_, -1), stands_on(n_, -1);  // by support part: the tip over it, the tip under it
-    std::vector<double> top, all;  // of the tips found here: their largest joint, and all their joints together
-    std::vector<int> low, high;    // and the layers they run from and to
+    std::vector<double> top;    // of the tips found here: their largest joint
+    std::vector<int> low, high;  // and the layers they run from and to
     auto found = [&](std::vector<int>& of, int part) {
         int g = of[part];
         for (int q = 0; g < 0 && q < same_[part]; ++q) g = of[part_[part].parents[q]];
         if (g < 0) {
             g = static_cast<int>(top.size());
             top.push_back(0);
-            all.push_back(0);
             low.push_back(layers_);
             high.push_back(-1);
         }
@@ -1095,7 +1097,6 @@ void Analysis::sizeJoints() {
                 const int g = l.kind == Kind::Tip ? found(ends_in, l.parent) : found(stands_on, l.child);
                 tip_group_[i] = given + g;
                 top[g] = std::max(top[g], l.area);
-                all[g] += l.area;
                 low[g] = std::min(low[g], L);
                 high[g] = std::max(high[g], L);
             }
@@ -1105,9 +1106,13 @@ void Analysis::sizeJoints() {
     tips_found_ = 0;
     for (int t = 0; t < given; ++t) {
         if (!(touching[t] > 0)) continue;
-        // The tip as it was made, unless it touches with clearly less than itself.
+        // The tip as it was made, unless it touches with less than itself: then
+        // as much of it as touches. (Its joints over all its layers together:
+        // a tip sunk into the model meets it in rings that come to two or
+        // three times its face, one grazing a slope in strips beside one
+        // another.)
         const double d = in_.tips[t].diameter, nominal = kPi * d * d / 4;
-        group_holds_[t] = tipHolds(d) * (touching[t] >= 0.75 * nominal ? 1.0 : touching[t] / nominal);
+        group_holds_[t] = tipHolds(d) * (nominal > 0 ? std::min(1.0, touching[t] / nominal) : 0.0);
         group_area_[t] = touching[t];
         ++tips_found_;
     }
@@ -1154,7 +1159,10 @@ void Analysis::sizeJoints() {
             case Kind::Rod: break;  // once the rod's lean is known (buildRods)
             case Kind::Tip:
             case Kind::Foot:
-                l.holds = group_holds_[tip_group_[i]];
+                // A tip that holds nothing (no size, or one the table gives
+                // nothing for) still takes its share of the pull: it lets go
+                // as soon as it is pulled, and the others get its share.
+                l.holds = std::max(group_holds_[tip_group_[i]], 1e-9);
                 tip_follows_[i] = led[tip_group_[i]];  // the first joint of a tip stands for it in the replays
                 led[tip_group_[i]] = 1;
                 break;
@@ -1238,8 +1246,12 @@ void Analysis::buildRods() {
                     // longer than it is tall, and only part of its pull is
                     // upward, so it gives more. Its strength is its own
                     // cross-section's: the planner's tip table does not
-                    // know a head's lean, and neither does this.
-                    const double t = std::min(1.0, distance(centre_[id], centre_[l.parent]) / h_);
+                    // know a head's lean, and neither does this. No rod leans
+                    // more than 60° (the steepest head the app lets the tree
+                    // build; bridges and branches lean 45°): a centre that
+                    // moves further in a layer is where two shapes meet.
+                    constexpr double kSteepestLean = 1.7320508075688772;  // tan 60°
+                    const double t = std::min(kSteepestLean, distance(centre_[id], centre_[l.parent]) / h_);
                     const double lean = 1 + t * t;
                     l.eff = l.area / std::sqrt(lean);
                     l.holds = bulk_ * l.eff;
@@ -2423,10 +2435,17 @@ void Analysis::findSkins() {
     out_.skins.assign(layers_, {});
     if (in_.standalone_tips) return;  // the planner asks what each tip carries, not what forms
     const double chances[] = {0.01, 0.05, 0.2, 0.5, 0.9};
-    double reach[5];
-    for (int j = 0; j < 5; ++j)
-        reach[j] = cfg_.skin_half_reach * std::pow(-std::log2(1 - chances[j]), 1 / (2 * steep_));
-    if (!(cfg_.skin_half_reach > 0)) return;
+    // A skin's stress goes with the square of its reach, so the reach at a
+    // chance is the half-way one times the root of the strength's own spread.
+    const bool between = cfg_.skin_half_reach > 0, edge = cfg_.skin_edge_reach > 0;
+    if (!between && !edge) return;
+    double reach[5], edge_reach[5];
+    for (int j = 0; j < 5; ++j) {
+        const double f = std::pow(-std::log2(1 - chances[j]), 1 / (2 * steep_));
+        reach[j] = cfg_.skin_half_reach * f;
+        edge_reach[j] = cfg_.skin_edge_reach * f;
+    }
+    const double shortest = between && edge ? std::min(reach[0], edge_reach[0]) : between ? reach[0] : edge_reach[0];
     parallelFor(static_cast<size_t>(layers_), cfg_.threads, [&](size_t L) {
         if (L < static_cast<size_t>(plate_layers_)) return;  // cured onto the plate: nothing there to form in mid-air
         for (int id : in_layer_[L]) {
@@ -2442,14 +2461,26 @@ void Analysis::findSkins() {
             if (std::abs(area(fresh)) < 0.05) continue;
             // A point further than `reach` from what is below lies on a way
             // through fresh skin at least that long.
-            if (norm(bbox(fresh).size()) < reach[0]) continue;
-            for (int j = 0; j < 5; ++j) {
+            if (norm(bbox(fresh).size()) < shortest) continue;
+            auto beyond = [&](double r) {  // what of this layer's part lies further than r from anything under it
                 Paths grown;
                 for (int q : p.parents) {
-                    const Paths g = grownBy(part_[q].poly(), reach[j]);
+                    const Paths g = grownBy(part_[q].poly(), r);
                     grown.insert(grown.end(), g.begin(), g.end());
                 }
-                Paths far = difference(mine, grown);
+                return difference(mine, grown);
+            };
+            for (int j = 0; j < 5; ++j) {
+                Paths far = between ? beyond(reach[j]) : Paths{};
+                // At a free edge: a point nearer the part's own outline than
+                // anything that holds it hangs off one side, as a ledge does.
+                // Those further than the edge reach from a hold and within it
+                // of the outline are such points.
+                if (edge && (!between || edge_reach[j] < reach[j])) {
+                    const Paths rim = difference(mine, offset(mine, -edge_reach[j]));
+                    const Paths ledge = intersection(beyond(edge_reach[j]), rim);
+                    far = far.empty() ? ledge : unionOf(far, ledge);
+                }
                 far = offset(offset(far, -0.002), 0.002);  // slivers
                 if (std::abs(area(far)) < 1e-3) break;
                 out_.skins[L].push_back({id, static_cast<float>(chances[j]), std::move(far)});
@@ -2512,6 +2543,36 @@ void Analysis::runReplays() {
         const int i = cand[c].link;
         return tip_group_[i] >= 0 ? group_at_[tip_group_[i]] : links_[i].c;
     };
+    // By joint under the model: how many layers of model stand over where it
+    // holds, one on another from its own up, as step() reads the model's
+    // thickness under a patch. Worked out when first needed, and only as far
+    // as could still matter (past four slabs a piece is stiff; past 30 mm the
+    // share reaches over most of a plate). Under a support: no limit.
+    std::vector<int> column(nc, -1);
+    const int column_cap =
+        static_cast<int>(std::ceil(std::max(4 * std::max(cfg_.slab, 0.0), 30.0) / h_));
+    auto columnOver = [&](int c) {
+        if (column[c] >= 0) return column[c];
+        int id = cand[c].child;
+        if (!model_[id]) return column[c] = layers_;
+        const Vec2 at = links_[cand[c].link].c;  // the middle of its area: on the model, where a tip's pin may be just off it
+        int n = 0;
+        while (id >= 0 && n < column_cap) {
+            ++n;
+            int up = -1;
+            for (int ch : part_[id].children) {
+                if (!model_[ch]) continue;
+                const BBox2& b = part_[ch].box;
+                if (at.x < b.min.x || at.x > b.max.x || at.y < b.min.y || at.y > b.max.y) continue;
+                if (part_[ch].poly().contains(at)) {
+                    up = ch;
+                    break;
+                }
+            }
+            id = up;
+        }
+        return column[c] = n;
+    };
     // The joints of each tip, to let go together.
     std::vector<std::vector<int>> of_tip(group_holds_.size());
     for (int c = 0; c < nc; ++c)
@@ -2571,8 +2632,50 @@ void Analysis::runReplays() {
         return x;
     };
 
+    // What no replay can save: the model that starts in mid-air goes every
+    // time (mm³). And each fresh skin, drawn once a replay: its bands are
+    // nested, the likelier ones nearer its far edge, so one strength for the
+    // whole skin tears it back to the band whose chance that draw falls under,
+    // and each band's area is lost as often as its chance says.
+    double unheld_volume = 0;
+    for (int id = 0; id < n_; ++id)
+        if (model_[id] && !held_[id]) unheld_volume += area_[id] * h_;
+    struct SkinDraw {
+        int part;
+        std::vector<std::pair<float, double>> bands;  // chance (rising), mm² that tears with it
+    };
+    std::vector<SkinDraw> skin_draws;
+    for (int L = 0; L < layers_; ++L)
+        for (const SkinBand& b : out_.skins[static_cast<size_t>(L)]) {
+            if (skin_draws.empty() || skin_draws.back().part != b.part) skin_draws.push_back({b.part, {}});
+            skin_draws.back().bands.push_back({b.chance, std::abs(area(b.region))});
+        }
+
+    // How much of the fresh skins tears in replay r (mm³), but for those of
+    // parts already gone with something else.
+    auto skinLost = [&](int r, const std::vector<int>* gone_in) {
+        double lost = 0;
+        Rng skin_rng(cfg_.seed * 0xA24BAED4963EE407ULL + static_cast<std::uint64_t>(r) * 0x9FB21C651E98DF25ULL + 2);
+        for (const SkinDraw& s : skin_draws) {
+            const double v = skin_rng.unit();
+            if (gone_in && (*gone_in)[s.part] == r) continue;
+            for (const auto& [chance, a] : s.bands)
+                if (v < chance) {
+                    lost += a * h_;
+                    break;
+                }
+        }
+        return lost;
+    };
+
     if (replays == 0 || nc == 0) {
         for (int id = 0; id < n_; ++id) out_.parts[id].lost_chance = held_[id] ? 0.0f : 1.0f;
+        // Nothing that can break: only what starts in mid-air and the skins.
+        if (replays > 0) {
+            int whole = 0;
+            for (int r = 0; r < replays; ++r) whole += unheld_volume + skinLost(r, nullptr) < kWorthLosing;
+            whole_ = static_cast<double>(whole) / replays;
+        }
         return;
     }
 
@@ -2613,9 +2716,10 @@ void Analysis::runReplays() {
     // so what a joint has been given is a sum of the own loads of the joints
     // that let go before it (each own load as worked out with everything
     // there), each times the share of it that came this way; a share too
-    // small to matter (or one past the most kept) is kept at what it was
-    // when given. mm² of layer.
-    constexpr double kTracked = 0.02;  // a share under this is kept at what it was
+    // small to matter (the smallest of a load spread wide, together under a
+    // twentieth of it, or one past the most a joint keeps) is kept at what it
+    // was when given. mm² of layer.
+    constexpr double kTracked = 0.02;  // a share this big is always followed
     constexpr size_t kMostTracked = 8;
     struct Given {
         std::vector<std::pair<int, double>> from;  // a joint that let go, the share of its own load
@@ -2631,11 +2735,12 @@ void Analysis::runReplays() {
         for (const auto& [s, share] : g.from) f += share * own(s, k);
         return f;
     };
-    // Joint x let go at layer k, and c takes `share` of all it carried.
-    auto pass = [&](int x, int c, double share, int k) {
+    // Joint x let go at layer k, and c takes `share` of all it carried
+    // (`follow`: of all it would have carried later too).
+    auto pass = [&](int x, int c, double share, int k, bool follow) {
         Given& g = given[c];
         if (g.from.empty() && g.fixed == 0) given_list.push_back(c);
-        if (share < kTracked) {
+        if (!follow) {
             g.fixed += share * carriesAt(x, k);
             return;
         }
@@ -2701,13 +2806,13 @@ void Analysis::runReplays() {
         int piece, k, by;  // the layer printing when it fell, and the joint whose letting go dropped it
     };
     std::vector<Fall> fallen;
-    std::vector<std::pair<int, double>> takers;
+    std::vector<std::pair<int, double>> takers, shares;
+    std::vector<double> sizes;
     // By joint: the replays in which it let go, and the model that went with it then (mm³, summed).
     std::vector<int> let_go(nc, 0), lost_by;
     std::vector<double> went_with(nc, 0);
     int tips_cost = 0;          // replays in which part of the model went with tips
     double tips_cost_sum = 0;   // and how much, summed over those
-
     for (int r = 0; r < replays; ++r) {
         if ((r & 15) == 0) ctl_.step("replays", static_cast<double>(r) / replays);
         Rng rng(cfg_.seed * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(r) * 0xD1B54A32D192ED03ULL + 1);
@@ -2803,7 +2908,10 @@ void Analysis::runReplays() {
             // from the middle one). The far side is not let off: what lets go
             // makes nothing else safer.
             const Vec2 here = placeOf(x);
-            const double over = (k - layerOf(cand[x].child) + 1) * h_;
+            // How thick the model over it is by now: what has printed since,
+            // where that stands on it. (A thin shelf joined to a tall wall is
+            // still thin over its own tips.)
+            const double over = std::min(k - layerOf(cand[x].child) + 1, columnOver(x)) * h_;
             const double len = std::max(0.3, cfg_.share_reach * std::pow(over, 0.75));
             const double inv = cfg_.share_reach < 1e5 ? 1 / (3.2 * len * len) : 0.0;
             takers.clear();
@@ -2835,13 +2943,32 @@ void Analysis::runReplays() {
             // and half where the model over the joint is `slab` mm thick.
             const bool stiff_all = !(cfg_.share_reach < 1e5);
             const double thin = stiff_all || !(cfg_.slab > 0) ? 0.0 : 1.0 / (1.0 + std::pow(over / cfg_.slab, 4));
+            shares.clear();
+            double total = 0;
             for (const auto& [c, w] : takers) {
                 if (w == 0) continue;
                 const Vec2 d = placeOf(c) - here;
                 const double share =
                     lever ? (1 - thin) * w * (mv.w + mv.gx * d.x + mv.gy * d.y) + thin * w / sum : w / sum;
                 if (!(share > 0)) continue;
-                pass(x, c, share, k);
+                shares.push_back({c, share});
+                total += share;
+            }
+            // Every share follows the load as it grows, but for the smallest,
+            // which together come to under a twentieth of it: those are kept
+            // at what they were given. (Spread over 50 joints or more, each
+            // share is small, but together they are all of it.)
+            sizes.clear();
+            for (const auto& s : shares) sizes.push_back(s.second);
+            std::sort(sizes.begin(), sizes.end(), std::greater<>());
+            double so_far = 0, followed = 0;
+            for (double s : sizes) {
+                followed = s;
+                so_far += s;
+                if (so_far >= 0.95 * total) break;
+            }
+            for (const auto& [c, share] : shares) {
+                pass(x, c, share, k, share >= std::min(kTracked, followed));
                 when[c] = firstOverAll(c, k);
                 if (when[c] != kNever && !listed[c]) {
                     listed[c] = 1;
@@ -2893,7 +3020,7 @@ void Analysis::runReplays() {
                 }
             }
         }
-        whole += model_lost < kWorthLosing;
+        whole += model_lost + unheld_volume + skinLost(r, &lost_stamp) < kWorthLosing;
         if (with_tips >= kCountsAsLost) {
             ++tips_cost;
             tips_cost_sum += with_tips;
@@ -3141,6 +3268,7 @@ void Analysis::summarise() {
 
 StabilityResult Analysis::run() {
     const auto t0 = std::chrono::steady_clock::now();
+    if (!in_.print || in_.print->size() == 0) return std::move(out_);  // no layers: nothing to replay
     buildParts();
     ctl_.check();
     buildLinks();
@@ -3167,6 +3295,7 @@ StabilityResult Analysis::run() {
     findSpots();
     listTips();
     summarise();
+    for (const auto& c : cups_) out_.stats.cup_layers += !c.empty();
     out_.stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return std::move(out_);
 }
@@ -3198,7 +3327,14 @@ StabilityConfig stabilityConfig(const SupportConfig& cfg) {
     CoverageModel reach = cfg.coverage;
     reach.density = 1.0;
     const bool reach_fitted = cfg.coverage.curve != CoverageModel{}.curve;
-    s.skin_half_reach = reach.radius(0) / std::sqrt(reach_fitted ? kFittedMargin : kBorrowedMargin);
+    const double root = std::sqrt(reach_fitted ? kFittedMargin : kBorrowedMargin);
+    s.skin_half_reach = reach.radius(0) / root;
+    // At a free edge the skin hangs off one side, like a ledge: the planner
+    // wants a tip within its skin reach of such an edge (1.6 mm: the span a
+    // 1.0-1.5 mm ledge is trusted with), and the same root makes that the
+    // reach at which half of them tear. No plate measures it yet: it stays
+    // with the spacing plate's margin, as the reach between holds does.
+    s.skin_edge_reach = cfg.skin_reach > 0 ? cfg.skin_reach / root : 0.0;
     return s;
 }
 

@@ -319,9 +319,16 @@ RiskHeadline riskHeadline(const RiskReport& r) {
 }
 
 std::string riskStrengthsNote(const RiskReport& r) {
-    return r.borrowed ? "Strengths are borrowed, not measured for this resin."
-                      : "Tip strengths are this resin's, from its tips plate. How strong the model is between its own "
-                        "layers is taken to be the same: not measured.";
+    // The guesses the answer moves most with, whatever the resin: how a pull
+    // spreads through thin model (from 2 to 4 mm, the lid's likeliest tip
+    // went from under 1 in 100 to more than 1 in 4), and a cup's suction.
+    std::string s = r.borrowed ? "Strengths are borrowed, not measured for this resin."
+                               : "Tip strengths are this resin's, from its tips plate. How strong the model is between "
+                                 "its own layers is taken to be the same: not measured.";
+    s += " How far a layer's pull spreads through thin model is a guess too: with another, a tip can come out many "
+         "times likelier to let go.";
+    if (r.cups) s += " So is how hard the suction in a cup pulls.";
+    return s;
 }
 
 // ---------------------------------------------------------------- the paint
@@ -831,6 +838,7 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
     ctl.step("stress", 0.2);
     auto res = std::make_shared<fruit::StabilityResult>(fruit::analyzeStability(in, cfg, ctl.sub(0.2, 0.9)));
     findRiskPlaces(*res, cfg.usable_fraction, r);
+    r.cups = res->stats.cup_layers > 0;
     if (paint) {
         ctl.step("paint", 0.9);
         paintRisk(doc.placed(), *res, r.paint, ctl);

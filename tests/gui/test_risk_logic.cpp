@@ -492,7 +492,19 @@ TEST_CASE("Risk: the demo bracket on its own supports is replayed, the same ever
     const RiskHeadline h = riskHeadline(a);
     CHECK_FALSE(h.title.empty());
     CHECK_FALSE(h.detail.empty());
-    CHECK(riskStrengthsNote(a) == "Strengths are borrowed, not measured for this resin.");
+    CHECK_FALSE(a.cups);
+    CHECK(riskStrengthsNote(a) == "Strengths are borrowed, not measured for this resin. How far a layer's pull "
+                                  "spreads through thin model is a guess too: with another, a tip can come out many "
+                                  "times likelier to let go.");
+    // Measured tips, and a cup in the print: the suction is named too.
+    RiskReport measured_cup;
+    measured_cup.borrowed = false;
+    measured_cup.cups = true;
+    CHECK(riskStrengthsNote(measured_cup) ==
+          "Tip strengths are this resin's, from its tips plate. How strong the model is between its own layers is "
+          "taken to be the same: not measured. How far a layer's pull spreads through thin model is a guess too: "
+          "with another, a tip can come out many times likelier to let go. So is how hard the suction in a cup "
+          "pulls.");
     // Each place has its words, and a layer to go to.
     for (const RiskPlace& p : a.places) {
         CHECK_FALSE(p.title.empty());

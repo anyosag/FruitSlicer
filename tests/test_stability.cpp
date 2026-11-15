@@ -178,7 +178,16 @@ TEST_CASE("a cap on a stem: the stem's stress is the pull times cap area over st
     // often as one such neck breaks.
     const double p = breakChance(100.0 / kPerMm2, 7);
     CHECK(at(r, 25, {3, 3}).lost_chance == Approx(p).margin(0.025));
-    CHECK(r.stats.whole_chance == Approx(1 - p).margin(0.025));
+    // The whole print, with fresh skins not judged: as often as the stem holds.
+    StabilityConfig no_skins = cfg;
+    no_skins.skin_half_reach = no_skins.skin_edge_reach = 0;
+    Build again(30);
+    again.part(0, 20, rect(-0.5, -0.5, 0.5, 0.5));
+    again.part(20, 30, rect(-5, -5, 5, 5));
+    CHECK(again.run(no_skins).stats.whole_chance == Approx(1 - p).margin(0.025));
+    // With them: the cap's first layer hangs 4.5 mm past the stem all round,
+    // and tears in most replays (at least 1 mm³ of it in nine in ten).
+    CHECK(r.stats.whole_chance == Approx((1 - p) * 0.1).margin(0.03));
     // Listed once, though twenty layers of stem are equally loaded. (The cap's
     // first layer, hanging 4.5 mm past the stem all round, is listed above it.)
     int necks = 0;
@@ -595,8 +604,9 @@ TEST_CASE("a fresh skin fails past its reach and not within it", "[stability]") 
     CHECK(r.skins[21].empty());  // the second layer lies on the first
     // 5 mm from the column: past the reach at which half fail.
     CHECK(r.chanceAt(20, {6, 0}) >= 0.89);
-    // Exactly at that reach it is about a half; well inside there is nothing.
-    CHECK(r.chanceAt(20, {4.02, 0}) >= 0.5);
+    // Just past that reach it is a half (not more: the next band, 9 in 10,
+    // starts further out); well inside there is nothing.
+    CHECK(r.chanceAt(20, {4.02, 0}) == Approx(0.5));
     CHECK(r.chanceAt(20, {3.95, 0}) < 0.89);
     CHECK(r.chanceAt(20, {2.5, 0}) == 0);
     CHECK(r.chanceAt(21, {6, 0}) == 0);
@@ -807,6 +817,209 @@ TEST_CASE("a thin piece that loses a tip passes its load to the next one, withou
     StabilityConfig all_stiff;
     all_stiff.slab = 0.01;
     CHECK(at(bar(all_stiff), 25, {0, 0}).lost_chance == Approx(1));
+}
+
+TEST_CASE("a thin frame joined to a tall post is still thin over its own tips when one lets go late", "[stability]") {
+    // A frame of thin strips on four tips at the corners of a square, a post rising 10 mm from one
+    // corner, and one wide layer on top of the post, over the whole square. The tip at the far corner
+    // lets go only under that layer: by then a lot has printed since it was joined, but over that tip
+    // there is still only the frame, under half a millimetre of it. So its load goes to the two tips
+    // beside it by what each was carrying, about half each. Taken as stiff (by the height printed
+    // since), the lever rule would give each of them all of it, and they would go too.
+    auto frame = [](const StabilityConfig& base) {
+        Build b(230);
+        for (double x : {-2.0, 2.0})
+            for (double y : {-2.0, 2.0}) b.support(0, 20, rect(x - 0.3, y - 0.3, x + 0.3, y + 0.3));
+        for (const Path& strip : {rect(-2.3, -2.3, 2.3, -1.7), rect(-2.3, 1.7, 2.3, 2.3), rect(-2.3, -2.3, -1.7, 2.3),
+                                  rect(1.7, -2.3, 2.3, 2.3)})
+            b.part(20, 29, strip);
+        b.part(29, 229, rect(1.5, 1.5, 2.5, 2.5));  // the post, over one corner's tip
+        b.part(229, 230, rect(-3, -3, 3, 3));      // one wide layer on it, over the whole frame
+        StabilityConfig cfg = base;
+        cfg.bulk_factor = 100;
+        cfg.steepness = 1000;
+        cfg.replays = 200;
+        cfg.skin_half_reach = cfg.skin_edge_reach = 0;  // only the tips are judged here
+        return b.run(cfg, {{{-2, -2, 1.0}, 0.2}, {{-2, 2, 1.0}, 0.4}, {{2, -2, 1.0}, 0.4}, {{2, 2, 1.0}, 0.4}});
+    };
+    const StabilityResult thin = frame(StabilityConfig{});
+    REQUIRE(thin.tips.size() == 4);
+    const TipRisk *weak = nullptr, *next = nullptr;
+    for (const TipRisk& t : thin.tips) {
+        if (std::abs(t.at.x + 2) < 0.1 && std::abs(t.at.y + 2) < 0.1) weak = &t;
+        if (std::abs(t.at.x + 2) < 0.1 && std::abs(t.at.y - 2) < 0.1) next = &t;
+    }
+    REQUIRE(weak);
+    REQUIRE(next);
+    CHECK(weak->load > weak->holds);  // the weak one goes,
+    CHECK(weak->at_layer == 229);     // under the wide layer
+    CHECK(next->load + 0.6 * weak->load < next->holds);  // half of its load on top of its own: it holds
+    CHECK(next->load + 0.9 * weak->load > next->holds);  // all of it would not
+    CHECK(at(thin, 25, {0, 2}).lost_chance == 0);
+    StabilityConfig all_stiff;
+    all_stiff.slab = 0.01;
+    CHECK(at(frame(all_stiff), 25, {0, 2}).lost_chance == Approx(1));
+}
+
+TEST_CASE("a load spread over sixty tips is followed as it grows", "[stability]") {
+    // Sixty tips in a ring under a disc, and one in the middle that holds nothing: it lets go in the
+    // first layer, and its load goes to the sixty, a sixtieth each. The disc widens at its top, so the
+    // load the middle one would have carried grows. Each of the sixty takes its share of that, not only
+    // of what it carried when it went; tips just strong enough for the smaller of the two let go.
+    auto disc = [](int top, double usable, bool wide = true) {
+        Build b(top + 1);
+        std::vector<TipContact> tips{{{0, 0, 1.0}, 0.0}};
+        b.support(0, 20, rect(-0.2, -0.2, 0.2, 0.2));
+        for (int i = 0; i < 60; ++i) {
+            const double a = 2 * kPi * i / 60;
+            const Vec2 c{10 * std::cos(a), 10 * std::sin(a)};
+            b.support(0, 20, rect(c.x - 0.2, c.y - 0.2, c.x + 0.2, c.y + 0.2));
+            tips.push_back({{c.x, c.y, 1.0}, 0.3});
+        }
+        b.part(20, top, ring({0, 0}, 11, 120));
+        b.part(top, top + 1, ring({0, 0}, wide ? 20 : 11, 120));
+        StabilityConfig cfg;
+        cfg.bulk_factor = 100;
+        cfg.steepness = 1e5;  // every strength exactly where half let go: the margins here are fine ones
+        cfg.replays = 20;
+        cfg.share_reach = 1e6;  // a stiff disc: every pull goes to all its tips at once
+        cfg.skin_half_reach = cfg.skin_edge_reach = 0;
+        cfg.usable_fraction = usable;
+        return b.run(cfg, tips);
+    };
+    // What the tips carry of their own, with the middle one there: at the first layer, and at their worst.
+    const StabilityResult first = disc(20, 1.0, false), whole = disc(100, 1.0);
+    double middle_first = 0, middle_most = 0, ring_most = 0, ring_holds = 0;
+    for (const TipRisk& t : first.tips)
+        if (norm(t.at.xy()) < 1) middle_first = t.load;
+    for (const TipRisk& t : whole.tips) {
+        if (norm(t.at.xy()) < 1) middle_most = t.load;
+        else if (t.load > ring_most) {
+            ring_most = t.load;
+            ring_holds = t.holds;  // at usable 1: the 0.3 mm tip's whole strength
+        }
+    }
+    REQUIRE(middle_first > 0);
+    REQUIRE(middle_most > 2 * middle_first);
+    // Strong enough for their own load and a sixtieth of the middle one's at the first layer, not for a
+    // sixtieth of its larger one.
+    const double need = ring_most + (middle_first + middle_most) / 2 / 60;
+    const double usable = ring_holds / need;
+    REQUIRE(usable > 0.05);
+    REQUIRE(usable < 1);
+    CHECK(at(disc(100, usable), 100, {0, 0}).lost_chance == Approx(1));
+    // A little stronger than its own and a sixtieth of the larger: they hold.
+    CHECK(at(disc(100, ring_holds / (ring_most + middle_most / 60 * 1.2)), 100, {0, 0}).lost_chance == 0);
+}
+
+TEST_CASE("a tip that holds nothing lets go at once, and the model on it alone goes with it", "[stability]") {
+    Build b(30);
+    b.support(0, 20, rect(-0.4, -0.4, 0.4, 0.4));
+    b.part(20, 30, rect(-3, -3, 3, 3));
+    StabilityConfig cfg;
+    cfg.replays = 50;
+    const StabilityResult r = b.run(cfg, {{{0, 0, 1.0}, 0.0}});
+    REQUIRE(r.tips.size() == 1);
+    CHECK(r.tips[0].holds < 1e-6);
+    CHECK(r.tips[0].chance == Approx(1));
+    CHECK(at(r, 25, {0, 0}).lost_chance == Approx(1));
+    CHECK(r.stats.whole_chance == 0);
+}
+
+TEST_CASE("the whole print's chance counts a part that starts in mid-air", "[stability]") {
+    Build b(40);
+    b.part(0, 20, rect(0, 0, 10, 10));
+    b.part(25, 40, rect(0, 0, 10, 10));  // a quarter of a millimetre above it, with nothing between
+    StabilityConfig cfg;
+    cfg.replays = 50;
+    const StabilityResult r = b.run(cfg);
+    CHECK(r.stats.unheld >= 1);
+    CHECK(at(r, 30, {5, 5}).lost_chance == Approx(1));
+    CHECK(r.stats.whole_chance == 0);
+    // The block alone prints whole.
+    Build alone(20);
+    alone.part(0, 20, rect(0, 0, 10, 10));
+    CHECK(alone.run(cfg).stats.whole_chance == Approx(1));
+}
+
+TEST_CASE("a tip touching with part of its face holds as much as touches, with no step", "[stability]") {
+    // Two 0.4 mm tips (0.126 mm² each): one meets the model with all of its face, one with four fifths
+    // of it. (A tip that touches with more than its face, as one sunk into the model does over several
+    // layers, holds as itself.)
+    const double nominal = kPi * 0.4 * 0.4 / 4, side = std::sqrt(0.8 * nominal);
+    Build b(30);
+    b.support(0, 20, rect(-5.2, -0.2, -4.8, 0.2));  // 0.16 mm²: more than its face
+    b.support(0, 20, rect(5 - side / 2, -side / 2, 5 + side / 2, side / 2));
+    b.part(20, 30, rect(-6, -1, 6, 1));
+    StabilityConfig cfg;
+    cfg.replays = 10;
+    const StabilityResult r = b.run(cfg, {{{-5, 0, 1.0}, 0.4}, {{5, 0, 1.0}, 0.4}});
+    REQUIRE(r.tips.size() == 2);
+    const TipRisk& full = r.tips[0].at.x < 0 ? r.tips[0] : r.tips[1];
+    const TipRisk& part = r.tips[0].at.x < 0 ? r.tips[1] : r.tips[0];
+    CHECK(part.area == Approx(0.8 * nominal).epsilon(0.01));
+    CHECK(part.holds == Approx(0.8 * full.holds).epsilon(0.01));
+}
+
+TEST_CASE("a fresh skin at a free edge tears at a shorter reach than one held all round", "[stability]") {
+    // The reaches as the app has them: the planner's own (its tip spacing on a flat face, 3.2 mm, and
+    // the tip it wants within 1.6 mm of a free edge) over the root of the borrowed margin.
+    StabilityConfig cfg = stabilityConfig(SupportConfig{});
+    REQUIRE(cfg.skin_half_reach == Approx(3.2 * std::sqrt(3.0)));
+    REQUIRE(cfg.skin_edge_reach == Approx(1.6 * std::sqrt(3.0)));
+    cfg.bulk_factor = 100;
+    cfg.replays = 10;
+    // A ledge reaching 3 mm out from a block, one layer of it with nothing under it.
+    Build ledge(22);
+    ledge.part(0, 22, rect(-5, -5, 5, 5));
+    ledge.part(20, 22, rect(-5, -5, 8, 5));
+    const StabilityResult l = ledge.run(cfg);
+    CHECK(l.chanceAt(20, {7.9, 0}) >= 0.5);  // its far edge, 2.9 mm out
+    CHECK(l.chanceAt(20, {6.5, 0}) == 0);    // 1.5 mm out: what the planner trusts a ledge with
+    CHECK(l.chanceAt(21, {7.9, 0}) == 0);    // the next layer lies on it
+    // Judged only as skin between holds, the same ledge would pass.
+    StabilityConfig between = cfg;
+    between.skin_edge_reach = 0;
+    Build again(22);
+    again.part(0, 22, rect(-5, -5, 5, 5));
+    again.part(20, 22, rect(-5, -5, 8, 5));
+    CHECK(again.run(between).chanceAt(20, {7.9, 0}) == 0);
+    // A roof 6 mm across on walls all round: its middle is 3 mm from them too, but held on every side.
+    Build roof(22);
+    Path hole = rect(-3, -3, 3, 3);
+    std::reverse(hole.begin(), hole.end());
+    for (int L = 0; L < 20; ++L) {
+        roof.print.slices[static_cast<size_t>(L)] = {rect(-4, -4, 4, 4), hole};
+        roof.model.slices[static_cast<size_t>(L)] = {rect(-4, -4, 4, 4), hole};
+    }
+    roof.part(20, 22, rect(-4, -4, 4, 4));
+    const StabilityResult top = roof.run(cfg);
+    CHECK(top.chanceAt(20, {0, 0}) == 0);
+    CHECK(top.skins[20].empty());
+}
+
+TEST_CASE("a support leaning 60 degrees gives as a 60 degree one, not as one at 45", "[stability]") {
+    // A support 0.6 mm square stepping sideways by tan 60° of a layer each layer, a block on top.
+    const double step = kH * std::sqrt(3.0), w = 0.6;
+    Build b(30);
+    for (int L = 0; L < 20; ++L) b.support(L, L + 1, rect(L * step, 0, L * step + w, w));
+    b.part(20, 30, rect(-1, -1, 21 * step + 1, w + 1));
+    StabilityConfig cfg;
+    cfg.replays = 10;
+    const StabilityResult r = b.run(cfg);
+    // Between layers 9 and 10: the cut it shares with the layer below, at its lean: cos 60°.
+    const double shared = (w - step) * w;
+    CHECK(supportAt(r, 10, {10 * step + w / 2, w / 2}).joint_area == Approx(shared / 2).epsilon(0.02));
+}
+
+TEST_CASE("an empty print: nothing to replay, and no crash", "[stability]") {
+    LayerStack empty;
+    StabilityInput in;
+    in.print = &empty;
+    const StabilityResult r = analyzeStability(in, StabilityConfig{});
+    CHECK(r.parts.empty());
+    CHECK(r.spots.empty());
+    CHECK(r.stats.model_volume == 0);
 }
 
 TEST_CASE("the same print in thinner layers: the same loads and chances", "[stability][layers]") {
