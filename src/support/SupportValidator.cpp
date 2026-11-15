@@ -19,13 +19,12 @@ ValidationReport validateSupported(const TriangleMesh& model, const TriangleMesh
 ValidationReport validateLayers(const LayerStack& ls, double link_grow, double small_area, double pixel_area,
                                 const JobControl& ctl, double plate_hold_height) {
     ctl.step("islands", 0);
-    const IslandGraph g(ls, link_grow);
+    const std::vector<LayerPart> islands = findIslands(ls, link_grow);
     ctl.report("islands", 1);
     ValidationReport r;
     r.layers = ls.size();
     if (ls.size()) r.first_layer_area = area(ls.slices[0]);
-    for (int id : g.islands()) {
-        const LayerPart& p = g.part(id);
+    for (const LayerPart& p : islands) {
         if (p.layer == 0) {
             ++r.first_layer_islands;
             continue;

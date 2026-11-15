@@ -129,3 +129,30 @@ TEST_CASE("the hollows found are the same on one thread or many", "[islands][hol
     CHECK(traps >= 1);
     CHECK(cups >= 1);
 }
+
+TEST_CASE("findIslands gives the island graph's islands, in its order", "[islands]") {
+    TriangleMesh m = mixedModel();
+    // Pillars with balls and a bar across them, some starting in mid-air: many small parts per layer.
+    for (int i = 0; i < 12; ++i) {
+        const double x = 80 + 2.5 * i, z0 = i % 3 == 0 ? 2.0 : 0.0;
+        m.append(makeCylinder({x, 0, z0}, 0.5, 6, 20));
+        m.append(makeSphere({x, 0, z0 + 6}, 0.7, 20));
+    }
+    m.append(makeBox({79, -0.3, 6.5}, {109, 0.3, 7}));
+    const LayerStack ls = sliceModel(m, 0.05);
+    for (const double grow : {0.0, 0.01, 0.12}) {
+        const IslandGraph g(ls, grow);
+        const std::vector<LayerPart> found = findIslands(ls, grow);
+        const std::vector<int> ids = g.islands();
+        REQUIRE(found.size() == ids.size());
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            const LayerPart& a = g.part(ids[i]);
+            CHECK(found[i].layer == a.layer);
+            CHECK(found[i].area == a.area);
+            CHECK(found[i].box.min.x == a.box.min.x);
+            CHECK(found[i].box.max.y == a.box.max.y);
+            CHECK(found[i].shape.contour == a.shape.contour);
+        }
+        CHECK(ids.size() > 8);  // the feet, the floating pieces and the pillars that start in mid-air
+    }
+}

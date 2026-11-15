@@ -46,4 +46,10 @@ private:
     std::vector<std::vector<int>> by_layer_;
 };
 
+// The parts IslandGraph(layers, link_grow_mm) finds islands (no parent), in
+// its order, with the same layer, box, area and shape: without working out
+// the links, each part only asks whether it rests on anything below. For
+// checks that need nothing more (the mid-air check).
+std::vector<LayerPart> findIslands(const LayerStack& layers, double link_grow_mm, unsigned threads = 0);
+
 }  // namespace fruit
