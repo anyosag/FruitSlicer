@@ -2827,10 +2827,19 @@ void Analysis::runReplays() {
             if (!(sum > 0)) continue;
             Move mv;
             const bool lever = settle(hold, {1, 0, 0}, mv);
+            // Only as far as the piece is stiff. A thin one bends: the joints
+            // near the one that went take its load by what each was carrying,
+            // with no lever to make one of them carry more than all of it (a
+            // shelf that loses a tip at its edge does not hang twice as hard
+            // from the next one). The same split as a layer's own pull: half
+            // and half where the model over the joint is `slab` mm thick.
+            const bool stiff_all = !(cfg_.share_reach < 1e5);
+            const double thin = stiff_all || !(cfg_.slab > 0) ? 0.0 : 1.0 / (1.0 + std::pow(over / cfg_.slab, 4));
             for (const auto& [c, w] : takers) {
                 if (w == 0) continue;
                 const Vec2 d = placeOf(c) - here;
-                const double share = lever ? w * (mv.w + mv.gx * d.x + mv.gy * d.y) : w / sum;
+                const double share =
+                    lever ? (1 - thin) * w * (mv.w + mv.gx * d.x + mv.gy * d.y) + thin * w / sum : w / sum;
                 if (!(share > 0)) continue;
                 pass(x, c, share, k);
                 when[c] = firstOverAll(c, k);

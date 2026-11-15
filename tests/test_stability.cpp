@@ -770,6 +770,45 @@ TEST_CASE("a stiff piece that loses a tip hangs from the others by the lever rul
     CHECK(at(middle, 25, {0, 0}).lost_chance == 0);
 }
 
+TEST_CASE("a thin piece that loses a tip passes its load to the next one, without a lever", "[stability]") {
+    // A bar on five tips in a line, 2 mm apart, narrow for nine layers and then wide for one. Half a
+    // millimetre thick, it bends: its pull is held patch by patch by the tips near each patch. The end
+    // tip is weak and lets go under the wide layer. Its two neighbours within reach then take its load by
+    // what each was carrying, the nearer almost all of it, and no more than all of it. Under a stiff bar
+    // the lever rule would make the nearer one carry about twice that load (and the next one less than
+    // nothing), and it would go too, and the rest after it.
+    auto bar = [](const StabilityConfig& base) {
+        Build b(30);
+        for (double x : {-4.0, -2.0, 0.0, 2.0, 4.0}) b.support(0, 20, rect(x - 0.4, -0.4, x + 0.4, 0.4));
+        b.part(20, 29, rect(-5, -0.5, 5, 0.5));  // a narrow bar, then one wide layer on it
+        b.part(29, 30, rect(-5, -2.5, 5, 2.5));
+        StabilityConfig cfg = base;
+        cfg.bulk_factor = 100;  // only the tips can break
+        cfg.steepness = 1000;   // every strength all but exactly where half let go
+        cfg.replays = 200;
+        return b.run(cfg, {{{-4, 0, 1.0}, 0.3}, {{-2, 0, 1.0}, 0.5}, {{0, 0, 1.0}, 0.5}, {{2, 0, 1.0}, 0.5},
+                           {{4, 0, 1.0}, 0.5}});
+    };
+    const StabilityResult thin = bar(StabilityConfig{});
+    REQUIRE(thin.tips.size() == 5);
+    const TipRisk *weak = nullptr, *next = nullptr;
+    for (const TipRisk& t : thin.tips) {
+        if (std::abs(t.at.x + 4) < 0.1) weak = &t;
+        if (std::abs(t.at.x + 2) < 0.1) next = &t;
+    }
+    REQUIRE(weak);
+    REQUIRE(next);
+    CHECK(weak->load > weak->holds);                       // the weak one goes
+    CHECK(next->load + weak->load < next->holds);          // its load on top of the next one's own: it holds
+    CHECK(next->load + 1.8 * weak->load > next->holds);    // about twice that, under a lever, would not
+    CHECK(at(thin, 25, {0, 0}).lost_chance == 0);
+    // Were no model thin (`slab` all but nothing), the lever rule would share it, and the same tips would
+    // lose it every time.
+    StabilityConfig all_stiff;
+    all_stiff.slab = 0.01;
+    CHECK(at(bar(all_stiff), 25, {0, 0}).lost_chance == Approx(1));
+}
+
 TEST_CASE("the same print in thinner layers: the same loads and chances", "[stability][layers]") {
     // Each shape is drawn in mm and cut at 0.05 and at 0.025 mm.
     auto layers = [](double mm, double h) { return static_cast<int>(std::lround(mm / h)); };
