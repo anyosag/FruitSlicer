@@ -585,6 +585,26 @@ void resultsSheet(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
     ImGui::PopStyleColor(2);
 }
 
+// ---- Arrange's layouts, over the view ----
+
+void layoutsSheet(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
+    const ImVec2 pos(origin.x + kToolPanelX, origin.y + 16);
+    const ImVec2 sz(size.x - kToolPanelX - 16, size.y - 32);
+    ImGui::SetCursorScreenPos(pos);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col::App);
+    ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 16);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+    ImGui::BeginChild("layout_sheet", sz, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
+    layoutResults(app, doc, ImVec2(0, sz.y - 16));
+    ImGui::PopStyleVar();
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
 }  // namespace
 
 ToolsBar toolsBarLayout(ImVec2 origin, ImVec2 size) {
@@ -631,6 +651,8 @@ void workspaceOverlay(App& app, Document* doc, ImVec2 origin, ImVec2 size, const
     modelTools(app, doc, origin, size);
     if (doc && app.step() == Step::Orient && app.orientView() == OrientView::Results && doc->orient().results)
         resultsSheet(app, *doc, origin, size);
+    else if (doc && app.layoutsOpen())
+        layoutsSheet(app, *doc, origin, size);
 }
 
 }  // namespace gui::screens::parts

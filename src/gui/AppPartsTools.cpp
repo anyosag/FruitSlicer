@@ -65,12 +65,131 @@ void App::duplicateOnce(int id) {
     if (parts_tools_.last.done < 1) openTool(Tool::Duplicate);
 }
 
+namespace {
+const char* const kLayoutsJob = "Finding layouts";
+const char* const kMoveSupportsJob = "Moving supports with the parts";
+}  // namespace
+
+bool App::findingLayouts() const { return layouts_wanted_ || (jobs_.busy() && jobs_.progress().name == kLayoutsJob); }
+bool App::movingSupports() const { return jobs_.busy() && jobs_.progress().name == kMoveSupportsJob; }
+
+bool App::layoutsOpen() const {
+    return layouts_open_ && layouts_ && doc_ && layouts_doc_.lock() == doc_ && layouts_->revision == doc_->revision();
+}
+
+void App::findLayouts() {
+    if (!doc_ || doc_->partCount() < 2) return;
+    // Supports moving with the parts: let them finish, then search (starting
+    // now would stop them, and they would need making again).
+    if (movingSupports()) {
+        layouts_wanted_ = true;
+        return;
+    }
+    layouts_wanted_ = false;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<LayoutSearch>();
+    const double gap = parts_tools_.arrange_gap;
+    const bool turn = parts_tools_.arrange_turn;
+    std::weak_ptr<const Document> target = doc_;
+    jobs_.start(
+        kLayoutsJob, [snap, out, gap, turn](const fruit::JobControl& ctl) { *out = gui::findLayouts(*snap, gap, turn, ctl); },
+        [this, target, out](std::exception_ptr err) {
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't find layouts", e.what());
+                }
+                return;
+            }
+            const auto d = target.lock();
+            if (!d || d != doc_) return;
+            layouts_ = std::make_shared<const LayoutSearch>(std::move(*out));
+            layouts_doc_ = d;
+            layouts_open_ = true;
+            log::info("layouts: " + std::to_string(layouts_->candidates) + " found, " +
+                      std::to_string(layouts_->choices.size()) + " shown, in " + std::to_string(layouts_->seconds) + " s");
+        });
+}
+
+unsigned App::layoutPicture(int choice) {
+    if (!layouts_) return 0;
+    if (layout_pictures_for_ != layouts_) {
+        for (unsigned t : layout_pictures_) Renderer::freeTexture(t);
+        layout_pictures_.clear();
+        for (const LayoutChoice& c : layouts_->choices)
+            layout_pictures_.push_back(c.picture.empty() ? 0u : renderer_.uploadRgba(c.picture.w, c.picture.h, c.picture.rgba));
+        layout_pictures_for_ = layouts_;
+    }
+    return choice >= 0 && choice < static_cast<int>(layout_pictures_.size()) ? layout_pictures_[static_cast<std::size_t>(choice)] : 0;
+}
+
+void App::useLayout(int choice) {
+    if (!layoutsOpen()) return;
+    auto before = std::make_shared<const Document>(*doc_);
+    const std::shared_ptr<const LayoutSearch> s = layouts_;
+    runTool(*this, *doc_, Tool::Arrange,
+            [s, choice](const Document& d, PartsEdit& e) { return applyLayout(d, e, *s, choice); });
+    layouts_open_ = false;
+    if (parts_tools_.last.changed) moveSupportsWith(before);
+}
+
+void App::moveSupportsWith(const std::shared_ptr<const Document>& before) {
+    const SupportState& was = before->supports;
+    if (!doc_ || !was.result || !was.fresh(before->revision(), before->supportSettings())) return;
+    MovedTips mt = moveTips(*before, *doc_, *was.result);
+    if (!mt.ok) {
+        parts_tools_.last.message += " The supports need making again: " + mt.why + ".";
+        return;
+    }
+    parts_tools_.last.message += " Their supports move with them.";
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<SupportResult>();
+    const SupportChoices choices = doc_->supports.choices;
+    const std::vector<TipEdit> edits = doc_->supports.edits;
+    const int rev = doc_->revision();
+    const std::int64_t settings = doc_->supportSettings();
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        kMoveSupportsJob,
+        [snap, out, choices, edits, plan = std::move(mt.plan)](const fruit::JobControl& ctl) mutable {
+            fruit::JobControl rest = ctl;
+            // Planned on the hollowed or drilled model: that is made again where the part now stands.
+            if (snap->hollow.applied) {
+                auto hp = std::make_shared<const HollowPlan>(
+                    planHollow(*snap, snap->hollow.choices, snap->hollow.manual, kLayerHeight, ctl.sub(0.0, 0.3)));
+                if (hp->changes()) plan.hollow = hp;
+                rest = ctl.sub(0.3, 1.0);
+            }
+            *out = finishWithEdits(*snap, choices, std::move(plan), edits, rest);
+        },
+        [this, target, out, rev, settings](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't move the supports", e.what());
+                }
+                if (layouts_wanted_) findLayouts();
+                return;
+            }
+            installSupports(d, std::make_shared<const SupportResult>(std::move(*out)), rev, settings);
+            if (layouts_wanted_) findLayouts();
+        });
+}
+
 void App::arrangeAll() {
     if (!doc_ || doc_->partCount() < 2) return;
     const double gap = parts_tools_.arrange_gap;
     const bool turn = parts_tools_.arrange_turn;
+    auto before = std::make_shared<const Document>(*doc_);
     runTool(*this, *doc_, Tool::Arrange,
             [gap, turn](const Document& d, PartsEdit& e) { return arrangeParts(d, e, gap, turn); });
+    if (parts_tools_.last.changed) moveSupportsWith(before);
 }
 
 void App::splitSelected() {

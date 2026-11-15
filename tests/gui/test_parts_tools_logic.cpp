@@ -8,9 +8,11 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Arranging.h"
 #include "Collisions.h"
 #include "Document.h"
 #include "PartsTools.h"
+#include "mesh/AabbTree.h"
 #include "mesh/ModelLoad.h"
 #include "mesh/Primitives.h"
 #include "ops/MeshOps.h"
@@ -458,4 +460,151 @@ TEST_CASE("Merge: Fuse in two halves (the app's background job) gives what fusin
     const FuseResult bad = fuseMeshes({{"a", open}, {"b", meshes[1].second}}, fruit::JobControl::none());
     CHECK_FALSE(bad.ok);
     CHECK_THAT(bad.message, ContainsSubstring("Can't fuse: a"));
+}
+
+
+// ---- Arrange's layouts and the supports that move with the parts ----
+
+namespace {
+
+// The least distance between two convex outlines (0 when they overlap).
+double outlineGap(const std::vector<fruit::Vec2>& a, const std::vector<fruit::Vec2>& b) {
+    auto inside = [](const fruit::Vec2& p, const std::vector<fruit::Vec2>& poly) {
+        for (std::size_t i = 0; i < poly.size(); ++i) {
+            const fruit::Vec2 &u = poly[i], &v = poly[(i + 1) % poly.size()];
+            if ((v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x) < 0) return false;
+        }
+        return true;
+    };
+    auto seg = [](const fruit::Vec2& p, const fruit::Vec2& u, const fruit::Vec2& v) {
+        const fruit::Vec2 d = v - u;
+        const double t = std::clamp(((p.x - u.x) * d.x + (p.y - u.y) * d.y) / std::max(1e-12, d.x * d.x + d.y * d.y), 0.0, 1.0);
+        return std::hypot(p.x - (u.x + d.x * t), p.y - (u.y + d.y * t));
+    };
+    for (const auto& p : a)
+        if (inside(p, b)) return 0;
+    for (const auto& p : b)
+        if (inside(p, a)) return 0;
+    double best = 1e300;
+    for (const auto& p : a)
+        for (std::size_t i = 0; i < b.size(); ++i) best = std::min(best, seg(p, b[i], b[(i + 1) % b.size()]));
+    for (const auto& p : b)
+        for (std::size_t i = 0; i < a.size(); ++i) best = std::min(best, seg(p, a[i], a[(i + 1) % a.size()]));
+    return best;
+}
+
+// Convex parts' outlines at least `gap` apart, and on the plate.
+void checkApart(const Document& d, double gap) {
+    const auto& ps = d.parts();
+    for (std::size_t i = 0; i < ps.size(); ++i) {
+        CHECK(ps[i].fit().fits);
+        for (std::size_t j = i + 1; j < ps.size(); ++j) CHECK(outlineGap(ps[i].footprint(), ps[j].footprint()) >= gap - 0.05);
+    }
+}
+
+// Supports made for `doc` as it is, kept as the job keeps them.
+void makeSupports(Document& doc) {
+    const SupportResult r = generate(doc, doc.supports.choices, doc.visibleInPrinter(), fruit::JobControl::none());
+    doc.supports.result = std::make_shared<const SupportResult>(r);
+    doc.supports.result_revision = doc.revision();
+    doc.supports.result_settings = doc.supportSettings();
+}
+
+// A slab with a shelf under it: something for tips to hold.
+fruit::TriangleMesh shelf() {
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {24, 14, 3});
+    m.append(fruit::makeBox({0, 0, 3}, {4, 14, 12}));
+    return m;
+}
+
+}  // namespace
+
+TEST_CASE("Arrange's layouts: up to four, each fitting every part and standing it as it stood", "[gui][parts-tools]") {
+    std::vector<NewPart> parts;
+    for (int i = 0; i < 4; ++i) {
+        NewPart n = partOf(box(110, 12, 8), "bar" + std::to_string(i), {0, 0});
+        n.placement.rotation_deg = {i < 2 ? 15.0 : 0.0, 0, 35};
+        parts.push_back(std::move(n));
+    }
+    const auto doc = jobOf(std::move(parts));
+    const LayoutSearch s = findLayouts(*doc, 2, true, fruit::JobControl::none());
+    REQUIRE(s.choices.size() >= 2);
+    CHECK(s.choices.size() <= 4);
+    CHECK(s.candidates >= s.choices.size());
+    CHECK(s.choices[0].title == "Recommended");
+    CHECK_FALSE(s.supports);
+    for (std::size_t c = 0; c < s.choices.size(); ++c) {
+        CHECK(s.choices[c].layout.placed == 4);
+        CHECK(s.choices[c].picture.w == 568);
+        CHECK(s.choices[c].picture.rgba.size() == 568u * 320u * 4u);
+        const auto copy = std::make_shared<Document>(*doc);
+        ToolReport rep;
+        REQUIRE(copy->editParts([&](PartsEdit& e) { rep = applyLayout(*copy, e, s, static_cast<int>(c)); }));
+        CHECK(rep.done == 4);
+        CHECK_THAT(rep.message, ContainsSubstring("all 4 parts fit"));
+        // Room for each raft (no supports yet: half a foot, the pad's brim and a Full slab's margin
+        // past the outline) and the gap between them.
+        const fruit::TreeConfig tc = treeConfig(doc->supports.choices);
+        const double reach =
+            tc.base_diameter / 2 + tc.pad_brim + (tc.raft == fruit::RaftStyle::Full ? tc.full_raft_margin : 0.0);
+        checkApart(*copy, 2 + 2 * reach);
+        for (std::size_t i = 0; i < 4; ++i) {
+            const Part& p = copy->parts()[i];
+            CHECK(p.placement().rotation_deg.x == (i < 2 ? 15.0 : 0.0));  // only the turn about the vertical changed
+            CHECK(p.placement().rotation_deg.y == 0);
+            CHECK(p.fit().top == Approx(doc->parts()[i].fit().top));
+        }
+    }
+}
+
+TEST_CASE("Arrange moves the supports with the parts, and says when they need making again", "[gui][parts-tools][slow]") {
+    auto doc = jobOf({partOf(shelf(), "a", {-40, 0}), partOf(shelf(), "b", {40, 0})});
+    makeSupports(*doc);
+    REQUIRE(doc->supports.result);
+    REQUIRE_FALSE(doc->supports.result->planned.empty());
+    const auto before = std::make_shared<const Document>(*doc);
+    // Moved and turned about the vertical: each tip goes with its part and stays on it.
+    REQUIRE(doc->editParts([&](PartsEdit& e) {
+        PartState* a = e.find(doc->parts()[0].id());
+        a->placement.offset = {-20, 25};
+        a->placement.rotation_deg.z = 90;
+        e.find(doc->parts()[1].id())->placement.offset = {30, 30};
+    }));
+    const SupportResult& r = *before->supports.result;
+    MovedTips mt = moveTips(*before, *doc, r);
+    REQUIRE(mt.ok);
+    REQUIRE(mt.plan.points.size() == r.planned.size());
+    const fruit::AabbTree onto(doc->placed());
+    for (const fruit::SupportPoint& p : mt.plan.points) CHECK(onto.closest(p.pos).distance < 1e-6);
+    // Built again from them: the same tips, made for the job as it is now.
+    const SupportResult again = finishWithEdits(*doc, doc->supports.choices, mt.plan, doc->supports.edits, fruit::JobControl::none());
+    CHECK(again.planned.size() == r.planned.size());
+    CHECK(again.tips == r.tips);
+
+    // Tilted: not just moved, so they need making again.
+    auto tilted = std::make_shared<Document>(*before);
+    tilted->editParts([&](PartsEdit& e) { e.find(tilted->parts()[0].id())->placement.rotation_deg.x = 30; });
+    const MovedTips no = moveTips(*before, *tilted, r);
+    CHECK_FALSE(no.ok);
+    CHECK_THAT(no.why, ContainsSubstring("changed more than where it stands"));
+}
+
+TEST_CASE("Supports planned for the hinge move only towards it", "[gui][parts-tools][slow]") {
+    auto doc = jobOf({partOf(shelf(), "a", {0, 0})});
+    SupportChoices c = doc->supports.choices;
+    c.hinge = fruit::HingeSide::PlusY;  // the hinge at the back: the peel pulls hardest at the front
+    doc->supports.choices = c;
+    makeSupports(*doc);
+    REQUIRE(doc->supports.result->cfg.peel_bias > 0);
+    const auto before = std::make_shared<const Document>(*doc);
+    auto moveTo = [&](fruit::Vec2 at) {
+        auto d = std::make_shared<Document>(*before);
+        d->editParts([&](PartsEdit& e) { e.find(d->parts()[0].id())->placement.offset = at; });
+        return moveTips(*before, *d, *before->supports.result);
+    };
+    CHECK(moveTo({20, 30}).ok);    // towards the hinge: no more pull than planned for
+    CHECK(moveTo({20, 2}).ok);     // a little way the other way: within the allowance
+    const MovedTips away = moveTo({0, -40});
+    CHECK_FALSE(away.ok);
+    CHECK_THAT(away.why, ContainsSubstring("hinge"));
 }

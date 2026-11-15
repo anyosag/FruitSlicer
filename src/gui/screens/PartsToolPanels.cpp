@@ -5,6 +5,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 #include "App.h"
@@ -73,18 +74,18 @@ void duplicatePanel(App& app, Document& doc) {
 void arrangePanel(App& app, Document& doc) {
     PartsToolState& st = app.partsTools();
     groupLabel("Lay them out");
-    numberRow("Gap between parts", "gap", &st.arrange_gap, "mm", 0, 50);
+    numberRow("Room between parts", "gap", &st.arrange_gap, "mm", 0, 50);
     ImGui::Checkbox("##arrange_turn", &st.arrange_turn);
     ImGui::SameLine(0, 10);
     text("Turn them to fit", fonts().semibold, size::Body, col::Text);
     text(st.arrange_turn
-             ? "Every part is moved, biggest first, with this much room between them, and the whole layout is "
-               "centred on the plate. When they don't all fit as they are, each is turned about the vertical to where "
-               "it takes the least room; how it stands does not change. Their rafts and the supports at their edges "
-               "need room: 5 mm is a good gap."
-             : "Every part is moved, biggest first, with this much room between them, and the whole layout is centred "
-               "on the plate. Parts are not turned. Their rafts and the supports at their edges need room: 5 mm is a "
-               "good gap.",
+             ? "Find layouts lays the parts out by their outlines seen from above, with their supports' feet and "
+               "rafts, turning them about the vertical only (how each stands does not change), and shows the best "
+               "four. Lay out at once packs their rectangles, turning them only when they don't all fit as they are. "
+               "Either way the room is between the parts' rafts."
+             : "Find layouts lays the parts out by their outlines seen from above, with their supports' feet and "
+               "rafts, without turning them, and shows the best four. Lay out at once packs their rectangles. Either "
+               "way the room is between the parts' rafts.",
          fonts().regular, size::Help, col::TextMuted, true);
     if (doc.partCount() < 2) {
         ImGui::Dummy(ImVec2(0, 6));
@@ -159,9 +160,9 @@ void mergePanel(App& app, Document& doc) {
 
 float partsToolFooterHeight(Tool t) {
     switch (t) {
-        case Tool::Merge: return 150;
+        case Tool::Merge:
+        case Tool::Arrange: return 150;
         case Tool::Duplicate:
-        case Tool::Arrange:
         case Tool::Split: return 96;
         default: return 0;
     }
@@ -179,9 +180,27 @@ void partsToolFooter(App& app, Document& doc, Tool t) {
         }
         case Tool::Arrange: {
             if (doc.partCount() < 2) {
-                greyed("Arrange", "Needs two parts.");
-            } else if (primaryButton(strf("Arrange %zu parts", doc.partCount()).c_str(), ImVec2(-1, 38), !working)) {
-                app.arrangeAll();
+                greyed("Find layouts", "Needs two parts.");
+            } else if (app.findingLayouts()) {
+                // The search's progress, and a way out.
+                const JobProgress jp = app.jobs().progress();
+                const ImVec2 bp = ImGui::GetCursorScreenPos();
+                const float bw = ImGui::GetContentRegionAvail().x;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 38), col::Active, 8);
+                dl->AddRectFilled(bp, ImVec2(bp.x + bw * static_cast<float>(jp.fraction), bp.y + 38),
+                                  IM_COL32(0xFF, 0x8F, 0x3F, 90), 8);
+                ImGui::PushFont(fonts().semibold, size::Body);
+                const char* label = "Finding layouts…";
+                const ImVec2 ts = ImGui::CalcTextSize(label);
+                dl->AddText(ImVec2(bp.x + (bw - ts.x) / 2, bp.y + (38 - ts.y) / 2), col::Text, label);
+                ImGui::PopFont();
+                ImGui::Dummy(ImVec2(bw, 38));
+                if (secondaryButton("Cancel", ImVec2(-1, 38))) app.jobs().cancel();
+            } else {
+                if (primaryButton("Find layouts", ImVec2(-1, 38), !working)) app.findLayouts();
+                if (secondaryButton(strf("Lay out %zu parts at once", doc.partCount()).c_str(), ImVec2(-1, 38), !working))
+                    app.arrangeAll();
             }
             break;
         }
@@ -208,6 +227,104 @@ void partsToolFooter(App& app, Document& doc, Tool t) {
         }
         default: break;
     }
+}
+
+// ---- Arrange's picker: the layouts found, four across ----
+
+namespace {
+
+const char* layoutWhy(const std::string& title) {
+    if (title == "Recommended") return "The best all round: compact, balanced on the plate, and gentle on the peel.";
+    if (title == "Most compact") return "Takes the least room on the plate.";
+    if (title == "Balanced on the plate") return "Its load is centred, so the plate is pulled evenly at every peel.";
+    if (title == "Gentlest peel") return "Its biggest layers are nearest the vat's hinge, where the peel pulls least.";
+    if (title == "Fewest turns") return "Turns as few parts as it can.";
+    if (title == "Another way") return "A different layout that also scores well.";
+    return "";
+}
+
+void layoutCard(App& app, int index, const LayoutChoice& c, const LayoutSearch& s, ImVec2 size) {
+    const bool first = index == 0;
+    beginCard(("layout" + std::to_string(index)).c_str(), size, 16, first ? col::Card : col::Panel,
+              first ? col::Accent : col::Border);
+    const float w = ImGui::GetContentRegionAvail().x;
+    text(c.title.c_str(), fonts().semibold, size::Section + 1, col::Text);
+    // What else it is best at: "Also the most compact and balanced on the plate".
+    std::string also;
+    for (std::size_t i = 0; i < c.also.size(); ++i) {
+        std::string a = c.also[i];
+        if (!a.empty()) a[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(a[0])));
+        if (a == "most compact" || a == "gentlest peel") a = "the " + a;
+        also += (i == 0 ? "" : i + 1 == c.also.size() ? " and " : ", ") + a;
+    }
+    text(also.empty() ? " " : ("Also " + also).c_str(), fonts().regular, size::Help, col::TextSecondary);
+    ImGui::Dummy(ImVec2(0, 2));
+    // The plate from above.
+    const float ph = std::round(w * 320.0f / 568.0f);
+    const ImVec2 pp = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pp, ImVec2(pp.x + w, pp.y + ph), col::Viewport, 10);
+    if (const unsigned tex = app.layoutPicture(index)) ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(tex)), ImVec2(w, ph));
+    else ImGui::Dummy(ImVec2(w, ph));
+    ImGui::Dummy(ImVec2(0, 6));
+    const fruit::ops::NestLayout& L = c.layout;
+    const int n = static_cast<int>(s.part_ids.size());
+    auto row = [&](const char* label, const std::string& value, ImU32 colour) {
+        const float y = ImGui::GetCursorPosY();
+        text(label, fonts().regular, size::Body, col::TextSecondary);
+        ImGui::PushFont(fonts().semibold, size::Body);
+        const float vw = ImGui::CalcTextSize(value.c_str()).x;
+        ImGui::PopFont();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - vw, y));
+        text(value.c_str(), fonts().semibold, size::Body, colour);
+    };
+    row("Parts that fit", strf("%d of %d", L.placed, n), L.placed == n ? col::Ok : col::Warn);
+    row("Takes", strf("%.0f × %.0f mm", L.width, L.depth), col::Text);
+    row("Load from the middle", L.balance < 0.5 ? std::string("centred") : strf("%.0f mm", L.balance), col::Text);
+    if (L.peel >= 0) row("Big layers from the hinge", strf("%.0f %% of the way", L.peel * 100), col::Text);
+    row("Turned", L.turned == 0 ? std::string("none") : strf("%d of %d", L.turned, n), col::Text);
+    ImGui::Dummy(ImVec2(0, 4));
+    text(layoutWhy(c.title), fonts().regular, size::Body, col::TextSecondary, true);
+    ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 16 - 40);
+    const bool pressed = first ? primaryButton("Use this", ImVec2(96, 40)) : secondaryButton("Use this", ImVec2(96, 40));
+    if (pressed) app.useLayout(index);
+    endCard();
+}
+
+}  // namespace
+
+void layoutResults(App& app, Document& /*doc*/, ImVec2 size) {
+    const LayoutSearch& s = *app.layouts();
+    beginPanel("layout_results", ImVec2(0, size.y), col::App, ImVec2(24, 26));
+    const std::size_t n = s.choices.size();
+    static const char* counts[] = {"No layout found", "One way to lay them out", "Two ways to lay them out",
+                                   "Three ways to lay them out", "Four ways to lay them out"};
+    const float w = ImGui::GetContentRegionAvail().x;
+    const float y0 = ImGui::GetCursorPosY();
+    text(counts[std::min<std::size_t>(n, 4)], fonts().bold, size::DialogTitle + 2, col::Text);
+    // Test captures leave out the time it took, which differs run to run.
+    const std::string took = app.options().deterministic ? std::string() : strf(" in %.1f s", s.seconds);
+    ImGui::PushFont(fonts().semibold, size::Body);
+    const float bw = ImGui::CalcTextSize("Back to the job").x + 32;
+    ImGui::PopFont();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - bw - 24);
+    text(strf("Tried %zu layouts%s: every part by its outline seen from above%s, %g mm apart, turned about the "
+              "vertical only. Nothing changes until you pick one, and you can undo.",
+              s.candidates, took.c_str(),
+              s.supports ? ", with its supports' feet and raft" : ", with room for the raft it will have", s.gap)
+             .c_str(),
+         fonts().regular, size::Body, col::TextSecondary, true);
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - bw, y0 + 4));
+    if (secondaryButton("Back to the job", ImVec2(bw, 0))) app.closeLayouts();
+    ImGui::SetCursorPosY(y0 + 72);
+    const float gap = 16, card_w = (w - 3 * gap) / 4;
+    const float card_h = std::min(470.0f, ImGui::GetContentRegionAvail().y - 4);
+    for (std::size_t i = 0; i < n && i < 4; ++i) {
+        layoutCard(app, static_cast<int>(i), s.choices[i], s, ImVec2(card_w, card_h));
+        ImGui::SameLine(0, gap);
+    }
+    endPanel();
 }
 
 }  // namespace gui::screens::parts

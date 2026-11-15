@@ -57,6 +57,7 @@ set(app_sources
   AppPartsTools.cpp
   AppRisk.cpp
   PartsTools.cpp
+  Arranging.cpp
   Collisions.cpp
   screens/PartsToolPanels.cpp
   screens/CollisionsTab.cpp

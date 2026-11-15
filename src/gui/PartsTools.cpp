@@ -9,24 +9,25 @@
 
 #include "Format.h"
 #include "mesh/ModelLoad.h"
+#include "Supports.h"
 #include "ops/Arrange.h"
 #include "ops/MeshOps.h"
 
 namespace gui {
 
-namespace {
-
 std::string plural(int n, const char* one, const char* many) {
     return std::to_string(n) + " " + (n == 1 ? one : many);
 }
-
-fruit::Vec2 centreOf(const fruit::BBox2& b) { return b.center(); }
 
 std::string namesOf(const std::vector<std::string>& v) {
     std::string s;
     for (std::size_t i = 0; i < v.size(); ++i) s += (i ? (i + 1 == v.size() ? " and " : ", ") : "") + v[i];
     return s;
 }
+
+namespace {
+
+fruit::Vec2 centreOf(const fruit::BBox2& b) { return b.center(); }
 
 // A placement for a mesh that is already in printer coordinates (joined
 // parts): it stays where it is, at the job's lift.
@@ -158,6 +159,10 @@ ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap, bool turn
     gap = std::max(0.0, gap);
     double margin = 0;
     for (const Part& p : doc.parts()) margin = std::max(margin, fruit::plateMargin(p.placement()));
+    // The room is between their rafts: a raft reaches past a part's outline
+    // by about half a support's foot, the pad's brim and the Full slab's margin.
+    const fruit::TreeConfig tc = treeConfig(doc.supports.choices);
+    const double reach = tc.base_diameter / 2 + tc.pad_brim + (tc.raft == fruit::RaftStyle::Full ? tc.full_raft_margin : 0.0);
     // Three ways, the first that fits them all (else the one that fits the
     // most, the earlier on a tie): as they are; each turned about the
     // vertical to where it takes the least room, its long side along X; and
@@ -184,6 +189,7 @@ ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap, bool turn
                 const fruit::BBox2 b = p.footprintBox();
                 t.size = {b.size().x, b.size().y};
             }
+            if (!p.placement().on_plate) t.size = {t.size.width + 2 * reach, t.size.depth + 2 * reach};
             pl.fps.push_back(t.size);
             pl.turns.push_back(t.degrees);
         }

@@ -34,6 +34,10 @@ struct ToolReport {
 // everything. A copy that has no room is not made.
 ToolReport duplicatePart(const Document& doc, PartsEdit& e, int copies, double gap);
 
+// "3 parts"; "a, b and c": for the tools' reports.
+std::string plural(int n, const char* one, const char* many);
+std::string namesOf(const std::vector<std::string>& names);
+
 // Every part laid out on the plate, `gap` mm apart (ops::arrange), the whole
 // layout centred on the plate. A part that has no room stays where it is.
 // With `turn`, when they don't all fit as they are, each part is turned about
@@ -74,7 +78,7 @@ std::string numberedName(const std::string& base, const std::vector<std::string>
 // The tools' settings, kept with the app while a job is open.
 struct PartsToolState {
     int copies = 1;            // Duplicate
-    double arrange_gap = kPartGap;  // Arrange, mm
+    double arrange_gap = 2.0;       // Arrange, mm: between the parts' rafts
     bool arrange_turn = true;       // Arrange may turn parts about the vertical
     std::vector<int> merge_off;     // Merge: parts left out (ids); all others are joined
     ToolReport last;           // the last thing a tool did

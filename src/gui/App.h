@@ -24,6 +24,7 @@
 #include "Preferences.h"
 #include "ShapeTools.h"
 #include "ABTest.h"
+#include "Arranging.h"
 #include "Fit.h"
 #include "GooTools.h"
 #include "Navigation.h"
@@ -234,6 +235,17 @@ public:
     float partMenuY() const { return part_menu_y_; }
     void duplicateOnce(int id);          // the menu's Duplicate: one copy of part `id`, beside it
     void arrangeAll();                // every part, partsTools().arrange_gap apart
+    // Arrange's picker: layouts found in the background, four shown over the
+    // view; using one lays the parts out (one undo step) and moves their
+    // supports with them where it can (Arranging.h).
+    void findLayouts();
+    bool findingLayouts() const;
+    bool layoutsOpen() const;  // shown, and still for the job as it is
+    const LayoutSearch* layouts() const { return layouts_.get(); }
+    void useLayout(int choice);
+    void closeLayouts() { layouts_open_ = false; }
+    unsigned layoutPicture(int choice);
+    bool movingSupports() const;
     void splitSelected();             // the selected part into its shells
     void mergeParts(bool fuse);       // the parts not left out (partsTools().merge_off), joined or fused
     std::vector<int> mergeChosen() const;  // ids of the parts Merge would join
@@ -654,6 +666,16 @@ private:
     std::optional<fruit::Vec3> hover_point_;
     std::optional<std::pair<float, float>> cube_hover_;  // a script's stand-in pointer over the view cube
     PartsToolState parts_tools_;
+    std::shared_ptr<const LayoutSearch> layouts_;
+    std::weak_ptr<const Document> layouts_doc_;
+    bool layouts_open_ = false;
+    bool layouts_wanted_ = false;  // asked for while supports were moving: found once they are
+    std::vector<unsigned> layout_pictures_;
+    std::shared_ptr<const LayoutSearch> layout_pictures_for_;
+    // After Arrange moved the parts of `before` (its supports made for it):
+    // their tips moved with them and the supports built again from them, or
+    // the report says why they need making again.
+    void moveSupportsWith(const std::shared_ptr<const Document>& before);
     int part_menu_request_ = -1, part_menu_part_ = -1;
     float part_menu_x_ = 0, part_menu_y_ = 0;
     std::shared_ptr<const CollisionReport> collision_report_;

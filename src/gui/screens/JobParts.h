@@ -136,6 +136,8 @@ void relinkDialog(App& app);         // "Where is … now?"
 // Rotate: the search, how it sits now, the sides people see; the results.
 void orientPanel(App& app, Document& doc);
 void orientResults(App& app, Document& doc, ImVec2 size);
+// Arrange's picker: the layouts found, four across (PartsToolPanels.cpp).
+void layoutResults(App& app, Document& doc, ImVec2 size);
 // Mirror and Measure: each tool's panel, and Measure's marks in the view (the
 // points, the line between them, and the clicks that pick them).
 void mirrorPanel(App& app, Document& doc);

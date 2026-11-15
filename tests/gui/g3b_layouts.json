@@ -1,0 +1,13 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"duplicate": 3}, {"collisions": "wait"},
+    {"select_part": 2}, {"move": [-5, 5]}, {"select_part": 3}, {"move": [0, 8]}, {"collisions": "wait"},
+    {"tool": "arrange"}, {"shot": "g3b_arrange_panel"},
+    {"layouts": "find"}, {"wait": "jobs"}, {"frames": 2}, {"shot": "g3b_layouts"},
+    {"layout_use": 2}, {"wait": "jobs"}, {"collisions": "wait"}, {"view": "top"}, {"frames": 2}, {"shot": "g3b_layout_used"},
+    {"undo": 1}, {"collisions": "wait"}, {"frames": 2}, {"shot": "g3b_layout_undone"}
+  ]
+}

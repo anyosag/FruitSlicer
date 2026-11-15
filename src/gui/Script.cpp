@@ -458,6 +458,14 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("duplicate")) {
             app.partsTools().copies = std::clamp(step["duplicate"].get<int>(), 1, kMaxCopies);
             app.duplicateParts();
+        } else if (step.contains("layouts")) {
+            // "find": Arrange's Find layouts (then {"wait": "jobs"}); "close": back to the job.
+            const std::string a = step["layouts"].get<std::string>();
+            if (a == "find") app.findLayouts();
+            else if (a == "close") app.closeLayouts();
+            else throw std::runtime_error("unknown layouts step " + a);
+        } else if (step.contains("layout_use")) {
+            app.useLayout(step["layout_use"].get<int>() - 1);  // 1 = the first
         } else if (step.contains("arrange_turn")) {
             app.partsTools().arrange_turn = step["arrange_turn"].get<bool>();
         } else if (step.contains("arrange")) {

@@ -89,7 +89,20 @@ are the supports' own: the planner alone leaves out the tips it adds where
 one tip would carry too much, and for the demo bracket's tilted finalists it
 counted only a third to a quarter of the tips their supports have. This
 makes the search slower: about 10 s on the bracket, and 100 s on a lid with
-about 640 tips, where it took 13 s before. The
+about 640 tips, where it took 13 s before. With several parts, Arrange's
+**Find layouts** lays them out by their real outlines seen from above (a
+ring's middle and an L's corner are room), with their supports' feet and
+rafts, turned about the vertical only so each stands as it did: many runs
+(orders of the parts, sides to fill from, how much turning) on every core,
+each scored for the room it takes, how far its load is from the plate's
+middle, how far its big layers are from the vat's hinge (when that is
+known) and how many parts it turns. The best four, all different to look at,
+are shown side by side, each with a picture of the plate; five parts take
+under a tenth of a second, forty about a third. Using one moves each part's
+supports with it, rebuilt from its tips without planning them again (3 s
+instead of 9 on the DishRack job), unless a part moved further from the
+hinge than its tips were planned for (an allowance of 2 %, ours, not
+measured); then they need making again, and it says so. The
 Supports step generates tips and the support tree from three quick
 controls, named for what they set rather than for an outcome (the planner
 has rules that place tips, and the part decides which rule applies, so a

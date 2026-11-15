@@ -87,6 +87,7 @@ App::~App() {
     Renderer::freeTexture(orient_tex_[1]);
     Renderer::freeTexture(open_picture_.tex);
     for (auto& [path, p] : job_pictures_) Renderer::freeTexture(p.tex);
+    for (unsigned t : layout_pictures_) Renderer::freeTexture(t);
 }
 
 bool App::initGraphics(std::string* error) {

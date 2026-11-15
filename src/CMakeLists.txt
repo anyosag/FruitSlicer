@@ -47,6 +47,7 @@ add_library(fruit_core
   calibration/ABPlate.cpp
   ops/MeshOps.cpp
   ops/Arrange.cpp
+  ops/Nest.cpp
   ops/TextSolid.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/font_text_inter.cpp
 )

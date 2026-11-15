@@ -14,6 +14,7 @@
 
 #include "mesh/Primitives.h"
 #include "ops/Arrange.h"
+#include "ops/Nest.h"
 #include "ops/MeshOps.h"
 #include "ops/TextSolid.h"
 
@@ -699,4 +700,260 @@ TEST_CASE("Performance: a 200 000 triangle part is combined, cut and checked in 
     CHECK(t_convert + t_subtract + t_cut + t_collide + t_back < 120.0);
     WARN("200k triangles: convert " << t_convert << " s, subtract " << t_subtract << " s, cut " << t_cut
                                     << " s, collide " << t_collide << " s, back " << t_back << " s");
+}
+
+
+// ---- Nesting: real outlines, turned about the vertical ----
+
+namespace {
+
+// A part's outline as placed, turned and moved as `pl` says (its mesh's points, seen from above).
+std::vector<Vec2> placedOutline(const TriangleMesh& m, const NestPlacement& pl) {
+    const BBox3 b = m.bbox();
+    const Vec2 mid{(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2};
+    const double r = pl.turn_deg * 3.14159265358979323846 / 180, c = std::cos(r), s = std::sin(r);
+    std::vector<Vec2> pts;
+    double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+    for (const Vec3& v : m.vertices) {
+        const Vec2 q{(v.x - mid.x) * c - (v.y - mid.y) * s, (v.x - mid.x) * s + (v.y - mid.y) * c};
+        pts.push_back(q);
+        x0 = std::min(x0, q.x), x1 = std::max(x1, q.x), y0 = std::min(y0, q.y), y1 = std::max(y1, q.y);
+    }
+    // Placement::offset is the middle of the turned rectangle.
+    const Vec2 shift = pl.offset - Vec2{(x0 + x1) / 2, (y0 + y1) / 2};
+    for (Vec2& q : pts) q = q + shift;
+    return pts;
+}
+
+// The convex outline of `m` placed as `pl` says.
+std::vector<Vec2> placedHull(const TriangleMesh& m, const NestPlacement& pl) {
+    std::vector<Vec2> pts = placedOutline(m, pl);
+    std::sort(pts.begin(), pts.end(), [](const Vec2& a, const Vec2& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+    auto cross = [](const Vec2& o, const Vec2& a, const Vec2& b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+    std::vector<Vec2> h(2 * pts.size());
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        while (k >= 2 && cross(h[k - 2], h[k - 1], pts[i]) <= 0) --k;
+        h[k++] = pts[i];
+    }
+    for (std::size_t i = pts.size() - 1, t = k + 1; i > 0; --i) {
+        while (k >= t && cross(h[k - 2], h[k - 1], pts[i - 1]) <= 0) --k;
+        h[k++] = pts[i - 1];
+    }
+    h.resize(k - 1);
+    return h;
+}
+
+// The least distance between two convex polygons (0 when they overlap).
+double hullGap(const std::vector<Vec2>& a, const std::vector<Vec2>& b) {
+    auto inside = [](const Vec2& p, const std::vector<Vec2>& poly) {
+        for (std::size_t i = 0; i < poly.size(); ++i) {
+            const Vec2 &u = poly[i], &v = poly[(i + 1) % poly.size()];
+            if ((v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x) < 0) return false;
+        }
+        return true;
+    };
+    auto segDist = [](const Vec2& p, const Vec2& u, const Vec2& v) {
+        const Vec2 d = v - u;
+        const double t = std::clamp(((p.x - u.x) * d.x + (p.y - u.y) * d.y) / std::max(1e-12, d.x * d.x + d.y * d.y), 0.0, 1.0);
+        return std::hypot(p.x - (u.x + d.x * t), p.y - (u.y + d.y * t));
+    };
+    for (const Vec2& p : a)
+        if (inside(p, b)) return 0;
+    for (const Vec2& p : b)
+        if (inside(p, a)) return 0;
+    double best = 1e300;
+    for (const Vec2& p : a)
+        for (std::size_t i = 0; i < b.size(); ++i) best = std::min(best, segDist(p, b[i], b[(i + 1) % b.size()]));
+    for (const Vec2& p : b)
+        for (std::size_t i = 0; i < a.size(); ++i) best = std::min(best, segDist(p, a[i], a[(i + 1) % a.size()]));
+    return best;
+}
+
+// The least distance between two convex parts as placed.
+double nearest(const TriangleMesh& ma, const NestPlacement& pa, const TriangleMesh& mb, const NestPlacement& pb) {
+    return hullGap(placedHull(ma, pa), placedHull(mb, pb));
+}
+
+TriangleMesh turnedBar(double w, double d, double h, double deg, Vec2 at) {
+    TriangleMesh m = box(-w / 2, -d / 2, 0, w / 2, d / 2, h);
+    const double r = deg * 3.14159265358979323846 / 180, c = std::cos(r), s = std::sin(r);
+    for (Vec3& v : m.vertices) v = {v.x * c - v.y * s + at.x, v.x * s + v.y * c + at.y, v.z};
+    return m;
+}
+
+NestPart nestPart(const TriangleMesh& m) {
+    NestPart p;
+    p.mesh = &m;
+    const BBox3 b = m.bbox();
+    p.load = std::max(1.0, m.volume());
+    p.load_at = {(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2};
+    p.big_layer = (b.max.x - b.min.x) * (b.max.y - b.min.y);
+    return p;
+}
+
+}  // namespace
+
+TEST_CASE("Nest: bars lying askew are turned about the vertical to fit, the gap kept, on the plate", "[ops][nest]") {
+    std::vector<TriangleMesh> bars;
+    for (int i = 0; i < 5; ++i) bars.push_back(turnedBar(130, 12, 8, 40, {0, 0}));
+    std::vector<NestPart> parts;
+    for (const TriangleMesh& m : bars) parts.push_back(nestPart(m));
+    NestOptions o;
+    o.plate_width = 211.68, o.plate_depth = 118.37, o.gap = 2;
+    // Not turned, they fit only lying askew side by side, taking much more room.
+    o.turn = false;
+    const std::vector<NestPick> plain = pickLayouts(nestLayouts(parts, o));
+    REQUIRE_FALSE(plain.empty());
+    double plain_area = 1e300;
+    for (const NestPick& pk : plain) {
+        plain_area = std::min(plain_area, pk.layout.area());
+        CHECK(pk.layout.turned == 0);
+    }
+    o.turn = true;
+    const std::vector<NestLayout> all = nestLayouts(parts, o);
+    const std::vector<NestPick> picks = pickLayouts(all);
+    REQUIRE_FALSE(picks.empty());
+    CHECK(picks.size() <= 4);
+    for (const NestPick& pk : picks) {
+        const NestLayout& L = pk.layout;
+        CHECK(L.placed == 5);
+        for (std::size_t i = 0; i < 5; ++i) {
+            const auto pts = placedOutline(bars[i], L.parts[i]);
+            for (const Vec2& q : pts) {
+                CHECK(std::abs(q.x) <= o.plate_width / 2 + 1e-6);
+                CHECK(std::abs(q.y) <= o.plate_depth / 2 + 1e-6);
+            }
+            for (std::size_t j = i + 1; j < 5; ++j) CHECK(nearest(bars[i], L.parts[i], bars[j], L.parts[j]) >= o.gap - 0.3);
+        }
+    }
+    double best_area = 1e300;
+    for (const NestPick& pk : picks) best_area = std::min(best_area, pk.layout.area());
+    CHECK(best_area < 0.8 * plain_area);
+    // All titled, and the criteria each named once.
+    std::vector<std::string> named;
+    for (const NestPick& pk : picks) {
+        CHECK_FALSE(pk.title.empty());
+        if (pk.title != "Another way") named.push_back(pk.title);
+        for (const std::string& a : pk.also) named.push_back(a);
+    }
+    std::sort(named.begin(), named.end());
+    CHECK(std::adjacent_find(named.begin(), named.end()) == named.end());
+    CHECK(picks[0].title == "Recommended");
+}
+
+TEST_CASE("Nest: a small part goes in a frame's hole where rectangles could not share the plate", "[ops][nest]") {
+    // A square frame 60 mm across with a 40 mm hole, and a 20 mm block, on a 72 x 72 plate:
+    // side by side they need 60 + 2 + 20 = 82 mm either way.
+    TriangleMesh frame = box(-30, -30, 0, 30, -20, 5);
+    frame.append(box(-30, 20, 0, 30, 30, 5));
+    frame.append(box(-30, -20, 0, -20, 20, 5));
+    frame.append(box(20, -20, 0, 30, 20, 5));
+    const TriangleMesh block = box(-10, -10, 0, 10, 10, 5);
+    std::vector<NestPart> parts{nestPart(frame), nestPart(block)};
+    NestOptions o;
+    o.plate_width = 72, o.plate_depth = 72, o.gap = 2;
+    const std::vector<NestPick> picks = pickLayouts(nestLayouts(parts, o));
+    REQUIRE_FALSE(picks.empty());
+    const NestLayout& L = picks[0].layout;
+    CHECK(L.placed == 2);
+    // The frame's sides, each convex, placed as the frame is: the block keeps the gap to each.
+    const BBox3 fb = frame.bbox();
+    for (int s = 0; s < 4; ++s) {
+        TriangleMesh side = s == 0 ? box(-30, -30, 0, 30, -20, 5) : s == 1 ? box(-30, 20, 0, 30, 30, 5)
+                          : s == 2 ? box(-30, -20, 0, -20, 20, 5) : box(20, -20, 0, 30, 20, 5);
+        // Placed as part of the frame: the same turn about the frame's middle, then the same move.
+        NestPlacement sp = L.parts[0];
+        const double r = sp.turn_deg * 3.14159265358979323846 / 180, c = std::cos(r), sn = std::sin(r);
+        const BBox3 sb = side.bbox();
+        const Vec2 own{(sb.min.x + sb.max.x) / 2 - (fb.min.x + fb.max.x) / 2, (sb.min.y + sb.max.y) / 2 - (fb.min.y + fb.max.y) / 2};
+        // The side's own rectangle middle, turned with the frame, is where its offset goes (a box stays a box at quarter turns).
+        sp.offset = L.parts[0].offset + Vec2{own.x * c - own.y * sn, own.x * sn + own.y * c};
+        CHECK(nearest(side, sp, block, L.parts[1]) >= o.gap - 0.3);
+    }
+}
+
+TEST_CASE("Nest: the same answer on one thread or many, and the picks are the best at what they say", "[ops][nest]") {
+    std::vector<TriangleMesh> ms;
+    for (int i = 0; i < 6; ++i) ms.push_back(turnedBar(20.0 + 9 * i, 10.0 + 3 * (i % 3), 5.0 + 4 * i, 15.0 * i, {0, 0}));
+    std::vector<NestPart> parts;
+    for (const TriangleMesh& m : ms) parts.push_back(nestPart(m));
+    NestOptions o;
+    o.plate_width = 211.68, o.plate_depth = 118.37, o.gap = 3;
+    o.hinge = Vec2{0, 1};
+    o.threads = 1;
+    const std::vector<NestLayout> one = nestLayouts(parts, o);
+    o.threads = 0;
+    const std::vector<NestLayout> many = nestLayouts(parts, o);
+    REQUIRE(one.size() == many.size());
+    for (std::size_t i = 0; i < one.size(); ++i) {
+        CHECK(one[i].how == many[i].how);
+        for (std::size_t k = 0; k < parts.size(); ++k) {
+            CHECK(one[i].parts[k].offset.x == many[i].parts[k].offset.x);
+            CHECK(one[i].parts[k].turn_deg == many[i].parts[k].turn_deg);
+        }
+    }
+    const std::vector<NestPick> picks = pickLayouts(many);
+    REQUIRE_FALSE(picks.empty());
+    CHECK(picks.size() <= 4);
+    // The pick that says it is best at something is.
+    auto pickFor = [&](const std::string& t) -> const NestLayout* {
+        for (const NestPick& p : picks) {
+            if (p.title == t) return &p.layout;
+            for (const std::string& a : p.also)
+                if (a == t) return &p.layout;
+        }
+        return nullptr;
+    };
+    int most = 0;
+    for (const NestLayout& L : many) most = std::max(most, L.placed);
+    double least_area = 1e300, least_balance = 1e300, least_peel = 1e300;
+    for (const NestLayout& L : many)
+        if (L.placed == most) {
+            least_area = std::min(least_area, L.area());
+            least_balance = std::min(least_balance, L.balance);
+            least_peel = std::min(least_peel, L.peel);
+        }
+    for (const NestPick& p : picks) CHECK(p.layout.placed == most);
+    for (const char* t : {"Recommended", "Most compact", "Balanced on the plate", "Gentlest peel"}) REQUIRE(pickFor(t));
+    CHECK(pickFor("Most compact")->area() == Approx(least_area));
+    CHECK(pickFor("Balanced on the plate")->balance <= least_balance + 0.05);
+    CHECK(pickFor("Gentlest peel")->peel == Approx(least_peel));
+    CHECK(pickFor("Gentlest peel")->peel >= 0);
+    CHECK(pickFor("Gentlest peel")->peel <= 1);
+    // All different to look at.
+    for (std::size_t i = 0; i < picks.size(); ++i)
+        for (std::size_t j = i + 1; j < picks.size(); ++j) CHECK(picks[i].layout.covers != picks[j].layout.covers);
+}
+
+TEST_CASE("Nest: how long forty mixed parts take", "[.][bench][nest]") {
+    std::vector<TriangleMesh> ms;
+    for (int i = 0; i < 40; ++i) {
+        if (i % 3 == 0) ms.push_back(turnedBar(25.0 + (i % 5) * 8, 6.0 + (i % 4) * 3, 5, 17.0 * i, {0, 0}));
+        else if (i % 3 == 1) {
+            TriangleMesh f = box(-10, -10, 0, 10, -7, 5);
+            f.append(box(-10, 7, 0, 10, 10, 5));
+            f.append(box(-10, -7, 0, -7, 7, 5));
+            f.append(box(7, -7, 0, 10, 7, 5));
+            ms.push_back(f);
+        } else {
+            TriangleMesh l = box(0, 0, 0, 24, 6, 5);
+            l.append(box(0, 6, 0, 6, 20, 5));
+            ms.push_back(l);
+        }
+    }
+    std::vector<NestPart> parts;
+    for (const TriangleMesh& m : ms) parts.push_back(nestPart(m));
+    NestOptions o;
+    o.plate_width = 211.68, o.plate_depth = 118.37, o.gap = 2;
+    o.hinge = Vec2{0, 1};
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::vector<NestLayout> all = nestLayouts(parts, o);
+    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const std::vector<NestPick> picks = pickLayouts(all);
+    WARN("40 parts: " << all.size() << " layouts in " << s << " s; best fits " << picks[0].layout.placed);
+    o.threads = 1;
+    const auto t1 = std::chrono::steady_clock::now();
+    (void)nestLayouts(parts, o);
+    WARN("on one thread: " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count() << " s");
 }
