@@ -341,10 +341,40 @@ struct Rng {
     double unit() { return (static_cast<double>(next() >> 11) + 0.5) * (1.0 / 9007199254740992.0); }  // (0, 1)
 };
 
+}  // namespace
+
+// The model's depth map (Analysis::buildDepths), kept between standalone calls.
+struct StandaloneCache::Kept {
+    // How far each point of a part is from thick model of that part (mm), on
+    // a grid of the depth lattice's own points (every `stride`-th of them),
+    // in hundredths of a mm; none at all where the part has no thick model.
+    struct Away {
+        int i0 = 0, r0 = 0, nx = 0, ny = 0, stride = 1;
+        std::vector<std::uint16_t> d;
+    };
+    // What it was worked out for.
+    const LayerStack* model = nullptr;
+    const IslandGraph* parts = nullptr;
+    double slab = -1, h = -1;
+    int models = -1;
+    bool ready = false;  // false while an analysis has it
+    std::vector<std::vector<std::uint16_t>> depth;
+    std::vector<std::vector<Vec2>> spread;
+    std::vector<Vec2> spread_cell;
+    std::vector<Away> away;
+    Vec2 lattice_min;
+};
+
+StandaloneCache::StandaloneCache() : kept(std::make_unique<Kept>()) {}
+StandaloneCache::~StandaloneCache() = default;
+
+namespace {
+
 class Analysis {
 public:
-    Analysis(const StabilityInput& in, const StabilityConfig& cfg, const JobControl& ctl)
-        : in_(in), cfg_(cfg), ctl_(ctl) {
+    Analysis(const StabilityInput& in, const StabilityConfig& cfg, const JobControl& ctl,
+             StandaloneCache* cache = nullptr)
+        : in_(in), cfg_(cfg), ctl_(ctl), cache_(cache ? cache->kept.get() : nullptr) {
         if (!in.print) throw std::invalid_argument("stability: no layers given");
         h_ = in.print->layer_height;
         if (!(h_ > 0)) throw std::invalid_argument("stability: layer height must be positive");
@@ -363,6 +393,23 @@ public:
     }
 
     StabilityResult run();
+    ~Analysis() {
+        if (!give_back_) return;
+        StandaloneCache::Kept& k = *cache_;
+        k.depth = std::move(depth_);
+        k.spread = std::move(spread_);
+        k.spread_cell = std::move(spread_cell_);
+        k.away = std::move(away_);
+        k.lattice_min = lattice_min_;
+        k.model = in_.model;
+        k.parts = model_graph_.get();
+        k.slab = cfg_.slab;
+        k.h = h_;
+        k.models = models_;
+        k.ready = true;
+    }
+    Analysis(const Analysis&) = delete;
+    Analysis& operator=(const Analysis&) = delete;
 
 private:
     void buildParts();
@@ -503,12 +550,15 @@ private:
     // How far each point of a part is from thick model of that part (mm), on
     // a grid of the depth lattice's own points (every `stride`-th of them),
     // in hundredths of a mm; none at all where the part has no thick model.
-    struct Away {
-        int i0 = 0, r0 = 0, nx = 0, ny = 0, stride = 1;
-        std::vector<std::uint16_t> d;
-    };
+    using Away = StandaloneCache::Kept::Away;
     std::vector<Away> away_;
     Vec2 lattice_min_;
+    // The depth map kept between standalone calls: taken from it when it was
+    // made for this model, and given (back) to it when this analysis ends.
+    StandaloneCache::Kept* cache_ = nullptr;
+    bool give_back_ = false;
+    bool depthsKept() const;
+    void workOutDepths();
     double awayAt(int part, const Vec2& x) const;
     std::vector<char> head_;  // by joint: part of the head under a tip, whose strength is the tip's
     std::vector<char> sliver_;  // by joint: smaller than the smallest tip
@@ -1230,7 +1280,31 @@ void Analysis::buildRods() {
 // How thick the model is under each point that a part's pull is shared out
 // from: for how many layers in a row, down from the part's own, there is
 // model at that point. Counted on a lattice of points 0.25 mm apart.
+bool Analysis::depthsKept() const {
+    // Only the model's parts, their shapes and areas, the slab and the layer
+    // height go into the map: standalone, those are the same call to call.
+    const StandaloneCache::Kept* k = cache_;
+    return k && k->ready && in_.standalone_tips && k->model == in_.model && k->parts == model_graph_.get() &&
+           k->slab == cfg_.slab && k->h == h_ && k->models == models_;
+}
+
 void Analysis::buildDepths() {
+    if (depthsKept()) {
+        StandaloneCache::Kept& k = *cache_;
+        depth_ = std::move(k.depth);
+        spread_ = std::move(k.spread);
+        spread_cell_ = std::move(k.spread_cell);
+        away_ = std::move(k.away);
+        lattice_min_ = k.lattice_min;
+        k.ready = false;
+    } else {
+        workOutDepths();
+    }
+    // Kept for the next call only once whole (not when stopped halfway).
+    give_back_ = cache_ && in_.standalone_tips;
+}
+
+void Analysis::workOutDepths() {
     depth_.assign(static_cast<size_t>(models_), {});
     away_.assign(static_cast<size_t>(models_), {});
     spread_.assign(static_cast<size_t>(models_), {});
@@ -3175,7 +3249,7 @@ StabilityResult analyzeStability(const StabilityInput& in, const StabilityConfig
 
 std::vector<TipLoad> standaloneTipLoads(const LayerStack& model, std::shared_ptr<const IslandGraph> parts,
                                         const std::vector<TipContact>& tips, const StabilityConfig& cfg,
-                                        const JobControl& ctl) {
+                                        const JobControl& ctl, StandaloneCache* cache, const HollowReport* hollows) {
     std::vector<TipLoad> out(tips.size());
     if (tips.empty() || model.size() == 0) return out;
     StabilityInput in;
@@ -3184,10 +3258,11 @@ std::vector<TipLoad> standaloneTipLoads(const LayerStack& model, std::shared_ptr
     in.model_graph = std::move(parts);
     in.tips = tips;
     in.standalone_tips = true;
+    in.hollows = hollows;
     StabilityConfig c = cfg;
     c.replays = 0;
     c.skin_half_reach = cfg.skin_half_reach;
-    const StabilityResult r = analyzeStability(in, c, ctl);
+    const StabilityResult r = Analysis(in, c, ctl, cache).run();
     for (const TipRisk& t : r.tips) {
         if (t.contact < 0 || static_cast<size_t>(t.contact) >= out.size()) continue;
         out[static_cast<size_t>(t.contact)] = {t.load, t.near, t.holds, t.at_layer};

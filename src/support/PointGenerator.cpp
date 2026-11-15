@@ -1353,6 +1353,7 @@ void Generator::relieve() {
             for (size_t i = 0; i < of.size(); ++i) rod[of[i]] = std::max(0.0, len[i]);
     }
     const StabilityConfig sc = stabilityConfig(cfg_);
+    StandaloneCache kept;  // the model's own work in the loads, the same every round
     // (The parts are this planner's own until it hands them on: lent, not given.)
     const std::shared_ptr<const IslandGraph> parts(std::shared_ptr<const IslandGraph>(), &graph_);
     const double limit = cfg_.tip_load_limit;
@@ -1373,7 +1374,7 @@ void Generator::relieve() {
             contacts.push_back(c);
         }
         if (live.empty()) break;
-        const std::vector<TipLoad> loads = standaloneTipLoads(layers(), parts, contacts, sc, ctl_.silent());
+        const std::vector<TipLoad> loads = standaloneTipLoads(layers(), parts, contacts, sc, ctl_.silent(), &kept, &hollows_);
         struct Over {
             int tip;
             double times, load;

@@ -3,6 +3,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 #include "mesh/Primitives.h"
@@ -1378,4 +1379,38 @@ TEST_CASE("a box on the planner's own supports: every part held, no tip past whe
     CHECK(r.parts[static_cast<size_t>(mid)].model);
     CHECK(r.parts[static_cast<size_t>(mid)].lost_chance < 0.05);
     CHECK(r.closeness_by_layer.size() == print.size());
+}
+
+TEST_CASE("the planner's question asked round after round: kept work gives the same loads", "[stability]") {
+    // A thin slab with a thick block under part of it: how deep the model is and how far from thick
+    // model both count. The planner adds tips each round; with the model's work kept, every load is the same.
+    Build b(40);
+    b.part(20, 30, rect(-2, -2, 2, 2));
+    b.part(30, 32, rect(-8, -6, 8, 6));
+    for (Paths& sl : b.model.slices) sl = unionNonZero(sl);
+    const StabilityConfig cfg;
+    auto parts = std::make_shared<const IslandGraph>(b.model, cfg.link_grow);
+    const HollowReport hollows = analyzeHollows(b.model);
+    auto tip = [&](double x, double y, int layer) {
+        TipContact t;
+        t.at = {x, y, layer * kH};
+        t.diameter = 0.4;
+        t.part = parts->partsInLayer(static_cast<size_t>(layer))[0];
+        return t;
+    };
+    std::vector<TipContact> tips{tip(0, 0, 20), tip(-6, -4, 30), tip(6, 4, 30)};
+    StandaloneCache kept;
+    for (int round = 0; round < 4; ++round) {
+        const std::vector<TipLoad> fresh = standaloneTipLoads(b.model, parts, tips, cfg);
+        const std::vector<TipLoad> again = standaloneTipLoads(b.model, parts, tips, cfg, JobControl::none(), &kept, &hollows);
+        REQUIRE(fresh.size() == again.size());
+        CHECK(std::any_of(fresh.begin(), fresh.end(), [](const TipLoad& l) { return l.load > 0; }));
+        for (std::size_t i = 0; i < fresh.size(); ++i) {
+            CHECK(again[i].load == fresh[i].load);
+            CHECK(again[i].near == fresh[i].near);
+            CHECK(again[i].holds == fresh[i].holds);
+            CHECK(again[i].at_layer == fresh[i].at_layer);
+        }
+        tips.push_back(tip(-6 + 3.5 * round, 4 - 2.5 * round, 30));  // the next round has one more
+    }
 }

@@ -326,8 +326,25 @@ struct TipLoad {
     double holds = 0;   // mm² of layer at which half of such tips let go
     int at_layer = -1;  // the layer printing at its worst (-1: never pulled)
 };
+// What standaloneTipLoads keeps between calls on the same model and parts
+// (the planner asks again each round, with tips added): the model's own work,
+// which no tip changes. One for one model and its parts; not shared between
+// threads.
+class StandaloneCache {
+public:
+    StandaloneCache();
+    ~StandaloneCache();
+    StandaloneCache(const StandaloneCache&) = delete;
+    StandaloneCache& operator=(const StandaloneCache&) = delete;
+    struct Kept;
+    std::unique_ptr<Kept> kept;
+};
+// `cache`: kept between calls (null: worked out each time; the answer is the
+// same). `hollows`: the model's cups and traps, analyzeHollows(model), if
+// already worked out.
 std::vector<TipLoad> standaloneTipLoads(const LayerStack& model, std::shared_ptr<const IslandGraph> parts,
                                         const std::vector<TipContact>& tips, const StabilityConfig& cfg,
-                                        const JobControl& ctl = JobControl::none());
+                                        const JobControl& ctl = JobControl::none(), StandaloneCache* cache = nullptr,
+                                        const HollowReport* hollows = nullptr);
 
 }  // namespace fruit
