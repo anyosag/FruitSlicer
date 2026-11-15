@@ -167,10 +167,12 @@ void App::settleCollisions() {
 
 void App::settleChecks() {
     // Other work: a script waits for that itself.
-    if (jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips()) return;
+    if (jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips() && !makingSupportsAhead()) return;
     jobs_.wait();  // the check running now, and any set aside for other work that is still stopping
     startCollisionCheck();
     if (checkingCollisions()) jobs_.wait();
+    startSupportsAhead();
+    if (makingSupportsAhead()) jobs_.wait();
     startTipCounts();
     if (countingTips()) jobs_.wait();
     startRiskCheck();
@@ -194,6 +196,13 @@ void App::forgetJobTools() {
     shape();  // the shape tools' settings and note start again too
     tip_counts_for_.reset();
     tip_counts_tried_.reset();
+    tip_plans_for_.reset();
+    tip_plans_ = {};
+    ahead_.reset();
+    ahead_out_.reset();
+    ahead_for_.reset();
+    ahead_tried_.reset();
+    ahead_seen_.reset();
     risk_report_.reset();
     risk_for_.reset();
     risk_tried_.reset();

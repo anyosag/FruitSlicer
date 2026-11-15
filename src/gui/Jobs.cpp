@@ -95,6 +95,17 @@ void JobRunner::launch(std::string name, std::function<void(const fruit::JobCont
     });
 }
 
+bool JobRunner::claim(const std::string& running, std::string name, Done done) {
+    std::lock_guard<std::mutex> lock(mu_);
+    // (Its `done` is only called from poll(), on this thread: nothing else reads it now.)
+    if (!current_ || current_->name != running || current_->ctl.cancelled()) return false;
+    log::info("job taken over: " + current_->name + " as " + name);
+    current_->name = std::move(name);
+    current_->done = std::move(done);
+    current_->gives_way = false;
+    return true;
+}
+
 void JobRunner::cancel() {
     std::lock_guard<std::mutex> lock(mu_);
     if (current_) current_->ctl.cancel();

@@ -6,6 +6,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ctime>
 #include <cctype>
@@ -704,7 +705,9 @@ void App::maintain() {
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
     // The background checks (the Collisions check with several parts, the replay of the print) give way: the
     // work below cancels them, and they start again after.
-    const auto busy = [this] { return jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips(); };
+    const auto busy = [this] {
+        return jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips() && !makingSupportsAhead();
+    };
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result
         // and height correction.
@@ -926,22 +929,19 @@ void App::removeHole(int index) {
     planHollowPreview();
 }
 
+namespace {
+const char* const kAheadJob = "Getting supports ready";
+const char* const kSupportsJob = "Generating supports";
+}  // namespace
+
 void App::generateSupports() {
     if (!doc_ || !doc_->fits()) return;
     advanced_open_ = false;  // the run shows in the 3D view
-    auto snap = std::make_shared<const Document>(*doc_);
-    auto out = std::make_shared<SupportResult>();
-    const int rev = doc_->revision();
-    const std::int64_t settings = doc_->supportSettings();
-    const SupportChoices choices = doc_->supports.choices;
-    const std::vector<TipEdit> edits = doc_->supports.edits;  // hand edits stay: they apply again
+    const SupportInputs now = supportInputs();
     std::weak_ptr<Document> target = doc_;
-    jobs_.start(
-        "Generating supports",
-        [snap, out, choices, edits](const fruit::JobControl& ctl) {
-            *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
-        },
-        [this, target, out, rev, settings](std::exception_ptr err) {
+    // When it ends: the supports made, for the job as it was then.
+    auto done = [this, target, rev = now.revision, settings = now.settings](std::shared_ptr<SupportResult> out) {
+        return [this, target, out, rev, settings](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
             if (err) {
@@ -953,17 +953,142 @@ void App::generateSupports() {
                 }
                 return;
             }
-            SupportState& s = d->supports;
-            if (s.result) {
-                s.before_tips = s.result->tips;
-                s.before_ml = s.result->support_ml;
+            installSupports(d, std::make_shared<const SupportResult>(std::move(*out)), rev, settings);
+        };
+    };
+    // Made ahead for the job as it is now: shown at once.
+    if (ahead_ && ahead_for_ && *ahead_for_ == now) {
+        installSupports(doc_, std::move(ahead_), now.revision, now.settings);
+        ahead_.reset();
+        ahead_for_.reset();
+        return;
+    }
+    // Being made ahead for it: this takes that over (nothing starts again).
+    if (makingSupportsAhead() && ahead_tried_ && *ahead_tried_ == now && ahead_out_ &&
+        jobs_.claim(kAheadJob, kSupportsJob, done(ahead_out_)))
+        return;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<SupportResult>();
+    const SupportChoices choices = doc_->supports.choices;
+    const std::vector<TipEdit> edits = doc_->supports.edits;  // hand edits stay: they apply again
+    jobs_.start(
+        kSupportsJob,
+        [snap, out, choices, edits](const fruit::JobControl& ctl) {
+            *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
+        },
+        done(out));
+}
+
+void App::installSupports(const std::shared_ptr<Document>& d, std::shared_ptr<const SupportResult> r, int rev,
+                          std::int64_t settings) {
+    SupportState& s = d->supports;
+    if (s.result) {
+        s.before_tips = s.result->tips;
+        s.before_ml = s.result->support_ml;
+    }
+    s.result = std::move(r);
+    s.result_revision = rev;
+    s.result_settings = settings;
+    s.selected_tip = -1;
+    log::info("supports: " + std::to_string(s.result->tips) + " tips, " + std::to_string(s.result->pillars) +
+              " pillars in " + std::to_string(s.result->seconds) + " s");
+}
+
+bool App::SupportInputs::operator==(const SupportInputs& o) const {
+    if (visible.size() != o.visible.size()) return false;
+    for (std::size_t i = 0; i < visible.size(); ++i)
+        if (visible[i].x != o.visible[i].x || visible[i].y != o.visible[i].y || visible[i].z != o.visible[i].z)
+            return false;
+    return revision == o.revision && settings == o.settings && choices == o.choices && edits == o.edits &&
+           bottom_layers == o.bottom_layers && transition_layers == o.transition_layers && pixel == o.pixel &&
+           plate_hold == o.plate_hold;
+}
+
+App::SupportInputs App::supportInputs() const {
+    SupportInputs k;
+    k.revision = doc_->revision();
+    k.settings = doc_->supportSettings();
+    k.choices = doc_->supports.choices;
+    k.edits = doc_->supports.edits;
+    k.visible = doc_->visibleInPrinter();
+    k.bottom_layers = doc_->printer.bottom_layers;
+    k.transition_layers = doc_->printer.transition_layers;
+    k.pixel = doc_->printer.pixelX() * doc_->printer.pixelY();
+    k.plate_hold = modelInBottomLayers(*doc_);
+    return k;
+}
+
+std::optional<App::SupportInputs> App::aheadKey() const {
+    if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports || tip_editing_ || !doc_->fits()) return std::nullopt;
+    // Made already for the job as it is: nothing to make.
+    if (doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) return std::nullopt;
+    return supportInputs();
+}
+
+bool App::makingSupportsAhead() const { return jobs_.busy() && jobs_.progress().name == kAheadJob; }
+
+void App::startSupportsAhead() {
+    const auto key = aheadKey();
+    if (makingSupportsAhead()) {
+        // Made for a job that has changed since, or with the Supports step left: it stops.
+        if (!key || !(ahead_tried_ && *ahead_tried_ == *key)) jobs_.cancel();
+        return;
+    }
+    if (!key || (ahead_for_ && *ahead_for_ == *key) || (ahead_tried_ && *ahead_tried_ == *key)) return;
+    // Once the job has been as it is for half a second: a control being
+    // dragged through its stops starts nothing at each. (Scripts: at once.)
+    if (!opts_.deterministic) {
+        const double now = static_cast<double>(SDL_GetTicks()) / 1000.0;
+        if (!(ahead_seen_ && *ahead_seen_ == *key)) {
+            ahead_seen_ = key;
+            ahead_seen_at_ = now;
+            return;
+        }
+        if (now - ahead_seen_at_ < 0.5) return;
+    }
+    if (jobs_.busy() || jobs_.stopping()) return;  // the work running now comes first; one at a time in the background
+    ahead_tried_ = key;
+    ahead_.reset();  // one kept aside at a time
+    ahead_for_.reset();
+    const int generation = ++ahead_generation_;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<SupportResult>();
+    ahead_out_ = out;
+    // The plan the tip counts made for this stop, when they were made for these inputs.
+    std::optional<SupportPlan> plan;
+    SupportInputs centre = *key;
+    centre.choices.how_many = kHowManyCentre;
+    if (tip_plans_for_ && *tip_plans_for_ == centre)
+        plan = tip_plans_[static_cast<std::size_t>(std::clamp(key->choices.how_many, 1, kQuickStops) - 1)];
+    const SupportChoices choices = key->choices;
+    const std::vector<TipEdit> edits = key->edits;
+    std::weak_ptr<Document> target = doc_;
+    jobs_.startGivingWay(
+        kAheadJob,
+        [snap, out, choices, edits, plan](const fruit::JobControl& ctl) {
+            if (plan) {
+                const auto t0 = std::chrono::steady_clock::now();
+                *out = finishWithEdits(*snap, choices, *plan, edits, ctl);
+                out->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            } else {
+                *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
             }
-            s.result = std::make_shared<const SupportResult>(std::move(*out));
-            s.result_revision = rev;
-            s.result_settings = settings;
-            s.selected_tip = -1;
-            log::info("supports: " + std::to_string(s.result->tips) + " tips, " + std::to_string(s.result->pillars) +
-                      " pillars in " + std::to_string(s.result->seconds) + " s");
+        },
+        [this, target, out, key, generation](std::exception_ptr err) {
+            if (!target.lock()) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                    if (generation == ahead_generation_) ahead_tried_.reset();  // made again when wanted
+                } catch (const std::exception& e) {
+                    log::info(std::string("supports ahead: ") + e.what());
+                }
+                return;
+            }
+            if (generation != ahead_generation_) return;
+            ahead_ = std::make_shared<const SupportResult>(std::move(*out));
+            ahead_for_ = key;
         });
 }
 
@@ -1034,14 +1159,26 @@ void App::startTipCounts() {
     const int generation = ++tip_counts_generation_;
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<std::array<std::size_t, kQuickStops>>();
+    auto plans = std::make_shared<std::array<SupportPlan, kQuickStops>>();
+    // The plans are kept for making supports at another stop; the one made
+    // ahead for this job, at its stop, is not planned again.
+    SupportInputs inputs = supportInputs();
+    inputs.choices.how_many = kHowManyCentre;
+    std::shared_ptr<const KnownPlan> known;
+    if (ahead_ && ahead_for_) {
+        SupportInputs made = *ahead_for_;
+        made.choices.how_many = kHowManyCentre;
+        if (made == inputs) known = std::make_shared<const KnownPlan>(KnownPlan{ahead_for_->choices.how_many, planOf(*ahead_)});
+    }
     std::weak_ptr<Document> target = doc_;
     // It gives way: making the supports, or anything else, doesn't wait for it.
     jobs_.startGivingWay(
         kTipCountJob,
-        [snap, out](const fruit::JobControl& ctl) {
-            *out = gui::tipCounts(*snap, snap->supports.choices, snap->visibleInPrinter(), ctl, snap->supports.edits);
+        [snap, out, plans, known](const fruit::JobControl& ctl) {
+            *out = gui::tipCounts(*snap, snap->supports.choices, snap->visibleInPrinter(), ctl, snap->supports.edits,
+                                  known.get(), plans.get());
         },
-        [this, target, out, key, generation](std::exception_ptr err) {
+        [this, target, out, plans, inputs, key, generation](std::exception_ptr err) {
             if (!target.lock()) return;
             if (err) {
                 try {
@@ -1055,6 +1192,8 @@ void App::startTipCounts() {
             }
             tip_counts_ = *out;
             tip_counts_for_ = key;
+            tip_plans_ = std::move(*plans);
+            tip_plans_for_ = inputs;
         });
 }
 
@@ -2973,7 +3112,7 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     // ⌘↩: the Job panel's main button (Make supports, Slice…).
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job &&
-        (!jobs_.busy() || checkingCollisions() || checkingRisk() || countingTips())) {
+        (!jobs_.busy() || checkingCollisions() || checkingRisk() || countingTips() || makingSupportsAhead())) {
         const MainButton mb = mainButton(doc_.get());
         if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
             supportsNow();
@@ -3071,7 +3210,8 @@ void App::keys() {
 void App::frame() {
     maintain();
     if (!placing()) startCollisionCheck();  // with several parts: do they overlap? (after the work above)
-    if (!placing()) startTipCounts();       // on the Supports step: how many tips at each stop? (after both)
+    if (!placing()) startSupportsAhead();   // on the Supports step: the supports, made before they are asked for
+    if (!placing()) startTipCounts();       // on the Supports step: how many tips at each stop? (after those)
     if (!placing()) startRiskCheck();       // with supports: what may not print? (after all of it)
     // Scripted captures keep the drive list they set up: the machine's own
     // drives would change the pictures.

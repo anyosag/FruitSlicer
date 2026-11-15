@@ -728,3 +728,30 @@ TEST_CASE("Full raft: the choice reaches the engine, is saved with the job and m
     CHECK(o.doc->supports.choices.full_raft);
     CHECK(o.doc->supports.choices == doc->supports.choices);
 }
+
+TEST_CASE("Quick support: supports made ahead from the tip counts' plans are the ones Make supports makes",
+          "[gui][supports][quick]") {
+    // The head start finishes supports from the plan the tip counts made for a stop, and the counts reuse
+    // the plan of supports made ahead: both must give what making them afresh gives.
+    const auto doc = bracket("ahead");
+    const SupportChoices c = at(3);
+    const auto visible = doc->visibleInPrinter();
+    std::array<SupportPlan, kQuickStops> plans;
+    const auto counts = tipCounts(*doc, c, visible, fruit::JobControl::none(), {}, nullptr, &plans);
+    for (const int stop : {1, 3, 5}) {
+        CAPTURE(stop);
+        const SupportResult fresh = made(*doc, at(stop));
+        const SupportResult ahead = finishWithEdits(*doc, at(stop), plans[static_cast<std::size_t>(stop - 1)], {},
+                                                    fruit::JobControl::none());
+        CHECK(ahead.tips == fresh.tips);
+        CHECK(ahead.mesh.faces.size() == fresh.mesh.faces.size());
+        REQUIRE(ahead.points.size() == fresh.points.size());
+        for (std::size_t i = 0; i < fresh.points.size(); ++i) {
+            CHECK(ahead.points[i].pos.x == fresh.points[i].pos.x);
+            CHECK(ahead.points[i].pos.z == fresh.points[i].pos.z);
+            CHECK(ahead.points[i].tip_diameter == fresh.points[i].tip_diameter);
+        }
+        const KnownPlan known{stop, planOf(fresh)};
+        CHECK(tipCounts(*doc, c, visible, fruit::JobControl::none(), {}, &known) == counts);
+    }
+}

@@ -50,6 +50,11 @@ public:
     // it aside to stop by itself. Its `done` gets fruit::Cancelled, or its
     // result if it got to the end first.
     void startGivingWay(std::string name, std::function<void(const fruit::JobControl&)> work, Done done);
+    // The running job, when it is called `running` (work that gives way,
+    // started ahead of a click): it carries on as `name`, no longer giving
+    // way, and `done` is called when it ends instead of its own. False when
+    // no such job is running (then nothing changes).
+    bool claim(const std::string& running, std::string name, Done done);
     void cancel();
     bool busy() const;      // a job is running (not counting work set aside)
     bool stopping() const;  // work set aside has not stopped yet

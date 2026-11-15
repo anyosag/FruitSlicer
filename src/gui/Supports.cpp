@@ -1094,7 +1094,8 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
 
 std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
                                                const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
-                                               const std::vector<TipEdit>& edits) {
+                                               const std::vector<TipEdit>& edits, const KnownPlan* known,
+                                               std::array<SupportPlan, kQuickStops>* plans) {
     std::array<std::size_t, kQuickStops> tips{};
     std::array<SupportPlan, kQuickStops> kept;
     // Every stop's own plan, side by side (none depends on another)...
@@ -1102,6 +1103,13 @@ std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const Suppor
     doc.placed();
     fruit::parallelFor(kQuickStops, kQuickStops, [&](std::size_t i) {
         const int stop = order[i];
+        // (One made already is planTips' for its stop: it is what the
+        // comparison below keeps for that stop, and what the stop below is
+        // compared with, either way.)
+        if (known && known->stop == stop) {
+            kept[static_cast<std::size_t>(stop - 1)] = known->plan;
+            return;
+        }
         SupportChoices one = c;
         one.how_many = stop;
         kept[static_cast<std::size_t>(stop - 1)] =
@@ -1114,7 +1122,12 @@ std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const Suppor
         if (stop < kHowManyCentre && !keepsOwn(kept[at], kept[at + 1])) kept[at] = kept[at + 1];
         tips[at] = applyEdits(kept[at].points, edits, doc.frames()).size();
     }
+    if (plans) *plans = std::move(kept);
     return tips;
+}
+
+SupportPlan planOf(const SupportResult& r) {
+    return SupportPlan{r.planned, r.plan_warnings, r.plan_edits, r.hollow, r.held_min, r.held_max};
 }
 
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,

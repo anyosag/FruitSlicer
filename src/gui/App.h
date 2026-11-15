@@ -261,6 +261,11 @@ public:
     // on the Supports step and gives way to any other work.
     const std::array<std::size_t, kQuickStops>* tipCountsByStop() const;
     bool countingTips() const;
+    // On the Supports step, the supports Make supports would make are made in
+    // the background first (before the tip counts), and kept aside: pressed
+    // then, it shows them at once, or takes over their making. Gives way to
+    // any other work, like the counts.
+    bool makingSupportsAhead() const;
     void finishTipCounts();           // scripts and tests: starts the count if it is due and waits for it
     // A script's shot: the background checks (collisions, the tip counts, then
     // this) run to their end first, so a picture never depends on how fast they were.
@@ -682,6 +687,31 @@ private:
     int tip_counts_generation_ = 0;
     std::optional<TipCountKey> tipCountKey() const;  // none: no counts wanted now
     void startTipCounts();
+    // Everything Make supports reads from the job: supports made for equal
+    // inputs are the same supports.
+    struct SupportInputs {
+        int revision = -1;
+        std::int64_t settings = -1;
+        SupportChoices choices;
+        std::vector<TipEdit> edits;
+        std::vector<fruit::Vec3> visible;
+        int bottom_layers = 0, transition_layers = 0;
+        double pixel = 0, plate_hold = 0;
+        bool operator==(const SupportInputs& o) const;
+    };
+    SupportInputs supportInputs() const;  // of the job as it is now (doc_ must be set)
+    std::optional<SupportInputs> aheadKey() const;  // none: none wanted now
+    std::optional<SupportInputs> ahead_for_, ahead_tried_, ahead_seen_;  // made for; started for; last seen (to wait)
+    double ahead_seen_at_ = 0;                        // since when it has been as seen, s
+    std::shared_ptr<const SupportResult> ahead_;      // made ahead, for ahead_for_
+    std::shared_ptr<SupportResult> ahead_out_;        // where the one being made goes
+    int ahead_generation_ = 0;
+    // The plans the tip counts made, by stop, for these inputs (How many at the centre).
+    std::array<SupportPlan, kQuickStops> tip_plans_;
+    std::optional<SupportInputs> tip_plans_for_;
+    void startSupportsAhead();
+    void installSupports(const std::shared_ptr<Document>& d, std::shared_ptr<const SupportResult> r, int rev,
+                         std::int64_t settings);
     void forgetJobTools();  // another job is open: what the tools kept was for the one before
     ShapeState shape_;
     void runShape(const std::string& job, std::function<ShapeOutcome(const fruit::JobControl&)> work,

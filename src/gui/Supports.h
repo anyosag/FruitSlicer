@@ -300,9 +300,18 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
 // How many tips each stop of How many would give this job (1 to 5, the other
 // choices as `c` has them): what generate() would end with, hand edits
 // included, without building the supports.
+// `known`: one stop's plan already made (planTips' for it, the same job and
+// choices), not made again. `plans`: every stop's plan, as planTips gives it.
+struct KnownPlan {
+    int stop = 0;
+    SupportPlan plan;
+};
 std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
                                                const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
-                                               const std::vector<TipEdit>& edits = {});
+                                               const std::vector<TipEdit>& edits = {}, const KnownPlan* known = nullptr,
+                                               std::array<SupportPlan, kQuickStops>* plans = nullptr);
+// A plan as made (before its hand edits), from the supports finished from it.
+SupportPlan planOf(const SupportResult& r);
 // Everything after the tips: the tree, its checks and the problems. Used
 // when a saved job comes back with its tips.
 SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,

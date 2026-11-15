@@ -102,6 +102,11 @@ alone adds almost nothing), towards Fewer how close a tip sits to a free
 fresh edge. A lighter stop never keeps more tips than the stop above it.
 Under the stops the panel shows the tips this job would get at each,
 counted in the background, and says when a stop changes nothing here.
+Before that, the supports for the settings as they are are made in the
+background too and kept aside: **Make supports** shows them at once, or,
+pressed while they are being made, carries on with that work rather than
+starting again. They are made afresh when anything they depend on changes
+(after half a second, so dragging through the stops starts nothing).
 **Tip size** (0.3, 0.4, 0.6 mm) is the usual tip; the sizes for spots in
 mid-air and near edges move with it, so it reaches every tip. Edge tips go
 no smaller than 0.3 mm that way until the resin's tips plate is fitted:
