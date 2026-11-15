@@ -977,6 +977,20 @@ TEST_CASE("a fresh skin at a free edge tears at a shorter reach than one held al
     CHECK(l.chanceAt(20, {7.9, 0}) >= 0.5);  // its far edge, 2.9 mm out
     CHECK(l.chanceAt(20, {6.5, 0}) == 0);    // 1.5 mm out: what the planner trusts a ledge with
     CHECK(l.chanceAt(21, {7.9, 0}) == 0);    // the next layer lies on it
+    // Listed as a place: 2.3 mm² of the layer is likelier than not to tear there.
+    bool listed = false;
+    for (const WeakSpot& s : l.spots) listed = listed || s.cause == RiskCause::Skin;
+    CHECK(listed);
+    CHECK(l.stats.small_skins == 0);
+    // The same ledge 2 mm wide: under half a square millimetre of it would tear, less than counts as
+    // losing any of the model. Its chance is worked out as before, and it is not listed.
+    Build narrow(22);
+    narrow.part(0, 22, rect(-5, -5, 5, 5));
+    narrow.part(20, 22, rect(-5, -1, 8, 1));
+    const StabilityResult n = narrow.run(cfg);
+    CHECK(n.chanceAt(20, {7.9, 0}) >= 0.5);
+    CHECK(n.stats.small_skins == 1);
+    for (const WeakSpot& s : n.spots) CHECK(s.cause != RiskCause::Skin);
     // Judged only as skin between holds, the same ledge would pass.
     StabilityConfig between = cfg;
     between.skin_edge_reach = 0;

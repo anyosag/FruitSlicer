@@ -3147,7 +3147,9 @@ void Analysis::findSpots() {
         }
         all.push_back(s);
     }
-    // Skins more likely than not to fail: one per part.
+    // Skins more likely than not to fail: one per part. Not one so small
+    // that what tears is less than counts as losing any of the model (as a
+    // tip's sliver with nothing going with it): it is counted, not listed.
     for (int L = 0; L < layers_; ++L) {
         const auto& bands = out_.skins[L];
         for (size_t i = 0; i < bands.size(); ++i) {
@@ -3156,6 +3158,11 @@ void Analysis::findSpots() {
             size_t j = i;
             while (j + 1 < bands.size() && bands[j + 1].part == bands[i].part) ++j;
             const AreaMoments m = areaMoments(bands[i].region);
+            if (m.area * h_ < kCountsAsLost) {
+                ++out_.stats.small_skins;
+                i = j;
+                continue;
+            }
             WeakSpot s;
             s.cause = RiskCause::Skin;
             s.at = {m.centroid.x, m.centroid.y, L * h_};

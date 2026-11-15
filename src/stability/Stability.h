@@ -285,6 +285,9 @@ struct StabilityStats {
     std::size_t unheld_specks = 0;
     std::size_t slivers = 0;          // overloaded joints under 0.02 mm² with nothing at risk above: not listed
     std::size_t cup_layers = 0;       // layers in which the suction of a cup open to the vat pulls
+    // Fresh skins likelier than not to tear, but over less than kCountsAsLost
+    // of the model: not listed.
+    std::size_t small_skins = 0;
     double model_volume = 0;          // mm³
     // Model volume whose chance of not printing is at least 1, 5, 20 and 50 %.
     double at_risk[4] = {0, 0, 0, 0};

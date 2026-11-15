@@ -23,6 +23,7 @@ json stabilityJson(const StabilityResult& r, const StabilityConfig& cfg, std::si
     j["unheld_specks"] = s.unheld_specks;
     j["slivers_not_listed"] = s.slivers;
     j["layers_with_cup_suction"] = s.cup_layers;
+    j["small_skins_not_listed"] = s.small_skins;
     j["whole_print_chance"] = s.whole_chance;
     j["expected_loss_mm3"] = s.expected_loss;
     j["volume_at_risk_mm3"] = {{"1%", s.at_risk[0]}, {"5%", s.at_risk[1]}, {"20%", s.at_risk[2]}, {"50%", s.at_risk[3]}};

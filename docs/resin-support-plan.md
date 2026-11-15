@@ -430,7 +430,14 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
     round keeps the spacing's reach. That ledge now shows a spot at a 1 in
     2 chance at its far edge. Neither reach depends yet on the layer height
     or the pull, as the formula says it should: the skin's thickness is the
-    cure depth, which the replay does not know.
+    cure depth, which the replay does not know. With it, small flaps showed
+    up at the lowest layer of gently sloped faces. On the lid one was
+    0.5 mm², at the lowest point, where the nearest tips touch two or three
+    layers higher. Ordinary models then read "1 place may not print". So a
+    skin likelier than not to tear, but over less than 0.1 mm³ of model (2 mm²
+    of a 0.05 mm layer), is counted and not listed (`small_skins`). This is
+    the same bar as a tip's sliver with nothing going with it. Its chance
+    still colours the heatmap.
   - The whole-print chance in the CLI report left out parts that start in
     mid-air and fresh skins. It read 1.0 next to a 950 mm³ part that was
     certain to fall. Now both count: what starts in mid-air in every replay,
