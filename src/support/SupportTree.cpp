@@ -3,10 +3,12 @@
 #include "support/SupportTree.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <numeric>
 #include <sstream>
 
+#include "core/Parallel.h"
 #include "mesh/Primitives.h"
 #include "ops/MeshOps.h"
 
@@ -274,12 +276,29 @@ private:
     }
     void settlePlateHead(const SupportPoint& p, Head& h);
 
-    bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok);
+    bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok) const;
     bool placeStub(const SupportPoint& p, int point);
     // A head for `p` at its own size and what it stands on (a pillar, a
     // bridge to one, a route to the raft, or the model below). False, with
     // nothing kept, when there is none; `why` is the warning's code then.
-    bool supportTip(const SupportPoint& p, int pi, const char*& why);
+    // What supporting a tip where it was planned asks of the model alone:
+    // its head, the room for a foot under it, a route down and a spot to
+    // stand on the model. Nothing built so far takes part, so this is worked
+    // out for every tip side by side before they are joined in order; each
+    // part only as far as supportTip would get to it.
+    struct Ahead {
+        bool head = false, drop_ok = false, plate = false;
+        Head h;
+        double room = 0;                  // footRoom under the junction (with drop_ok)
+        bool route = false;               // groundRoute found a way...
+        Vec3 route_end;
+        double route_room = 0;            // ...and the room for a foot where it lands
+        bool stand = false;               // modelStand found a spot
+        Vec3 stand_top, foot, foot_n;
+    };
+    Ahead workOut(const SupportPoint& p) const;
+    // `ahead`: that tip's work, done before (null: done here).
+    bool supportTip(const SupportPoint& p, int pi, const char*& why, const Ahead* ahead = nullptr);
     // The same at the planned size, then smaller ones; then a little way
     // across the same face. True when one of them got a head.
     bool supportSmallerOrMoved(const SupportPoint& p, int pi);
@@ -311,7 +330,7 @@ private:
     SupportTree out_;
 };
 
-bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) {
+bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) const {
     PinheadSpec s;
     s.tip_diameter = p.tip_diameter;
     s.penetration = penetrationFor(p.tip_diameter, cfg_);
@@ -722,10 +741,36 @@ void Builder::raft() {
     }
 }
 
-bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
+Builder::Ahead Builder::workOut(const SupportPoint& p) const {
+    // As supportTip goes, up to what depends on the supports built before it.
+    Ahead a;
+    a.head = placeHead(p, a.h, a.drop_ok);
+    if (!a.head) return a;
+    if (headBottom(a.h) < 0) {
+        a.plate = true;  // settled in order (it may be reported)
+        return a;
+    }
+    const double shaft_r = a.h.spec.shaft_diameter / 2;
+    a.room = a.drop_ok ? footRoom(a.h.junction.xy(), shaft_r) : 0;
+    if (a.drop_ok && a.room >= 2 * shaft_r - 1e-9) return a;
+    a.route = groundRoute(a.h.junction, shaft_r, cfg_.max_route_length, a.route_end);
+    if (a.route) {
+        a.route_room = footRoom(a.route_end.xy(), shaft_r);
+        return a;
+    }
+    if (a.drop_ok) return a;
+    a.stand = modelStand(a.h.junction, a.h.spec.shaft_diameter / 2, a.stand_top, a.foot, a.foot_n);
+    return a;
+}
+
+bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why, const Ahead* ahead) {
     Head h;
     bool drop_ok = false;
-    if (!placeHead(p, h, drop_ok)) {
+    if (ahead) {
+        h = ahead->h;
+        drop_ok = ahead->drop_ok;
+    }
+    if (ahead ? !ahead->head : !placeHead(p, h, drop_ok)) {
         why = "head_blocked";
         return false;
     }
@@ -744,14 +789,15 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
     if (attachToPillar(hi)) return true;
     // Straight down, on a foot as wide as the room beside the model allows.
     const double shaft_r = h.spec.shaft_diameter / 2;
-    const double room = drop_ok ? footRoom(h.junction.xy(), shaft_r) : 0;
+    const double room = ahead ? ahead->room : drop_ok ? footRoom(h.junction.xy(), shaft_r) : 0;
     if (drop_ok && room >= 2 * shaft_r - 1e-9) {
         newPillar(hi, false);
         out_.pillars.back().base_diameter = std::min(cfg_.base_diameter, room);
         return true;
     }
     Vec3 route_end;
-    if (groundRoute(h.junction, shaft_r, cfg_.max_route_length, route_end)) {
+    if (ahead) route_end = ahead->route_end;
+    if (ahead ? ahead->route : groundRoute(h.junction, shaft_r, cfg_.max_route_length, route_end)) {
         // Diagonal bridge to a new pillar standing where the drop is clear.
         out_.bridges.push_back({h.junction, route_end, h.spec.shaft_diameter});
         Pillar P;
@@ -759,7 +805,7 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
         P.top = route_end.z;
         P.bottom = out_.raft_top + cfg_.base_height;
         P.diameter = h.spec.shaft_diameter;
-        P.base_diameter = std::min(cfg_.base_diameter, footRoom(P.xy, shaft_r));
+        P.base_diameter = std::min(cfg_.base_diameter, ahead ? ahead->route_room : footRoom(P.xy, shaft_r));
         P.heads.push_back(hi);
         P.bridges = 1;
         // The bridge lands on its top: a later head may raise the top, and a
@@ -788,7 +834,12 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why) {
     // Stand on the model below: straight down, or on the nearest spot a
     // short walk reaches where the shaft clears the model.
     Vec3 stand, foot, foot_n;
-    if (modelStand(h.junction, h.spec.shaft_diameter / 2, stand, foot, foot_n)) {
+    if (ahead) {
+        stand = ahead->stand_top;
+        foot = ahead->foot;
+        foot_n = ahead->foot_n;
+    }
+    if (ahead ? ahead->stand : modelStand(h.junction, h.spec.shaft_diameter / 2, stand, foot, foot_n)) {
         // Where another support already stands on that spot, this tip joins
         // it: two feet on one spot are one foot, and it would carry both
         // tips on a contact made for one.
@@ -861,12 +912,22 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
     std::iota(order.begin(), order.end(), 0);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return pts[a].pos.z > pts[b].pos.z; });
     const double np = static_cast<double>(std::max<size_t>(order.size(), 1));
+    // Each tip's own work first, side by side (the most of it)...
+    std::vector<Ahead> ahead(pts.size());
+    std::atomic<size_t> worked{0};
+    parallelFor(order.size(), 0, [&](size_t k) {
+        ctl.check();
+        const size_t pi = static_cast<size_t>(order[k]);
+        ahead[pi] = workOut(pts[pi]);
+        if ((++worked & 15) == 0) ctl.report("tree", 0.5 * static_cast<double>(worked) / np);
+    });
+    // ...then joined in order, highest first.
     size_t done = 0;
     for (int pi : order) {
-        if ((done++ & 15) == 0) ctl.step("tree", 0.7 * static_cast<double>(done) / np);
+        if ((done++ & 15) == 0) ctl.step("tree", 0.5 + 0.2 * static_cast<double>(done) / np);
         const SupportPoint& p = pts[pi];
         const char* why = nullptr;
-        if (supportTip(p, pi, why)) continue;
+        if (supportTip(p, pi, why, &ahead[static_cast<size_t>(pi)])) continue;
         if (supportSmallerOrMoved(p, pi)) continue;
         // No head at all: a short column to the model just below, if there is one.
         if (std::string(why) == "head_blocked" && placeStub(p, pi)) continue;
