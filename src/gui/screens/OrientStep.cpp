@@ -54,7 +54,7 @@ void orientPanel(App& app, Document& doc) {
     const OrientState& o = doc.orient();
     groupLabel("Find a good rotation");
     text("Searching tries 64 directions plus this one, plans tips for the best 6, then makes their supports and "
-         "replays each print. It shows you up to three that beat how it sits now and may lose no more of it.",
+         "replays each print. It shows you up to three that beat how it sits now and are not clearly riskier.",
          fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 2));
     {
@@ -267,7 +267,7 @@ void orientResults(App& app, Document& doc, ImVec2 size) {
     ImGui::PopFont();
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - cw - 24);
     text(strf("Searched %d directions%s, planned tips for the best %d, then made their supports and replayed the "
-              "print layer by layer to see what may not print. Ways that may lose more than now are left out. Nothing "
+              "print layer by layer to see what may not print. Ways clearly riskier than now are left out. Nothing "
               "changes until you pick one, and you can undo.",
               r.directions, took.c_str(), r.finalists)
              .c_str(),

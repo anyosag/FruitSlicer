@@ -31,13 +31,18 @@ const char* sideName(Side s);
 struct OrientRisk {
     bool checked = false;              // replayed (else the rest is empty)
     RiskBand worst = RiskBand::None;   // the likeliest place that takes some of the model with it
+    double worst_chance = 0;           // its chance (0: none from 1 in 20 up)
     std::size_t places = 0;            // places that may not print
     std::size_t tips = 0;              // tips that may let go (whether or not the model goes with them)
     double lost_mm3 = 0;               // of the model, on average per print
 };
-// Whether `a` is clearly safer than `b`: its likeliest place is in a lower
-// band, or in the same band with under 0.8 times as much of the model lost
-// on average. With either not replayed, neither is.
+// Whether `a` is clearly safer than `b`: its likeliest place is at least
+// kRiskClearly less likely, or, about as likely, under 0.8 times as much of
+// the model is lost on average. The replay's chances move a little from one
+// machine to another and its strengths are borrowed, so a place just over
+// 1 in 20 against none is not a difference that decides. With either not
+// replayed, neither is.
+inline constexpr double kRiskClearly = 0.10;
 bool saferThan(const OrientRisk& a, const OrientRisk& b);
 // The places, in words: "nothing likely to be lost", "1 place may not print".
 std::string riskWords(const OrientRisk& r);

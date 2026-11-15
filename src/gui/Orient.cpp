@@ -90,8 +90,9 @@ std::string fmt(const char* f, double a, double b = 0) {
 
 bool saferThan(const OrientRisk& a, const OrientRisk& b) {
     if (!a.checked || !b.checked) return false;
-    if (a.worst != b.worst) return a.worst < b.worst;
-    return a.worst != RiskBand::None && a.lost_mm3 < 0.8 * b.lost_mm3;
+    if (b.worst_chance - a.worst_chance >= kRiskClearly) return true;
+    if (a.worst_chance - b.worst_chance >= kRiskClearly) return false;
+    return b.lost_mm3 >= kRiskLosesModel && a.lost_mm3 < 0.8 * b.lost_mm3;
 }
 
 std::string riskWords(const OrientRisk& r) {
@@ -138,6 +139,7 @@ OrientRisk replayOf(const Document& one, const SupportChoices& choices, const st
             continue;
         }
         out.worst = std::max(out.worst, place.band);
+        out.worst_chance = std::max(out.worst_chance, place.chance);
     }
     out.places = r.places_found - std::min(tips_only, r.places_found);
     out.tips = r.tips.size();
@@ -301,8 +303,10 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
     std::stable_sort(fin.begin(), fin.end(), [](const Finalist& a, const Finalist& b) {
         const OrientRisk &x = a.op.m.risk, &y = b.op.m.risk;
         if (x.checked != y.checked) return x.checked;
-        if (x.worst != y.worst) return x.worst < y.worst;
-        if (x.worst != RiskBand::None && x.lost_mm3 != y.lost_mm3) return x.lost_mm3 < y.lost_mm3;
+        // In steps of kRiskClearly, so a few hundredths either way don't reorder them.
+        const int sx = static_cast<int>(x.worst_chance / kRiskClearly), sy = static_cast<int>(y.worst_chance / kRiskClearly);
+        if (sx != sy) return sx < sy;
+        if (x.lost_mm3 != y.lost_mm3 && std::max(x.lost_mm3, y.lost_mm3) >= kRiskLosesModel) return x.lost_mm3 < y.lost_mm3;
         return a.score < b.score;
     });
     for (Finalist& f : fin) {
@@ -413,9 +417,10 @@ std::string summarize(const OrientMetrics& o, const OrientMetrics& now) {
     // What the replay finds comes first.
     if (saferThan(o.risk, now.risk)) {
         if (o.risk.places == 0) good.push_back("nothing is likely to be lost in printing");
-        else if (o.risk.worst < now.risk.worst) good.push_back("what may not print is less likely to go");
+        else if (now.risk.worst_chance - o.risk.worst_chance >= kRiskClearly)
+            good.push_back("what may not print is less likely to go");
         else good.push_back("less of the model is likely to be lost");
-    } else if (saferThan(now.risk, o.risk)) {
+    } else if (saferThan(now.risk, o.risk) || o.risk.places > now.risk.places) {
         bad.push_back(riskWords(o.risk));
     }
     const double islands = diff(o.island_tips, now.island_tips);

@@ -126,42 +126,49 @@ TEST_CASE("Orient: scoring as it sits and searching for better", "[gui][orient][
 }
 
 TEST_CASE("Orient: what the replay finds ranks first", "[gui][orient]") {
-    auto risk = [](RiskBand worst, std::size_t places, double lost) {
+    auto risk = [](double chance, std::size_t places, double lost) {
         OrientRisk r;
         r.checked = true;
-        r.worst = worst;
+        r.worst_chance = chance;
+        r.worst = riskBand(chance);
         r.places = places;
         r.lost_mm3 = lost;
         return r;
     };
-    const OrientRisk none = risk(RiskBand::None, 0, 0.002), may = risk(RiskBand::May, 1, 0.4),
-                     may_less = risk(RiskBand::May, 2, 0.2), likely = risk(RiskBand::Likely, 1, 0.1);
-    // A lower band is safer, whatever else.
-    CHECK(saferThan(none, may));
+    const OrientRisk none = risk(0, 0, 0.002), may = risk(0.08, 1, 0.4), likely = risk(0.30, 1, 0.1);
+    // Clearly less likely to break is safer, whatever else.
+    CHECK(saferThan(none, likely));
     CHECK(saferThan(may, likely));
     CHECK_FALSE(saferThan(likely, may));
-    // In the same band, clearly less of the model lost is safer; a little less is not.
-    CHECK(saferThan(may_less, may));
-    CHECK_FALSE(saferThan(risk(RiskBand::May, 1, 0.35), may));
-    CHECK_FALSE(saferThan(risk(RiskBand::None, 0, 0), none));  // nothing listed: as safe as each other
+    // A place just over 1 in 20 against none is no clear difference, either way (the replay's
+    // chances move a little from one machine to another).
+    CHECK_FALSE(saferThan(none, risk(0.057, 1, 0.01)));
+    CHECK_FALSE(saferThan(risk(0.057, 1, 0.01), none));
+    CHECK_FALSE(saferThan(none, risk(0.071, 2, 0.02)));
+    // About as likely: clearly less of the model lost is safer; a little less, or next to nothing, is not.
+    CHECK(saferThan(risk(0.06, 2, 0.2), may));
+    CHECK_FALSE(saferThan(risk(0.08, 1, 0.35), may));
+    CHECK_FALSE(saferThan(risk(0, 0, 0), none));
     // Not replayed: neither is safer.
     CHECK_FALSE(saferThan(OrientRisk{}, may));
     CHECK_FALSE(saferThan(may, OrientRisk{}));
     CHECK(riskWords(none) == "nothing likely to be lost");
     CHECK(riskWords(may) == "1 place may not print");
-    CHECK(riskWords(may_less) == "2 places may not print");
+    CHECK(riskWords(risk(0.06, 2, 0.2)) == "2 places may not print");
     CHECK(riskWords(OrientRisk{}).empty());
 
-    // The summary leads with it.
+    // The summary leads with it, and names places the option has that now hasn't.
     OrientMetrics now, o;
     now.tips = o.tips = 100, now.top = o.top = 30;
-    now.risk = may;
+    now.risk = likely;
     o.risk = none;
     CHECK_THAT(summarize(o, now), StartsWith("Nothing is likely to be lost in printing"));
-    o.risk = may_less;
-    CHECK_THAT(summarize(o, now), StartsWith("Less of the model is likely to be lost"));
-    now.risk = likely;
     o.risk = may;
     CHECK_THAT(summarize(o, now), StartsWith("What may not print is less likely to go"));
-    CHECK_THAT(summarize(now, o), ContainsSubstring("But 1 place may not print"));
+    now.risk = may;
+    o.risk = risk(0.06, 2, 0.2);
+    CHECK_THAT(summarize(o, now), StartsWith("Less of the model is likely to be lost"));
+    now.risk = none;
+    o.risk = risk(0.057, 1, 0.01);
+    CHECK_THAT(summarize(o, now), ContainsSubstring("But 1 place may not print"));
 }
