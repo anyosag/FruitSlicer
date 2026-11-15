@@ -28,7 +28,9 @@ struct GeometryQuality {
 // from the part, usually downward). Returns the junction point where a shaft
 // or bridge attaches.
 Vec3 appendPinhead(TriangleMesh& m, const Vec3& contact, const Vec3& dir, const PinheadSpec& s,
-                   const GeometryQuality& q = {});
+                   const GeometryQuality& q = {}, bool joint_ball = true);
+// Where appendPinhead puts the junction (the centre of its joint ball).
+Vec3 pinheadJunction(const Vec3& contact, const Vec3& dir, const PinheadSpec& s);
 
 // Vertical (or slanted) shaft between two points. `top_joint` adds a sphere
 // at `top` (skip it when a pinhead junction sphere is already there).

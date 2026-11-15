@@ -3,9 +3,11 @@
 #include "support/SupportTree.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <numeric>
+#include <set>
 #include <sstream>
 
 #include "core/Parallel.h"
@@ -1040,33 +1042,67 @@ Paths SupportTree::fullRaftOutline(const TreeConfig& cfg, double inset) const {
 TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;
-    for (const Head& h : heads) {
-        if (h.stub) continue;  // drawn as its column, below
-        if (h.on_plate)
-            plateHead(h, &m, q);
-        else
-            appendPinhead(m, h.contact, h.dir, h.spec, q);
-    }
-    for (const Rod& r : stubs) appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
-    for (const Rod& r : bridges) {
-        appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
-        appendSphere(m, r.b, r.diameter / 2, q.segments(r.diameter / 2));
-    }
-    for (const Pillar& P : pillars) {
-        const Vec3 top{P.xy.x, P.xy.y, P.top}, bottom{P.xy.x, P.xy.y, P.bottom};
-        appendShaft(m, top, bottom, P.diameter, q, true);
+    // The joint balls: under each head, at the top and merged bottom of each
+    // pillar, at the far end of each bridge and branch, where a pillar stands
+    // on the model. Where one is the same ball as one drawn before it (a
+    // pillar's top on its head's joint), it is the same triangles again: it
+    // isn't drawn. (One wholly inside a bigger one is: leaving it out moves
+    // where outlines meet by a rounding, and with it the print file.)
+    struct Ball {
+        Vec3 c;
+        double r;
+    };
+    std::vector<Ball> balls;  // in the order they are drawn below
+    std::vector<PinheadSpec> foot_spec(pillars.size());
+    for (const Head& h : heads)
+        if (!h.stub && !h.on_plate) balls.push_back({pinheadJunction(h.contact, h.dir, h.spec), h.spec.shaft_diameter / 2});
+    for (const Rod& r : bridges) balls.push_back({r.b, r.diameter / 2});
+    for (size_t i = 0; i < pillars.size(); ++i) {
+        const Pillar& P = pillars[i];
+        balls.push_back({{P.xy.x, P.xy.y, P.top}, P.diameter / 2});
         if (P.merged) {
-            appendSphere(m, bottom, P.diameter / 2, q.segments(P.diameter / 2));
+            balls.push_back({{P.xy.x, P.xy.y, P.bottom}, P.diameter / 2});
         } else if (P.on_model) {
             // Reversed pinhead: a contact as wide as the tip above, sunk as deep
             // into the surface below (it is pulled as hard as the tip is).
-            PinheadSpec a;
+            PinheadSpec& a = foot_spec[i];
             a.tip_diameter = P.foot_tip;
             a.penetration = penetrationFor(P.foot_tip, cfg);
             // Junction of the reversed head lands on the pillar bottom.
             a.head_length = std::max(0.1, P.bottom - P.anchor_contact.z - (a.tip_diameter - a.penetration) - P.diameter / 2);
             a.shaft_diameter = P.diameter;
-            appendPinhead(m, P.anchor_contact, {0, 0, 1}, a, q);
+            balls.push_back({pinheadJunction(P.anchor_contact, {0, 0, 1}, a), P.diameter / 2});
+        }
+    }
+    for (const Rod& r : branches) balls.push_back({r.b, r.diameter / 2});
+    std::vector<char> skip(balls.size(), 0);
+    std::set<std::array<double, 4>> seen;
+    for (size_t i = 0; i < balls.size(); ++i)
+        if (!seen.insert({balls[i].c.x, balls[i].c.y, balls[i].c.z, balls[i].r}).second) skip[i] = 1;
+    size_t at = 0;
+    auto ball = [&](const Vec3& c, double r) {
+        if (!skip[at++]) appendSphere(m, c, r, q.segments(r));
+    };
+    for (const Head& h : heads) {
+        if (h.stub) continue;  // drawn as its column, below
+        if (h.on_plate)
+            plateHead(h, &m, q);
+        else
+            appendPinhead(m, h.contact, h.dir, h.spec, q, !skip[at++]);
+    }
+    for (const Rod& r : stubs) appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+    for (const Rod& r : bridges) {
+        appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+        ball(r.b, r.diameter / 2);
+    }
+    for (size_t i = 0; i < pillars.size(); ++i) {
+        const Pillar& P = pillars[i];
+        const Vec3 top{P.xy.x, P.xy.y, P.top}, bottom{P.xy.x, P.xy.y, P.bottom};
+        appendShaft(m, top, bottom, P.diameter, q, !skip[at++]);
+        if (P.merged) {
+            ball(bottom, P.diameter / 2);
+        } else if (P.on_model) {
+            appendPinhead(m, P.anchor_contact, {0, 0, 1}, foot_spec[i], q, !skip[at++]);
         } else {
             const double base = P.base_diameter > 0 ? std::max(P.base_diameter, P.diameter) : cfg.base_diameter;
             appendBaseCone(m, bottom, P.diameter, base, std::max(0.0, raft_top - 0.1), q);
@@ -1080,7 +1116,7 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     for (const Rod& r : braces) appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
     for (const Rod& r : branches) {
         appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
-        appendSphere(m, r.b, r.diameter / 2, q.segments(r.diameter / 2));
+        ball(r.b, r.diameter / 2);
     }
     if (cfg.raft == RaftStyle::Full && raft_top > 0) {
         // One slab, built as stacked prisms of the outline, each pulled in a

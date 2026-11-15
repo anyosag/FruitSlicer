@@ -8,19 +8,34 @@ namespace fruit {
 
 int GeometryQuality::segments(double radius) const { return segmentsFor(radius, chord_error); }
 
-Vec3 appendPinhead(TriangleMesh& m, const Vec3& contact, const Vec3& dir_in, const PinheadSpec& s,
-                   const GeometryQuality& q) {
+namespace {
+struct PinheadAt {
+    Vec3 front, junction;
+};
+PinheadAt pinheadAt(const Vec3& contact, const Vec3& dir_in, const PinheadSpec& s) {
     const Vec3 d = normalized(dir_in);
     const double r_tip = s.tip_diameter / 2;
     const double r_back = s.shaft_diameter / 2;
     // Front sphere sinks `penetration` into the part: its far side is at
     // contact - d * penetration.
     const Vec3 front = contact + d * (r_tip - s.penetration);
-    const Vec3 junction = front + d * (r_tip + s.head_length + r_back);
-    appendSphere(m, front, r_tip, q.segments(r_tip));
-    appendFrustum(m, front, r_tip, junction, r_back, q.segments(r_back));
-    appendSphere(m, junction, r_back, q.segments(r_back));
-    return junction;
+    return {front, front + d * (r_tip + s.head_length + r_back)};
+}
+}  // namespace
+
+Vec3 pinheadJunction(const Vec3& contact, const Vec3& dir, const PinheadSpec& s) {
+    return pinheadAt(contact, dir, s).junction;
+}
+
+Vec3 appendPinhead(TriangleMesh& m, const Vec3& contact, const Vec3& dir_in, const PinheadSpec& s,
+                   const GeometryQuality& q, bool joint_ball) {
+    const double r_tip = s.tip_diameter / 2;
+    const double r_back = s.shaft_diameter / 2;
+    const PinheadAt at = pinheadAt(contact, dir_in, s);
+    appendSphere(m, at.front, r_tip, q.segments(r_tip));
+    appendFrustum(m, at.front, r_tip, at.junction, r_back, q.segments(r_back));
+    if (joint_ball) appendSphere(m, at.junction, r_back, q.segments(r_back));
+    return at.junction;
 }
 
 void appendShaft(TriangleMesh& m, const Vec3& top, const Vec3& bottom, double diameter,

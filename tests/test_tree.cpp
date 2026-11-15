@@ -10,6 +10,7 @@
 #include "mesh/Primitives.h"
 #include "printer/PrinterProfile.h"
 #include "support/PointGenerator.h"
+#include "support/SupportGeometry.h"
 #include "support/SupportTree.h"
 #include "support/SupportValidator.h"
 
@@ -861,4 +862,24 @@ TEST_CASE("a tip with no way down at any size is moved a little across the same 
     CHECK(h.contact.x > 0.3);                        // past the fin
     CHECK(h.spec.tip_diameter == Approx(0.4));
     CHECK(h.point == 0);
+}
+
+TEST_CASE("a ball where one of the same size already is is drawn once", "[tree]") {
+    const Built b = build(makeBox({0, 0, 0}, {20, 20, 2}));
+    // Each pillar that starts at its head's junction has its top ball there,
+    // the same ball as the head's joint: one north pole at that junction.
+    std::size_t shared = 0;
+    for (const auto& P : b.tree.pillars) {
+        const Vec3 top{P.xy.x, P.xy.y, P.top};
+        bool on_joint = false;
+        for (const auto& h : b.tree.heads)
+            on_joint = on_joint || (!h.stub && !h.on_plate && distance(pinheadJunction(h.contact, h.dir, h.spec), top) == 0 &&
+                                    h.spec.shaft_diameter == P.diameter);
+        if (!on_joint) continue;
+        ++shared;
+        const Vec3 pole = top + Vec3{0, 0, P.diameter / 2};
+        CHECK(std::count_if(b.supports.vertices.begin(), b.supports.vertices.end(),
+                            [&](const Vec3& v) { return v.x == pole.x && v.y == pole.y && v.z == pole.z; }) == 1);
+    }
+    CHECK(shared > 0);
 }
