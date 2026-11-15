@@ -49,7 +49,7 @@ struct Prepared {
     std::vector<std::vector<int>> quarter;     // indices into its angles: the quarter turns of none and of its best
     std::vector<std::vector<Mask>> masks;      // [part][angle]; empty for a part that can't be drawn
     std::vector<Vec2> pivot;                   // each part's pivot now: its mesh rectangle's middle
-    std::vector<bool> usable;
+    std::vector<std::uint8_t> usable;  // not vector<bool>: written from several threads, one byte each
     std::vector<double> big;                   // each part's biggest layer (its outline's area when not given)
 };
 
@@ -349,7 +349,7 @@ std::vector<NestLayout> nestLayouts(const std::vector<NestPart>& parts, const Ne
     if (pr.W <= 0 || pr.H <= 0 || parts.empty()) return {};
     // Each part's outline, then a mask at every turn: all side by side.
     pr.pivot.resize(parts.size());
-    pr.usable.assign(parts.size(), false);
+    pr.usable.assign(parts.size(), 0);
     std::vector<std::vector<Vec2>> fine(parts.size());
     // Half the gap, and a cell and a half for the grid's rounding (outlines sampled at
     // half a cell, then put on the grid, then grown from cell centres).
@@ -360,7 +360,7 @@ std::vector<NestLayout> nestLayouts(const std::vector<NestPart>& parts, const Ne
         const BBox3 b = p.mesh->bbox();
         pr.pivot[i] = {(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2};
         fine[i] = fineCells(p, pr.pivot[i], cell / 2);
-        pr.usable[i] = !fine[i].empty();
+        pr.usable[i] = fine[i].empty() ? 0 : 1;
     });
     // The turns each part may take: none; or every `angle_step` degrees (0, 90,
     // 180 and 270 among them), and the turn that gives it its smallest
