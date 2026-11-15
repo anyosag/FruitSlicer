@@ -257,8 +257,19 @@ void layoutCard(App& app, int index, const LayoutChoice& c, const LayoutSearch& 
         if (a == "most compact" || a == "gentlest peel") a = "the " + a;
         also += (i == 0 ? "" : i + 1 == c.also.size() ? " and " : ", ") + a;
     }
-    text(also.empty() ? " " : ("Also " + also).c_str(), fonts().regular, size::Help, col::TextSecondary);
-    ImGui::Dummy(ImVec2(0, 2));
+    // Two lines kept for it on every card, so the pictures line up.
+    {
+        const float y = ImGui::GetCursorPosY();
+        ImGui::PushFont(fonts().regular, size::Help);
+        const float line = ImGui::GetTextLineHeightWithSpacing();
+        ImGui::PopFont();
+        if (!also.empty()) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+            text(("Also " + also).c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), y + 2 * line + 2));
+    }
     // The plate from above.
     const float ph = std::round(w * 320.0f / 568.0f);
     const ImVec2 pp = ImGui::GetCursorScreenPos();
@@ -269,13 +280,18 @@ void layoutCard(App& app, int index, const LayoutChoice& c, const LayoutSearch& 
     ImGui::Dummy(ImVec2(0, 6));
     const fruit::ops::NestLayout& L = c.layout;
     const int n = static_cast<int>(s.part_ids.size());
+    // A label and its value on one line, the value on a line of its own under it when both don't fit.
     auto row = [&](const char* label, const std::string& value, ImU32 colour) {
         const float y = ImGui::GetCursorPosY();
-        text(label, fonts().regular, size::Body, col::TextSecondary);
+        ImGui::PushFont(fonts().regular, size::Body);
+        const float lw = ImGui::CalcTextSize(label).x;
+        ImGui::PopFont();
         ImGui::PushFont(fonts().semibold, size::Body);
         const float vw = ImGui::CalcTextSize(value.c_str()).x;
         ImGui::PopFont();
-        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - vw, y));
+        text(label, fonts().regular, size::Body, col::TextSecondary);
+        const bool beside = lw + 12 + vw <= w;
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + w - vw, beside ? y : ImGui::GetCursorPosY()));
         text(value.c_str(), fonts().semibold, size::Body, colour);
     };
     row("Parts that fit", strf("%d of %d", L.placed, n), L.placed == n ? col::Ok : col::Warn);
