@@ -262,6 +262,25 @@ TEST_CASE("Placing: handles follow the mouse ray on the plate and round the ring
     }
     CHECK(d.turned == Approx(270));
     CHECK(q.rotation_deg.z == Approx(-90));
+    // The turn about the vertical lies on the plate, and is dragged there: from a camera
+    // looking down at an angle, rays to points on the plate a quarter of the way round
+    // the part turn it 90°. (Measured at the part's middle height, as the tilts are,
+    // those rays would land elsewhere and turn it by some other angle.)
+    CHECK(turnCentre(f, 2).z == 0);
+    CHECK(turnCentre(f, 0).z == Approx(15));
+    {
+        const fruit::Vec3 eye{-40, -160, 120};
+        const auto toward = [&](double deg) {
+            const double r = deg * 3.14159265358979 / 180;
+            return fruit::Vec3{f.radius * std::cos(r), f.radius * std::sin(r), 0} - eye;
+        };
+        HandleDrag t;
+        REQUIRE(startDrag(t, Handle::TurnZ, p, f, eye, toward(-60)));
+        fruit::Placement r;
+        for (int a = -50; a <= 30; a += 10) r = dragTo(t, eye, toward(a), false);
+        CHECK(t.turned == Approx(90));
+        CHECK(r.rotation_deg.z == Approx(90));
+    }
     // Seen edge on, a ring can't be grabbed.
     CHECK_FALSE(startDrag(d, Handle::TurnZ, p, f, {0, -100, 15}, {0, 1, 0}));
     // With ⇧ a turn goes in 15° steps.

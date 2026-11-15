@@ -560,7 +560,7 @@ void App::clearMeasure() { measure_.clear(); }
 bool App::measureShown() const { return doc_ && !measure_.empty() && measureStillOn(measure_, *doc_); }
 
 bool App::handlesShown() const {
-    // With Move or Rotate open: the arrows and rings that place it.
+    // With Move or Rotate open: the arrows and curved arrows that place it.
     return doc_ && screen_ == Screen::Job &&
            ((step_ == Step::Model && model_tool_ == Tool::Move) ||
             (step_ == Step::Orient && orient_view_ == OrientView::Settings));

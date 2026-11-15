@@ -1,0 +1,12 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "model"}, {"view": "angled"}, {"handles_shown": false},
+    {"click_part": 1}, {"handles_shown": true}, {"shot": "g7_clicked"},
+    {"click_empty": true}, {"handles_shown": false},
+    {"tool": "measure"}, {"click_part": 1}, {"handles_shown": false}, {"close_tool": true},
+    {"duplicate": 1}, {"close_tool": true}, {"view": "angled"}, {"click_part": 2}, {"handles_shown": true}, {"shot": "g7_second_part"}
+  ]
+}

@@ -53,6 +53,8 @@
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
 //   {"quick": {"how_many": 1-5, "tip": 0.3 | 0.4 | 0.6, "look_further": bool}} (the quick support controls) {"raft": bool} {"raft_type": "pads" | "full"} {"lift": 1-10 mm} {"height_correction": 0-0.5 mm} (with no raft) {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
+//   {"click_part": n} a click with the mouse on part n's middle (1-based) in the 3D view {"click_empty": true} on the
+//     plate where no part is {"handles_shown": bool} fails unless the handles that place a part are (not) shown
 //   {"lift_slide": [from, to]} the Lift height slider pressed at stop `from` with the mouse, dragged a stop at a
 //     time to `to` and let go, a few frames at each stop {"lift_is": mm} fails the script unless the lift is that
 //   {"supports_view": "supports" | "tips" | "why" | "risk"} {"select_tip": index} {"problems": bool}

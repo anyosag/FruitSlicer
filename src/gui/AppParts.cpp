@@ -55,6 +55,22 @@ void App::placeAddedPart() {
     frameModel();
 }
 
+void App::clickInView(int id) {
+    if (!doc_ || step_ != Step::Model || placing()) return;
+    if (toolPanelOpen() && tool() != Tool::Move) return;  // another tool's panel: its own clicks
+    const bool move_panel = toolPanelOpen();               // Move's
+    if (id >= 0 && doc_->partIndex(id) >= 0) {
+        selectPart(id);
+        if (model_tool_ != Tool::Move) {
+            model_tool_ = Tool::Move;
+            tool_panel_ = false;
+        }
+    } else if (id < 0 && model_tool_ == Tool::Move && !move_panel) {
+        model_tool_ = Tool::None;
+        tool_panel_ = false;
+    }
+}
+
 void App::selectPart(int id) {
     if (!doc_ || doc_->selectedId() == id || doc_->partIndex(id) < 0) return;
     if (placing()) endPlacing();
@@ -99,6 +115,15 @@ int App::pickPart(const fruit::Vec3& origin, const fruit::Vec3& dir) {
     if (!hit) return -1;
     const int i = doc_->partOfFace(static_cast<std::size_t>(hit->face));
     return i >= 0 ? doc_->parts()[static_cast<std::size_t>(i)].id() : -1;
+}
+
+bool App::hiddenFromCamera(const fruit::Vec3& p) {
+    if (!doc_ || doc_->parts().empty()) return false;
+    const V3 e = camera_.eye();
+    const fruit::Vec3 eye{e.x, e.y, e.z};
+    const double len = fruit::norm(p - eye);
+    if (len < 1e-6) return false;
+    return pickTree().anyHit(eye, (p - eye) / len, len - 0.05);
 }
 
 int App::partAt(const fruit::Vec3& at) {

@@ -221,6 +221,10 @@ HandleFrame handleFrame(const fruit::BBox3& box) {
     return f;
 }
 
+fruit::Vec3 turnCentre(const HandleFrame& f, int axis) {
+    return axis == 2 ? fruit::Vec3{f.centre.x, f.centre.y, 0} : f.centre;
+}
+
 std::optional<fruit::Vec3> hitPlane(const fruit::Vec3& origin, const fruit::Vec3& dir, const fruit::Vec3& point,
                                     const fruit::Vec3& normal) {
     const double d = fruit::dot(dir, normal);
@@ -241,11 +245,12 @@ double angleAbout(const fruit::Vec3& centre, int axis, const fruit::Vec3& p) {
 
 namespace {
 
-// The plane a handle is dragged in: the plate for arrows, the ring's own
-// plane for rings. Nothing when the ray is too near to running along it.
+// The plane a handle is dragged in: the plate for arrows and the turn about
+// the vertical, the tilt's own plane through the part's middle for a tilt.
+// Nothing when the ray is too near to running along it.
 std::optional<fruit::Vec3> handleHit(Handle h, const HandleFrame& f, const fruit::Vec3& origin, const fruit::Vec3& dir) {
     const fruit::Vec3 n = isTurn(h) ? axisVector(handleAxis(h)) : fruit::Vec3{0, 0, 1};
-    const fruit::Vec3 at = isTurn(h) ? f.centre : fruit::Vec3{0, 0, 0};
+    const fruit::Vec3 at = isTurn(h) ? turnCentre(f, handleAxis(h)) : fruit::Vec3{0, 0, 0};
     const double len = std::sqrt(fruit::dot(dir, dir));
     if (len <= 0 || std::abs(fruit::dot(dir, n)) / len < (isTurn(h) ? 0.08 : 0.02)) return std::nullopt;
     return hitPlane(origin, dir, at, n);
@@ -262,7 +267,7 @@ bool startDrag(HandleDrag& d, Handle h, const fruit::Placement& p, const HandleF
     d.start = p;
     d.frame = frame;
     d.grab = *hit;
-    d.last_angle = isTurn(h) ? angleAbout(frame.centre, handleAxis(h), *hit) : 0;
+    d.last_angle = isTurn(h) ? angleAbout(turnCentre(frame, handleAxis(h)), handleAxis(h), *hit) : 0;
     d.now = p;
     return true;
 }
@@ -273,7 +278,7 @@ fruit::Placement dragTo(HandleDrag& d, const fruit::Vec3& origin, const fruit::V
     if (!hit) return d.now;
     double amount = 0;
     if (isTurn(d.handle)) {
-        const double a = angleAbout(d.frame.centre, handleAxis(d.handle), *hit);
+        const double a = angleAbout(turnCentre(d.frame, handleAxis(d.handle)), handleAxis(d.handle), *hit);
         d.turned += tidyAngle(a - d.last_angle);  // the short way round since last frame
         d.last_angle = a;
         amount = d.turned;

@@ -217,6 +217,19 @@ public:
     void removePart(int id);                    // undoable; never the last one
     // The part under a ray (printer coordinates): its id, or -1.
     int pickPart(const fruit::Vec3& origin, const fruit::Vec3& dir);
+    // Whether a part stands between the camera and point `p` (printer coordinates).
+    bool hiddenFromCamera(const fruit::Vec3& p);
+    // A click in the view on the Model step, with no tool's panel open but
+    // Move's: on a part (its id) selects it and brings up the handles that
+    // place it, the arrows that move it and the curved arrows that turn it
+    // (Move, its panel left closed); on nothing (-1) puts them away again
+    // while Move's panel is closed.
+    void clickInView(int part_id);
+    // Where the 3D view was last drawn, screen points (scripts click in it).
+    struct ViewRect {
+        float x = 0, y = 0, w = 0, h = 0;
+    };
+    ViewRect& viewRect() { return view_rect_; }
     // A tool's change to the parts (Duplicate, Arrange, Split, Mirror…) as
     // one undo step, once any drag is let go (see Document::editParts).
     // False when nothing changed.
@@ -661,6 +674,7 @@ private:
     bool panel_scroll_end_ = false;
     int panel_scroll_frames_ = 0;
     HandleDrag handle_drag_;
+    ViewRect view_rect_;
     bool lifting_ = false;    // the drag is the lift slider's, not a handle's
     bool lift_held_ = false;  // its slider said so since maintain() last looked
     SliderTrack lift_track_;

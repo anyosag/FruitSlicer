@@ -352,6 +352,7 @@ void viewport(App& app, ImVec2 size, const Overlay& overlay = {}) {
     else ImGui::Dummy(avail);
     // Mouse: left drag turns, right/middle (or Shift + left) drag moves, wheel
     // zooms; not while a handle or a tip is held, or over a handle.
+    app.viewRect() = App::ViewRect{origin.x, origin.y, avail.x, avail.y};
     if (!app.handlesShown()) app.hoverHandle() = Handle::None;  // left where the handles were
     if (app.mouseSpent() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) app.mouseSpent() = false;
     const bool holding = app.placing() || app.draggingTip() >= 0 || app.hoverHandle() != Handle::None ||

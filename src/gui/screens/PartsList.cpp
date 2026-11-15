@@ -206,7 +206,10 @@ void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
                       (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[1] < 9);
     // With On plate open, a click anywhere on the selected part turns that surface to face the plate.
     const bool lays = click && app.step() == Step::Model && app.toolPanelOpen() && app.tool() == Tool::OnPlate;
-    if (!menu && !lays && !(click && doc.partCount() > 1)) return;
+    // On the Model step, with no tool's panel open but Move's, a click on a part brings up the arrows that
+    // move it (and the curved arrows that turn it); a click on nothing puts them away.
+    const bool places = click && app.step() == Step::Model && (!app.toolPanelOpen() || app.tool() == Tool::Move);
+    if (!menu && !lays && !places && !(click && doc.partCount() > 1)) return;
     const float nx = 2 * (m.x - origin.x) / size.x - 1, ny = 1 - 2 * (m.y - origin.y) / size.y;
     V3 o, d;
     app.camera().ray(nx, ny, size.x / std::max(1.0f, size.y), &o, &d);
@@ -219,6 +222,10 @@ void partsPick(App& app, Document& doc, ImVec2 origin, ImVec2 size) {
         if (doc.partCount() < 2) return;
     }
     const int id = app.pickPart({o.x, o.y, o.z}, {d.x, d.y, d.z});
+    if (places && !menu) {
+        app.clickInView(id);
+        return;
+    }
     if (id < 0) return;
     if (menu) app.openPartMenu(id, m.x, m.y);
     else app.selectPart(id);

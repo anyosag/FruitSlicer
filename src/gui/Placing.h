@@ -92,6 +92,10 @@ struct HandleFrame {
     double arrow_len = 10;
 };
 HandleFrame handleFrame(const fruit::BBox3& box);
+// What a turn about plate axis `axis` turns round, as drawn and dragged:
+// the middle of the outline for the two tilts; for the turn about the
+// vertical, the point on the plate under it (its handle lies on the plate).
+fruit::Vec3 turnCentre(const HandleFrame& f, int axis);
 
 // Where a ray (from `origin` along `dir`) meets the plane through `point`
 // square to `normal`; nothing when it runs along the plane or away from it.
@@ -102,7 +106,8 @@ std::optional<fruit::Vec3> hitPlane(const fruit::Vec3& origin, const fruit::Vec3
 double angleAbout(const fruit::Vec3& centre, int axis, const fruit::Vec3& p);
 
 // A drag in progress: where it started and how far it has gone. Moves are
-// measured on the plate, turns in the ring's plane.
+// measured on the plate, turns in their handle's plane (the plate for the
+// turn about the vertical).
 struct HandleDrag {
     Handle handle = Handle::None;
     fruit::Placement start;  // the placement when it was grabbed

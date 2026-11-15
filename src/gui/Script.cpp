@@ -2,7 +2,11 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "Script.h"
 
+#include <imgui.h>
+#include <imgui_internal.h>
+
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 
@@ -25,6 +29,7 @@
 #include "formats/GooSetup.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
+#include "view3d/Math.h"
 
 #include <miniz.h>
 
@@ -628,6 +633,97 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             frames(3);
             pointer_.reset();
             frames(2);
+        } else if (step.contains("click_part") || step.contains("click_empty")) {
+            // A click with the mouse in the 3D view: {"click_part": n} on the middle of part n (1-based),
+            // {"click_empty": true} on the plate where no part is.
+            render();  // the view drawn, so where it is is known
+            const App::ViewRect r = app.viewRect();
+            const auto& doc = app.document();
+            if (!doc || r.w <= 0 || r.h <= 0) throw std::runtime_error("click: no job in view");
+            const M4 vp = app.camera().proj(r.w / r.h) * app.camera().view();
+            const auto project = [&](const fruit::Vec3& w, float* x, float* y) {
+                const float* m = vp.m;
+                const float px = m[0] * w.x + m[4] * w.y + m[8] * w.z + m[12];
+                const float py = m[1] * w.x + m[5] * w.y + m[9] * w.z + m[13];
+                const float pw = m[3] * w.x + m[7] * w.y + m[11] * w.z + m[15];
+                if (pw <= 1e-4f) return false;
+                *x = r.x + (px / pw * 0.5f + 0.5f) * r.w;
+                *y = r.y + (0.5f - py / pw * 0.5f) * r.h;
+                return true;
+            };
+            const auto partAt = [&](float x, float y) {
+                const float nx = 2 * (x - r.x) / r.w - 1, ny = 1 - 2 * (y - r.y) / r.h;
+                V3 o, d;
+                app.camera().ray(nx, ny, r.w / r.h, &o, &d);
+                return app.pickPart({o.x, o.y, o.z}, {d.x, d.y, d.z});
+            };
+            float x = 0, y = 0;
+            if (step.contains("click_part")) {
+                const int n = step["click_part"].get<int>();
+                if (n < 1 || n > static_cast<int>(doc->partCount())) throw std::runtime_error("click_part: no part " + std::to_string(n));
+                const Part& part = doc->parts()[static_cast<std::size_t>(n - 1)];
+                // The point well inside the part (it and the points 3 pixels round it on the part),
+                // nearest its outline's middle on screen (that middle may be air). Whole pixels, as
+                // the mouse is.
+                float cx = 0, cy = 0;
+                if (!project(part.box().center(), &cx, &cy))
+                    throw std::runtime_error("click_part: part " + std::to_string(n) + " is not in view");
+                cx = std::floor(cx), cy = std::floor(cy);
+                const auto inside = [&](float px, float py) {
+                    for (const auto& o : {std::array<float, 2>{0, 0}, {3, 0}, {-3, 0}, {0, 3}, {0, -3}})
+                        if (partAt(px + o[0], py + o[1]) != part.id()) return false;
+                    return true;
+                };
+                float best = 1e9f;
+                for (int dy = -80; dy <= 80; dy += 4)
+                    for (int dx = -80; dx <= 80; dx += 4) {
+                        const float d = static_cast<float>(dx * dx + dy * dy);
+                        if (d < best && inside(cx + dx, cy + dy)) {
+                            best = d;
+                            x = cx + dx, y = cy + dy;
+                        }
+                    }
+                if (best > 1e8f) throw std::runtime_error("click_part: part " + std::to_string(n) + " is not under its middle");
+            } else {
+                // A place in the view clear of the panels and buttons floating on it, with no part and no
+                // handle under it.
+                const float q[5][2] = {{0.85f, 0.32f}, {0.62f, 0.2f}, {0.85f, 0.62f}, {0.45f, 0.2f}, {0.72f, 0.75f}};
+                bool found = false;
+                for (const auto& c : q) {
+                    x = std::floor(r.x + c[0] * r.w), y = std::floor(r.y + c[1] * r.h);
+                    if (partAt(x, y) >= 0) continue;
+                    pointer_ = Pointer{x, y, false};
+                    render();
+                    render();
+                    // Over the view itself, not a panel or button floating on it.
+                    const ImGuiWindow* over = ImGui::GetCurrentContext()->HoveredWindow;
+                    const bool clear = app.hoverHandle() == Handle::None && over &&
+                                       std::string(over->Name).find("viewport") != std::string::npos &&
+                                       !ImGui::IsAnyItemHovered();
+                    pointer_.reset();
+                    if (clear) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) throw std::runtime_error("click_empty: no empty place in view");
+            }
+            const auto frames = [&](int k) {
+                for (int i = 0; i < k; ++i) render();
+            };
+            pointer_ = Pointer{x, y, false};
+            frames(2);
+            pointer_->down = true;
+            frames(2);
+            pointer_->down = false;
+            frames(2);
+            pointer_.reset();
+            frames(1);
+        } else if (step.contains("handles_shown")) {
+            // {"handles_shown": bool}: fails the script unless the handles that place a part are (not) shown.
+            const bool want = step["handles_shown"].get<bool>();
+            if (app.handlesShown() != want)
+                throw std::runtime_error(std::string("handles_shown: they are ") + (want ? "not shown" : "shown"));
         } else if (step.contains("lift_is")) {
             const double want = step["lift_is"].get<double>();
             const auto& doc = app.document();
