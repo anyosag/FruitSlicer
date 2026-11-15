@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -391,6 +392,12 @@ void saveJob(const std::string& path, const Document& doc) {
         fs::remove(tmp, ec);
         throw std::runtime_error("cannot write " + path + ": " + ec.message());
     }
+}
+
+bool isJobFile(const std::string& path) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == std::string(".") + kJobExtension;
 }
 
 OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer, const fruit::JobControl& ctl) {

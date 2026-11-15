@@ -12,6 +12,7 @@
 
 #include "App.h"
 #include "Format.h"
+#include "JobFile.h"
 #include "Repairs.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -91,6 +92,50 @@ std::string tooBig(const Document& d, const fruit::PrinterProfile& pr) {
 }
 
 }  // namespace
+
+void opening(App& app) {
+    const JobProgress p = app.jobs().progress();
+    const bool on = p.running && p.name.rfind("Opening ", 0) == 0;
+    if (on && !ImGui::IsPopupOpen("opening")) ImGui::OpenPopup("opening");
+    if (!beginModal("opening", 460, ImGui::GetMainViewport()->Size.y * 0.32f)) return;
+    if (!on) {
+        ImGui::CloseCurrentPopup();
+        endModal();
+        return;
+    }
+    const std::string file = p.name.substr(8);
+    const bool job = isJobFile(file);
+    const std::string name = std::filesystem::path(file).stem().string();
+    // What it is doing now, from the stage it reports.
+    const char* doing = p.stage.empty() || p.stage == "load"
+                            ? (job ? "Reading the job" : "Reading the model")
+                            : (job ? "Making its supports again from the tips it saved"
+                                   : "Checking the mesh and repairing what it can");
+    ImGui::SetCursorPos(ImVec2(kPad, kPad));
+    ImGui::BeginGroup();
+    text(("Opening " + name).c_str(), fonts().bold, size::DialogTitle, col::Text);
+    ImGui::Dummy(ImVec2(0, 2));
+    text(doing, fonts().regular, size::Body, col::TextSecondary, true);
+    ImGui::Dummy(ImVec2(0, 6));
+    const float bw = 460 - 2 * kPad;
+    const ImVec2 bp = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 6), col::Input, 3);
+    dl->AddRectFilled(bp, ImVec2(bp.x + bw * static_cast<float>(std::clamp(p.fraction, 0.0, 1.0)), bp.y + 6), col::Accent, 3);
+    ImGui::Dummy(ImVec2(bw, 14));
+    if (job) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
+        text("A job keeps its tips, not its supports: they are made again each time it opens, so one with many "
+             "tips takes a few seconds.",
+             fonts().regular, size::Help, col::TextMuted, true);
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, 4));
+    }
+    if (secondaryButton("Cancel")) app.jobs().cancel();
+    ImGui::EndGroup();
+    ImGui::Dummy(ImVec2(0, kPad - 8));
+    endModal();
+}
 
 void health(App& app) {
     HealthDialog& h = app.health();

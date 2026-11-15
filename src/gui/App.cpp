@@ -150,14 +150,12 @@ void App::dragViewCube(float dx, float dy) {
 
 namespace {
 std::string recentFile() { return (std::filesystem::path(platform::dataDir()) / "recent.json").string(); }
-bool isJobFile(const std::string& path) {
-    std::string ext = std::filesystem::path(path).extension().string();
-    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return ext == std::string(".") + kJobExtension;
-}
 }  // namespace
 
 void App::openPath(const std::string& path) {
+    // Already opening it (a second click, or Finder asking again): let that finish.
+    const JobProgress p = jobs_.progress();
+    if (p.running && p.name == "Opening " + std::filesystem::path(path).filename().string()) return;
     leaveJob([this, path] {
         if (isJobFile(path)) openJobFile(path);
         else openModel(path);
@@ -3130,6 +3128,7 @@ void App::frame() {
         case Screen::Tools: screens::tools(*this); break;
     }
     ImGui::EndChild();
+    dialogs::opening(*this);
     dialogs::health(*this);
     dialogs::shortcuts(*this, shortcuts_open_);
     screens::parts::orientationQuestion(*this);

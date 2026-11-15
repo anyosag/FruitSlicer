@@ -21,6 +21,8 @@
 namespace gui {
 
 inline constexpr const char* kJobExtension = "fruitjob";
+// Whether `path` names a job file (by its extension, in any case).
+bool isJobFile(const std::string& path);
 
 // Writes the job (atomically: a failed save leaves any older file as it was).
 // Throws std::runtime_error with a readable message.

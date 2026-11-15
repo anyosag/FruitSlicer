@@ -276,6 +276,7 @@ void taskTray(App& app, ImVec2 origin, ImVec2 avail) {
     if (!p.running) return;
     // The main button shows these two itself, and Cut, Label and Combine show theirs under their panel.
     if (p.name == "Generating supports" || p.name == "Cutting layers") return;
+    if (p.name.rfind("Opening ", 0) == 0) return;  // the opening dialog covers the window
     const Tool open = app.toolPanelOpen() ? app.tool() : Tool::None;
     if (app.shapeBusy() && (open == Tool::Cut || open == Tool::Label || open == Tool::Combine)) return;
     const ImVec2 size(340, 96);

@@ -1,0 +1,11 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "home"}, {"frames": 2},
+    {"busy": "Opening DishRack_SideBar.fruitjob"}, {"frames": 3}, {"shot": "opening_job"},
+    {"cancel_job": true}, {"frames": 3}, {"shot": "opening_cancelled"},
+    {"busy": "Opening bracket.stl"}, {"frames": 3}, {"shot": "opening_model"},
+    {"cancel_job": true}, {"frames": 2}
+  ]
+}
