@@ -606,6 +606,43 @@ TEST_CASE("Arrange: exact fits, edge margin, and quarter turns", "[ops][arrange]
     CHECK(footprintOf(TriangleMesh{}).width == 0);
 }
 
+TEST_CASE("Arrange: the turn about the vertical that gives an outline its smallest rectangle", "[ops][arrange]") {
+    // A 40 x 10 rectangle lying 30 degrees round: turned back, it takes 40 x 10.
+    auto turned = [](double w, double d, double deg) {
+        const double r = deg * 3.14159265358979323846 / 180, c = std::cos(r), s = std::sin(r);
+        std::vector<Vec2> pts;
+        for (const Vec2& q : std::vector<Vec2>{{-w / 2, -d / 2}, {w / 2, -d / 2}, {w / 2, d / 2}, {-w / 2, d / 2}})
+            pts.push_back({q.x * c - q.y * s, q.x * s + q.y * c});
+        return pts;
+    };
+    const Turn t = smallestTurn(turned(40, 10, 30));
+    CHECK(t.degrees == Approx(-30).margin(1e-9));
+    CHECK(std::max(t.size.width, t.size.depth) == Approx(40));
+    CHECK(std::min(t.size.width, t.size.depth) == Approx(10));
+    // Past 45 degrees round, the nearer way back is the other quarter.
+    const Turn u = smallestTurn(turned(40, 10, 70));
+    CHECK(u.degrees == Approx(20).margin(1e-9));
+    CHECK(u.size.width * u.size.depth == Approx(400));
+    // Lying square already, or within 0.5 % of its best: no turn.
+    CHECK(smallestTurn(turned(40, 10, 0)).degrees == 0);
+    CHECK(smallestTurn(turned(40, 10, 0.02)).degrees == 0);
+    CHECK(smallestTurn(turned(40, 10, 0.1)).degrees == Approx(-0.1));  // 0.7 % more room: turned back
+    CHECK(smallestTurn({}).degrees == 0);
+    // A triangle: one side of the smallest rectangle lies along one of its edges.
+    const Turn tri = smallestTurn({{0, 0}, {30, 10}, {5, 20}});
+    double best = 1e300;
+    for (double deg = -45; deg <= 45; deg += 0.01) {
+        const double r = deg * 3.14159265358979323846 / 180, c = std::cos(r), s = std::sin(r);
+        double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+        for (const Vec2& q : std::vector<Vec2>{{0, 0}, {30, 10}, {5, 20}}) {
+            const double x = q.x * c - q.y * s, y = q.x * s + q.y * c;
+            x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+        }
+        best = std::min(best, (x1 - x0) * (y1 - y0));
+    }
+    CHECK(tri.size.width * tri.size.depth == Approx(best).epsilon(1e-4));
+}
+
 TEST_CASE("Arrange: sixty small parts on a big plate", "[ops][arrange]") {
     std::vector<Footprint> fp(60, Footprint{20, 15});
     ArrangeOptions o;

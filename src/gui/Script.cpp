@@ -458,6 +458,8 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("duplicate")) {
             app.partsTools().copies = std::clamp(step["duplicate"].get<int>(), 1, kMaxCopies);
             app.duplicateParts();
+        } else if (step.contains("arrange_turn")) {
+            app.partsTools().arrange_turn = step["arrange_turn"].get<bool>();
         } else if (step.contains("arrange")) {
             if (step["arrange"].is_number()) app.partsTools().arrange_gap = step["arrange"].get<double>();
             app.arrangeAll();

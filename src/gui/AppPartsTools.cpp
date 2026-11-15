@@ -68,7 +68,9 @@ void App::duplicateOnce(int id) {
 void App::arrangeAll() {
     if (!doc_ || doc_->partCount() < 2) return;
     const double gap = parts_tools_.arrange_gap;
-    runTool(*this, *doc_, Tool::Arrange, [gap](const Document& d, PartsEdit& e) { return arrangeParts(d, e, gap); });
+    const bool turn = parts_tools_.arrange_turn;
+    runTool(*this, *doc_, Tool::Arrange,
+            [gap, turn](const Document& d, PartsEdit& e) { return arrangeParts(d, e, gap, turn); });
 }
 
 void App::splitSelected() {

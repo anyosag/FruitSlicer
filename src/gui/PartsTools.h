@@ -36,7 +36,11 @@ ToolReport duplicatePart(const Document& doc, PartsEdit& e, int copies, double g
 
 // Every part laid out on the plate, `gap` mm apart (ops::arrange), the whole
 // layout centred on the plate. A part that has no room stays where it is.
-ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap);
+// With `turn`, when they don't all fit as they are, each part is turned about
+// the vertical to where it takes the least room (ops::smallestTurn), and a
+// quarter turn more where that fits better; only its turn about the vertical
+// changes, so it stands as it did. Arranging again gives the same layout.
+ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap, bool turn = true);
 
 // How many shells a part has (what Split would make of it), counted once per
 // mesh and kept.
@@ -71,6 +75,7 @@ std::string numberedName(const std::string& base, const std::vector<std::string>
 struct PartsToolState {
     int copies = 1;            // Duplicate
     double arrange_gap = kPartGap;  // Arrange, mm
+    bool arrange_turn = true;       // Arrange may turn parts about the vertical
     std::vector<int> merge_off;     // Merge: parts left out (ids); all others are joined
     ToolReport last;           // the last thing a tool did
     int last_tool = 0;         // which tool made it (a Tool value)

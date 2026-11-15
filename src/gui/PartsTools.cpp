@@ -152,33 +152,71 @@ ToolReport duplicatePart(const Document& doc, PartsEdit& e, int copies, double g
     return r;
 }
 
-ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap) {
+ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap, bool turn) {
     ToolReport r;
     r.wanted = static_cast<int>(doc.partCount());
     gap = std::max(0.0, gap);
     double margin = 0;
-    std::vector<fruit::ops::Footprint> fps;
-    for (const Part& p : doc.parts()) {
-        const fruit::BBox2 b = p.footprintBox();
-        fps.push_back({b.size().x, b.size().y});
-        margin = std::max(margin, fruit::plateMargin(p.placement()));
+    for (const Part& p : doc.parts()) margin = std::max(margin, fruit::plateMargin(p.placement()));
+    // Three ways, the first that fits them all (else the one that fits the
+    // most, the earlier on a tie): as they are; each turned about the
+    // vertical to where it takes the least room, its long side along X; and
+    // that with a quarter turn more where the packer finds it fits better.
+    // Arranging again finds the first one fits as they are now, with the
+    // same layout: nothing changes.
+    struct Plan {
+        std::vector<fruit::ops::Footprint> fps;
+        std::vector<double> turns;  // degrees about the vertical, before the packer's quarter turn
+        fruit::ops::ArrangeResult a;
+        std::size_t placed = 0;
+    };
+    auto plan = [&](int way) {
+        Plan pl;
+        for (const Part& p : doc.parts()) {
+            fruit::ops::Turn t;
+            if (way > 0) {
+                t = fruit::ops::smallestTurn(p.footprint());
+                if (t.size.width < t.size.depth) {
+                    t.degrees += 90;
+                    std::swap(t.size.width, t.size.depth);
+                }
+            } else {
+                const fruit::BBox2 b = p.footprintBox();
+                t.size = {b.size().x, b.size().y};
+            }
+            pl.fps.push_back(t.size);
+            pl.turns.push_back(t.degrees);
+        }
+        fruit::ops::ArrangeOptions o;
+        o.plate_width = doc.printer.build_x;
+        o.plate_depth = doc.printer.build_y;
+        o.gap = gap;
+        o.edge_margin = margin;
+        o.allow_rotate = way == 2;
+        pl.a = fruit::ops::arrange(pl.fps, o);
+        pl.placed = pl.a.parts.size() - pl.a.not_placed.size();
+        return pl;
+    };
+    Plan best = plan(0);
+    for (int way = 1; turn && way <= 2 && best.placed < doc.partCount(); ++way) {
+        Plan next = plan(way);
+        if (next.placed > best.placed) best = std::move(next);
     }
-    fruit::ops::ArrangeOptions o;
-    o.plate_width = doc.printer.build_x;
-    o.plate_depth = doc.printer.build_y;
-    o.gap = gap;
-    o.edge_margin = margin;
-    fruit::ops::ArrangeResult a = fruit::ops::arrange(fps, o);
+    const std::vector<fruit::ops::Footprint>& fps = best.fps;
+    const std::vector<double>& turns = best.turns;
+    const fruit::ops::ArrangeResult& a = best.a;
     // Centre the layout on the plate.
     fruit::BBox2 all;
     for (std::size_t i = 0; i < a.parts.size(); ++i) {
         if (!a.parts[i].placed) continue;
-        const fruit::Vec2 h{fps[i].width / 2, fps[i].depth / 2};
+        const bool q = a.parts[i].rotated;
+        const fruit::Vec2 h{(q ? fps[i].depth : fps[i].width) / 2, (q ? fps[i].width : fps[i].depth) / 2};
         all.extend(a.parts[i].centre - h);
         all.extend(a.parts[i].centre + h);
     }
     const fruit::Vec2 shift = all.empty() ? fruit::Vec2{0, 0} : fruit::Vec2{0, 0} - centreOf(all);
     std::vector<std::string> left_out;
+    int turned = 0;
     for (std::size_t i = 0; i < a.parts.size(); ++i) {
         const Part& p = doc.parts()[i];
         if (!a.parts[i].placed) {
@@ -187,21 +225,35 @@ ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap) {
         }
         PartState* s = e.find(p.id());
         if (!s) continue;
+        // About the vertical only: Z is the last of the placement's turns, so
+        // adding to it turns the part as it stands. Its rectangle is the same
+        // half a turn round, so the smaller of the two turns (none at all when
+        // it is laid out like this already).
+        const double d = std::remainder(turns[i] + (a.parts[i].rotated ? 90.0 : 0.0), 180.0);
+        if (std::abs(d) > 1e-6) {
+            s->placement.rotation_deg.z = std::remainder(s->placement.rotation_deg.z + d, 360.0);
+            r.changed = true;
+            ++turned;
+        }
+        // Less than a thousandth of a millimetre is where it is already.
         const fruit::Vec2 c = a.parts[i].centre + shift;
-        if (std::abs(s->placement.offset.x - c.x) > 1e-9 || std::abs(s->placement.offset.y - c.y) > 1e-9) {
+        if (std::abs(s->placement.offset.x - c.x) > 1e-3 || std::abs(s->placement.offset.y - c.y) > 1e-3) {
             s->placement.offset = c;
             r.changed = true;
         }
         ++r.done;
     }
+    const std::string turned_words =
+        turned == 0 ? "" : turned == 1 ? " 1 was turned to fit." : " " + std::to_string(turned) + " were turned to fit.";
     if (left_out.empty()) {
-        r.message = r.changed ? "All " + plural(r.wanted, "part", "parts") + " fit, " + strf("%g", gap) + " mm apart."
+        r.message = r.changed ? "All " + plural(r.wanted, "part", "parts") + " fit, " + strf("%g", gap) + " mm apart." +
+                                    turned_words
                               : "They are laid out like this already.";
     } else {
         r.message = std::to_string(r.done) + " of " + std::to_string(r.wanted) + " parts fit. " +
                     namesOf(left_out) + (left_out.size() == 1 ? " has" : " have") +
                     " no room and stay" + (left_out.size() == 1 ? "s" : "") + " where " +
-                    (left_out.size() == 1 ? "it is" : "they are") + ", so may overlap another part.";
+                    (left_out.size() == 1 ? "it is" : "they are") + ", so may overlap another part." + turned_words;
     }
     return r;
 }

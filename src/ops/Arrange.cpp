@@ -28,6 +28,45 @@ Footprint footprintOf(const TriangleMesh& mesh) {
     return {b.max.x - b.min.x, b.max.y - b.min.y};
 }
 
+Turn smallestTurn(const std::vector<Vec2>& pts) {
+    Turn t;
+    if (pts.empty()) return t;
+    // The rectangle round `pts` turned by `rad`.
+    auto sizeAt = [&](double rad) {
+        const double c = std::cos(rad), s = std::sin(rad);
+        double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+        for (const Vec2& q : pts) {
+            const double x = q.x * c - q.y * s, y = q.x * s + q.y * c;
+            x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+        }
+        return Footprint{x1 - x0, y1 - y0};
+    };
+    const double kPi = 3.14159265358979323846;
+    const Footprint now = sizeAt(0);
+    t.size = now;
+    double best = now.width * now.depth, best_rad = 0;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        const Vec2& a = pts[i];
+        const Vec2& b = pts[(i + 1) % pts.size()];
+        if (std::hypot(b.x - a.x, b.y - a.y) < 1e-9) continue;
+        // Turned so that this edge runs along X, then into (-45, 45] degrees
+        // (a quarter turn more only swaps the rectangle's sides).
+        double rad = -std::atan2(b.y - a.y, b.x - a.x);
+        while (rad > kPi / 4 + 1e-12) rad -= kPi / 2;
+        while (rad <= -kPi / 4 + 1e-12) rad += kPi / 2;
+        const Footprint f = sizeAt(rad);
+        const double area = f.width * f.depth;
+        if (area < best - 1e-9 || (area <= best + 1e-9 && std::abs(rad) < std::abs(best_rad))) {
+            best = area;
+            best_rad = rad;
+        }
+    }
+    if (now.width * now.depth <= best * 1.005) return t;  // as good as it is
+    t.degrees = best_rad * 180 / kPi;
+    t.size = sizeAt(best_rad);
+    return t;
+}
+
 ArrangeResult arrange(const std::vector<Footprint>& fps, const ArrangeOptions& o) {
     ArrangeResult res;
     res.parts.assign(fps.size(), {});
@@ -41,10 +80,15 @@ ArrangeResult arrange(const std::vector<Footprint>& fps, const ArrangeOptions& o
 
     std::vector<size_t> order(fps.size());
     std::iota(order.begin(), order.end(), size_t{0});
+    // Sizes within a millionth of each other count as the same, so rounding
+    // in where an outline came from never reorders equal parts (they stay in
+    // input order).
+    auto differ = [](double a, double b) { return std::abs(a - b) > 1e-6 * std::max({1.0, std::abs(a), std::abs(b)}); };
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
         const double aa = fps[a].width * fps[a].depth, bb = fps[b].width * fps[b].depth;
-        if (aa != bb) return aa > bb;
-        return std::max(fps[a].width, fps[a].depth) > std::max(fps[b].width, fps[b].depth);
+        if (differ(aa, bb)) return aa > bb;
+        const double la = std::max(fps[a].width, fps[a].depth), lb = std::max(fps[b].width, fps[b].depth);
+        return differ(la, lb) && la > lb;
     });
 
     for (size_t idx : order) {

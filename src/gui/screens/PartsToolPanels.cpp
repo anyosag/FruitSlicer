@@ -74,8 +74,17 @@ void arrangePanel(App& app, Document& doc) {
     PartsToolState& st = app.partsTools();
     groupLabel("Lay them out");
     numberRow("Gap between parts", "gap", &st.arrange_gap, "mm", 0, 50);
-    text("Every part is moved, biggest first, with this much room between them, and the whole layout is centred on "
-         "the plate. Parts are not turned. Their rafts and the supports at their edges need room: 5 mm is a good gap.",
+    ImGui::Checkbox("##arrange_turn", &st.arrange_turn);
+    ImGui::SameLine(0, 10);
+    text("Turn them to fit", fonts().semibold, size::Body, col::Text);
+    text(st.arrange_turn
+             ? "Every part is moved, biggest first, with this much room between them, and the whole layout is "
+               "centred on the plate. When they don't all fit as they are, each is turned about the vertical to where "
+               "it takes the least room; how it stands does not change. Their rafts and the supports at their edges "
+               "need room: 5 mm is a good gap."
+             : "Every part is moved, biggest first, with this much room between them, and the whole layout is centred "
+               "on the plate. Parts are not turned. Their rafts and the supports at their edges need room: 5 mm is a "
+               "good gap.",
          fonts().regular, size::Help, col::TextMuted, true);
     if (doc.partCount() < 2) {
         ImGui::Dummy(ImVec2(0, 6));

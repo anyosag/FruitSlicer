@@ -34,6 +34,7 @@
 //   {"cube_click": [x, y]} a click there: a face's middle, an edge or a corner {"cube_drag": [dx, dy]} the cube dragged
 //   {"mirror": "x" | "y" | "z"} the selected part (left to right, front to back, top to bottom)
 //   {"duplicate": n} n copies of the selected part {"arrange": gap_mm} every part laid out (gap optional)
+//   {"arrange_turn": bool} whether Arrange may turn parts about the vertical (on unless set)
 //   {"part_menu": n} part n's menu (double-click, right-click) open {"part_menu_duplicate": n} its Duplicate
 //   {"split": true} the selected part into its shells {"merge_pick": [n, ...]} (1-based) only these are joined next
 //   {"merge_parts": "join" | "fuse"} {"collisions": "wait" | gap_mm} wait for the check, or set its least gap

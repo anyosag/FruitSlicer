@@ -135,6 +135,9 @@ TEST_CASE("Arrange: every part laid out with the gap, centred, undoable", "[gui]
     CHECK(rep.done == 5);
     CHECK_THAT(rep.message, ContainsSubstring("All 5 parts fit"));
     checkLaidOut(*doc, 6);
+    // They fit as they are, so none is turned (Turn them to fit is on).
+    CHECK_THAT(rep.message, !ContainsSubstring("turned"));
+    for (const Part& p : doc->parts()) CHECK(p.placement().rotation_deg.z == 0);
     // Centred on the plate.
     fruit::BBox2 all;
     for (const Part& p : doc->parts()) all.extend(p.footprintBox());
@@ -147,6 +150,47 @@ TEST_CASE("Arrange: every part laid out with the gap, centred, undoable", "[gui]
     doc->undo();
     for (const Part& p : doc->parts()) CHECK(p.placement().offset.x == 0);
     CHECK(doc->revision() == rev);
+}
+
+TEST_CASE("Arrange: parts lying askew are turned about the vertical to fit, and stand as they did", "[gui][parts-tools]") {
+    // Five long bars lying 40 degrees round, two of them also tilted: square
+    // on, each takes 130 x 12 mm; askew, a rectangle almost 110 mm deep.
+    std::vector<NewPart> parts;
+    for (int i = 0; i < 5; ++i) {
+        NewPart n = partOf(box(130, 12, 8), "bar" + std::to_string(i), {0, 0});
+        n.placement.rotation_deg = {i < 2 ? 20.0 : 0.0, 0, 40};
+        parts.push_back(std::move(n));
+    }
+    const auto doc = jobOf(std::move(parts));
+    // Not turned, they don't all fit.
+    {
+        const auto plain = std::make_shared<Document>(*doc);
+        ToolReport rep;
+        plain->editParts([&](PartsEdit& e) { rep = arrangeParts(*plain, e, 5, false); });
+        CHECK(rep.done < 5);
+        for (const Part& p : plain->parts()) CHECK(p.placement().rotation_deg.z == 40);
+    }
+    ToolReport rep;
+    REQUIRE(doc->editParts([&](PartsEdit& e) { rep = arrangeParts(*doc, e, 5, true); }));
+    CHECK(rep.done == 5);
+    CHECK_THAT(rep.message, ContainsSubstring("All 5 parts fit"));
+    CHECK_THAT(rep.message, ContainsSubstring("5 were turned to fit"));
+    checkLaidOut(*doc, 5);
+    for (std::size_t i = 0; i < doc->partCount(); ++i) {
+        const Part& p = doc->parts()[i];
+        // Only the turn about the vertical changed: it stands as it did.
+        CHECK(p.placement().rotation_deg.x == (i < 2 ? 20.0 : 0.0));
+        CHECK(p.placement().rotation_deg.y == 0);
+        CHECK(p.placement().rotation_deg.z != 40);
+        CHECK(p.fit().top == Approx(doc->parts()[i].fit().top));
+        // Square on the plate: its rectangle is no bigger than the bar seen from above.
+        const fruit::BBox2 b = p.footprintBox();
+        CHECK(std::max(b.size().x, b.size().y) == Approx(130).margin(0.5));
+        CHECK(std::min(b.size().x, b.size().y) < 20);
+    }
+    // Arranging again changes nothing.
+    CHECK_FALSE(doc->editParts([&](PartsEdit& e) { rep = arrangeParts(*doc, e, 5, true); }));
+    CHECK_THAT(rep.message, ContainsSubstring("already"));
 }
 
 TEST_CASE("Arrange: a part with no room stays where it is, and the report says so", "[gui][parts-tools]") {

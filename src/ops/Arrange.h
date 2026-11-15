@@ -20,6 +20,18 @@ struct Footprint {
 // The XY size of a mesh's bounding box.
 Footprint footprintOf(const TriangleMesh& mesh);
 
+// A turn about the vertical (degrees, counter-clockwise seen from above) and
+// the size of the rectangle round an outline turned by it.
+struct Turn {
+    double degrees = 0;
+    Footprint size;
+};
+// The turn, between -45 and 45 degrees, that gives `outline` (a convex
+// polygon seen from above) its smallest rectangle: one side of the smallest
+// rectangle always lies along an edge of the outline. No turn when the
+// rectangle it has now is within 0.5 % of that.
+Turn smallestTurn(const std::vector<Vec2>& outline);
+
 struct ArrangeOptions {
     double plate_width = 0;   // X, mm
     double plate_depth = 0;   // Y, mm
