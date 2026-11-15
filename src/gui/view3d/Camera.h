@@ -27,14 +27,24 @@ public:
     // length; kept a little off straight up or down).
     void lookFrom(V3 dir);
 
+    // Glide over `seconds` from where `before` was looking to where this
+    // camera looks now, instead of jumping there: set the new view (preset,
+    // lookFrom, frame), then call this with a copy taken before. It starts
+    // and ends gently, turns the shorter way round, and zooms evenly. Turning,
+    // panning or zooming by hand while it glides stops it where it is.
+    void glideFrom(const Camera& before, double seconds);
+    // The clock the glide runs on (seconds): call once a frame, before drawing.
+    void tick(double now);
+    bool gliding() const { return glide_.on; }
+
     V3 eye() const;
     M4 view() const;
     M4 proj(float aspect) const;
     // The ray through a point of the view, given in normalised device
     // coordinates (-1..1, y up).
     void ray(float ndc_x, float ndc_y, float aspect, V3* origin, V3* dir) const;
-    V3 target() const { return target_; }
-    float distance() const { return distance_; }
+    V3 target() const { return shown().target; }
+    float distance() const { return shown().distance; }
     // Moves the picture sideways by `ndc_x` (normalised device units, + is
     // right) without turning the camera: a panel over the view's left keeps
     // the model centred in what the panel leaves. Projections and rays both
@@ -43,12 +53,28 @@ public:
     float shift() const { return shift_; }
 
 private:
+    struct State {
+        float yaw, pitch, distance;
+        V3 target;
+    };
+    // What is shown: where it is gliding through, or where it looks.
+    State shown() const;
+    State dest() const { return {yaw_deg_, pitch_deg_, distance_, target_}; }
+    // Stop gliding where it has got to (a move by hand starts from there).
+    void settle();
+
     float yaw_deg_ = -60;   // around Z, from +X
     float pitch_deg_ = 25;  // above the plate
     float distance_ = 320;
     float fov_deg_ = 30;
     V3 target_{0, 0, 15};
     float shift_ = 0;
+    struct Glide {
+        bool on = false;
+        State from{};
+        double start = 0, seconds = 0;
+    } glide_;
+    double now_ = 0;
 };
 
 }  // namespace gui

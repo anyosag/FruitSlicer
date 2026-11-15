@@ -117,14 +117,27 @@ void App::frameModel() {
                   static_cast<float>(std::max(r, 20.0)));
 }
 
+void App::glideFrom(const Camera& before) {
+    // Scripted runs jump straight there: the same pictures every time.
+    camera_.glideFrom(before, opts_.deterministic ? 0.0 : kViewGlideSeconds);
+}
+
+bool App::animating() const { return camera_.gliding(); }
+
 void App::setView(ViewPreset v) {
+    const Camera before = camera_;
     camera_.preset(v);
     view_ = v;
     view_set_ = true;
     frameModel();
+    glideFrom(before);
 }
 
-void App::fitView() { frameModel(); }
+void App::fitView() {
+    const Camera before = camera_;
+    frameModel();
+    glideFrom(before);
+}
 
 void App::lookFromCube(V3 dir) {
     const int sides = (dir.x != 0) + (dir.y != 0) + (dir.z != 0);
@@ -135,8 +148,10 @@ void App::lookFromCube(V3 dir) {
     } else if (sides == 1 && dir.x > 0) {
         setView(ViewPreset::Side);
     } else {
+        const Camera before = camera_;
         camera_.lookFrom(dir);
         viewChanged();
+        glideFrom(before);
     }
 }
 
@@ -564,6 +579,7 @@ void App::previewPlacement(const fruit::Placement& p) {
 void App::endPlacing() {
     if (placing()) doc_->endDrag();
     handle_drag_ = HandleDrag{};
+    lifting_ = lift_held_ = false;
 }
 
 void App::cancelPlacing() {
@@ -572,6 +588,7 @@ void App::cancelPlacing() {
         mouse_spent_ = true;  // the button still held turns nothing until it is let go
     }
     handle_drag_ = HandleDrag{};
+    lifting_ = lift_held_ = false;
 }
 
 void App::dragHandleBy(Handle h, double amount, bool snap) {
@@ -702,7 +719,14 @@ void App::clearSides() {
 }
 
 void App::maintain() {
-    if (placing() && !handlesShown()) endPlacing();  // its handles went (a search finished, another screen)
+    // A drag whose control went (a search finished, another screen, the panel closed) ends here: the lift
+    // slider's when it no longer says it is held, a handle's when its handles are not shown.
+    if (lifting_) {
+        if (!lift_held_) endPlacing();
+        lift_held_ = false;
+    } else if (placing() && !handlesShown()) {
+        endPlacing();
+    }
     if (placing()) return;  // nothing starts while a handle is held: the placement changes every frame
     // The background checks (the Collisions check with several parts, the replay of the print) give way: the
     // work below cancels them, and they start again after.
@@ -1109,15 +1133,19 @@ void App::setLift(double mm) {
 }
 
 void App::beginLift() {
-    if (doc_) doc_->beginDrag();
+    if (!doc_ || placing()) return;
+    doc_->beginDrag();
+    lifting_ = lift_held_ = placing();
 }
 
 void App::previewLift(double mm) {
-    if (doc_ && doc_->dragging()) doc_->preview(withLift(doc_->placement(), mm));
+    if (!lifting_ || !placing()) return;
+    lift_held_ = true;
+    doc_->preview(withLift(doc_->placement(), mm));
 }
 
 void App::endLift() {
-    if (doc_ && doc_->dragging()) doc_->endDrag();
+    if (lifting_) endPlacing();
 }
 
 // ---- How many tips each stop of How many would give ----
@@ -1446,8 +1474,10 @@ void App::selectTip(int index) {
 }
 
 void App::focusOn(const fruit::Vec3& where) {
+    const Camera before = camera_;
     camera_.frame({static_cast<float>(where.x), static_cast<float>(where.y), static_cast<float>(where.z)}, 12);
     view_set_ = false;
+    glideFrom(before);
 }
 
 void App::showPatch() {
@@ -1461,10 +1491,12 @@ void App::showPatch() {
     const fruit::Vec3 at = part->transform().apply(r.biggest_patch_at);
     const fruit::Vec3 facing = part->transform().applyLinear(r.biggest_patch_facing);
     const double across = r.biggest_patch_across * part->placement().scale;
+    const Camera before = camera_;
     camera_.frame({static_cast<float>(at.x), static_cast<float>(at.y), static_cast<float>(at.z)},
                   static_cast<float>(std::max(5.0, 0.75 * across)));
     camera_.lookFrom({static_cast<float>(facing.x), static_cast<float>(facing.y), static_cast<float>(facing.z)});
     view_set_ = false;
+    glideFrom(before);
 }
 
 namespace {
@@ -3178,8 +3210,10 @@ void App::keys() {
         if (ImGui::IsKeyPressed(ImGuiKey_4, false)) setView(ViewPreset::Angled);
         if (ImGui::IsKeyPressed(ImGuiKey_F, false)) fitView();
         if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {  // from the top
+            const Camera before = camera_;
             camera_.lookFrom({0, 0, 1});
             viewChanged();
+            glideFrom(before);
         }
         // The tools around the view, by their first letters.
         if (doc_ && !inLayersMode(step_) && !io.KeyShift) {
@@ -3209,6 +3243,7 @@ void App::keys() {
 }
 
 void App::frame() {
+    camera_.tick(static_cast<double>(SDL_GetTicksNS()) / 1e9);  // the view's glide, if it is gliding
     maintain();
     if (!placing()) startCollisionCheck();  // with several parts: do they overlap? (after the work above)
     if (!placing()) startSupportsAhead();   // on the Supports step: the supports, made before they are asked for

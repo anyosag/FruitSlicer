@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 
 #include <cstdio>
 #include <filesystem>
@@ -15,6 +16,7 @@
 #include "App.h"
 #include "Capture.h"
 #include "Document.h"
+#include "Format.h"
 #include "Log.h"
 #include "ShapeTools.h"
 #include "calibration/CalibrationFit.h"
@@ -601,6 +603,38 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setHeightCorrection(step["height_correction"].get<double>());
         } else if (step.contains("lift")) {
             app.setLift(step["lift"].get<double>());
+        } else if (step.contains("lift_slide")) {
+            render();  // the panel drawn, so where its slider is is known
+            const App::SliderTrack t = app.liftTrack();
+            if (t.hi <= t.lo) throw std::runtime_error("lift_slide: the Lift height slider is not shown");
+            const int from = step["lift_slide"][0].get<int>(), to = step["lift_slide"][1].get<int>();
+            if (std::min(from, to) < t.lo || std::max(from, to) > t.hi)
+                throw std::runtime_error("lift_slide: no such stop");
+            const auto at = [&](int stop) {
+                return t.x0 + (t.x1 - t.x0) * static_cast<float>(stop - t.lo) / static_cast<float>(t.hi - t.lo);
+            };
+            const auto frames = [&](int n) {
+                for (int i = 0; i < n; ++i) render();
+            };
+            pointer_ = Pointer{at(from), t.y, false};
+            frames(2);
+            pointer_->down = true;
+            frames(3);
+            for (int s = from; s != to; s += to > from ? 1 : -1) {
+                pointer_->x = at(s + (to > from ? 1 : -1));
+                frames(3);
+            }
+            pointer_->down = false;
+            frames(3);
+            pointer_.reset();
+            frames(2);
+        } else if (step.contains("lift_is")) {
+            const double want = step["lift_is"].get<double>();
+            const auto& doc = app.document();
+            if (!doc) throw std::runtime_error("lift_is: no job open");
+            const double got = doc->placement().elevation;
+            if (std::abs(got - want) > 1e-6)
+                throw std::runtime_error(strf("lift_is: the lift is %g mm, not %g mm", got, want));
         } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
             SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
             if (step.contains("tip_size")) {

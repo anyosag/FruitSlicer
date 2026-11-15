@@ -459,13 +459,30 @@ void viewCube(App& app, ImVec2 origin, ImVec2 size) {
             dl->AddConvexPolyFilled(sp, 4, IM_COL32(0x4A, 0x52, 0x62, 245));
         }
         dl->AddPolyline(pts, 4, IM_COL32(0x4E, 0x56, 0x66, 255), 1.0f, ImDrawFlags_Closed);
-        if (f.facing > 0.3f) {
+        if (f.facing > 0.2f) {
+            // The label lies on the face: drawn upright, then each of its corners put where that
+            // point of the face is on screen. Corner 0 of a face is its lower left seen from
+            // outside, corner 1 its lower right, corner 3 its upper left, so it reads the right
+            // way round, and tilts and narrows as the face turns away. Straight on, it is as big
+            // as text of its size.
             const char* label = cubeLabel(f.side);
-            ImGui::PushFont(fonts().semibold, f.facing > 0.55f ? size::Label + 0.5f : size::Label - 1);
+            ImGui::PushFont(fonts().semibold, size::Label + 0.5f);
             const ImVec2 ts = ImGui::CalcTextSize(label);
             const ImVec2 mid((pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4, (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4);
-            dl->AddText(ImVec2(mid.x - ts.x / 2, mid.y - ts.y / 2), f.facing > 0.55f ? col::Text : col::TextSecondary, label);
+            const ImVec2 o(mid.x - ts.x / 2, mid.y - ts.y / 2);  // drawn here first (inside the clip), then moved
+            const int first = dl->VtxBuffer.Size;
+            const ImU32 ink = f.facing > 0.55f ? col::Text : col::TextSecondary;
+            dl->AddText(o, ink, label);
             ImGui::PopFont();
+            // One unit along the face's right and up (it spans -1..1 both ways), on screen.
+            const ImVec2 U((pts[1].x - pts[0].x) / 2, (pts[1].y - pts[0].y) / 2);
+            const ImVec2 V((pts[3].x - pts[0].x) / 2, (pts[3].y - pts[0].y) / 2);
+            for (int k = first; k < dl->VtxBuffer.Size; ++k) {
+                ImDrawVert& v = dl->VtxBuffer[k];
+                // Pixels from the text's middle, as units of the face (half a face is `half` pixels).
+                const float u = (v.pos.x - mid.x) / half, w = -(v.pos.y - mid.y) / half;
+                v.pos = ImVec2(mid.x + U.x * u + V.x * w, mid.y + U.y * u + V.y * w);
+            }
         }
     }
     if (under >= 0 && over) {

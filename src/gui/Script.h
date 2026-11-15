@@ -53,6 +53,8 @@
 //   {"orient": "find" | "settings"} {"use": 1 | 2 | 3, or 0 to keep how it sits}
 //   {"supports": "generate" | "now"} ("now": the accent button: shows Supports and makes them) {"tip_size": 0.3 | 0.4 | 0.6} {"spacing": 1 to 2} {"merge": bool}
 //   {"quick": {"how_many": 1-5, "tip": 0.3 | 0.4 | 0.6, "look_further": bool}} (the quick support controls) {"raft": bool} {"raft_type": "pads" | "full"} {"lift": 1-10 mm} {"height_correction": 0-0.5 mm} (with no raft) {"quick_reset": true} {"scroll_panel": "end" | "start"} (the open tool's panel)
+//   {"lift_slide": [from, to]} the Lift height slider pressed at stop `from` with the mouse, dragged a stop at a
+//     time to `to` and let go, a few frames at each stop {"lift_is": mm} fails the script unless the lift is that
 //   {"supports_view": "supports" | "tips" | "why" | "risk"} {"select_tip": index} {"problems": bool}
 //   {"risk": "wait" | "show"} lets the replay of the print finish, or shows the Risk view ("Show them on the model")
 //   {"risk_place": n} picks the n-th place that may not print (1-based; 0: none) {"risk_layer": n} its "Go to layer"
@@ -79,6 +81,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -99,8 +102,17 @@ public:
     // Returns the process exit code.
     int run(App& app, const std::string& shot_dir, const std::function<std::vector<uint8_t>()>& render);
 
+    // The mouse, while a step moves it (screen points; the left button); none
+    // otherwise, and the app gets no pointer.
+    struct Pointer {
+        float x = 0, y = 0;
+        bool down = false;
+    };
+    const std::optional<Pointer>& pointer() const { return pointer_; }
+
 private:
     nlohmann::json steps_;
+    std::optional<Pointer> pointer_;
     int width_ = 1440, height_ = 900;
     float scale_ = 1;
 };

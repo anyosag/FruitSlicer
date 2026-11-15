@@ -33,18 +33,22 @@ void rightText(const char* s, ImFont* f, float size, ImU32 c, float y) {
 }
 
 // A slider with a stop at each whole number from `lo` to `hi`: a thin track, a
-// round grip and a dot for each stop. True when it moved. `activated` and
-// `released` tell when a drag starts and ends. Left and Right move it a stop
-// while it has the focus.
-bool stopSlider(const char* id, int* v, int lo, int hi, bool* activated = nullptr, bool* released = nullptr) {
+// round grip and a dot for each stop. True when it moved. `activated`,
+// `held` and `released` tell when a drag starts, that it goes on (every
+// frame of it) and when it ends. Left and Right move it a stop while it has
+// the focus. `track`: where its stops are drawn.
+bool stopSlider(const char* id, int* v, int lo, int hi, bool* activated = nullptr, bool* released = nullptr,
+                bool* held = nullptr, App::SliderTrack* track = nullptr) {
     const float w = ImGui::GetContentRegionAvail().x, h = 22, r = 9;
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton(id, ImVec2(w, h));
     const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
     if (activated) *activated = ImGui::IsItemActivated();
     if (released) *released = ImGui::IsItemDeactivated();
+    if (held) *held = active;
     const int n = hi - lo + 1;
     const float x0 = p.x + r, x1 = p.x + w - r;
+    if (track) *track = App::SliderTrack{x0, x1, p.y + h / 2, lo, hi};
     int next = *v;
     if (active) {
         const float t = (ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, x1 - x0);
@@ -270,11 +274,11 @@ void onThePlate(App& app, Document& doc) {
     rightText(raft ? strf("%d mm", now).c_str() : "None", fonts().semibold, size::Help,
               differs ? col::Accent : col::TextSecondary, y);
     int v = now;
-    bool begin = false, end = false;
-    if (stopSlider("##lift", &v, 1, 10, &begin, &end) || begin) {
-        if (begin) app.beginLift();
-        app.previewLift(v);
-    }
+    bool begin = false, end = false, holding = false;
+    const bool moved = stopSlider("##lift", &v, 1, 10, &begin, &end, &holding, &app.liftTrack());
+    if (begin) app.beginLift();
+    if (holding) app.previewLift(v);    // every frame it is held, so the drag lasts until it is let go
+    else if (moved) app.setLift(v);  // Left and Right: a stop each, each its own undo step
     if (end) app.endLift();
     const float ey = ImGui::GetCursorPosY();
     text("1 mm", fonts().regular, size::Label, col::TextMuted);

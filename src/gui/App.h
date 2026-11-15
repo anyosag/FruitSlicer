@@ -131,6 +131,8 @@ public:
     bool quitting() const { return quit_; }
     void setScreen(Screen s) { screen_ = s; }
     void setView(ViewPreset v);
+    // The view is gliding to where it was sent (the window keeps drawing).
+    bool animating() const;
     void fitView();
     // Health dialog, after a model loads: place it at the chosen size, or drop it.
     void chooseSize(SizeChoice c, double custom_percent = 0);
@@ -366,8 +368,14 @@ public:
     // the raft's (setOnPlate); dragging its slider is one undo step.
     void setLift(double mm);
     void beginLift();
-    void previewLift(double mm);
+    void previewLift(double mm);  // every frame the slider is held, moved or not: the drag lasts while it is
     void endLift();
+    // Where the lift slider's stops were last drawn, screen points (scripts drag it there).
+    struct SliderTrack {
+        float x0 = 0, x1 = 0, y = 0;  // the first and last stops, and the track's middle
+        int lo = 0, hi = 0;
+    };
+    SliderTrack& liftTrack() { return lift_track_; }
     // The height correction (0 to 0.5 mm, the job's, used with no raft): the same, beginLift/endLift
     // bracket the slider's drag.
     void setHeightCorrection(double mm);  // the job's print setting
@@ -653,6 +661,9 @@ private:
     bool panel_scroll_end_ = false;
     int panel_scroll_frames_ = 0;
     HandleDrag handle_drag_;
+    bool lifting_ = false;    // the drag is the lift slider's, not a handle's
+    bool lift_held_ = false;  // its slider said so since maintain() last looked
+    SliderTrack lift_track_;
     Handle hover_handle_ = Handle::None;
     bool mouse_spent_ = false;
     bool tip_editing_ = false;
@@ -666,6 +677,9 @@ private:
     std::optional<fruit::Vec3> hover_point_;
     std::optional<std::pair<float, float>> cube_hover_;  // a script's stand-in pointer over the view cube
     PartsToolState parts_tools_;
+    // How long the view takes to glide to a new view (the cube, Home, From below, keys 1-5, Show it).
+    static constexpr double kViewGlideSeconds = 0.32;
+    void glideFrom(const Camera& before);
     std::shared_ptr<const LayoutSearch> layouts_;
     std::weak_ptr<const Document> layouts_doc_;
     bool layouts_open_ = false;

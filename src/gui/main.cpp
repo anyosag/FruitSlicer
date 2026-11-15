@@ -13,6 +13,7 @@
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cfloat>
 #include <cstdio>
@@ -200,7 +201,13 @@ int main(int argc, char** argv) {
             io.DisplaySize = ImVec2(static_cast<float>(lw), static_cast<float>(lh));
             io.DisplayFramebufferScale = ImVec2(scale, scale);
             io.DeltaTime = 1.0f / 60.0f;
-            io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+            if (script && script->pointer()) {  // a step that moves the mouse
+                io.AddMousePosEvent(script->pointer()->x, script->pointer()->y);
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, script->pointer()->down);
+            } else {
+                io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            }
             ImGui::NewFrame();
             app.frame();
             ImGui::Render();
@@ -236,6 +243,7 @@ int main(int argc, char** argv) {
             SDL_Event e;
             const bool hovering = ImGui::GetCurrentContext() && ImGui::IsAnyItemHovered();
             bool got;
+            if (app.animating()) frames = std::max(frames, 2);  // keep drawing while the view glides
             if (frames > 0) got = SDL_PollEvent(&e);
             else got = SDL_WaitEventTimeout(&e, app.jobs().busy() || hovering ? 100 : 1000);
             while (got) {

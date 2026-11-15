@@ -1,0 +1,14 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"},
+    {"step": "supports"}, {"scroll_panel": "end"}, {"frames": 6},
+    {"lift_is": 5},
+    {"lift_slide": [5, 9]}, {"lift_is": 9},
+    {"lift_slide": [9, 3]}, {"lift_is": 3},
+    {"undo": 1}, {"lift_is": 9},
+    {"undo": 1}, {"lift_is": 5},
+    {"redo": 2}, {"lift_is": 3}
+  ]
+}
