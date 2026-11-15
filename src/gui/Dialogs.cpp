@@ -350,13 +350,14 @@ void shortcuts(App&, bool& open) {
                                       {"From the top", "5"},
                                       {"Fit the model", "F"}};
     const std::vector<Row> placing = {{"Move it on the plate", "drag an arrow"},
-                                      {"Turn it", "drag a ring"},
-                                      {"Turn it in 15° steps", "Shift drag a ring"},
+                                      {"Turn it", "drag a curved arrow"},
+                                      {"Turn it in 15° steps", "Shift drag a curved arrow"},
                                       {"Move it 1 mm", "← → ↑ ↓"},
                                       {"Move it 10 mm", "Shift ← → ↑ ↓"},
                                       {"Let go and put it back", "Esc"}};
     const std::vector<Row> parts = {{"Add a part to the plate", cmd("O", true)},
-                                    {"Select a part: the tools act on it", "click it"},
+                                    {"Select a part and show its arrows", "click it"},
+                                    {"Put the arrows away", "click beside it"},
                                     {"Arrange · Combine · Merge", "A · B · G"}};
     const std::vector<Row> layers = {{"Next or previous layer", "↑ · ↓"},
                                      {"Ten layers at a time", "Page Up · Page Down"},

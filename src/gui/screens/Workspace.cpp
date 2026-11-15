@@ -149,7 +149,7 @@ void rotateBody(App& app, Document& doc) {
     double* values[] = {&r.x, &r.y, &r.z};
     if (fieldsRow(labels, values, 3, -360, 360)) app.setRotation(r);
     if (secondaryButton("Turn 90°", ImVec2(0, 32))) app.turnQuarter();
-    text("A quarter turn about the vertical. Or drag the rings in the view; hold ⇧ for 15° steps.", fonts().regular,
+    text("A quarter turn about the vertical. Or drag the curved arrows in the view; hold ⇧ for 15° steps.", fonts().regular,
          size::Help, col::TextMuted, true);
     ImGui::Dummy(ImVec2(0, 10));
     orientPanel(app, doc);
