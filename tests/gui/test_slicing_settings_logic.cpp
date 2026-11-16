@@ -171,7 +171,11 @@ TEST_CASE("Layer height: a raft thinner than the long-exposure layers at that he
     const auto doc = box();
     withSample(*doc);
     auto sup = std::make_shared<SupportResult>();
-    sup->tree.raft_top = 1.0;
+    SupportResult::RaftMade raft;
+    raft.top = 1.0;
+    sup->rafts.push_back(raft);
+    raft.top = 2.0;  // the thinnest raft is the one that counts
+    sup->rafts.push_back(raft);
     doc->supports.result = sup;
     const PrintShape shape = printShape(doc->placed(), 8.0);
     const auto tested = testedLight(doc->print.settings, nullptr);

@@ -421,7 +421,7 @@ void layerHeight(App& app, Document& doc, ImVec2 size) {
     const float ty = ImGui::GetCursorPosY();
     text("Layer height", fonts().bold, size::DialogTitle + 2, col::Text);
     text(strf("%s · %.1f mm tall%s. What each height takes in light and time, and what it changes in the print.",
-              doc.name.c_str(), shape.top, doc.placement().on_plate ? "" : " with the raft")
+              doc.name.c_str(), shape.top, doc.allOnPlate() ? "" : " with the raft")
              .c_str(),
          fonts().regular, size::Body, col::TextMuted);
     {
@@ -699,8 +699,8 @@ void layerHeight(App& app, Document& doc, ImVec2 size) {
                         mmText(picked->h).c_str(), current ? current->held_mm : 0.0, picked->held_mm, mmText(picked->h).c_str()));
         else
             detail("Supports", 1,
-                   doc.placement().on_plate ? std::string("Stay as they are, up to date: no tip moves.")
-                                            : std::string("Stay as they are, up to date. Every part stands on the raft."));
+                   doc.anyOnPlate() ? std::string("Stay as they are, up to date: no tip moves.")
+                                    : std::string("Stay as they are, up to date. Every part stands on a raft."));
         if (picked->raft > 0) {
             if (picked->raft_thin) {
                 detail("Raft", -1,
@@ -725,7 +725,7 @@ void layerHeight(App& app, Document& doc, ImVec2 size) {
                        strf("The %d long-exposure layers reach %.2f mm, inside the %.1f mm raft.", picked->long_layers,
                             picked->long_mm, picked->raft));
             }
-        } else if (doc.placement().on_plate) {
+        } else if (doc.allOnPlate()) {
             detail("Raft", 2, "None: the parts stand on the plate.");
         }
         if (std::abs(picked->h - kLayerHeight) < 1e-6)

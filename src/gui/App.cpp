@@ -1622,7 +1622,7 @@ void App::thickenRaftFor(double h) {
     if (!doc_) return;
     const std::vector<TestedLight> tested = testedLight(doc_->print.settings, jobResin());
     const HeightChoice c = heightChoice(*doc_, printShapeNow(), tested, h);
-    fruit::RaftSpec s = doc_->supports.choices.raft;
+    fruit::RaftSpec s = supportChoicesShown().raft;
     s.thickness = std::max(s.thickness, std::ceil(c.long_mm * 10 - 1e-6) / 10);
     showRaft(true);
     editRaft(s);  // a built-in preset asks for the name of a copy of your own

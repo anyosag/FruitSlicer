@@ -234,7 +234,7 @@ HeightChoice heightChoice(const Document& doc, const PrintShape& shape, const st
     c.light = lightAt(tested, h);
     const PrintSettings s = withLayerHeight(doc.print.settings, h, c.light);
     const fruit::GooHeader header = headerFor(doc, s);
-    const bool on_plate = !doc.parts().empty() && doc.placement().on_plate;
+    const bool on_plate = doc.anyOnPlate();
     const int base = on_plate ? fruit::heightCorrectionLayers(heightCorrection(s), h) : 0;
     c.layers = static_cast<std::size_t>(std::max(0.0, std::ceil(shape.top / h - 1e-9))) + static_cast<std::size_t>(base);
     c.seconds = fruit::estimatePrintSeconds(header, static_cast<std::uint32_t>(c.layers), fruit::GooExportOptions{});
@@ -248,8 +248,8 @@ HeightChoice heightChoice(const Document& doc, const PrintShape& shape, const st
     }
     c.long_layers = static_cast<int>(header.print.bottom_layers + header.print.transition_layers);
     c.long_mm = c.long_layers * h;
-    if (!on_plate && doc.supports.result) {
-        c.raft = doc.supports.result->tree.raft_top;
+    if (!doc.allOnPlate() && doc.supports.result) {
+        c.raft = doc.supports.result->thinnestRaft();
         c.raft_thin = c.raft > 0 && c.long_mm > c.raft + 1e-9;
     }
     if (on_plate) {
@@ -269,7 +269,7 @@ SliceSettingsView sliceSettingsView(const Document& doc, const PrinterSetup& set
     const fruit::PrinterProfile& pr = doc.printer;
     const fruit::GooHeader h = headerFor(doc, s);
     const std::map<std::string, PrintRow> rows = rowsByKey(doc);
-    const bool on_plate = !doc.parts().empty() && doc.placement().on_plate;
+    const bool on_plate = doc.anyOnPlate(), all_plate = doc.allOnPlate();
     const double lh = fruit::gooLayerHeight(h);
     const std::vector<TestedLight> tested = testedLight(s, resin);
     using F = ValueFrom;
@@ -412,21 +412,55 @@ SliceSettingsView sliceSettingsView(const Document& doc, const PrinterSetup& set
             const bool own = c.how_many != kHowManyCentre || c.look_further || !c.advanced.empty();
             g.rows.push_back({"Supports", value, help, fresh ? (own ? F::Yours : F::Default) : F::OutOfDate, ""});
         }
-        if (!on_plate) {
-            const double thick = sup ? sup->tree.raft_top : c.raft.thickness;
-            const std::string name = c.raft_preset.name.empty() ? std::string("This job's own raft") : c.raft_preset.name;
-            g.rows.push_back({"Raft", strf("%s · %.1f mm thick", name.c_str(), thick), raftSummary(c.raft, thick),
+        // Each raft and the parts on it (as made, or as chosen before supports are made), and the parts on the plate.
+        auto names = [&](const std::vector<int>& ids) {
+            std::string out;
+            for (int id : ids)
+                for (const Part& p : doc.parts())
+                    if (p.id() == id) out += (out.empty() ? "" : ", ") + p.name();
+            return out;
+        };
+        struct RaftLine {
+            std::vector<int> parts;
+            fruit::RaftSpec spec;
+            std::string preset;
+            double thick;
+            bool touching;
+        };
+        std::vector<RaftLine> rafts;
+        if (sup && !sup->rafts.empty()) {
+            for (const auto& r : sup->rafts) rafts.push_back({r.parts, r.spec, r.preset, r.top, r.touching});
+        } else if (!all_plate) {
+            const SupportSetup setup{doc.supports.choices, doc.supports.own, doc.supports.shared};
+            for (const RaftGroup& r : chosenRafts(doc, setup)) rafts.push_back({r.parts, r.spec, r.preset, r.spec.thickness, false});
+        }
+        for (std::size_t i = 0; i < rafts.size(); ++i) {
+            const RaftLine& r = rafts[i];
+            const std::string name = r.preset.empty() ? std::string("Its own raft") : r.preset;
+            std::string help = parts > 1 ? "Under " + names(r.parts) + ". " : std::string();
+            help += raftSummary(r.spec, r.thick);
+            if (r.touching) help += " Joined: their rafts would meet.";
+            g.rows.push_back({rafts.size() > 1 ? strf("Raft %zu", i + 1) : std::string("Raft"),
+                              strf("%s · %.1f mm thick", name.c_str(), r.thick), help,
                               name == fruit::kDefaultRaftPreset ? F::Default : F::Yours, ""});
-            g.rows.push_back({"Height correction", "None: the parts stand on a raft",
-                              strf("%g mm is added only under parts that stand on the plate.", heightCorrection(s)), F::Default,
-                              ""});
-        } else {
+        }
+        if (on_plate) {
+            std::vector<int> plate;
+            for (const Part& p : doc.parts())
+                if (p.placement().on_plate) plate.push_back(p.id());
+            g.rows.push_back({"On the plate", all_plate && parts > 1 ? std::string("Every part, no raft") : all_plate ? std::string("No raft")
+                                                                                                                    : names(plate),
+                              "", F::Yours, ""});
             const int n = fruit::heightCorrectionLayers(heightCorrection(s), lh);
             const auto r = rows.find("height_correction");
-            g.rows.push_back({"Raft", "None: the parts stand on the plate", "", F::Yours, ""});
             g.rows.push_back({"Height correction", strf("%g mm, %d extra layer%s", n * lh, n, n == 1 ? "" : "s"),
-                              "Added under the parts, because the printer squashes the first layers.",
+                              all_plate ? "Added under the parts, because the printer squashes the first layers."
+                                        : "Added under the whole print, rafts too: it has one first layer.",
                               r != rows.end() ? fromRow(r->second) : F::Default, ""});
+        } else {
+            g.rows.push_back({"Height correction", "None: the parts stand on rafts",
+                              strf("%g mm is added only under parts that stand on the plate.", heightCorrection(s)), F::Default,
+                              ""});
         }
         {
             const HollowChoices& hc = doc.hollow.choices;
@@ -455,9 +489,9 @@ SliceSettingsView sliceSettingsView(const Document& doc, const PrinterSetup& set
     if (!sup) v.checked.push_back({-1, "There are no supports yet"});
     else if (fresh) v.checked.push_back({1, "The supports were made for these parts where they stand, with these settings"});
     else v.checked.push_back({-1, "Failed: the supports match the parts where they stand now"});
-    if (sup && !on_plate) {
+    if (sup && !all_plate && sup->thinnestRaft() > 0) {
         const int n = static_cast<int>(h.print.bottom_layers + h.print.transition_layers);
-        const double need = n * lh, raft = sup->tree.raft_top;
+        const double need = n * lh, raft = sup->thinnestRaft();
         if (raft + 1e-9 >= need)
             v.checked.push_back({1, strf("The %.1f mm raft is thicker than the %d bottom and transition layers, %.2f mm", raft, n, need)});
         else
