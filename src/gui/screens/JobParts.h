@@ -115,6 +115,9 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size);
 // The advanced settings page.
 void supportsAdvanced(App& app, Document& doc, ImVec2 size);
 void supportsRaft(App& app, Document& doc, ImVec2 size);
+// Slicing settings and the Layer height page, as sheets over the job.
+void slicingSettings(App& app, Document& doc, ImVec2 size);
+void layerHeight(App& app, Document& doc, ImVec2 size);
 // The advanced page's pieces the Resins page uses too: a row's fields, each
 // change going to `set` with the field's key; and the badge saying where a
 // value comes from.

@@ -22,6 +22,7 @@ Preferences loadPreferences(const std::string& file) {
         p.cores = j.value("cores", p.cores);
         p.goo_to_drive = j.value("goo_to_drive", p.goo_to_drive);
         p.goo_folder = j.value("goo_folder", p.goo_folder);
+        p.settings_before_slice = j.value("settings_before_slice", p.settings_before_slice);
     } catch (const std::exception&) {
         return Preferences{};
     }
@@ -32,7 +33,8 @@ void savePreferences(const std::string& file, const Preferences& p) {
     const json j = {{"smooth_view", p.smooth_view},
                     {"cores", p.cores},
                     {"goo_to_drive", p.goo_to_drive},
-                    {"goo_folder", p.goo_folder}};
+                    {"goo_folder", p.goo_folder},
+                    {"settings_before_slice", p.settings_before_slice}};
     const std::filesystem::path path(file);
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
     const std::string tmp = file + ".tmp";

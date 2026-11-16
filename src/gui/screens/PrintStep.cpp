@@ -443,7 +443,7 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
             if (secondaryButton("Back to Prepare", ImVec2(0, 38))) app.goToPrepare();
             break;
         case Need::Layers:
-            if (primaryButton("Slice", ImVec2(0, 38))) app.goToStep(Step::Layers);
+            if (primaryButton("Slice", ImVec2(0, 38))) app.slice();
             break;
     }
     endCard();
@@ -461,6 +461,7 @@ void printSide(App& app, Document& doc, float h) {
         dl->AddLine(p, ImVec2(p.x, p.y + h), col::Border);
     }
     text("This print", fonts().semibold, size::Section + 1, col::Text);
+    if (doc.layersFresh() && linkButton("Settings these layers used ›")) app.showSlicing(true, true);
     ImGui::Dummy(ImVec2(0, 2));
     const float save_h = doc.supports.result && doc.supports.result->hollow ? 270 : 222;
     ImGui::BeginChild("print_details", ImVec2(0, std::max(120.0f, ImGui::GetContentRegionAvail().y - save_h)),

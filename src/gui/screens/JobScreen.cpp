@@ -506,7 +506,9 @@ void statusBar(App& app) {
 }
 
 // The advanced support settings (or the Raft page), as a sheet over the workspace.
-void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area, bool raft = false) {
+enum class Sheet { Advanced, Raft, Slicing, LayerHeight };
+
+void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area, Sheet which = Sheet::Advanced) {
     // Over everything behind it, so clicks land on the sheet or nowhere.
     ImGui::SetCursorScreenPos(origin);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(6, 7, 9, 158));
@@ -520,12 +522,17 @@ void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area, bool raf
     ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 16);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-    ImGui::BeginChild(raft ? "raft_sheet" : "advanced_sheet", sz,
+    const char* ids[] = {"advanced_sheet", "raft_sheet", "slicing_sheet", "layer_height_sheet"};
+    ImGui::BeginChild(ids[static_cast<int>(which)], sz,
                       ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
-    if (raft) supportsRaft(app, doc, ImVec2(0, sz.y - 16));
-    else supportsAdvanced(app, doc, ImVec2(0, sz.y - 16));
+    switch (which) {
+        case Sheet::Raft: supportsRaft(app, doc, ImVec2(0, sz.y - 16)); break;
+        case Sheet::Slicing: slicingSettings(app, doc, ImVec2(0, sz.y - 16)); break;
+        case Sheet::LayerHeight: layerHeight(app, doc, ImVec2(0, sz.y - 16)); break;
+        default: supportsAdvanced(app, doc, ImVec2(0, sz.y - 16)); break;
+    }
     ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
@@ -556,8 +563,11 @@ void job(App& app) {
         ImGui::SameLine(0, 0);
         jobPanel(app, body_h);
         if (doc && app.advancedOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h));
-        else if (doc && app.raftOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h), true);
+        else if (doc && app.raftOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h), Sheet::Raft);
     }
+    // Over either place: Slice opens it from Prepare, "Settings these layers used" from Layers.
+    if (doc && app.slicingOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h), Sheet::Slicing);
+    else if (doc && app.layerHeightOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h), Sheet::LayerHeight);
     statusBar(app);
     ImGui::PopStyleVar(2);
 }

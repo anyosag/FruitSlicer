@@ -107,6 +107,12 @@ std::vector<Resin> loadResins(const std::string& dir) {
             if (j.contains("print")) readPrint(j["print"], r);
             if (j.contains("profile") && j["profile"].is_object()) r.profile = j["profile"];
             if (j.contains("plates")) readPlates(j["plates"], r);
+            if (j.contains("tested_light") && j["tested_light"].is_array())
+                for (const json& t : j["tested_light"]) {
+                    if (!t.is_object()) continue;
+                    TestedLight l{t.value("layer_height", 0.0), t.value("exposure", 0.0), t.value("note", std::string())};
+                    if (l.layer_height > 0 && l.exposure > 0) r.tested_light.push_back(std::move(l));
+                }
             out.push_back(std::move(r));
         } catch (const std::exception&) {
             // Not a resin (or damaged): left out.
@@ -119,7 +125,13 @@ std::vector<Resin> loadResins(const std::string& dir) {
 void saveResin(const std::string& dir, const Resin& r) {
     if (r.id.empty()) throw std::runtime_error("a resin needs an id");
     fs::create_directories(dir);
-    const json j = {{"name", r.name}, {"print", printJson(r)}, {"profile", r.profile}, {"plates", platesJson(r)}};
+    json j = {{"name", r.name}, {"print", printJson(r)}, {"profile", r.profile}, {"plates", platesJson(r)}};
+    if (!r.tested_light.empty()) {
+        json t = json::array();
+        for (const TestedLight& l : r.tested_light)
+            t.push_back({{"layer_height", l.layer_height}, {"exposure", l.exposure}, {"note", l.note}});
+        j["tested_light"] = std::move(t);
+    }
     const fs::path file = fs::path(dir) / (r.id + ".json");
     const std::string tmp = file.string() + ".tmp";
     {

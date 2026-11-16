@@ -19,6 +19,16 @@
 
 namespace gui {
 
+// A layer height a resin has printed well at, and the exposure it had (the
+// Layer height page's tested points; the SatelLite file's own is not kept
+// here, it is read from the file).
+struct TestedLight {
+    double layer_height = 0;  // mm
+    double exposure = 0;      // s
+    std::string note;         // where it comes from, in a few words ("your print")
+    bool operator==(const TestedLight&) const = default;
+};
+
 struct Resin {
     std::string id;    // its file's name in the resins folder, without ".json"
     std::string name;  // as shown
@@ -33,6 +43,8 @@ struct Resin {
     nlohmann::json profile;
     // The test plates saved for it, by kind ("tips", "spacing", "islands").
     std::map<std::string, PlateFiles> plates;
+    // Exposures tested at other layer heights, thinnest first.
+    std::vector<TestedLight> tested_light;
     bool operator==(const Resin&) const = default;
 };
 

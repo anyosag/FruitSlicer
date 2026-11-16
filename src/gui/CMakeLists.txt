@@ -97,6 +97,7 @@ set(app_sources
   Preferences.cpp
   RaftPresets.cpp
   RaftPreview.cpp
+  SlicingSettings.cpp
   Print.cpp
   Resins.cpp
   Risk.cpp
@@ -124,6 +125,7 @@ set(app_sources
   screens/SettingsScreens.cpp
   screens/SupportsAdvanced.cpp
   screens/SupportsRaft.cpp
+  screens/SlicingPages.cpp
   screens/OrientStep.cpp
   screens/RiskParts.cpp
   screens/SupportsStep.cpp

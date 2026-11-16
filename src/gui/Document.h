@@ -99,6 +99,7 @@ struct HollowState {
 struct LayerState {
     std::shared_ptr<const LayerResult> result;
     std::shared_ptr<const SupportResult> for_supports;  // the supports it was cut with
+    PrintSettings cut_with;                              // the print settings when it was cut
     int current = -1;         // layer shown (0-based); -1 = the biggest
     bool show_below = false;  // the layer below, dimmed, under this one
     double scroll_carry = 0;  // trackpad scrolling over the chart that has not yet made a whole layer

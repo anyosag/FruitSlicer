@@ -389,6 +389,7 @@ void App::installJob(std::shared_ptr<Document> d) {
     orient_view_ = OrientView::Settings;
     advanced_open_ = false;
     raft_open_ = false;
+    slicing_open_ = layer_height_open_ = false;
     frameModel();
     remember(*doc_);
     log::info("job opened: " + doc_->job_path);
@@ -497,6 +498,7 @@ void App::placeChecked() {
     health_.open = false;
     advanced_open_ = false;
     raft_open_ = false;
+    slicing_open_ = layer_height_open_ = false;
     step_ = Step::Model;
     orient_view_ = OrientView::Settings;
     screen_ = Screen::Job;
@@ -658,6 +660,7 @@ void App::goToStep(Step s) {
     if (s != step_) {
         advanced_open_ = false;
         raft_open_ = false;
+        slicing_open_ = layer_height_open_ = false;
         tip_editing_ = false;
         tool_panel_ = true;  // a place opens with its panel showing
     }
@@ -787,6 +790,7 @@ void App::maintain() {
                     }
                     d->layers.result = std::make_shared<const LayerResult>(std::move(*out));
                     d->layers.for_supports = sup;
+                    d->layers.cut_with = d->print.settings;
                     d->layers.current = -1;
                     log::info("layers: " + std::to_string(d->layers.result->layers->size()) + " in " +
                               std::to_string(d->layers.result->seconds) + " s");
@@ -985,6 +989,7 @@ void App::generateSupports() {
     if (!doc_ || !doc_->fits()) return;
     advanced_open_ = false;  // the run shows in the 3D view
     raft_open_ = false;
+    slicing_open_ = layer_height_open_ = false;
     const SupportInputs now = supportInputs();
     std::weak_ptr<Document> target = doc_;
     // When it ends: the supports made, for the job as it was then.
@@ -1518,6 +1523,111 @@ void App::showRaft(bool show) {
     raft_prompt_.reset();
 }
 
+void App::showSlicing(bool show, bool used) {
+    slicing_open_ = show && doc_;
+    slicing_used_ = slicing_open_ && used;
+    if (slicing_open_) {
+        advanced_open_ = raft_open_ = layer_height_open_ = false;
+        raft_prompt_.reset();
+    }
+}
+
+void App::slice() {
+    if (!doc_) return;
+    if (prefs_.settings_before_slice && !slicing_open_) showSlicing(true);
+    else sliceNow();
+}
+
+void App::sliceNow() {
+    slicing_open_ = layer_height_open_ = false;
+    goToStep(Step::Layers);
+}
+
+void App::setSettingsBeforeSlice(bool on) {
+    Preferences p = prefs_;
+    p.settings_before_slice = on;
+    setPreferences(p);
+}
+
+const PrintSettings* App::cutWith() const {
+    return doc_ && doc_->layers.result ? &doc_->layers.cut_with : nullptr;
+}
+
+const Resin* App::jobResin() const {
+    if (!doc_) return nullptr;
+    const std::string name = doc_->supports.choices.resin.empty() ? std::string("My resin") : doc_->supports.choices.resin;
+    for (const Resin& r : resins_)
+        if (r.name == name) return &r;
+    return nullptr;
+}
+
+void App::showLayerHeight(bool show) {
+    layer_height_open_ = show && doc_;
+    if (layer_height_open_) {
+        slicing_open_ = advanced_open_ = raft_open_ = false;
+        layer_height_pick_ = printLayerHeight(*doc_);
+    } else {
+        slicing_open_ = static_cast<bool>(doc_);  // back to the slicing settings
+        slicing_used_ = false;
+    }
+}
+
+const PrintShape& App::printShapeNow() {
+    const void* sup = doc_ && doc_->supports.result ? doc_->supports.result.get() : nullptr;
+    if (doc_ && (print_shape_doc_ != doc_.get() || print_shape_revision_ != doc_->revision() || print_shape_supports_ != sup)) {
+        fruit::BBox3 b = doc_->placed().bbox();
+        if (sup && !doc_->supports.result->mesh.vertices.empty()) b.extend(doc_->supports.result->mesh.bbox());
+        print_shape_ = printShape(doc_->placed(), b.max.z);
+        print_shape_doc_ = doc_.get();
+        print_shape_revision_ = doc_->revision();
+        print_shape_supports_ = sup;
+    }
+    return print_shape_;
+}
+
+void App::useLayerHeight(double h, bool remake_supports) {
+    if (!doc_ || !(h > 0)) return;
+    const std::vector<TestedLight> tested = testedLight(doc_->print.settings, jobResin());
+    doc_->print.settings = withLayerHeight(doc_->print.settings, h, lightAt(tested, h));
+    layer_height_pick_ = h;
+    showLayerHeight(false);  // back to the slicing settings
+    if (remake_supports) {
+        slicing_open_ = false;
+        supportsNow();
+    }
+}
+
+void App::addTestedLight(double h, double exposure, const std::string& note) {
+    const Resin* now = jobResin();
+    if (!now || !(h > 0) || !(exposure > 0)) return;
+    Resin r = *now;
+    h = std::round(h * 1000) / 1000;
+    exposure = std::round(exposure * 100) / 100;
+    std::erase_if(r.tested_light, [&](const TestedLight& t) { return std::abs(t.layer_height - h) < 1e-6; });
+    r.tested_light.push_back({h, exposure, note});
+    std::sort(r.tested_light.begin(), r.tested_light.end(),
+              [](const TestedLight& a, const TestedLight& b) { return a.layer_height < b.layer_height; });
+    storeResin(r);
+}
+
+void App::removeTestedLight(double h) {
+    const Resin* now = jobResin();
+    if (!now) return;
+    Resin r = *now;
+    std::erase_if(r.tested_light, [&](const TestedLight& t) { return std::abs(t.layer_height - h) < 1e-6; });
+    storeResin(r);
+}
+
+void App::thickenRaftFor(double h) {
+    if (!doc_) return;
+    const std::vector<TestedLight> tested = testedLight(doc_->print.settings, jobResin());
+    const HeightChoice c = heightChoice(*doc_, printShapeNow(), tested, h);
+    fruit::RaftSpec s = doc_->supports.choices.raft;
+    s.thickness = std::max(s.thickness, std::ceil(c.long_mm * 10 - 1e-6) / 10);
+    showRaft(true);
+    editRaft(s);  // a built-in preset asks for the name of a copy of your own
+}
+
 void App::useRaftPreset(const std::string& name) {
     const fruit::RaftSpec* r = presetSpec(name, raft_presets_);
     if (!doc_ || !r) return;
@@ -1695,6 +1805,7 @@ const App::RaftPreview& App::raftPreview(const fruit::RaftSpec& s, double min_th
 
 void App::applyRaft() {
     raft_open_ = false;
+    slicing_open_ = layer_height_open_ = false;
     raft_prompt_.reset();
     if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) generateSupports();
 }
@@ -1702,6 +1813,7 @@ void App::applyRaft() {
 void App::applyAdvanced() {
     advanced_open_ = false;
     raft_open_ = false;
+    slicing_open_ = layer_height_open_ = false;
     if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) generateSupports();
 }
 
@@ -1711,6 +1823,7 @@ void App::editTips(bool on) {
         step_ = Step::Supports;
         advanced_open_ = false;
         raft_open_ = false;
+        slicing_open_ = layer_height_open_ = false;
     }
     dragging_tip_ = -1;
     tip_undo_.clear();
@@ -3593,7 +3706,9 @@ void App::keys() {
         const MainButton mb = mainButton(doc_.get());
         if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
             supportsNow();
-        else if (mb.enabled && (mb.action == MainAction::Slice || mb.action == MainAction::ShowLayers))
+        else if (mb.enabled && mb.action == MainAction::Slice)
+            slice();
+        else if (mb.enabled && mb.action == MainAction::ShowLayers)
             goToStep(Step::Layers);
     }
     const ImGuiIO& io = ImGui::GetIO();
@@ -3623,6 +3738,13 @@ void App::keys() {
     }
     if (screen_ == Screen::Job && step_ == Step::Supports && advanced_open_) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) advanced_open_ = false;
+        return;
+    }
+    if (screen_ == Screen::Job && (slicing_open_ || layer_height_open_)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            if (layer_height_open_) showLayerHeight(false);
+            else showSlicing(false);
+        }
         return;
     }
     if (screen_ == Screen::Job && step_ == Step::Supports && raft_open_) {

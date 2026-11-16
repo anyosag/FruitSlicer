@@ -24,6 +24,7 @@
 #include "Collisions.h"
 #include "Preferences.h"
 #include "RaftPresets.h"
+#include "SlicingSettings.h"
 #include "RaftPreview.h"
 #include "ShapeTools.h"
 #include "ABTest.h"
@@ -477,6 +478,29 @@ public:
     void deleteRaftPreset(const std::string& name);
     void setNewJobsRaft(const std::string& name);
     void applyRaft();  // back to the Supports step, making supports with this raft
+    // Slicing settings (canvas "Slicing settings"): every setting the slice
+    // and its print file use, and where each comes from. Slice opens it first
+    // while the preference is on; from the Layers place it shows the settings
+    // the layers were cut with (`used`).
+    void showSlicing(bool show, bool used = false);
+    bool slicingOpen() const { return slicing_open_; }
+    bool slicingUsed() const { return slicing_used_; }
+    void slice();     // the Slice buttons: the settings first (when asked), else Layers
+    void sliceNow();  // the page's Slice: cut the layers
+    void setSettingsBeforeSlice(bool on);
+    const PrintSettings* cutWith() const;  // what the job's layers were cut with (null: no layers)
+    const Resin* jobResin() const;         // the job's resin in the library (null: not there)
+    // The Layer height page: what each layer height takes in light and time,
+    // and what it changes in the print. Its picked height is `layerHeightPick`
+    // (0: the print's own).
+    void showLayerHeight(bool show);
+    bool layerHeightOpen() const { return layer_height_open_; }
+    double& layerHeightPick() { return layer_height_pick_; }
+    const PrintShape& printShapeNow();  // the job's, kept until the parts or the supports change
+    void useLayerHeight(double h, bool remake_supports);  // the job's layer height and its light
+    void addTestedLight(double h, double exposure, const std::string& note);  // to the job's resin
+    void removeTestedLight(double h);
+    void thickenRaftFor(double h);  // the Raft page, the raft as thick as h mm layers need
     // The Raft page's preview of `s` round the trunks of the supports made
     // last, w × h pixels. Drawn off the UI thread (at once in a scripted
     // run): until a newer one is ready this is the last one drawn, and
@@ -757,6 +781,12 @@ private:
     bool problems_open_ = false;
     bool advanced_open_ = false;
     bool raft_open_ = false;
+    bool slicing_open_ = false, slicing_used_ = false, layer_height_open_ = false;
+    double layer_height_pick_ = 0;
+    PrintShape print_shape_;
+    int print_shape_revision_ = -1;
+    const void* print_shape_supports_ = nullptr;
+    const void* print_shape_doc_ = nullptr;
     RaftPresets raft_presets_;
     std::optional<RaftNamePrompt> raft_prompt_;
     std::string raft_menu_for_;

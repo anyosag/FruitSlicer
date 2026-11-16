@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "App.h"
+#include "SlicingSettings.h"
 #include "Format.h"
 #include "Hollows.h"
 #include "Icons.h"
@@ -371,7 +372,7 @@ void mainArea(App& app, Document* doc) {
     } else if (mb.action == MainAction::RemakeSupports) {
         note = "The supports were made before the last change.";
     } else if (mb.action == MainAction::Slice) {
-        note = "Cuts the model and its supports into layers.";
+        note = "Slicing with " + slicingLine(*doc) + ".";
     } else {
         note = "The layers are cut for these supports.";
     }
@@ -399,6 +400,10 @@ void mainArea(App& app, Document* doc) {
             }
             ImGui::SetCursorPosY(std::max(after, y + 30));
         }
+    }
+    if (doc && (mb.action == MainAction::Slice || mb.action == MainAction::ShowLayers) && !making && !cutting) {
+        ImGui::Dummy(ImVec2(0, 1));
+        if (linkButton("All slicing settings ›")) app.showSlicing(true);
     }
     ImGui::Dummy(ImVec2(0, 4));
     if (making || cutting) {
@@ -438,7 +443,7 @@ void mainArea(App& app, Document* doc) {
             case MainAction::OpenModel: app.openDialog(); break;
             case MainAction::MakeSupports:
             case MainAction::RemakeSupports: app.supportsNow(); break;
-            case MainAction::Slice:
+            case MainAction::Slice: app.slice(); break;
             case MainAction::ShowLayers: app.goToStep(Step::Layers); break;
         }
     }
@@ -471,7 +476,10 @@ void jobPanel(App& app, float h) {
     if (const CollisionReport* cr = doc ? app.collisions() : nullptr)
         if (!cr->problems.empty()) collisions_label += strf(" · %zu", cr->problems.size());
     tabs(tab, {"Checks", strf("Hollows · %zu", hollows), collisions_label});
-    const float list_h = std::max(80.0f, ImGui::GetContentRegionAvail().y - kMainH);
+    // Slice and Show the layers have the slicing settings' link under their note.
+    const MainAction act = mainButton(doc).action;
+    const float main_h = kMainH + (doc && (act == MainAction::Slice || act == MainAction::ShowLayers) ? 24.0f : 0.0f);
+    const float list_h = std::max(80.0f, ImGui::GetContentRegionAvail().y - main_h);
     ImGui::BeginChild("job_checks", ImVec2(0, list_h), ImGuiChildFlags_None);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 6));
     if (tab == 0) checksTab(app, doc);

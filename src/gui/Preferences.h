@@ -14,6 +14,7 @@ struct Preferences {
     unsigned cores = 0;        // at most this many processor cores for slicing and saving (0 = all)
     bool goo_to_drive = true;  // a USB drive plugged in is where .goo files go
     std::string goo_folder;    // the folder the last .goo was saved to, when not to a drive
+    bool settings_before_slice = true;  // Slice shows the slicing settings first
     bool operator==(const Preferences&) const = default;
 };
 

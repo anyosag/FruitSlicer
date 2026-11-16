@@ -18,6 +18,7 @@
 #include <thread>
 
 #include "App.h"
+#include "SlicingSettings.h"
 #include "Capture.h"
 #include "Document.h"
 #include "Format.h"
@@ -846,6 +847,38 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (what == "reset") app.resetAdvanced();
             else if (what == "apply") app.applyAdvanced();
             else throw std::runtime_error("unknown advanced step " + what);
+        } else if (step.contains("slicing_page")) {
+            // {"slicing_page": "open" | "used" | "close" | "slice" | "slice_now" | "layer_height" | "layer_height_close"}:
+            // the Slicing settings page ("slice" is the Slice button; "used": as the Layers place opens it).
+            const std::string what = step["slicing_page"].get<std::string>();
+            if (what == "open") app.showSlicing(true);
+            else if (what == "used") app.showSlicing(true, true);
+            else if (what == "close") app.showSlicing(false);
+            else if (what == "slice") app.slice();
+            else if (what == "slice_now") app.sliceNow();
+            else if (what == "layer_height") app.showLayerHeight(true);
+            else if (what == "layer_height_close") app.showLayerHeight(false);
+            else throw std::runtime_error("unknown slicing_page step " + what);
+        } else if (step.contains("slicing_open_is")) {
+            // {"slicing_open_is": true}: fails unless the Slicing settings page is (or isn't) showing.
+            if (app.slicingOpen() != step["slicing_open_is"].get<bool>())
+                throw std::runtime_error(std::string("slicing_open_is: the page is ") + (app.slicingOpen() ? "open" : "closed"));
+        } else if (step.contains("settings_before_slice")) {
+            app.setSettingsBeforeSlice(step["settings_before_slice"].get<bool>());
+        } else if (step.contains("layer_height_pick")) {
+            app.layerHeightPick() = step["layer_height_pick"].get<double>();  // a row on the Layer height page
+        } else if (step.contains("layer_height_use")) {
+            app.useLayerHeight(step["layer_height_use"].get<double>(), false);
+        } else if (step.contains("layer_height_is")) {
+            // {"layer_height_is": 0.05}: fails unless the print's layer height is that.
+            if (!app.document()) throw std::runtime_error("layer_height_is: no job open");
+            const double got = printLayerHeight(*app.document()), want = step["layer_height_is"].get<double>();
+            if (std::abs(got - want) > 1e-6) throw std::runtime_error("layer_height_is: the print's is " + std::to_string(got));
+        } else if (step.contains("tested_light")) {
+            // {"tested_light": [0.05, 2.5, "published profile"]}: a tested time for the job's resin.
+            const auto& t = step["tested_light"];
+            if (!app.jobResin()) throw std::runtime_error("tested_light: the job's resin is not in the library");
+            app.addTestedLight(t[0].get<double>(), t[1].get<double>(), t.size() > 2 ? t[2].get<std::string>() : std::string());
         } else if (step.contains("raft_page")) {
             // {"raft_page": "open" | "close" | "apply"}: the Raft page.
             const std::string what = step["raft_page"].get<std::string>();
