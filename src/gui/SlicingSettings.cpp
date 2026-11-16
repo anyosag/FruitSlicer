@@ -431,8 +431,7 @@ SliceSettingsView sliceSettingsView(const Document& doc, const PrinterSetup& set
         if (sup && !sup->rafts.empty()) {
             for (const auto& r : sup->rafts) rafts.push_back({r.parts, r.spec, r.preset, r.top, r.touching});
         } else if (!all_plate) {
-            const SupportSetup setup{doc.supports.choices, doc.supports.own, doc.supports.shared};
-            for (const RaftGroup& r : chosenRafts(doc, setup)) rafts.push_back({r.parts, r.spec, r.preset, r.spec.thickness, false});
+            for (const RaftGroup& r : chosenRafts(doc, doc.supports.setup())) rafts.push_back({r.parts, r.spec, r.preset, r.spec.thickness, false});
         }
         for (std::size_t i = 0; i < rafts.size(); ++i) {
             const RaftLine& r = rafts[i];
