@@ -32,6 +32,25 @@ void rightText(const char* s, ImFont* f, float size, ImU32 c, float y) {
     text(s, f, size, c);
 }
 
+// A button that opens a menu: `label` and a small caret, as wide as they are.
+bool presetButton(const char* id, const char* label) {
+    ImGui::PushFont(fonts().medium, size::Body);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const ImVec2 sz(ts.x + 40, 30);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, sz);
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), hovered ? col::Active : col::Panel, 15);
+    dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y), col::BorderStrong, 15);
+    dl->AddText(ImVec2(p.x + 14, p.y + std::round((sz.y - ts.y) / 2)), col::Text, label);
+    const float cx = p.x + sz.x - 17, cy = p.y + sz.y / 2;
+    dl->AddTriangleFilled(ImVec2(cx - 4, cy - 2), ImVec2(cx + 4, cy - 2), ImVec2(cx, cy + 3), col::TextSecondary);
+    ImGui::PopFont();
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return clicked;
+}
+
 // A slider with a stop at each whole number from `lo` to `hi`: a thin track, a
 // round grip and a dot for each stop. True when it moved. `activated`,
 // `held` and `released` tell when a drag starts, that it goes on (every
@@ -241,24 +260,32 @@ void onThePlate(App& app, Document& doc) {
     text(raftText.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
     ImGui::EndGroup();
     if (raft) {
-        // The kind of raft: a pad under each support, or one solid base.
-        ImGui::Dummy(ImVec2(0, 4));
+        // The job's raft: its preset (a menu of them), the way to the Raft page, and what it is.
+        ImGui::Dummy(ImVec2(0, 6));
         ImGui::Indent(28);
-        ImGui::PushID("raft_type");
-        const bool full = made.choices.full_raft;
-        bool pick = full;
-        if (segmentButton("Pads", !full)) pick = false;
-        ImGui::SameLine(0, 4);
-        if (segmentButton("Full", full)) pick = true;
-        ImGui::PopID();
-        if (pick != full) {
-            SupportChoices c = made.choices;
-            c.full_raft = pick;
-            app.setSupportChoices(c);
+        ImGui::PushID("raft_preset");
+        const std::string& name = made.choices.raft_preset.name;
+        const std::string label = name.empty() ? std::string("This job's own raft") : name;
+        if (presetButton("##preset", label.c_str())) ImGui::OpenPopup("raft_presets");
+        ImGui::SameLine(0, 12);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
+        if (linkButton("Edit raft…")) app.showRaft(true);
+        if (ImGui::BeginPopup("raft_presets")) {
+            auto item = [&](const std::string& n) {
+                if (ImGui::Selectable(n.c_str(), n == name, 0, ImVec2(220, 0))) app.useRaftPreset(n);
+            };
+            groupLabel("Built in");
+            for (const fruit::RaftPreset& p : fruit::builtInRaftPresets()) item(p.name);
+            if (!app.raftPresets().own.empty()) {
+                ImGui::Dummy(ImVec2(0, 4));
+                groupLabel("Yours");
+                for (const OwnRaftPreset& p : app.raftPresets().own) item(p.name);
+            }
+            ImGui::EndPopup();
         }
-        text(full ? "One solid base with a sloped edge for the scraper. Holds small and thin parts best."
-                  : "Small pads joined by bars. Uses the least resin.",
-             fonts().regular, size::Help, col::TextSecondary, true);
+        ImGui::PopID();
+        ImGui::Dummy(ImVec2(0, 2));
+        text(raftSummary(made.choices.raft, thick).c_str(), fonts().regular, size::Help, col::TextSecondary, true);
         ImGui::Unindent(28);
     }
     ImGui::Dummy(ImVec2(0, 4));

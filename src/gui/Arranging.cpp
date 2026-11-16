@@ -126,9 +126,8 @@ LayoutSearch findLayouts(const Document& doc, double gap, bool turn, const fruit
     const bool fresh = sup.result && sup.fresh(doc.revision(), doc.supportSettings());
     s.supports = fresh;
     const fruit::TreeConfig tc = fresh ? sup.result->tree_cfg : treeConfig(sup.choices);
-    const bool full = tc.raft == fruit::RaftStyle::Full;
-    // How far a raft reaches past the foot of a support: its pad's brim, and the Full slab's margin past that.
-    const double past_foot = tc.pad_brim + (full ? tc.full_raft_margin : 0.0);
+    // How far a raft reaches past the foot of a support, at its widest (a frame's too).
+    const double past_foot = fruit::raftPastFoot(tc);
     std::vector<fruit::ops::NestPart> parts;
     double margin = 0;
     for (const Part& p : doc.parts()) {

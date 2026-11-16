@@ -23,7 +23,6 @@ bool near(double a, double b, double eps = 1e-6) { return std::abs(a - b) <= eps
 constexpr double kLayer = 0.1;         // mm: a spec raft is built in layers this thick
 constexpr double kArcTol = 0.004;      // mm: arcs of the layers' offsets
 constexpr double kPlanFillet = 1.0;    // mm: joints rounded in plan (bar to pad, link to frame)
-constexpr double kMouthRound = 0.25;   // mm: where a window meets the side
 constexpr double kInnerCorner = 0.5;   // mm: a window's inner corners, in plan
 constexpr double kRoofCorner = 0.4;    // mm: a window's roof corners
 constexpr double kFarEdge = 1e3;       // mm: the top surface runs on, inward, past any edge
@@ -374,8 +373,9 @@ RaftShape specRaft(TriangleMesh* m, const SupportTree& tree, const TreeConfig& t
         if (!shape.windows.empty() && zm < wh) {
             Paths cut;
             for (const RaftWindow& w : shape.windows) cut.push_back(windowAt(w, base_inset, wh, zm));
+            // (Their mouths are left as cut: rounding them layer by layer took slivers off the low layers that
+            // the higher ones, leaning out, kept, so those started in mid-air.)
             layer = difference(layer, unionNonZero(cut));
-            if (s.rounded) layer = offset(offset(layer, -kMouthRound, kArcTol), kMouthRound, kArcTol);
         }
         layer = tidy(layer);
         if (k == 0) shape.base = layer;

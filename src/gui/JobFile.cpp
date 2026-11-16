@@ -298,7 +298,12 @@ void saveJob(const std::string& path, const Document& doc) {
     if (c.how_many != kHowManyCentre) sup["choices"]["how_many"] = c.how_many;
     if (c.look_further) sup["choices"]["look_further"] = true;
     if (c.hold != kHoldDefault) sup["choices"]["hold"] = c.hold;
-    if (c.full_raft) sup["choices"]["full_raft"] = true;  // only when on, so older jobs save as they did
+    // The raft only when it isn't Least resin, so older jobs save as they did.
+    if (!(c.raft == fruit::leastResinSpec()) || c.raft_preset.name != fruit::kDefaultRaftPreset) {
+        json r = fruit::raftSpecToJson(c.raft);
+        r["preset"] = c.raft_preset.name;
+        sup["choices"]["raft"] = std::move(r);
+    }
     if (c.hinge) sup["choices"]["hinge"] = fruit::hingeName(*c.hinge);
     // The resin's name and a copy of its measured values: the job keeps them.
     if (!c.resin.empty()) sup["choices"]["resin"] = c.resin;
@@ -478,8 +483,18 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     c.usual_tip = cj.value("usual_tip", 2);
     c.density = cj.value("density", 1.0);
     c.merge = cj.value("merge", true);
-    c.full_raft = cj.value("full_raft", false);
     c.advanced = cj.value("advanced", std::map<std::string, double>{});
+    if (cj.contains("raft") && cj["raft"].is_object()) {
+        c.raft = fruit::raftSpecFromJson(cj["raft"]);
+        c.raft_preset.name = cj["raft"].value("preset", std::string());
+    } else {
+        // Saved before the Raft page: the Full switch and the raft values set on the Advanced page, as the
+        // same raft. With none of them it is Least resin.
+        c.raft = legacyJobRaft(cj.value("full_raft", false), c.advanced);
+        c.raft_preset.name = c.raft == fruit::leastResinSpec()   ? std::string(fruit::kDefaultRaftPreset)
+                             : c.raft == fruit::plainBaseSpec() ? std::string("Plain base")
+                                                                : std::string();
+    }
     if (cj.contains("hinge") && cj["hinge"].is_string()) c.hinge = fruit::parseHinge(cj["hinge"].get<std::string>());
     c.resin = cj.value("resin", std::string());
     if (cj.contains("profile") && cj["profile"].is_object()) c.profile = cj["profile"];

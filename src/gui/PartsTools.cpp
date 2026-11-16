@@ -160,9 +160,9 @@ ToolReport arrangeParts(const Document& doc, PartsEdit& e, double gap, bool turn
     double margin = 0;
     for (const Part& p : doc.parts()) margin = std::max(margin, fruit::plateMargin(p.placement()));
     // The room is between their rafts: a raft reaches past a part's outline
-    // by about half a support's foot, the pad's brim and the Full slab's margin.
+    // by half a support's foot and as far as the raft reaches past it (raftPastFoot).
     const fruit::TreeConfig tc = treeConfig(doc.supports.choices);
-    const double reach = tc.base_diameter / 2 + tc.pad_brim + (tc.raft == fruit::RaftStyle::Full ? tc.full_raft_margin : 0.0);
+    const double reach = tc.base_diameter / 2 + fruit::raftPastFoot(tc);
     // Three ways, the first that fits them all (else the one that fits the
     // most, the earlier on a tie): as they are; each turned about the
     // vertical to where it takes the least room, its long side along X; and

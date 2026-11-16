@@ -5,6 +5,7 @@
 
 #include "support/Raft.h"
 #include "support/SupportTree.h"
+#include "support/SupportValidator.h"
 
 using namespace fruit;
 using Catch::Approx;
@@ -49,6 +50,11 @@ std::vector<Vec2> twoGroups() {
     for (double x : {25.5, 30.5, 35.5})
         for (double y : {7.0, 12.0, 17.0}) v.push_back({x, y});
     return v;
+}
+
+// The trunks the demo bracket's supports stand on: a dense row of lobes along every side.
+std::vector<Vec2> bracketTrunks() {
+    return {{0, 11}, {6, -11}, {16, 0}, {-14, -9}, {-14, -6}, {-14, -3}, {-14, 0}, {-14, 3}, {-14, 6}, {-14, 9}, {-12, 9}, {-11, -9}, {-11, -6}, {-11, 1}, {-9, 9}, {-8, -9}, {-8, 0}, {-7, 6}, {-6, 4}, {-6, 9}, {-5, -9}, {-5, -3}, {-5, 9}, {-2, -9}, {-2, -2}, {-2, 9}, {-1, 2}, {1, -9}, {1, 9}, {1, -6}, {2, 9}, {3, 2}, {4, -9}, {4, 6}, {5, -1}, {5, 9}, {7, -9}, {7, 2}, {7, -3}, {7, -2}, {8, 9}, {9, -6}, {10, -9}, {10, 3}, {11, -9}, {11, 9}, {14, -6}, {14, -5}, {14, -2}, {14, 2}, {14, 5}, {14, 6}, {14, -1}, {14, -9}, {14, 9}, {-7.49, 10.95}, {3.5, -11}, {-3.5, 11}, {-6, -11}, {4.5, 11}, {-0, -11}, {-2.5, -11}, {2.25, 11}};
 }
 
 TreeConfig withSpec(const RaftSpec& s) {
@@ -236,4 +242,24 @@ TEST_CASE("raft: the edge's cut shape starts at the plate and reaches the lip's 
     const auto f = raftEdgeProfile(preset("Pads with frame"), 1.0);
     CHECK(f.back().x == Approx(3.6));
     CHECK(f.back().y == 0.0);
+}
+
+TEST_CASE("raft: every preset's raft starts on the plate, nothing in mid-air", "[raft]") {
+    // As built, and with a window at every lobe tip, the edge wider, or both: a window beside a lobe's valley
+    // once left a sliver that started 0.3 mm up.
+    for (const RaftPreset& p : builtInRaftPresets())
+        for (int variant = 0; variant < 4; ++variant) {
+            RaftSpec s = p.spec;
+            if (variant & 1) s.windows = RaftWindows::EveryTip;
+            if (variant & 2) s.reach += 0.7;
+            for (const auto& layout : {twoGroups(), bracketTrunks()}) {
+                const SupportTree t = trunksAt(layout, s.thickness);
+                const TriangleMesh m = t.mesh(withSpec(s));
+                const ValidationReport v = validateSupported(TriangleMesh{}, m, 0.05, 0.0);
+                INFO(p.name << ", variant " << variant << ", " << layout.size() << " trunks");
+                for (const auto& f : v.floating)
+                    UNSCOPED_INFO("floating at z " << f.z << " (" << f.at.x << ", " << f.at.y << "), " << f.area << " mm²");
+                CHECK(v.floating.empty());
+            }
+        }
 }

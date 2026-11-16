@@ -693,13 +693,21 @@ TEST_CASE("Quick support: the stops plan and the far ends still make supports", 
     CHECK(run(at(3, 2, true)).tips > 0);
 }
 
-TEST_CASE("Full raft: the choice reaches the engine, is saved with the job and makes supports out of date",
-          "[gui][supports][jobs]") {
+TEST_CASE("Raft: the job's raft reaches the engine, is saved with the job and makes supports out of date",
+          "[gui][supports][jobs][raft]") {
     SupportChoices c;
-    CHECK(treeConfig(c).raft == fruit::RaftStyle::Pads);  // pads stay the default
-    c.full_raft = true;
-    CHECK(treeConfig(c).raft == fruit::RaftStyle::Full);
+    CHECK(treeConfig(c).raft == fruit::RaftStyle::Pads);  // Least resin's pads stay the default
+    CHECK_FALSE(treeConfig(c).raft_spec.has_value());
+    c.raft = fruit::plainBaseSpec();
+    CHECK(treeConfig(c).raft == fruit::RaftStyle::Full);  // Plain base: the old Full slab
+    CHECK_FALSE(treeConfig(c).raft_spec.has_value());
     CHECK_FALSE(c == SupportChoices{});  // differs from what the supports were made with
+    c.raft = fruit::builtInRaftPreset("Easy release")->spec;
+    CHECK(treeConfig(c).raft_spec.has_value());
+    // The preset's name is a label: renaming it leaves supports made with it up to date.
+    SupportChoices renamed = c;
+    renamed.raft_preset.name = "Something else";
+    CHECK(renamed == c);
     fruit::Placement flat;
     flat.on_plate = true;  // no raft at all, whatever the choice
     fruit::SupportConfig cfg;
@@ -708,25 +716,54 @@ TEST_CASE("Full raft: the choice reaches the engine, is saved with the job and m
     ch.on_plate = true;
     fruit::resolveSettings(nullptr, ch, cfg, &tc);
     CHECK(tc.raft == fruit::RaftStyle::None);
-    // The edge and gap rows set the engine's values.
-    c.advanced["full_raft_margin"] = 2.0;
-    c.advanced["full_raft_gap"] = 6.0;
-    CHECK(treeConfig(c).full_raft_margin == Approx(2.0));
-    CHECK(treeConfig(c).full_raft_gap == Approx(6.0));
 
     const fs::path dir = fs::temp_directory_path() / "fruit_full_raft_tests";
     fs::create_directories(dir);
     const auto doc = bracket("full_raft_bracket.stl");
     const auto pads = (dir / "pads.fruitjob").string();
     saveJob(pads, *doc);
-    CHECK_FALSE(openJob(pads, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none())
-                    .doc->supports.choices.full_raft);
-    doc->supports.choices.full_raft = true;
+    CHECK_FALSE(jobJson(pads)["supports"]["choices"].contains("raft"));  // a Least resin job saves as it always did
+    const OpenedJob p = openJob(pads, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    CHECK(p.doc->supports.choices.raft == fruit::leastResinSpec());
+    CHECK(p.doc->supports.choices.raft_preset.name == fruit::kDefaultRaftPreset);
+    doc->supports.choices.raft = fruit::builtInRaftPreset("Easy release")->spec;
+    doc->supports.choices.raft.reach = 2.5;
+    doc->supports.choices.raft_preset.name = "Copy of Easy release";
     const auto full = (dir / "full.fruitjob").string();
     saveJob(full, *doc);
     const OpenedJob o = openJob(full, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
-    CHECK(o.doc->supports.choices.full_raft);
+    CHECK(o.doc->supports.choices.raft == doc->supports.choices.raft);
+    CHECK(o.doc->supports.choices.raft_preset.name == "Copy of Easy release");
     CHECK(o.doc->supports.choices == doc->supports.choices);
+}
+
+TEST_CASE("Raft: a job saved before the Raft page opens with the same raft", "[gui][supports][jobs][raft]") {
+    const fs::path dir = fs::temp_directory_path() / "fruit_full_raft_tests";
+    fs::create_directories(dir);
+    const auto doc = bracket("old_raft_bracket.stl");
+    const auto path = (dir / "old.fruitjob").string();
+    saveJob(path, *doc);
+    for (bool full : {false, true}) {
+        const auto old = (dir / (full ? "old_full.fruitjob" : "old_pads.fruitjob")).string();
+        rewriteJob(path, old, [full](nlohmann::json& j) {
+            auto& cj = j["supports"]["choices"];
+            cj.erase("raft");
+            if (full) cj["full_raft"] = true;
+            cj["advanced"] = {{"raft_thickness", 1.5}, {"full_raft_margin", 2.0}, {"full_raft_gap", 6.0}, {"link_width", 2.0}};
+        });
+        const OpenedJob o = openJob(old, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+        const SupportChoices& c = o.doc->supports.choices;
+        CHECK(c.advanced.empty());  // no row reads them now: they are the raft's
+        const fruit::TreeConfig tc = treeConfig(c);
+        INFO("full: " << full);
+        CHECK_FALSE(tc.raft_spec.has_value());  // built by the old code, as it was
+        CHECK(tc.raft == (full ? fruit::RaftStyle::Full : fruit::RaftStyle::Pads));
+        CHECK(tc.raft_thickness == Approx(1.5));
+        CHECK(tc.full_raft_gap == Approx(6.0));
+        CHECK(tc.link_width == Approx(2.0));
+        if (full) CHECK(tc.full_raft_margin == Approx(2.0));
+        CHECK(tc.pad_brim == Approx(fruit::TreeConfig{}.pad_brim));
+    }
 }
 
 TEST_CASE("Quick support: supports made ahead from the tip counts' plans are the ones Make supports makes",

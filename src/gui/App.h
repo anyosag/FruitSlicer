@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Document.h"
@@ -22,6 +23,7 @@
 #include "PartsTools.h"
 #include "Collisions.h"
 #include "Preferences.h"
+#include "RaftPresets.h"
 #include "ShapeTools.h"
 #include "ABTest.h"
 #include "Arranging.h"
@@ -417,6 +419,35 @@ public:
     // (making supports out of date) and carry over to the next model opened.
     void showAdvanced(bool show) { advanced_open_ = show; }
     bool advancedOpen() const { return advanced_open_; }
+    // The Raft page: the job's raft, the presets (built in and yours) and
+    // which one new jobs start with. Built-in presets never change: a change
+    // to one waits, in raftPrompt(), for the name of a copy of your own.
+    void showRaft(bool show);
+    bool raftOpen() const { return raft_open_; }
+    const RaftPresets& raftPresets() const { return raft_presets_; }
+    void useRaftPreset(const std::string& name);  // the job's raft becomes that preset's
+    void editRaft(const fruit::RaftSpec& s);      // a value changed on the Raft page
+    struct RaftNamePrompt {
+        enum class Kind { SaveChange, Copy, Rename } kind = Kind::Copy;
+        std::string of;       // the preset it is a copy (or the new name) of
+        fruit::RaftSpec spec;  // what the copy will have
+        std::string change;   // SaveChange: the change, in words ("" for several)
+        std::string name;     // being typed
+        bool new_jobs = false;  // Start new jobs with this raft
+    };
+    std::optional<RaftNamePrompt>& raftPrompt() { return raft_prompt_; }
+    void askRaftCopy(const std::string& of);
+    void askRaftRename(const std::string& name);
+    // Save in the prompt: false (with the reason in raftPromptProblem) when the name can't be used.
+    bool finishRaftPrompt();
+    std::string raftPromptProblem() const;
+    void cancelRaftPrompt();  // Undo the change, or Cancel
+    void deleteRaftPreset(const std::string& name);
+    void setNewJobsRaft(const std::string& name);
+    void applyRaft();  // back to the Supports step, making supports with this raft
+    // Scripts: open a preset's ··· menu on the next frame the Raft page draws.
+    void openRaftMenu(const std::string& name) { raft_menu_for_ = name.empty() ? std::string("\x01") : name; }  // "": close it
+    std::string takeRaftMenu() { return std::exchange(raft_menu_for_, std::string()); }
     void setAdvanced(const std::string& key, double value);
     void resetAdvanced();
     void applyAdvanced();  // back to the Supports step, generating with these values
@@ -678,6 +709,12 @@ private:
     SupportsView supports_view_ = SupportsView::Supports;
     bool problems_open_ = false;
     bool advanced_open_ = false;
+    bool raft_open_ = false;
+    RaftPresets raft_presets_;
+    std::optional<RaftNamePrompt> raft_prompt_;
+    std::string raft_menu_for_;
+    std::string raftPresetsFile() const;
+    void saveRaftPresetsFile();
     bool panel_scroll_end_ = false;
     int panel_scroll_frames_ = 0;
     HandleDrag handle_drag_;

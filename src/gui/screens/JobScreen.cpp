@@ -505,8 +505,8 @@ void statusBar(App& app) {
     endPanel();
 }
 
-// The advanced support settings, as a sheet over the workspace.
-void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area) {
+// The advanced support settings (or the Raft page), as a sheet over the workspace.
+void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area, bool raft = false) {
     // Over everything behind it, so clicks land on the sheet or nowhere.
     ImGui::SetCursorScreenPos(origin);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(6, 7, 9, 158));
@@ -520,10 +520,12 @@ void advancedSheet(App& app, Document& doc, ImVec2 origin, ImVec2 area) {
     ImGui::PushStyleColor(ImGuiCol_Border, col::BorderStrong);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 16);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-    ImGui::BeginChild("advanced_sheet", sz, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
+    ImGui::BeginChild(raft ? "raft_sheet" : "advanced_sheet", sz,
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0);
-    supportsAdvanced(app, doc, ImVec2(0, sz.y - 16));
+    if (raft) supportsRaft(app, doc, ImVec2(0, sz.y - 16));
+    else supportsAdvanced(app, doc, ImVec2(0, sz.y - 16));
     ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
@@ -554,6 +556,7 @@ void job(App& app) {
         ImGui::SameLine(0, 0);
         jobPanel(app, body_h);
         if (doc && app.advancedOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h));
+        else if (doc && app.raftOpen()) advancedSheet(app, *doc, body_at, ImVec2(body_w, body_h), true);
     }
     statusBar(app);
     ImGui::PopStyleVar(2);

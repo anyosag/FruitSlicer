@@ -95,6 +95,7 @@ set(app_sources
   Measure.cpp
   Plates.cpp
   Preferences.cpp
+  RaftPresets.cpp
   Print.cpp
   Resins.cpp
   Risk.cpp
@@ -121,6 +122,7 @@ set(app_sources
   screens/SendDialog.cpp
   screens/SettingsScreens.cpp
   screens/SupportsAdvanced.cpp
+  screens/SupportsRaft.cpp
   screens/OrientStep.cpp
   screens/RiskParts.cpp
   screens/SupportsStep.cpp

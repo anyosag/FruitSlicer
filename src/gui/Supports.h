@@ -46,7 +46,14 @@ struct SupportChoices {
     // The sizes for spots in mid-air and near edges sit as many sizes above or below as it is from the resin's.
     int usual_tip = 2;
     double density = 1.0;  // 1 = normal spacing; up to 2 = closer together (old jobs; How many adds to it)
-    bool full_raft = false;  // one solid raft under all the supports, instead of a pad under each
+    // The job's raft, from the Raft page (Least resin's unless chosen).
+    fruit::RaftSpec raft;
+    // The preset it came from. A label only: two jobs with the same raft are the same whatever it is called,
+    // so renaming a preset leaves supports made with it up to date.
+    struct PresetName {
+        std::string name = fruit::kDefaultRaftPreset;
+        bool operator==(const PresetName&) const { return true; }
+    } raft_preset;
     bool merge = true;     // neighbouring supports join into trunks (old jobs; Trunks and braces can turn it off too)
     int how_many = kHowManyCentre;  // How many: 1 (Fewest) to 5 (Most)
     bool look_further = false;      // a support looks further for a way down before it stands on the model
@@ -117,6 +124,11 @@ void resetQuick(SupportChoices& c);
 // settings as it had, written as the usual tip and values of the job's own
 // on the Advanced page. `c` holds the rest of the job's choices already.
 void convertOldQuick(SupportChoices& c, int hold, int amount, int sturdy);
+
+// A job saved before the Raft page: its raft from the Full switch and the raft
+// values it set on the Advanced page (taken out of `advanced`, where no row
+// reads them now), so it builds as it did.
+fruit::RaftSpec legacyJobRaft(bool full, std::map<std::string, double>& advanced);
 
 // ---- The advanced page: every value the planner and tree builder use ----
 

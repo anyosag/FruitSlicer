@@ -66,7 +66,6 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
         cfg.edge_tip = std::max(cfg.edge_tip, floor);
     }
     tc.merge_pillars = c.merge;
-    if (c.full_raft && tc.raft == fruit::RaftStyle::Pads) tc.raft = fruit::RaftStyle::Full;  // none stays none
     if (const double k = quickCapacityScale(c.hold); k != 1.0) {
         // Scales the table or the reference value, as the advanced page's row does.
         if (cfg.capacity.table.empty()) cfg.capacity.reference_capacity *= k;
@@ -89,6 +88,7 @@ void resolve(const fruit::Placement& p, const SupportChoices& c, fruit::SupportC
     cfg.skin_reach *= howManyEdgeReach(stop);
     if (c.look_further) tc.max_route_length = std::max(tc.max_route_length, kLookFurtherRoute);
     applyAdvanced(c.advanced, cfg, tc);
+    fruit::applyRaftSpec(c.raft, tc);  // the Raft page's (none stays none)
     if (edge_held) *edge_held = held && !c.advanced.count("edge_tip");
 }
 
@@ -362,43 +362,20 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  },
                  .text = [](const X&) { return std::string("always on"); }});
     // ---- Raft ----
-    v.push_back({.group = "Raft", .label = "Raft thickness", .kind = K::Number, .source = S::Default,
-                 .fields = {{"raft_thickness", "", "mm", 0.2, 5, 1,
-                             [](const C&, const T& t) { return t.raft_thickness; },
-                             [](C&, T& t, double x) { t.raft_thickness = x; }}},
-                 .help = [](const X& x) {
-                     return strf("At least as thick as your bottom and transition layers: %d × %.2f = %.2f mm.",
-                                 x.raft_layers, x.raft_layer_height, x.raft_layers * x.raft_layer_height);
-                 }});
-    v.push_back({.group = "Raft", .label = "Full raft edge", .kind = K::Number, .source = S::Default,
-                 .fields = {{"full_raft_margin", "", "mm past", 0, 5, 1,
-                             [](const C&, const T& t) { return t.full_raft_margin; },
-                             [](C&, T& t, double x) { t.full_raft_margin = x; }}},
+    v.push_back({.group = "Raft", .label = "Raft", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X&) {
-                     return std::string("Full raft only: how far the raft reaches past the pads at the outer "
-                                        "supports. The edge also slopes in going up, so a scraper can slide under.");
+                     return std::string("Its shape, thickness, edge, windows, bars and frame are set on the Raft page: "
+                                        "Edit raft on the Supports panel.");
+                 },
+                 .text = [](const X& x) {
+                     return x.placement.on_plate ? std::string("none") : x.choices.raft_preset.name;
                  }});
-    v.push_back({.group = "Raft", .label = "Full raft gaps", .kind = K::Number, .source = S::Default,
-                 .fields = {{"full_raft_gap", "", "mm wide", 0, 30, 1,
-                             [](const C&, const T& t) { return t.full_raft_gap; },
-                             [](C&, T& t, double x) { t.full_raft_gap = x; }}},
-                 .help = [](const X&) {
-                     return std::string("Full raft only: gaps this narrow between supports are filled in. Supports "
-                                        "farther apart than this get their own raft, joined by flat bars.");
-                 }});
-    v.push_back({.group = "Raft", .label = "Pads", .kind = K::Number, .source = S::Default,
-                 .fields = {{"pad_diameter", "", "mm base", 1, 8, 1,
+    v.push_back({.group = "Raft", .label = "Trunk feet", .kind = K::Number, .source = S::Default,
+                 .fields = {{"pad_diameter", "", "mm across", 1, 8, 1,
                              [](const C&, const T& t) { return t.base_diameter; },
                              [](C&, T& t, double x) { t.base_diameter = x; }}},
                  .help = [](const X& x) {
-                     return strf("Each trunk stands on a %.1f mm tall pad with a %.1f mm brim.", x.tc.base_height,
-                                 x.tc.pad_brim);
-                 }});
-    v.push_back({.group = "Raft", .label = "Links", .kind = K::Number, .source = S::Default,
-                 .fields = {{"link_width", "", "mm wide", 0.5, 4, 1, [](const C&, const T& t) { return t.link_width; },
-                             [](C&, T& t, double x) { t.link_width = x; }}},
-                 .help = [](const X&) {
-                     return std::string("Flat bars join the pads, so the raft and supports come off in one piece.");
+                     return strf("Each trunk widens to this where it stands on the raft, over %.1f mm.", x.tc.base_height);
                  }});
     v.push_back({.group = "Raft", .label = "Lift", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X&) {
@@ -492,6 +469,21 @@ void addWarnings(const std::vector<fruit::Warning>& ws, std::map<std::string, Su
 }
 
 }  // namespace
+
+fruit::RaftSpec legacyJobRaft(bool full, std::map<std::string, double>& advanced) {
+    fruit::TreeConfig tc;
+    auto take = [&](const char* key, double& to) {
+        if (const auto it = advanced.find(key); it != advanced.end()) {
+            to = it->second;
+            advanced.erase(it);
+        }
+    };
+    take("raft_thickness", tc.raft_thickness);
+    take("full_raft_margin", tc.full_raft_margin);
+    take("full_raft_gap", tc.full_raft_gap);
+    take("link_width", tc.link_width);
+    return fruit::legacyRaftSpec(full, tc);
+}
 
 std::size_t SupportResult::count(SupportProblem::Level l) const {
     std::size_t n = 0;

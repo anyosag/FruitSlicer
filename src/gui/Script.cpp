@@ -602,7 +602,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("raft_type")) {
             // {"raft_type": "pads" | "full"}: the raft's kind, with the supports made stale like any setting
             SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
-            c.full_raft = step["raft_type"].get<std::string>() == "full";
+            const bool full = step["raft_type"].get<std::string>() == "full";
+            c.raft = full ? fruit::plainBaseSpec() : fruit::leastResinSpec();
+            c.raft_preset.name = full ? "Plain base" : fruit::kDefaultRaftPreset;
             app.setSupportChoices(c);
         } else if (step.contains("height_correction")) {
             app.setHeightCorrection(step["height_correction"].get<double>());
@@ -778,6 +780,53 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (what == "reset") app.resetAdvanced();
             else if (what == "apply") app.applyAdvanced();
             else throw std::runtime_error("unknown advanced step " + what);
+        } else if (step.contains("raft_page")) {
+            // {"raft_page": "open" | "close" | "apply"}: the Raft page.
+            const std::string what = step["raft_page"].get<std::string>();
+            if (what == "open") app.showRaft(true);
+            else if (what == "close") app.showRaft(false);
+            else if (what == "apply") app.applyRaft();
+            else throw std::runtime_error("unknown raft_page step " + what);
+        } else if (step.contains("raft_preset")) {
+            app.useRaftPreset(step["raft_preset"].get<std::string>());  // a built-in preset or one of yours
+        } else if (step.contains("raft_value")) {
+            // {"raft_value": {"reach": 2.5, ...}}: values changed on the Raft page (keys as in the job file).
+            if (!app.document()) throw std::runtime_error("raft_value: no job open");
+            nlohmann::json j = fruit::raftSpecToJson(app.document()->supports.choices.raft);
+            for (const auto& [k, v] : step["raft_value"].items()) j[k] = v;
+            app.editRaft(fruit::raftSpecFromJson(j));
+        } else if (step.contains("raft_copy")) {
+            app.askRaftCopy(step["raft_copy"].get<std::string>());  // Make a copy… on a preset's menu
+        } else if (step.contains("raft_menu")) {
+            app.openRaftMenu(step["raft_menu"].get<std::string>());  // a preset's ··· menu, for a picture
+        } else if (step.contains("raft_new_jobs")) {
+            app.setNewJobsRaft(step["raft_new_jobs"].get<std::string>());
+        } else if (step.contains("raft_prompt_name")) {
+            if (!app.raftPrompt()) throw std::runtime_error("raft_prompt_name: no name is being asked for");
+            app.raftPrompt()->name = step["raft_prompt_name"].get<std::string>();
+        } else if (step.contains("raft_prompt")) {
+            // {"raft_prompt": "save" | "cancel"}: the name prompt's buttons.
+            const std::string what = step["raft_prompt"].get<std::string>();
+            if (what == "save") {
+                if (!app.finishRaftPrompt()) throw std::runtime_error("raft_prompt: save refused: " + app.raftPromptProblem());
+            } else if (what == "cancel") {
+                app.cancelRaftPrompt();
+            } else {
+                throw std::runtime_error("unknown raft_prompt step " + what);
+            }
+        } else if (step.contains("raft_is")) {
+            // {"raft_is": "name"}: fails unless the job's raft is that preset's (and has its values).
+            const std::string want = step["raft_is"].get<std::string>();
+            if (!app.document()) throw std::runtime_error("raft_is: no job open");
+            const SupportChoices& c = app.document()->supports.choices;
+            if (c.raft_preset.name != want) throw std::runtime_error("raft_is: the job's raft is " + c.raft_preset.name);
+            const fruit::RaftSpec* s = presetSpec(want, app.raftPresets());
+            if (!s || !(*s == c.raft)) throw std::runtime_error("raft_is: the job's raft has other values than " + want);
+        } else if (step.contains("raft_prompt_is")) {
+            // {"raft_prompt_is": "Copy of Easy release"}: the name the prompt offers ("" for no prompt).
+            const std::string want = step["raft_prompt_is"].get<std::string>();
+            const std::string got = app.raftPrompt() ? app.raftPrompt()->name : std::string();
+            if (got != want) throw std::runtime_error("raft_prompt_is: the prompt offers \"" + got + "\"");
         } else if (step.contains("setting")) {
             const auto& kv = step["setting"];
             app.setAdvanced(kv[0].get<std::string>(), kv[1].get<double>());

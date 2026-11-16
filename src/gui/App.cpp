@@ -65,6 +65,7 @@ App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
         }
     }
     ab_record_ = loadABRecord((std::filesystem::path(abDir()) / "test.json").string());
+    raft_presets_ = loadRaftPresets(raftPresetsFile());  // (a scripted run's scratch folder starts empty)
     if (resins_.empty()) {  // scripted runs, or a folder that can't be written
         Resin r;
         r.id = "my-resin";
@@ -386,6 +387,7 @@ void App::installJob(std::shared_ptr<Document> d) {
     step_ = doc_->supports.fresh(doc_->revision(), doc_->supportSettings()) ? Step::Supports : Step::Model;
     orient_view_ = OrientView::Settings;
     advanced_open_ = false;
+    raft_open_ = false;
     frameModel();
     remember(*doc_);
     log::info("job opened: " + doc_->job_path);
@@ -483,11 +485,17 @@ void App::placeChecked() {
     forgetJobTools();
     checking_.reset();
     doc_->supports.choices.advanced = advanced_;  // your support settings stay with you
+    // New jobs start with the raft chosen for them on the Raft page.
+    if (const fruit::RaftSpec* r = presetSpec(raft_presets_.new_jobs, raft_presets_)) {
+        doc_->supports.choices.raft = *r;
+        doc_->supports.choices.raft_preset.name = raft_presets_.new_jobs;
+    }
     applyResin(*doc_, newJobResin());  // its print settings and measured values
     applyPrinterSetup();
     doc_->saved = doc_->stamp();  // nothing to save until something changes
     health_.open = false;
     advanced_open_ = false;
+    raft_open_ = false;
     step_ = Step::Model;
     orient_view_ = OrientView::Settings;
     screen_ = Screen::Job;
@@ -636,6 +644,7 @@ void App::goToStep(Step s) {
     if (placing()) endPlacing();
     if (s != step_) {
         advanced_open_ = false;
+        raft_open_ = false;
         tip_editing_ = false;
         tool_panel_ = true;  // a place opens with its panel showing
     }
@@ -962,6 +971,7 @@ const char* const kSupportsJob = "Generating supports";
 void App::generateSupports() {
     if (!doc_ || !doc_->fits()) return;
     advanced_open_ = false;  // the run shows in the 3D view
+    raft_open_ = false;
     const SupportInputs now = supportInputs();
     std::weak_ptr<Document> target = doc_;
     // When it ends: the supports made, for the job as it was then.
@@ -1281,8 +1291,144 @@ void App::resetAdvanced() {
     setSupportChoices(c);
 }
 
+// ---- The Raft page ----
+
+std::string App::raftPresetsFile() const { return (std::filesystem::path(dataFolder()) / "rafts.json").string(); }
+
+void App::saveRaftPresetsFile() {
+    try {
+        saveRaftPresets(raftPresetsFile(), raft_presets_);
+    } catch (const std::exception& e) {
+        log::error("raft presets: " + std::string(e.what()));
+    }
+}
+
+void App::showRaft(bool show) {
+    raft_open_ = show && doc_;
+    if (raft_open_) advanced_open_ = false;
+    raft_prompt_.reset();
+}
+
+void App::useRaftPreset(const std::string& name) {
+    const fruit::RaftSpec* r = presetSpec(name, raft_presets_);
+    if (!doc_ || !r) return;
+    SupportChoices c = doc_->supports.choices;
+    c.raft = *r;
+    c.raft_preset.name = name;
+    setSupportChoices(c);
+}
+
+void App::editRaft(const fruit::RaftSpec& s) {
+    if (!doc_ || raft_prompt_) return;
+    SupportChoices c = doc_->supports.choices;
+    if (s == c.raft) return;
+    const std::string name = c.raft_preset.name;
+    if (isBuiltInPreset(name)) {
+        // Built-in presets never change: the change waits for the name of a copy of your own.
+        RaftNamePrompt p;
+        p.kind = RaftNamePrompt::Kind::SaveChange;
+        p.of = name;
+        p.spec = s;
+        p.change = raftChange(c.raft, s);
+        p.name = copyName(name, raft_presets_);
+        raft_prompt_ = std::move(p);
+        return;
+    }
+    c.raft = s;
+    setSupportChoices(c);
+    if (OwnRaftPreset* o = raft_presets_.find(name)) {  // yours: the change is saved in it as you make it
+        o->spec = s;
+        saveRaftPresetsFile();
+    }
+}
+
+void App::askRaftCopy(const std::string& of) {
+    RaftNamePrompt p;
+    p.kind = RaftNamePrompt::Kind::Copy;
+    p.of = of;
+    if (const fruit::RaftSpec* r = presetSpec(of, raft_presets_)) p.spec = *r;
+    else if (doc_) p.spec = doc_->supports.choices.raft;
+    p.name = copyName(of.empty() ? std::string("this job's raft") : of, raft_presets_);
+    raft_prompt_ = std::move(p);
+}
+
+void App::askRaftRename(const std::string& name) {
+    const OwnRaftPreset* o = raft_presets_.find(name);
+    if (!o) return;
+    RaftNamePrompt p;
+    p.kind = RaftNamePrompt::Kind::Rename;
+    p.of = name;
+    p.spec = o->spec;
+    p.name = name;
+    raft_prompt_ = std::move(p);
+}
+
+namespace {
+std::string trimmed(const std::string& s) {
+    const auto a = s.find_first_not_of(" \t"), b = s.find_last_not_of(" \t");
+    return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+}  // namespace
+
+std::string App::raftPromptProblem() const {
+    if (!raft_prompt_) return "";
+    const RaftNamePrompt& p = *raft_prompt_;
+    return nameProblem(trimmed(p.name), raft_presets_, p.kind == RaftNamePrompt::Kind::Rename ? p.of : "");
+}
+
+bool App::finishRaftPrompt() {
+    if (!raft_prompt_ || !raftPromptProblem().empty()) return false;
+    const RaftNamePrompt p = *raft_prompt_;
+    const std::string name = trimmed(p.name);
+    if (p.kind == RaftNamePrompt::Kind::Rename) {
+        if (OwnRaftPreset* o = raft_presets_.find(p.of)) o->name = name;
+        if (raft_presets_.new_jobs == p.of) raft_presets_.new_jobs = name;
+        if (doc_ && doc_->supports.choices.raft_preset.name == p.of) doc_->supports.choices.raft_preset.name = name;
+    } else {
+        std::string from = presetOrigin(p.of, raft_presets_);
+        if (from.empty()) from = fruit::kDefaultRaftPreset;
+        raft_presets_.own.push_back({name, from, p.spec});
+        if (p.new_jobs) raft_presets_.new_jobs = name;
+        if (doc_) {  // the job takes the copy
+            SupportChoices c = doc_->supports.choices;
+            c.raft = p.spec;
+            c.raft_preset.name = name;
+            setSupportChoices(c);
+        }
+    }
+    saveRaftPresetsFile();
+    raft_prompt_.reset();
+    return true;
+}
+
+void App::cancelRaftPrompt() { raft_prompt_.reset(); }
+
+void App::deleteRaftPreset(const std::string& name) {
+    auto& own = raft_presets_.own;
+    const auto it = std::find_if(own.begin(), own.end(), [&](const OwnRaftPreset& o) { return o.name == name; });
+    if (it == own.end()) return;
+    own.erase(it);
+    if (raft_presets_.new_jobs == name) raft_presets_.new_jobs = fruit::kDefaultRaftPreset;
+    // A job on it keeps its raft, as its own.
+    if (doc_ && doc_->supports.choices.raft_preset.name == name) doc_->supports.choices.raft_preset.name.clear();
+    saveRaftPresetsFile();
+}
+
+void App::setNewJobsRaft(const std::string& name) {
+    if (!presetSpec(name, raft_presets_) || raft_presets_.new_jobs == name) return;
+    raft_presets_.new_jobs = name;
+    saveRaftPresetsFile();
+}
+
+void App::applyRaft() {
+    raft_open_ = false;
+    raft_prompt_.reset();
+    if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) generateSupports();
+}
+
 void App::applyAdvanced() {
     advanced_open_ = false;
+    raft_open_ = false;
     if (doc_ && !doc_->supports.fresh(doc_->revision(), doc_->supportSettings())) generateSupports();
 }
 
@@ -1291,6 +1437,7 @@ void App::editTips(bool on) {
     if (tip_editing_) {
         step_ = Step::Supports;
         advanced_open_ = false;
+        raft_open_ = false;
     }
     dragging_tip_ = -1;
     tip_undo_.clear();
@@ -3209,6 +3356,13 @@ void App::keys() {
     }
     if (screen_ == Screen::Job && step_ == Step::Supports && advanced_open_) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) advanced_open_ = false;
+        return;
+    }
+    if (screen_ == Screen::Job && step_ == Step::Supports && raft_open_) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            if (raft_prompt_) cancelRaftPrompt();
+            else showRaft(false);
+        }
         return;
     }
     if (screen_ == Screen::Job && inLayersMode(step_) && doc_ && doc_->layersFresh()) {

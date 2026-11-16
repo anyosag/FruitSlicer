@@ -114,6 +114,7 @@ void placeOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const flo
 void needCard(App& app, Document& doc, Need need, ImVec2 size);
 // The advanced settings page.
 void supportsAdvanced(App& app, Document& doc, ImVec2 size);
+void supportsRaft(App& app, Document& doc, ImVec2 size);
 // The advanced page's pieces the Resins page uses too: a row's fields, each
 // change going to `set` with the field's key; and the badge saying where a
 // value comes from.
