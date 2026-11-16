@@ -244,22 +244,39 @@ TEST_CASE("raft: the edge's cut shape starts at the plate and reaches the lip's 
     CHECK(f.back().y == 0.0);
 }
 
+// Pieces of a layer above the first that rest on nothing in the layer below: they would start in mid-air.
+int floatingPieces(const RaftShape& shape) {
+    int n = 0;
+    for (size_t k = 1; k < shape.layers.size(); ++k)
+        for (const ExPolygon& e : toExPolygons(shape.layers[k]))
+            if (std::abs(area(intersection(e.toPaths(), shape.layers[k - 1]))) < 1e-3) ++n;
+    return n;
+}
+
 TEST_CASE("raft: every preset's raft starts on the plate, nothing in mid-air", "[raft]") {
-    // As built, and with a window at every lobe tip, the edge wider, or both: a window beside a lobe's valley
-    // once left a sliver that started 0.3 mm up.
+    // As built, and with a window at every lobe tip, the edge wider, or both, on two layouts: a window beside a
+    // lobe's valley once left a sliver that started 0.3 mm up. Layer by layer, as the builder makes them.
     for (const RaftPreset& p : builtInRaftPresets())
         for (int variant = 0; variant < 4; ++variant) {
             RaftSpec s = p.spec;
             if (variant & 1) s.windows = RaftWindows::EveryTip;
             if (variant & 2) s.reach += 0.7;
+            TreeConfig tc = withSpec(s);
+            tc.raft_spec = s;  // the old Pads and Full ones too
             for (const auto& layout : {twoGroups(), bracketTrunks()}) {
-                const SupportTree t = trunksAt(layout, s.thickness);
-                const TriangleMesh m = t.mesh(withSpec(s));
-                const ValidationReport v = validateSupported(TriangleMesh{}, m, 0.05, 0.0);
+                const RaftShape shape = specRaftShape(trunksAt(layout, s.thickness), tc);
                 INFO(p.name << ", variant " << variant << ", " << layout.size() << " trunks");
-                for (const auto& f : v.floating)
-                    UNSCOPED_INFO("floating at z " << f.z << " (" << f.at.x << ", " << f.at.y << "), " << f.area << " mm²");
-                CHECK(v.floating.empty());
+                REQUIRE(shape.layers.size() > 1);
+                CHECK(floatingPieces(shape) == 0);
             }
         }
+    // And once as the job's own check sees it: the raft built, sliced, and its islands looked for.
+    RaftSpec s = builtInRaftPreset("Easy release")->spec;
+    s.windows = RaftWindows::EveryTip;
+    s.reach += 0.7;
+    const TriangleMesh m = trunksAt(bracketTrunks(), s.thickness).mesh(withSpec(s));
+    const ValidationReport v = validateSupported(TriangleMesh{}, m, 0.05, 0.0);
+    for (const auto& f : v.floating)
+        UNSCOPED_INFO("floating at z " << f.z << " (" << f.at.x << ", " << f.at.y << "), " << f.area << " mm²");
+    CHECK(v.floating.empty());
 }
