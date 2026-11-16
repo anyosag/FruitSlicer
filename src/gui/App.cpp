@@ -2282,7 +2282,7 @@ void App::savePrint() {
         Preferences p = prefs_;  // the next save starts here
         p.goo_folder = std::filesystem::path(path).parent_path().string();
         setPreferences(p);
-        savePrintTo(path, "");
+        savePrintTo(path, driveHolding(path, platform::removableVolumes()));  // a folder on a USB drive is the drive
     });
 }
 
@@ -3837,6 +3837,15 @@ void App::frame() {
                 if (std::none_of(drives_.begin(), drives_.end(),
                                  [&](const platform::Volume& v) { return v.path == found[i].path; }))
                     plugged_in = static_cast<int>(i);
+            {
+                // Each change in the drives found, for the log: a drive missing here can't be saved to or ejected.
+                auto paths = [](const std::vector<platform::Volume>& vs) {
+                    std::string out;
+                    for (const platform::Volume& v : vs) out += (out.empty() ? "" : ", ") + v.name + " at " + v.path;
+                    return out.empty() ? std::string("none") : out;
+                };
+                if (paths(found) != paths(drives_)) log::info("USB drives: " + paths(found));
+            }
             drives_ = std::move(found);
             // Your choice stays (a folder too); a drive plugged in is picked
             // when .goo files go to drives (Settings).

@@ -78,6 +78,15 @@ BottomLayers bottomLayers(const Document& doc) {
 
 }  // namespace
 
+std::string driveHolding(const std::string& path, const std::vector<platform::Volume>& drives) {
+    for (const platform::Volume& v : drives) {
+        if (v.path.empty()) continue;
+        const std::string root = v.path.back() == '/' ? v.path : v.path + "/";
+        if (path.rfind(root, 0) == 0) return v.name.empty() ? v.path : v.name;
+    }
+    return "";
+}
+
 double bottomLayersHeight(const Document& doc) {
     const BottomLayers b = bottomLayers(doc);
     return b.count * b.height;

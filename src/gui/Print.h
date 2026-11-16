@@ -15,6 +15,7 @@
 #include "formats/GooSetup.h"
 #include "geometry/BBox.h"
 #include "mesh/TriangleMesh.h"
+#include "platform/Platform.h"
 #include "printer/PrinterProfile.h"
 
 namespace gui {
@@ -80,6 +81,10 @@ int baseLayers(const Document& doc, double layer_height);
 
 // Reads a sample's header; throws std::runtime_error with a readable message.
 std::shared_ptr<const fruit::GooHeader> loadSample(const std::string& path);
+
+// The name of the drive in `drives` that `path` is on ("" for none): a file
+// saved through the folder dialog onto a USB drive counts as saved to it.
+std::string driveHolding(const std::string& path, const std::vector<platform::Volume>& drives);
 
 // Inside the printer's build volume (the plate is centred on the origin).
 bool fitsPlate(const fruit::PrinterProfile& printer, const fruit::BBox3& b);

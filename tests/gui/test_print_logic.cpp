@@ -309,3 +309,14 @@ TEST_CASE("Height correction: a print setting; changing it cuts the layers again
     doc->print.settings.height_correction = 0.4;
     CHECK(baseLayers(*doc, kLayerHeight) == 0);
 }
+
+TEST_CASE("Print: a file saved through the folder dialog onto a USB drive counts as on that drive", "[gui][print]") {
+    const std::vector<platform::Volume> drives = {{"DISK_IMG", "/Volumes/DISK_IMG", "MS-DOS (FAT32)", 0},
+                                                  {"ELEGOO", "/Volumes/ELEGOO/", "", 0}};
+    CHECK(driveHolding("/Volumes/DISK_IMG/DishRack5.goo", drives) == "DISK_IMG");
+    CHECK(driveHolding("/Volumes/DISK_IMG/prints/a.goo", drives) == "DISK_IMG");
+    CHECK(driveHolding("/Volumes/ELEGOO/a.goo", drives) == "ELEGOO");
+    CHECK(driveHolding("/Volumes/DISK_IMG2/a.goo", drives).empty());  // another drive, whose name starts the same
+    CHECK(driveHolding("/Users/me/Documents/a.goo", drives).empty());
+    CHECK(driveHolding("/Volumes/DISK_IMG/a.goo", {}).empty());
+}
