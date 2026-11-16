@@ -633,10 +633,28 @@ void raftSection(App& app, Document& doc) {
     ImGui::SameLine(0, 12);
     ImGui::SetCursorPosY(ry);
     const std::string& name = c.raft_preset.name;
-    const std::string label = name.empty() ? std::string("This raft's own") : name;
+    std::string label = name.empty() ? std::string("This raft's own") : name;
+    {  // a name too long for the line is shortened (the menu shows it whole)
+        ImGui::PushFont(fonts().medium, size::Body);
+        const float room = ImGui::GetContentRegionAvail().x - 40;
+        if (ImGui::CalcTextSize(label.c_str()).x > room) {
+            while (label.size() > 1 && ImGui::CalcTextSize((label + "…").c_str()).x > room) label.pop_back();
+            label += "…";
+        }
+        ImGui::PopFont();
+    }
     if (presetButton("##preset", label.c_str())) ImGui::OpenPopup("raft_presets");
+    if (label != name && !name.empty()) tooltip(name.c_str());
+    ImGui::PushFont(fonts().semibold, size::Body);
+    const float link_w = ImGui::CalcTextSize("Edit raft…").x;
+    ImGui::PopFont();
     ImGui::SameLine(0, 10);
-    ImGui::SetCursorPosY(ry + 7);
+    if (ImGui::GetContentRegionAvail().x >= link_w) {
+        ImGui::SetCursorPosY(ry + 7);
+    } else {  // no room beside a long name: under it
+        ImGui::NewLine();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2);
+    }
     if (linkButton("Edit raft…")) app.showRaft(true);
     if (ImGui::BeginPopup("raft_presets")) {
         auto item = [&](const std::string& n) {
