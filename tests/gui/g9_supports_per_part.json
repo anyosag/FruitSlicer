@@ -1,0 +1,55 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo-bar"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"add_part": "@demo"}, {"wait": "jobs"}, {"health": "place"}, {"wait": "jobs"},
+    {"step": "supports"}, {"view": "angled"},
+    {"rafts_are": [[1], [2], [3]]},
+    {"shot": "g9_all_parts"},
+
+    {"supports_for": "part"},
+    {"quick": {"tip": 0.6}}, {"lift": 7},
+    {"part_is": {"part": 3, "tip": 0.6, "lift": 7}},
+    {"part_is": {"part": 1, "tip": 0.4, "lift": 5}},
+    {"shot": "g9_one_part"},
+
+    {"raft": false},
+    {"part_is": {"part": 3, "on_plate": true}},
+    {"part_is": {"part": 1, "on_plate": false}},
+    {"rafts_are": [[1], [2]]},
+    {"shot": "g9_part_on_plate"},
+
+    {"supports_for": "all"},
+    {"lift": 4},
+    {"part_is": {"part": 1, "lift": 4}},
+    {"part_is": {"part": 2, "lift": 4}},
+    {"part_is": {"part": 3, "lift": 7}},
+    {"share_raft": [2, 1]},
+    {"rafts_are": [[1, 2]]},
+    {"supports": "generate"}, {"wait": "jobs"},
+    {"rafts_are": [[1, 2]]},
+    {"shot": "g9_shared_made"},
+    {"supports_section": {"tips": false, "raft": false}},
+    {"shot": "g9_folded"},
+    {"supports_section": {"tips": true, "raft": true}},
+
+    {"save_job": "@demo"}, {"wait": "jobs"},
+    {"open": "@demo-job"}, {"wait": "jobs"},
+    {"rafts_are": [[1, 2]]},
+    {"part_is": {"part": 3, "on_plate": true, "tip": 0.6}},
+    {"part_is": {"part": 1, "lift": 4, "tip": 0.4}},
+    {"step": "supports"}, {"view": "angled"},
+    {"shot": "g9_reopened"},
+
+    {"separate_raft": 1},
+    {"rafts_are": [[1], [2]]},
+    {"select_part": 3}, {"supports_for": "part"},
+    {"use_job_values": 3},
+    {"part_is": {"part": 3, "on_plate": false, "tip": 0.4, "lift": 4}},
+    {"rafts_are": [[1], [2], [3]]},
+    {"supports_for": "all"},
+    {"shot": "g9_separated"}
+  ]
+}

@@ -1669,6 +1669,34 @@ fruit::SupportTree raftTree(const RaftGroup& g, const std::vector<Making>& made)
 
 const char* pieceWords(int n) { return n == 1 ? "piece" : "pieces"; }
 
+// What a part standing on the plate covers of it: the outline of its lowest
+// points (within a layer of the plate), seen from above, as one convex shape.
+fruit::Paths baseOnPlate(const Part& part) {
+    std::vector<fruit::Vec2> pts;
+    for (const fruit::Vec3& v : part.placed().vertices)
+        if (v.z <= kLayerHeight + 1e-6) pts.push_back({v.x, v.y});
+    if (pts.size() < 3) return {};
+    std::sort(pts.begin(), pts.end(), [](const fruit::Vec2& a, const fruit::Vec2& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+    const auto cross = [](const fruit::Vec2& o, const fruit::Vec2& a, const fruit::Vec2& b) {
+        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    };
+    std::vector<fruit::Vec2> hull(2 * pts.size());
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        while (k >= 2 && cross(hull[k - 2], hull[k - 1], pts[i]) <= 0) --k;
+        hull[k++] = pts[i];
+    }
+    for (std::size_t i = pts.size() - 1, t = k + 1; i-- > 0;) {
+        while (k >= t && cross(hull[k - 2], hull[k - 1], pts[i]) <= 0) --k;
+        hull[k++] = pts[i];
+    }
+    hull.resize(k > 0 ? k - 1 : 0);
+    if (hull.size() < 3) return {};
+    fruit::Path path;
+    for (const fruit::Vec2& v : hull) path.push_back(fruit::toPoint(v));
+    return {path};
+}
+
 std::string partNames(const Document& doc, const std::vector<int>& ids) {
     std::string out;
     for (std::size_t i = 0; i < ids.size(); ++i) {
@@ -1846,11 +1874,20 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
     for (const Making& m : made)
         if (m.raft < 0) on_plate.push_back(m.id);
     const bool one_raft = r.rafts.size() == 1 && on_plate.empty();
-    if (!one_raft)
+    // A raft that meets a part standing on the plate prints joined to it.
+    std::vector<std::pair<std::size_t, int>> raft_meets_part;  // (raft, part id)
+    if (!one_raft) {
+        std::vector<fruit::Paths> bases;
+        for (const int id : on_plate) bases.push_back(fruit::offset(baseOnPlate(*doc.findPart(id)), kRaftsMeet / 2));
         for (std::size_t g = 0; g < r.rafts.size(); ++g) {
             const fruit::Paths foot = raftTree(rafts[g], made).raftFootprint(r.rafts[g].tree_cfg);
             r.rafts[g].pieces = static_cast<int>(fruit::toExPolygons(foot).size());
+            const fruit::Paths near = fruit::offset(foot, kRaftsMeet / 2);
+            for (std::size_t k = 0; k < on_plate.size(); ++k)
+                if (!near.empty() && !bases[k].empty() && !fruit::intersection(near, bases[k]).empty())
+                    raft_meets_part.emplace_back(g, on_plate[k]);
         }
+    }
 
     ctl.step("check", 0.67);
     // The checks below each read the supports as built and nothing else, so
@@ -2017,6 +2054,25 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                           static_cast<double>(short_from_raft)),
                       -1, first_tied}},
                     by_code);
+    if (!raft_meets_part.empty()) {
+        SupportProblem m;
+        m.level = SupportProblem::Level::Review;
+        m.code = "raft_meets_part";
+        const auto [g, id] = raft_meets_part.front();
+        m.title = raft_meets_part.size() == 1 ? strf("Raft %zu meets %s", g + 1, partNames(doc, {id}).c_str())
+                                              : std::string("Rafts meet parts on the plate");
+        m.body = "A part that stands on the plate is this close to a raft: they would print joined, and the raft "
+                 "would come off with a piece of the part's first layers or leave a mark. Move them apart, or put "
+                 "the part on a raft too.";
+        m.count = raft_meets_part.size();
+        m.has_where = true;
+        if (const Part* p = doc.findPart(id)) {
+            const fruit::BBox3 b = p->box();
+            m.where = {(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, 0};
+        }
+        m.engine = strf("nearer than %.1f mm at the plate", kRaftsMeet);
+        by_code[m.code] = m;
+    }
     if (v.subpixel) {
         SupportProblem sp;
         sp.level = SupportProblem::Level::Note;

@@ -584,7 +584,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("quick")) {
             // {"quick": {"how_many": 1-5, "tip": 0.3 | 0.4 | 0.6, "look_further": bool}}: the quick support controls
             if (!app.document()) throw std::runtime_error("quick: no model open");
-            SupportChoices c = app.document()->supports.choices;
+            SupportChoices c = app.supportChoicesShown();  // All parts', or the selected part's
             const auto& q = step["quick"];
             if (q.contains("how_many")) c.how_many = std::clamp(q["how_many"].get<int>(), 1, kQuickStops);
             if (q.contains("tip")) {
@@ -601,7 +601,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setOnPlate(!step["raft"].get<bool>());
         } else if (step.contains("raft_type")) {
             // {"raft_type": "pads" | "full"}: the raft's kind, with the supports made stale like any setting
-            SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
+            SupportChoices c = app.supportChoicesShown();
             const bool full = step["raft_type"].get<std::string>() == "full";
             c.raft = full ? fruit::plainBaseSpec() : fruit::leastResinSpec();
             c.raft_preset.name = full ? "Plain base" : fruit::kDefaultRaftPreset;
@@ -734,7 +734,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (std::abs(got - want) > 1e-6)
                 throw std::runtime_error(strf("lift_is: the lift is %g mm, not %g mm", got, want));
         } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
-            SupportChoices c = app.document() ? app.document()->supports.choices : SupportChoices{};
+            SupportChoices c = app.supportChoicesShown();
             if (step.contains("tip_size")) {
                 const double d = step["tip_size"].get<double>();
                 c.usual_tip = d < 0.35 ? 1 : (d < 0.5 ? 2 : 3);
@@ -742,6 +742,72 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (step.contains("spacing")) c.density = step["spacing"].get<double>();
             if (step.contains("merge")) c.merge = step["merge"].get<bool>();
             app.setSupportChoices(c);
+        } else if (step.contains("supports_for")) {
+            // {"supports_for": "all" | "part"}: the Supports panel's switch (part: the selected one).
+            const std::string what = step["supports_for"].get<std::string>();
+            if (what != "all" && what != "part") throw std::runtime_error("supports_for: all or part");
+            app.setSupportsForPart(what == "part");
+        } else if (step.contains("supports_section")) {
+            // {"supports_section": {"tips": false, "raft": true, "rafts": true}}: the panel's sections folded or open.
+            for (const auto& [k, v] : step["supports_section"].items()) {
+                const int which = k == "tips" ? kSectionTips : k == "raft" ? kSectionRaft : k == "rafts" ? kSectionRafts : -1;
+                if (which < 0) throw std::runtime_error("supports_section: tips, raft or rafts");
+                app.setSupportsSectionOpen(which, v.get<bool>());
+            }
+        } else if (step.contains("share_raft") || step.contains("separate_raft") || step.contains("own_raft") ||
+                   step.contains("use_job_values")) {
+            // {"share_raft": [2, 1]}: part 2's raft goes with part 1's; {"separate_raft": 1}: the parts on
+            // part 1's raft each on their own; {"own_raft": 2}: part 2 alone on its own; {"use_job_values": 2}:
+            // part 2 back to All parts' values. Parts are counted from 1.
+            const auto& doc = app.document();
+            if (!doc) throw std::runtime_error("rafts: no job open");
+            const auto id = [&](const nlohmann::json& j) {
+                const int i = j.get<int>() - 1;
+                if (i < 0 || i >= static_cast<int>(doc->partCount())) throw std::runtime_error("rafts: no such part");
+                return doc->parts()[static_cast<std::size_t>(i)].id();
+            };
+            if (step.contains("share_raft")) app.shareRaft(id(step["share_raft"][0]), id(step["share_raft"][1]));
+            else if (step.contains("separate_raft")) app.separateRaft(id(step["separate_raft"]));
+            else if (step.contains("own_raft")) app.leaveRaft(id(step["own_raft"]));
+            else app.useJobValues(id(step["use_job_values"]));
+        } else if (step.contains("rafts_are")) {
+            // {"rafts_are": [[1, 2], [3]]}: the rafts (as made when the supports are up to date, else as
+            // chosen), each with its parts counted from 1; parts on the plate are on none.
+            const auto& doc = app.document();
+            if (!doc) throw std::runtime_error("rafts_are: no job open");
+            std::vector<std::vector<int>> got;
+            const SupportState& st = doc->supports;
+            std::vector<RaftGroup> rafts;
+            if (st.result && st.fresh(doc->revision(), doc->supportSettings()))
+                for (const auto& g : st.result->rafts) rafts.push_back(g);
+            else
+                rafts = chosenRafts(*doc, st.setup());
+            for (const RaftGroup& g : rafts) {
+                got.emplace_back();
+                for (const int pid : g.parts) got.back().push_back(doc->partIndex(pid) + 1);
+            }
+            const auto want = step["rafts_are"].get<std::vector<std::vector<int>>>();
+            if (got != want) throw std::runtime_error("rafts_are: the rafts are " + nlohmann::json(got).dump());
+        } else if (step.contains("part_is")) {
+            // {"part_is": {"part": 2, "lift": 6, "on_plate": false, "tip": 0.6, "how_many": 4}}: part 2's
+            // values as the panel would show them for it (any of them).
+            const auto& doc = app.document();
+            if (!doc) throw std::runtime_error("part_is: no job open");
+            const auto& w = step["part_is"];
+            const int i = w.at("part").get<int>() - 1;
+            if (i < 0 || i >= static_cast<int>(doc->partCount())) throw std::runtime_error("part_is: no such part");
+            const Part& part = doc->parts()[static_cast<std::size_t>(i)];
+            const SupportChoices c = doc->supports.setup().forPart(part.id());
+            if (w.contains("lift") && std::abs(part.placement().elevation - w["lift"].get<double>()) > 1e-6)
+                throw std::runtime_error(strf("part_is: its lift is %g mm", part.placement().elevation));
+            if (w.contains("on_plate") && part.placement().on_plate != w["on_plate"].get<bool>())
+                throw std::runtime_error(part.placement().on_plate ? "part_is: it is on the plate" : "part_is: it is on a raft");
+            if (w.contains("tip")) {
+                const double d = w["tip"].get<double>();
+                if (c.usual_tip != (d < 0.35 ? 1 : (d < 0.5 ? 2 : 3))) throw std::runtime_error("part_is: its tip size differs");
+            }
+            if (w.contains("how_many") && c.how_many != w["how_many"].get<int>())
+                throw std::runtime_error(strf("part_is: its How many is %d", c.how_many));
         } else if (step.contains("supports_view")) {
             const std::string v = step["supports_view"].get<std::string>();
             app.setSupportsView(v == "why"    ? SupportsView::Why

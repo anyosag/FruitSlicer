@@ -119,8 +119,10 @@ void tipEditSelected(App& app, Document& doc) {
         if (c < 3) ImGui::SameLine(0, 4);
     }
     ImGui::Dummy(ImVec2(0, 2));
-    keyValue("Holds", strf("%.1f mm² of layer", r.cfg.capacity.capacity(p.tip_diameter)));
-    keyValue("Contact depth", strf("%.2f mm", fruit::tipPenetration(p.tip_diameter, r.tree_cfg)));
+    // The settings of the part the tip is on (each part may have its own).
+    const SupportResult::PartMade* pm = r.partOfTip(static_cast<std::size_t>(s.selected_tip));
+    keyValue("Holds", strf("%.1f mm² of layer", (pm ? pm->cfg : r.cfg).capacity.capacity(p.tip_diameter)));
+    keyValue("Contact depth", strf("%.2f mm", fruit::tipPenetration(p.tip_diameter, pm ? pm->tree_cfg : r.tree_cfg)));
     keyValue("Position", strf("%.2f, %.2f, %.2f mm", p.pos.x, p.pos.y, p.pos.z));
     keyValue("Layer", thousands(static_cast<std::size_t>(std::max(0, p.layer)) + 1));
     endCard();

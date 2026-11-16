@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -265,7 +266,7 @@ bool sectionHeader(App& app, int section, const char* title, const std::string& 
     if (!first) dl->AddLine(p, ImVec2(p.x + w, p.y), col::Border, 1);
     float link_w = 0;
     if (open && right) {
-        ImGui::PushFont(fonts().semibold, size::Help);
+        ImGui::PushFont(fonts().semibold, size::Body);  // as linkButton draws it
         link_w = ImGui::CalcTextSize(right).x + 8;
         ImGui::PopFont();
     }
@@ -1221,12 +1222,60 @@ bool supportsBanner(App& app, const Document& doc, ImVec2 origin, ImVec2 size, I
     return true;
 }
 
+// With several parts: each raft's number in the view, under the front of
+// its parts, and "On the plate" under each part that has no raft (the
+// panel's Rafts on the plate list names them the same).
+void raftTags(const Document& doc, const std::function<bool(const fruit::Vec3&, ImVec2*)>& project) {
+    if (doc.partCount() < 2) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    auto tag = [&](const fruit::BBox2& b, const std::string& label, int number) {
+        ImVec2 at;
+        if (!project({(b.min.x + b.max.x) / 2, b.min.y - 3, 0}, &at)) return;
+        ImGui::PushFont(fonts().semibold, size::Label);
+        const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+        const float badge = number > 0 ? 18 : 0, w = ts.x + 18 + badge, h = 22;
+        const ImVec2 a(std::round(at.x - w / 2), std::round(at.y + 6)), z(a.x + w, a.y + h);
+        dl->AddRectFilled(a, z, col::Input, h / 2);
+        if (number > 0) {
+            dl->AddRect(a, z, IM_COL32(0x4A, 0x51, 0x60, 255), h / 2);
+            const ImVec2 c(a.x + 9 + 7.5f, a.y + h / 2);
+            dl->AddCircleFilled(c, 7.5f, IM_COL32(0x3A, 0x40, 0x4C, 255), 16);
+            const std::string n = std::to_string(number);
+            const ImVec2 ns = ImGui::CalcTextSize(n.c_str());
+            dl->AddText(ImVec2(c.x - ns.x / 2, c.y - ns.y / 2), col::Text, n.c_str());
+        } else {
+            dashedRect(dl, a, z, IM_COL32(0x6B, 0x72, 0x80, 255), 1.0f, 4, 3);
+        }
+        dl->AddText(ImVec2(a.x + 9 + badge, a.y + (h - ts.y) / 2), number > 0 ? col::Text : col::TextSecondary,
+                    label.c_str());
+        ImGui::PopFont();
+    };
+    const std::vector<RaftRow> rows = raftRows(doc);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        fruit::BBox2 b;
+        for (const int id : rows[i].g.parts)
+            if (const Part* p = doc.findPart(id)) b.extend(p->footprintBox());
+        tag(b, strf("Raft %zu", i + 1), static_cast<int>(i) + 1);
+    }
+    for (const Part& p : doc.parts())
+        if (p.placement().on_plate) tag(p.footprintBox(), "On the plate", 0);
+}
+
 void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
     const SupportState& s = doc.supports;
     if (running(app)) {
         runningCard(app, origin, size);
         return;
     }
+    auto project = [&](const fruit::Vec3& w, ImVec2* out) {
+        const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];
+        const float y = vp[1] * w.x + vp[5] * w.y + vp[9] * w.z + vp[13];
+        const float c = vp[3] * w.x + vp[7] * w.y + vp[11] * w.z + vp[15];
+        if (c <= 1e-4f) return false;
+        *out = ImVec2(origin.x + (x / c * 0.5f + 0.5f) * size.x, origin.y + (0.5f - y / c * 0.5f) * size.y);
+        return true;
+    };
+    if (app.supportsView() != SupportsView::Risk || !s.result) raftTags(doc, project);
     if (!doc.fits()) fitBanner(app, doc, origin, size);
     if (!s.result) return;
     const SupportResult& r = *s.result;
@@ -1238,14 +1287,6 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
         return;
     }
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
-    auto project = [&](const fruit::Vec3& w, ImVec2* out) {
-        const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];
-        const float y = vp[1] * w.x + vp[5] * w.y + vp[9] * w.z + vp[13];
-        const float c = vp[3] * w.x + vp[7] * w.y + vp[11] * w.z + vp[15];
-        if (c <= 1e-4f) return false;
-        *out = ImVec2(origin.x + (x / c * 0.5f + 0.5f) * size.x, origin.y + (0.5f - y / c * 0.5f) * size.y);
-        return true;
-    };
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (fresh && s.selected_tip >= 0) {
         ImVec2 q;
