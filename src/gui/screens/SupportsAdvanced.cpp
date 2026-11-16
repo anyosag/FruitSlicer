@@ -240,7 +240,7 @@ void groupCard(App& app, const char* group, const AdvancedContext& x, float w) {
 
 void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
     beginPanel("advanced", ImVec2(0, size.y), col::App, ImVec2(28, 18));
-    const SupportChoices& c = doc.supports.choices;
+    const SupportChoices c = app.supportChoicesShown();  // the job's, or the selected part's
     const fruit::SupportConfig cfg = supportConfig(doc.placement(), c);
     const fruit::TreeConfig tc = treeConfig(c);
     AdvancedContext x{cfg, tc, c, doc.placement()};
@@ -264,7 +264,10 @@ void supportsAdvanced(App& app, Document& doc, ImVec2 size) {
     ImGui::Dummy(ImVec2(0, 2));
     const float ty = ImGui::GetCursorPosY();
     text("Advanced support settings", fonts().bold, size::DialogTitle + 2, col::Text);
-    text(("For: " + resinLabel(c.resin, c.profile)).c_str(), fonts().regular, size::Body, col::TextMuted);
+    const std::string for_whom = app.supportsForPart() ? doc.part().name() + " · "
+                                 : doc.partCount() > 1 ? std::string("all parts · ")
+                                                       : std::string();
+    text(("For: " + for_whom + resinLabel(c.resin, c.profile)).c_str(), fonts().regular, size::Body, col::TextMuted);
     {
         const float right = ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x;
         ImGui::PushFont(fonts().bold, size::Body);

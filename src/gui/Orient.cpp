@@ -151,7 +151,7 @@ OrientRisk replayOf(const Document& one, const SupportChoices& choices, const st
 
 OrientRisk riskFor(const Document& doc, const fruit::Placement& p, const std::vector<fruit::Vec3>& visible_model,
                    OrientMetrics& m, const fruit::JobControl& ctl) {
-    return replayOf(alone(doc, p), doc.supports.choices, visible_model, m, ctl);
+    return replayOf(alone(doc, p), doc.supports.setup().forPart(doc.selectedId()), visible_model, m, ctl);
 }
 
 OrientMetrics measure(const Document& doc, const std::vector<fruit::Vec3>& visible_model,
@@ -249,6 +249,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
         q.rotation_deg = f.op.rotation_deg;
         runs.push_back({alone(doc, slidOnto(doc.part().mesh(), q, doc.printer)), &f.op.m});
     }
+    const SupportChoices part_choices = doc.supports.setup().forPart(doc.selectedId());  // the part's own, over the job's
     {
         // A few at a time: each holds its model's and supports' layers (about
         // half a gigabyte on a 60 mm part), and each already uses several cores.
@@ -260,7 +261,7 @@ OrientSearch search(const Document& doc, const std::vector<fruit::Vec3>& visible
             work.push_back(std::async(std::launch::async, [&] {
                 for (std::size_t i; (i = next++) < runs.size();) {
                     Run& run = runs[i];
-                    run.m->risk = replayOf(run.one, doc.supports.choices, visible_model, *run.m, quiet);
+                    run.m->risk = replayOf(run.one, part_choices, visible_model, *run.m, quiet);
                     ctl.report("orient.replay",
                                0.3 + 0.67 * static_cast<double>(++done) / static_cast<double>(runs.size()));
                 }

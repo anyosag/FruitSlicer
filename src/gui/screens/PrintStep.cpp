@@ -87,9 +87,12 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
                    "Choose a SatelLite .goo saved for this printer, or type them under Print settings.");
     } else {
         verdictRow("raft", plan->raft_thick_enough ? Verdict::Ok : Verdict::Warn,
-                   plan->raft_thick_enough ? "Raft thick enough" : "Raft thinner than the bottom layers",
-                   doc.placement().on_plate
-                       ? "It stands on the plate: no raft needed."
+                   plan->raft_thick_enough ? (sup.rafts.size() > 1 ? "Rafts thick enough" : "Raft thick enough")
+                                           : (sup.rafts.size() > 1 ? "A raft thinner than the bottom layers"
+                                                                   : "Raft thinner than the bottom layers"),
+                   doc.allOnPlate()
+                       ? (doc.partCount() > 1 ? "They stand on the plate: no raft needed."
+                                              : "It stands on the plate: no raft needed.")
                        : strf("The bottom and transition layers need at least %.2f mm", plan->raft_needed).c_str());
     }
     const std::size_t review = sup.count(SupportProblem::Level::Review);
@@ -148,7 +151,7 @@ void settingsCard(App& app, Document& doc, const PrintPlan* plan, float w, float
         const fruit::GooHeader& hd = plan->setup.header;
         keyValue("Layer height", strf("%.2f mm", plan->layer_height));
         keyValue("Bottom layers", strf("%d × %.1f s", static_cast<int>(hd.print.bottom_layers), hd.print.bottom_exposure));
-        if (doc.placement().on_plate)
+        if (doc.anyOnPlate())
             keyValue("Height correction", plan->base_layers > 0
                                               ? strf("%d layers, %g mm", static_cast<int>(plan->base_layers),
                                                      plan->base_layers * plan->layer_height)

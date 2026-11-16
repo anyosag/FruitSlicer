@@ -545,7 +545,8 @@ void topPill(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
                                                        "[ and ] change its size";
     } else if (app.step() == Step::Supports && !doc->supports.result) {
         hint_text = strf("Faces that need tips are tinted: they lean more than %.0f° from upright.",
-                         supportConfig(doc->placement(), doc->supports.choices).critical_angle_deg);
+                         supportConfig(doc->placement(), doc->supports.setup().forPart(doc->selectedId()))
+                             .critical_angle_deg);
         hint = hint_text.c_str();
     } else if (hollow && !doc->hollow.choices.auto_holes) {
         hint = "Click on the model to put a hole there.";

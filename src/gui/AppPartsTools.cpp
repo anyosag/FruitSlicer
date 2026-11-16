@@ -146,14 +146,14 @@ void App::moveSupportsWith(const std::shared_ptr<const Document>& before) {
     parts_tools_.last.message += " Their supports move with them.";
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
-    const SupportChoices choices = doc_->supports.choices;
+    const SupportSetup setup = doc_->supports.setup();
     const std::vector<TipEdit> edits = doc_->supports.edits;
     const int rev = doc_->revision();
     const std::int64_t settings = doc_->supportSettings();
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
         kMoveSupportsJob,
-        [snap, out, choices, edits, plan = std::move(mt.plan)](const fruit::JobControl& ctl) mutable {
+        [snap, out, setup, edits, plan = std::move(mt.plan)](const fruit::JobControl& ctl) mutable {
             fruit::JobControl rest = ctl;
             // Planned on the hollowed or drilled model: that is made again where the part now stands.
             if (snap->hollow.applied) {
@@ -162,7 +162,7 @@ void App::moveSupportsWith(const std::shared_ptr<const Document>& before) {
                 if (hp->changes()) plan.hollow = hp;
                 rest = ctl.sub(0.3, 1.0);
             }
-            *out = finishWithEdits(*snap, choices, std::move(plan), edits, rest);
+            *out = finishWithEdits(*snap, setup, splitPlan(*snap, std::move(plan)), edits, rest);
         },
         [this, target, out, rev, settings](std::exception_ptr err) {
             const auto d = target.lock();

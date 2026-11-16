@@ -72,6 +72,55 @@ struct SupportChoices {
     bool operator==(const SupportChoices&) const = default;
 };
 
+// A part's own support values, set on the Supports panel with that part
+// picked: each one here is the part's instead of the job's (All parts). A
+// value equal to the job's is not kept (tidy), so the part reads as
+// following the job again. Lift and Raft / On the plate are the part's
+// placement (Document: Placement::elevation, on_plate).
+struct PartChoices {
+    std::optional<int> how_many;
+    std::optional<int> usual_tip;
+    std::optional<bool> look_further;
+    std::map<std::string, double> advanced;  // Advanced rows the part sets itself, over the job's
+    std::optional<fruit::RaftSpec> raft;     // its raft's settings (on a shared raft: every part on it the same)
+    SupportChoices::PresetName raft_preset;  // with `raft`: the preset it came from (a label)
+    bool empty() const { return !how_many && !usual_tip && !look_further && advanced.empty() && !raft; }
+    bool operator==(const PartChoices&) const = default;
+};
+
+// What supports are made from besides the parts themselves: the job's
+// choices (All parts), each part's own, and the parts that share a raft.
+struct SupportSetup {
+    SupportChoices choices;                // All parts
+    std::map<int, PartChoices> own;        // by part id
+    std::vector<std::vector<int>> shared;  // parts that share a raft by choice: ids, a list per raft
+    // The part's choices: the job's, with the part's own over them.
+    SupportChoices forPart(int part) const;
+    bool operator==(const SupportSetup&) const = default;
+};
+// Drops a part's own values that are the job's, and the parts left with none.
+void tidy(SupportSetup& s);
+// The same with every How many at the centre (what tip counts are made for:
+// they count every stop).
+SupportSetup centred(SupportSetup s);
+
+// A raft and the parts on it.
+struct RaftGroup {
+    std::vector<int> parts;     // ids, in the job's order
+    fruit::RaftSpec spec;       // its settings: its first part's
+    std::string preset;         // the preset they came from (a label)
+    bool touching = false;      // joined because their rafts would meet, not by choice (made supports only)
+    bool operator==(const RaftGroup&) const = default;
+};
+// The rafts as chosen: each part not on the plate on a raft of its own, or on
+// the one it shares by choice (SupportSetup::shared), in the job's order. Rafts
+// that would meet are joined when the supports are made (SupportResult::rafts).
+std::vector<RaftGroup> chosenRafts(const Document& doc, const SupportSetup& s);
+// Rafts nearer each other than this, mm, print joined: the first layers are
+// cured much longer and come out wider than drawn. ASSUMPTION (0.5 mm), as
+// TreeConfig::foot_clearance; not measured.
+inline constexpr double kRaftsMeet = 0.5;
+
 // Tip sizes are chosen as FruitSlicer's own classes (0.2, 0.3, 0.4, 0.6 mm,
 // by index). A resin profile may have measured other sizes: a choice then
 // means the class nearest that size, and a class shows as the nearest one.
@@ -247,8 +296,23 @@ struct SupportProblem {
     fruit::Vec3 where;    // printer coordinates of the first one
 };
 
+// The tip planner's part: its own tips and what it warned about. Given hand
+// edits, it plans around them: your tips are pinned (and left out of
+// `points`, which applyEdits puts back) and its own are kept out of the zones.
+struct SupportPlan {
+    std::vector<fruit::SupportPoint> points;
+    std::vector<fruit::Warning> warnings;
+    std::vector<TipEdit> edits;  // the hand edits it planned around
+    std::shared_ptr<const HollowPlan> hollow;  // the hollowed or drilled model, when the Hollow screen changed it
+    // With no raft: the counts of held layers these tips are right for (SupportResult::held_min).
+    int held_min = 0, held_max = std::numeric_limits<int>::max();
+};
+// Each part's plan, by part id.
+using JobPlan = std::map<int, SupportPlan>;
+
 struct SupportResult {
-    SupportChoices choices;
+    SupportChoices choices;  // the job's (All parts): setup.choices
+    SupportSetup setup;      // what it was made from
     // The hollowed or drilled model the tips were planned on (null: the
     // model as it is). The layers and the print file use the same.
     std::shared_ptr<const HollowPlan> hollow;
@@ -275,60 +339,94 @@ struct SupportResult {
     // underside there.
     int held_min = 0, held_max = std::numeric_limits<int>::max();
     double seconds = 0;
+    // What each part got, in the job's order.
+    struct PartMade {
+        int part = -1;                     // its id
+        std::size_t first = 0, tips = 0;   // its tips: points[first, first + tips)
+        std::size_t trunks = 0;
+        double ml = 0;                     // its supports, and its raft when it has one of its own
+        int raft = -1;                     // index into rafts (-1: it stands on the plate)
+        fruit::SupportConfig cfg;          // its settings
+        fruit::TreeConfig tree_cfg;
+    };
+    std::vector<PartMade> parts;
+    // The rafts as made: those that would meet are one (RaftGroup::touching).
+    struct RaftMade : RaftGroup {
+        double top = 0;                   // its thickness, mm
+        int pieces = 1;                   // separate pieces on the plate
+        fruit::TreeConfig tree_cfg;       // the settings it was built with
+        std::vector<std::size_t> pillars;  // its trunks: indexes into tree.pillars
+    };
+    std::vector<RaftMade> rafts;
+    JobPlan plans;  // each part's tips as planned, before hand edits (planned is them all, in the job's order)
 
     std::size_t count(SupportProblem::Level l) const;
+    const PartMade* partOfTip(std::size_t i) const;  // null: no such tip
+    const PartMade* partMade(int id) const;
+    double thinnestRaft() const;  // the thinnest raft's thickness; 0 with none
     bool heldLayersFit(int held) const { return held_min <= held && held <= held_max; }
 };
+
+// Raft `raft` of the result alone (its trunks and its thickness): for the
+// Raft page's preview. Empty when there is no such raft.
+fruit::SupportTree raftTreeOf(const SupportResult& r, std::size_t raft);
 
 // The planner's settings for this placement and these choices.
 fruit::SupportConfig supportConfig(const fruit::Placement& p, const SupportChoices& c);
 fruit::TreeConfig treeConfig(const SupportChoices& c);
 
-// Plans tips, builds the tree and checks the result, for every part of the
-// job together. `visible` are the sides people will see, as printer
-// directions (Document::visibleInPrinter). Progress: tips up to 0.55, the
-// tree up to 0.85, the check after (stage "check").
+// Plans tips, builds the trees and rafts and checks the result. Each part
+// gets its tips and its supports with its own choices (SupportSetup::forPart),
+// on the plate or on a raft: its own, or one it shares (chosenRafts; rafts
+// that would meet are joined). A job of one part is made as it always was.
+// `visible` are the sides people will see, as printer directions
+// (Document::visibleInPrinter). Progress: tips up to 0.55, the trees up to
+// 0.85, the check after (stage "check").
+SupportResult generate(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
+// The same with `c` for every part, all on one raft (as jobs were made before
+// parts had their own): tests, and the orientation search's one part.
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                        const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
+// Every part with `c`, on one raft.
+SupportSetup oneRaft(const Document& doc, const SupportChoices& c);
 
-// The tip planner's part: its own tips and what it warned about. Given hand
-// edits, it plans around them: your tips are pinned (and left out of
-// `points`, which applyEdits puts back) and its own are kept out of the zones.
-struct SupportPlan {
-    std::vector<fruit::SupportPoint> points;
-    std::vector<fruit::Warning> warnings;
-    std::vector<TipEdit> edits;  // the hand edits it planned around
-    std::shared_ptr<const HollowPlan> hollow;  // the hollowed or drilled model, when the Hollow screen changed it
-    // With no raft: the counts of held layers these tips are right for (SupportResult::held_min).
-    int held_min = 0, held_max = std::numeric_limits<int>::max();
-};
 // With no raft the planner gives no tips to what starts within `held_mm` of
 // the plate (what the bottom layers print of the model, modelInBottomLayers):
 // how many of its layers that is. Supports planned for another count would
 // come out differently, so they no longer count.
 int plateHeldLayers(double held_mm);
+// The planner's tips for the whole job as one model, with `c`.
 SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
                      const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
-// How many tips each stop of How many would give this job (1 to 5, the other
-// choices as `c` has them): what generate() would end with, hand edits
-// included, without building the supports.
-// `known`: one stop's plan already made (planTips' for it, the same job and
-// choices), not made again. `plans`: every stop's plan, as planTips gives it.
-struct KnownPlan {
-    int stop = 0;
-    SupportPlan plan;
-};
-std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
-                                               const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
-                                               const std::vector<TipEdit>& edits = {}, const KnownPlan* known = nullptr,
-                                               std::array<SupportPlan, kQuickStops>* plans = nullptr);
-// A plan as made (before its hand edits), from the supports finished from it.
-SupportPlan planOf(const SupportResult& r);
-// Everything after the tips: the tree, its checks and the problems. Used
-// when a saved job comes back with its tips.
-SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,
-                             const fruit::JobControl& ctl);
-// The planner's tips with hand edits applied, then the rest (keeps both).
+// Each part's tips, with its own choices and raft. `known`: plans made
+// already for some parts (for these choices), not made again.
+JobPlan planJob(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
+                const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {}, const JobPlan* known = nullptr);
+// How many tips each stop of How many (1 to 5) would give each part, the
+// part's other choices as they are: what generate() would end with, hand
+// edits included, without building the supports. `known`: plans made already
+// at a part's own stop (planJob's), not made again; `plans`: every part's plan
+// at every stop.
+using TipCounts = std::array<std::size_t, kQuickStops>;
+std::map<int, TipCounts> partTipCounts(const Document& doc, const SupportSetup& s,
+                                       const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
+                                       const std::vector<TipEdit>& edits = {}, const JobPlan* known = nullptr,
+                                       std::map<int, std::array<SupportPlan, kQuickStops>>* plans = nullptr);
+// The job's tips at each stop of All parts' How many: a part with a How many
+// of its own keeps its own stop.
+TipCounts jobTipCounts(const std::map<int, TipCounts>& counts, const SupportSetup& s);
+// The plans as made (before their hand edits), from the supports finished from them.
+JobPlan planOf(const SupportResult& r);
+// One plan for the whole job (an older job's, or planTips'), split by the
+// part each tip is on.
+JobPlan splitPlan(const Document& doc, SupportPlan plan);
+// The planners' tips with hand edits applied, then the trees, the rafts, the
+// checks and the problems (keeps both). Used when a saved job comes back with
+// its tips, and after a hand edit.
+SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPlan plan,
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
+// The same for one plan and `c` for every part, all on one raft.
 SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
 

@@ -614,10 +614,22 @@ void App::dragHandleBy(Handle h, double amount, bool snap) {
 }
 
 void App::setOnPlate(bool on_plate) {
-    if (!doc_ || doc_->placement().on_plate == on_plate) return;
-    fruit::Placement p = doc_->placement();
-    p.on_plate = on_plate;
-    doc_->edit(p);
+    if (!doc_) return;
+    if (supportsForPart()) {
+        if (doc_->placement().on_plate == on_plate) return;
+        fruit::Placement p = doc_->placement();
+        p.on_plate = on_plate;
+        doc_->edit(p);
+    } else {
+        // Every part that has the job's: a part on the plate (or on a raft) of its own stays.
+        const bool was = doc_->jobLift().on_plate;
+        if (was == on_plate) return;
+        doc_->editParts([&](PartsEdit& e) {
+            for (PartState& s : e.parts())
+                if (s.placement.on_plate == was) s.placement.on_plate = on_plate;
+            e.job.on_plate = on_plate;
+        });
+    }
     frameModel();
 }
 
@@ -754,7 +766,7 @@ void App::maintain() {
             sliced_base_ = base;
             auto snap = std::make_shared<const Document>(*doc_);
             auto out = std::make_shared<LayerResult>();
-            const double raft = doc_->placement().on_plate ? 0.0 : sup->tree.raft_top;
+            const double raft = sup->tree.raft_top;  // the tallest raft (0: none)
             std::weak_ptr<Document> target = doc_;
             jobs_.start(
                 "Cutting layers",
@@ -1005,12 +1017,12 @@ void App::generateSupports() {
         return;
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
-    const SupportChoices choices = doc_->supports.choices;
+    const SupportSetup setup = doc_->supports.setup();
     const std::vector<TipEdit> edits = doc_->supports.edits;  // hand edits stay: they apply again
     jobs_.start(
         kSupportsJob,
-        [snap, out, choices, edits](const fruit::JobControl& ctl) {
-            *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
+        [snap, out, setup, edits](const fruit::JobControl& ctl) {
+            *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits);
         },
         done(out));
 }
@@ -1035,7 +1047,7 @@ bool App::SupportInputs::operator==(const SupportInputs& o) const {
     for (std::size_t i = 0; i < visible.size(); ++i)
         if (visible[i].x != o.visible[i].x || visible[i].y != o.visible[i].y || visible[i].z != o.visible[i].z)
             return false;
-    return revision == o.revision && settings == o.settings && choices == o.choices && edits == o.edits &&
+    return revision == o.revision && settings == o.settings && setup == o.setup && edits == o.edits &&
            bottom_layers == o.bottom_layers && transition_layers == o.transition_layers && pixel == o.pixel &&
            plate_hold == o.plate_hold;
 }
@@ -1044,7 +1056,7 @@ App::SupportInputs App::supportInputs() const {
     SupportInputs k;
     k.revision = doc_->revision();
     k.settings = doc_->supportSettings();
-    k.choices = doc_->supports.choices;
+    k.setup = doc_->supports.setup();
     k.edits = doc_->supports.edits;
     k.visible = doc_->visibleInPrinter();
     k.bottom_layers = doc_->printer.bottom_layers;
@@ -1090,25 +1102,27 @@ void App::startSupportsAhead() {
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
     ahead_out_ = out;
-    // The plan the tip counts made for this stop, when they were made for these inputs.
-    std::optional<SupportPlan> plan;
+    // The plans the tip counts made for each part's stop, when they were made for these inputs.
+    std::shared_ptr<const JobPlan> plans;
     SupportInputs centre = *key;
-    centre.choices.how_many = kHowManyCentre;
-    if (tip_plans_for_ && *tip_plans_for_ == centre)
-        plan = tip_plans_[static_cast<std::size_t>(std::clamp(key->choices.how_many, 1, kQuickStops) - 1)];
-    const SupportChoices choices = key->choices;
+    centre.setup = centred(key->setup);
+    if (tip_plans_for_ && *tip_plans_for_ == centre) {
+        auto known = std::make_shared<JobPlan>();
+        for (const auto& [id, by_stop] : tip_plans_)
+            (*known)[id] = by_stop[static_cast<std::size_t>(std::clamp(key->setup.forPart(id).how_many, 1, kQuickStops) - 1)];
+        plans = std::move(known);
+    }
+    const SupportSetup setup = key->setup;
     const std::vector<TipEdit> edits = key->edits;
     std::weak_ptr<Document> target = doc_;
     jobs_.startGivingWay(
         kAheadJob,
-        [snap, out, choices, edits, plan](const fruit::JobControl& ctl) {
-            if (plan) {
-                const auto t0 = std::chrono::steady_clock::now();
-                *out = finishWithEdits(*snap, choices, *plan, edits, ctl);
-                out->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-            } else {
-                *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
-            }
+        [snap, out, setup, edits, plans](const fruit::JobControl& ctl) {
+            const auto t0 = std::chrono::steady_clock::now();
+            *out = finishWithEdits(*snap, setup,
+                                   planJob(*snap, setup, snap->visibleInPrinter(), ctl.sub(0.0, 0.55), edits, plans.get()),
+                                   edits, ctl.sub(0.55, 1.0));
+            out->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         },
         [this, target, out, key, generation](std::exception_ptr err) {
             if (!target.lock()) return;
@@ -1128,23 +1142,170 @@ void App::startSupportsAhead() {
         });
 }
 
-void App::setSupportChoices(const SupportChoices& c) {
-    if (doc_) doc_->supports.choices = c;
+bool App::supportsForPart() const { return supports_for_part_ && doc_ && doc_->partCount() > 1; }
+
+SupportChoices App::supportChoicesShown() const {
+    if (!doc_) return {};
+    return supportsForPart() ? doc_->supports.setup().forPart(doc_->selectedId()) : doc_->supports.choices;
 }
 
 namespace {
+
+// Own values that are the job's go, and so do parts left with none.
+void tidyOwn(SupportState& s) {
+    SupportSetup t = s.setup();
+    tidy(t);
+    s.own = std::move(t.own);
+    s.shared = std::move(t.shared);
+}
+
+// The raft `part` stands on as chosen (null: on the plate).
+const RaftGroup* raftWith(const std::vector<RaftGroup>& rafts, int part) {
+    for (const RaftGroup& g : rafts)
+        if (std::find(g.parts.begin(), g.parts.end(), part) != g.parts.end()) return &g;
+    return nullptr;
+}
+
+}  // namespace
+
+void App::setJobChoices(const SupportChoices& c) {
+    if (!doc_) return;
+    doc_->supports.choices = c;
+    tidyOwn(doc_->supports);
+}
+
+void App::setSupportChoices(const SupportChoices& c) {
+    if (!doc_) return;
+    if (!supportsForPart()) {
+        setJobChoices(c);
+        return;
+    }
+    SupportState& s = doc_->supports;
+    const int id = doc_->selectedId();
+    const SupportChoices& job = s.choices;
+    const SupportChoices before = s.setup().forPart(id);
+    PartChoices& o = s.own[id];
+    o.how_many = c.how_many;
+    o.usual_tip = c.usual_tip;
+    o.look_further = c.look_further;
+    for (const auto& [k, v] : c.advanced) {
+        const auto j = job.advanced.find(k);
+        if (j == job.advanced.end() || j->second != v) o.advanced[k] = v;
+        else o.advanced.erase(k);
+    }
+    for (const auto& [k, v] : before.advanced)
+        if (!c.advanced.count(k) && !job.advanced.count(k)) o.advanced.erase(k);
+    // The raft: for every part on it.
+    if (!(c.raft == before.raft) || c.raft_preset.name != before.raft_preset.name) {
+        const std::vector<RaftGroup> rafts = chosenRafts(*doc_, s.setup());
+        std::vector<int> on = {id};
+        if (const RaftGroup* g = raftWith(rafts, id)) on = g->parts;
+        for (const int p : on) {
+            s.own[p].raft = c.raft;
+            s.own[p].raft_preset = c.raft_preset;
+        }
+    }
+    tidyOwn(s);
+}
+
+void App::useJobValues(int part) {
+    if (!doc_ || doc_->partIndex(part) < 0) return;
+    doc_->supports.own.erase(part);
+    const JobLift job = doc_->jobLift();
+    doc_->editParts([&](PartsEdit& e) {
+        if (PartState* s = e.find(part)) {
+            s->placement.elevation = job.elevation;
+            s->placement.on_plate = job.on_plate;
+        }
+    });
+}
+
+void App::shareRaft(int part, int with) {
+    if (!doc_) return;
+    SupportState& s = doc_->supports;
+    const std::vector<RaftGroup> rafts = chosenRafts(*doc_, s.setup());
+    const RaftGroup* a = raftWith(rafts, part);
+    const RaftGroup* b = raftWith(rafts, with);
+    if (!a || !b || a == b) return;
+    // The parts moved take the raft they join: its settings.
+    for (const int p : a->parts) {
+        s.own[p].raft = b->spec;
+        s.own[p].raft_preset.name = b->preset;
+    }
+    std::vector<int> both = b->parts;
+    both.insert(both.end(), a->parts.begin(), a->parts.end());
+    std::sort(both.begin(), both.end(), [&](int x, int y) { return doc_->partIndex(x) < doc_->partIndex(y); });
+    std::erase_if(s.shared, [&](const std::vector<int>& ids) {
+        for (const int id : ids)
+            if (std::find(both.begin(), both.end(), id) != both.end()) return true;
+        return false;
+    });
+    s.shared.push_back(std::move(both));
+    tidyOwn(s);
+}
+
+void App::separateRaft(int part) {
+    if (!doc_) return;
+    SupportState& s = doc_->supports;
+    const std::vector<RaftGroup> rafts = chosenRafts(*doc_, s.setup());
+    const RaftGroup* g = raftWith(rafts, part);
+    if (!g) return;
+    const std::vector<int> ids = g->parts;
+    std::erase_if(s.shared, [&](const std::vector<int>& list) {
+        for (const int id : list)
+            if (std::find(ids.begin(), ids.end(), id) != ids.end()) return true;
+        return false;
+    });
+}
+
+void App::leaveRaft(int part) {
+    if (!doc_) return;
+    SupportState& s = doc_->supports;
+    for (std::vector<int>& ids : s.shared) std::erase(ids, part);
+    tidyOwn(s);
+}
+
+bool App::supportsSectionOpen(int section) const {
+    return section >= 0 && section < static_cast<int>(supports_sections_.size()) &&
+           supports_sections_[static_cast<std::size_t>(section)];
+}
+
+void App::setSupportsSectionOpen(int section, bool open) {
+    if (section >= 0 && section < static_cast<int>(supports_sections_.size()))
+        supports_sections_[static_cast<std::size_t>(section)] = open;
+}
+
+namespace {
+double liftStop(double mm) { return std::clamp(std::round(mm), 1.0, 10.0); }
 fruit::Placement withLift(fruit::Placement p, double mm) {
-    p.elevation = std::clamp(std::round(mm), 1.0, 10.0);
+    p.elevation = liftStop(mm);
     return p;
+}
+// All parts: the job's lift, and every part in `followers` with it.
+void liftAll(PartsEdit& e, const std::vector<int>& followers, double mm) {
+    for (const int id : followers)
+        if (PartState* s = e.find(id)) s->placement.elevation = liftStop(mm);
+    e.job.elevation = liftStop(mm);
 }
 }  // namespace
 
 void App::setLift(double mm) {
-    if (doc_) doc_->edit(withLift(doc_->placement(), mm));
+    if (!doc_) return;
+    if (supportsForPart()) {
+        doc_->edit(withLift(doc_->placement(), mm));
+        return;
+    }
+    std::vector<int> followers;
+    for (const Part& p : doc_->parts())
+        if (p.placement().elevation == doc_->jobLift().elevation) followers.push_back(p.id());
+    doc_->editParts([&](PartsEdit& e) { liftAll(e, followers, mm); });
 }
 
 void App::beginLift() {
     if (!doc_ || placing()) return;
+    lift_followers_.clear();
+    for (const Part& p : doc_->parts())
+        if (p.placement().elevation == doc_->jobLift().elevation) lift_followers_.push_back(p.id());
     doc_->beginDrag();
     lifting_ = lift_held_ = placing();
 }
@@ -1152,7 +1313,8 @@ void App::beginLift() {
 void App::previewLift(double mm) {
     if (!lifting_ || !placing()) return;
     lift_held_ = true;
-    doc_->preview(withLift(doc_->placement(), mm));
+    if (supportsForPart()) doc_->preview(withLift(doc_->placement(), mm));
+    else doc_->previewParts([&](PartsEdit& e) { liftAll(e, lift_followers_, mm); });
 }
 
 void App::endLift() {
@@ -1167,14 +1329,17 @@ const char* const kTipCountJob = "Counting tips";
 
 std::optional<App::TipCountKey> App::tipCountKey() const {
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports || tip_editing_ || !doc_->fits()) return std::nullopt;
-    TipCountKey k{doc_->revision(), doc_->supportSettings(), doc_->supports.choices, doc_->supports.edits};
-    k.choices.how_many = kHowManyCentre;
-    return k;
+    return TipCountKey{doc_->revision(), doc_->supportSettings(), centred(doc_->supports.setup()), doc_->supports.edits};
 }
 
-const std::array<std::size_t, kQuickStops>* App::tipCountsByStop() const {
+std::optional<TipCounts> App::tipCountsByStop() const {
     const auto key = tipCountKey();
-    return key && tip_counts_for_ && *tip_counts_for_ == *key ? &tip_counts_ : nullptr;
+    if (!key || !tip_counts_for_ || !(*tip_counts_for_ == *key)) return std::nullopt;
+    if (supportsForPart()) {
+        const auto it = tip_counts_.find(doc_->selectedId());
+        return it != tip_counts_.end() ? std::optional<TipCounts>(it->second) : std::nullopt;
+    }
+    return jobTipCounts(tip_counts_, doc_->supports.setup());
 }
 
 bool App::countingTips() const { return jobs_.busy() && jobs_.progress().name == kTipCountJob; }
@@ -1198,25 +1363,26 @@ void App::startTipCounts() {
     tip_counts_tried_ = key;
     const int generation = ++tip_counts_generation_;
     auto snap = std::make_shared<const Document>(*doc_);
-    auto out = std::make_shared<std::array<std::size_t, kQuickStops>>();
-    auto plans = std::make_shared<std::array<SupportPlan, kQuickStops>>();
-    // The plans are kept for making supports at another stop; the one made
-    // ahead for this job, at its stop, is not planned again.
+    auto out = std::make_shared<std::map<int, TipCounts>>();
+    auto plans = std::make_shared<std::map<int, std::array<SupportPlan, kQuickStops>>>();
+    // The plans are kept for making supports at another stop; the ones made
+    // ahead for this job, at each part's stop, are not planned again.
     SupportInputs inputs = supportInputs();
-    inputs.choices.how_many = kHowManyCentre;
-    std::shared_ptr<const KnownPlan> known;
+    inputs.setup = centred(inputs.setup);
+    std::shared_ptr<const JobPlan> known;
+    const SupportSetup setup = doc_->supports.setup();
     if (ahead_ && ahead_for_) {
         SupportInputs made = *ahead_for_;
-        made.choices.how_many = kHowManyCentre;
-        if (made == inputs) known = std::make_shared<const KnownPlan>(KnownPlan{ahead_for_->choices.how_many, planOf(*ahead_)});
+        made.setup = centred(made.setup);
+        if (made == inputs && ahead_for_->setup == setup) known = std::make_shared<const JobPlan>(planOf(*ahead_));
     }
     std::weak_ptr<Document> target = doc_;
     // It gives way: making the supports, or anything else, doesn't wait for it.
     jobs_.startGivingWay(
         kTipCountJob,
-        [snap, out, plans, known](const fruit::JobControl& ctl) {
-            *out = gui::tipCounts(*snap, snap->supports.choices, snap->visibleInPrinter(), ctl, snap->supports.edits,
-                                  known.get(), plans.get());
+        [snap, out, plans, known, setup](const fruit::JobControl& ctl) {
+            *out = partTipCounts(*snap, setup, snap->visibleInPrinter(), ctl, snap->supports.edits, known.get(),
+                                 plans.get());
         },
         [this, target, out, plans, inputs, key, generation](std::exception_ptr err) {
             if (!target.lock()) return;
@@ -1244,17 +1410,51 @@ void App::setHeightCorrection(double mm) {
 
 void App::resetQuickSupport() {
     if (!doc_) return;
+    if (supportsForPart()) {  // the part back to All parts' values
+        useJobValues(doc_->selectedId());
+        return;
+    }
     SupportChoices c = doc_->supports.choices;
     resetQuick(c);
-    setSupportChoices(c);
-    fruit::Placement p = doc_->placement();
-    p.on_plate = false;
-    p.elevation = fruit::Placement{}.elevation;
-    doc_->edit(p);
+    setJobChoices(c);
+    // The job's lift and raft, and every part that has them.
+    const JobLift was = doc_->jobLift();
+    doc_->editParts([&](PartsEdit& e) {
+        for (PartState& s : e.parts()) {
+            if (s.placement.on_plate == was.on_plate) s.placement.on_plate = false;
+            if (s.placement.elevation == was.elevation) s.placement.elevation = fruit::Placement{}.elevation;
+        }
+        e.job = JobLift{};
+    });
 }
 
 void App::setAdvanced(const std::string& key, double value) {
     if (!doc_) return;
+    if (supportsForPart()) {
+        // The part's own value, unless it is what the part would have from the job.
+        const int id = doc_->selectedId();
+        SupportState& st = doc_->supports;
+        for (const AdvancedSetting& s : advancedSettings())
+            for (const AdvancedField& f : s.fields) {
+                if (key != f.key) continue;
+                const double v = std::clamp(value, f.lo, f.hi);
+                PartChoices& o = st.own[id];
+                if (key == kUsualTipKey) {
+                    o.usual_tip = static_cast<int>(std::lround(v));
+                } else {
+                    SupportSetup without = st.setup();
+                    without.own[id].advanced.erase(key);
+                    const SupportChoices from_job = without.forPart(id);
+                    const double job = f.get(supportConfig(doc_->placement(), from_job), treeConfig(from_job));
+                    if (std::abs(v - job) < 1e-9) o.advanced.erase(key);
+                    else o.advanced[key] = v;
+                }
+                tidyOwn(st);
+                return;
+            }
+        log::error("unknown support setting " + key);
+        return;
+    }
     SupportChoices c = doc_->supports.choices;
     for (const AdvancedSetting& s : advancedSettings())
         for (const AdvancedField& f : s.fields) {
@@ -1277,19 +1477,27 @@ void App::setAdvanced(const std::string& key, double value) {
                 else c.advanced[key] = v;
             }
             advanced_ = c.advanced;
-            setSupportChoices(c);
+            setJobChoices(c);
             return;
         }
     log::error("unknown support setting " + key);
 }
 
 void App::resetAdvanced() {
-    advanced_.clear();
     if (!doc_) return;
+    if (supportsForPart()) {  // the part's own Advanced values go: it has the job's
+        if (auto it = doc_->supports.own.find(doc_->selectedId()); it != doc_->supports.own.end()) {
+            it->second.advanced.clear();
+            it->second.usual_tip.reset();
+            tidyOwn(doc_->supports);
+        }
+        return;
+    }
+    advanced_.clear();
     SupportChoices c = doc_->supports.choices;
     c.advanced.clear();
     c.usual_tip = usualTipFor(c.profile);  // the resin's measured one, if it has one
-    setSupportChoices(c);
+    setJobChoices(c);
 }
 
 // ---- The Raft page ----
@@ -1313,7 +1521,7 @@ void App::showRaft(bool show) {
 void App::useRaftPreset(const std::string& name) {
     const fruit::RaftSpec* r = presetSpec(name, raft_presets_);
     if (!doc_ || !r) return;
-    SupportChoices c = doc_->supports.choices;
+    SupportChoices c = supportChoicesShown();
     c.raft = *r;
     c.raft_preset.name = name;
     setSupportChoices(c);
@@ -1321,7 +1529,7 @@ void App::useRaftPreset(const std::string& name) {
 
 void App::editRaft(const fruit::RaftSpec& s) {
     if (!doc_ || raft_prompt_) return;
-    SupportChoices c = doc_->supports.choices;
+    SupportChoices c = supportChoicesShown();
     if (s == c.raft) return;
     const std::string name = c.raft_preset.name;
     if (isBuiltInPreset(name)) {
@@ -1348,7 +1556,7 @@ void App::askRaftCopy(const std::string& of) {
     p.kind = RaftNamePrompt::Kind::Copy;
     p.of = of;
     if (const fruit::RaftSpec* r = presetSpec(of, raft_presets_)) p.spec = *r;
-    else if (doc_) p.spec = doc_->supports.choices.raft;
+    else if (doc_) p.spec = supportChoicesShown().raft;
     p.name = copyName(of.empty() ? std::string("this job's raft") : of, raft_presets_);
     raft_prompt_ = std::move(p);
 }
@@ -1384,14 +1592,18 @@ bool App::finishRaftPrompt() {
     if (p.kind == RaftNamePrompt::Kind::Rename) {
         if (OwnRaftPreset* o = raft_presets_.find(p.of)) o->name = name;
         if (raft_presets_.new_jobs == p.of) raft_presets_.new_jobs = name;
-        if (doc_ && doc_->supports.choices.raft_preset.name == p.of) doc_->supports.choices.raft_preset.name = name;
+        if (doc_) {  // the job's and the parts' rafts on it keep it, by its new name
+            if (doc_->supports.choices.raft_preset.name == p.of) doc_->supports.choices.raft_preset.name = name;
+            for (auto& [id, o] : doc_->supports.own)
+                if (o.raft && o.raft_preset.name == p.of) o.raft_preset.name = name;
+        }
     } else {
         std::string from = presetOrigin(p.of, raft_presets_);
         if (from.empty()) from = fruit::kDefaultRaftPreset;
         raft_presets_.own.push_back({name, from, p.spec});
         if (p.new_jobs) raft_presets_.new_jobs = name;
-        if (doc_) {  // the job takes the copy
-            SupportChoices c = doc_->supports.choices;
+        if (doc_) {  // the job (or the part's raft) takes the copy
+            SupportChoices c = supportChoicesShown();
             c.raft = p.spec;
             c.raft_preset.name = name;
             setSupportChoices(c);
@@ -1411,7 +1623,11 @@ void App::deleteRaftPreset(const std::string& name) {
     own.erase(it);
     if (raft_presets_.new_jobs == name) raft_presets_.new_jobs = fruit::kDefaultRaftPreset;
     // A job on it keeps its raft, as its own.
-    if (doc_ && doc_->supports.choices.raft_preset.name == name) doc_->supports.choices.raft_preset.name.clear();
+    if (doc_) {
+        if (doc_->supports.choices.raft_preset.name == name) doc_->supports.choices.raft_preset.name.clear();
+        for (auto& [id, o] : doc_->supports.own)
+            if (o.raft && o.raft_preset.name == name) o.raft_preset.name.clear();
+    }
     saveRaftPresetsFile();
 }
 
@@ -1427,11 +1643,25 @@ unsigned App::raftPictureTexture(const JobPicture& p) {
     return raft_picture_;
 }
 
+std::size_t App::raftShown() const {
+    const std::shared_ptr<const SupportResult> r = doc_ ? doc_->supports.result : nullptr;
+    if (!r) return 0;
+    if (supportsForPart())
+        if (const SupportResult::PartMade* pm = r->partMade(doc_->selectedId()); pm && pm->raft >= 0)
+            return static_cast<std::size_t>(pm->raft);
+    for (std::size_t g = 0; g < r->rafts.size(); ++g) {
+        const auto it = r->setup.own.find(r->rafts[g].parts.front());
+        if (it == r->setup.own.end() || !it->second.raft) return g;
+    }
+    return 0;
+}
+
 const App::RaftPreview& App::raftPreview(const fruit::RaftSpec& s, double min_thick, int w, int h, bool* current) {
     const std::shared_ptr<const SupportResult> r = doc_ ? doc_->supports.result : nullptr;
-    const RaftPreviewKey key{r, s, min_thick, w, h};
+    const std::size_t raft = raftShown();
+    const RaftPreviewKey key{r, raft, s, min_thick, w, h};
     if (current) *current = key == raft_preview_key_;
-    if (!r || r->tree.raft_top <= 0 || w <= 0 || h <= 0) {
+    if (!r || raft >= r->rafts.size() || r->rafts[raft].top <= 0 || w <= 0 || h <= 0) {
         if (current) *current = true;
         static const RaftPreview none;
         return none;
@@ -1446,7 +1676,7 @@ const App::RaftPreview& App::raftPreview(const fruit::RaftSpec& s, double min_th
         raft_preview_key_ = key;
     };
     if (opts_.deterministic) {  // a scripted picture shows the preview as it is, every time
-        RaftPreviewPicture p = drawRaftPreview(r->tree, r->tree_cfg, s, min_thick, w, h);
+        RaftPreviewPicture p = drawRaftPreview(raftTreeOf(*r, raft), r->rafts[raft].tree_cfg, s, min_thick, w, h);
         take(p);
         if (current) *current = true;
         return raft_preview_;
@@ -1454,7 +1684,9 @@ const App::RaftPreview& App::raftPreview(const fruit::RaftSpec& s, double min_th
     auto out = std::make_shared<RaftPreviewPicture>();
     raft_jobs_.startGivingWay(
         "Drawing the raft",
-        [out, r, s, min_thick, w, h](const fruit::JobControl&) { *out = drawRaftPreview(r->tree, r->tree_cfg, s, min_thick, w, h); },
+        [out, r, raft, s, min_thick, w, h](const fruit::JobControl&) {
+            *out = drawRaftPreview(raftTreeOf(*r, raft), r->rafts[raft].tree_cfg, s, min_thick, w, h);
+        },
         [this, out, take, key](std::exception_ptr e) {
             if (!e && raft_preview_asked_ == key) take(*out);  // an older one, overtaken, is dropped
         });
@@ -1528,7 +1760,7 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
     const auto prev = doc_->supports.result;
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<SupportResult>();
-    const SupportChoices choices = prev->choices;
+    const SupportSetup setup = prev->setup;
     const std::vector<TipEdit> edits = doc_->supports.edits;
     // Edits made since the tips were planned go on top: only the tree is built
     // again. Taking back one the planner worked around would leave its hole or
@@ -1539,14 +1771,9 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
     std::weak_ptr<Document> target = doc_;
     jobs_.start(
         replan ? "Planning the tips again" : "Updating the tips",
-        [snap, prev, out, choices, edits, replan](const fruit::JobControl& ctl) {
-            if (replan) {
-                *out = generate(*snap, choices, snap->visibleInPrinter(), ctl, edits);
-            } else {
-                SupportPlan plan{prev->planned, prev->plan_warnings, prev->plan_edits,
-                                 prev->hollow, prev->held_min, prev->held_max};
-                *out = finishWithEdits(*snap, choices, std::move(plan), edits, ctl);
-            }
+        [snap, prev, out, setup, edits, replan](const fruit::JobControl& ctl) {
+            if (replan) *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits);
+            else *out = finishWithEdits(*snap, setup, planOf(*prev), edits, ctl);
         },
         [this, target, out, rev, settings, select](std::exception_ptr err) {
             const auto d = target.lock();
@@ -1798,7 +2025,7 @@ void App::syncScene() {
     const SupportState& s = doc_->supports;
     if (!s.result) {
         renderer_.clearExtras();
-        renderer_.setOverhangTint(supportConfig(doc_->placement(), s.choices).critical_angle_deg);
+        renderer_.setOverhangTint(supportConfig(doc_->placement(), s.setup().forPart(doc_->selectedId())).critical_angle_deg);
         return;
     }
     // What may not print, for these supports (null: not replayed yet, or they are out of date).
@@ -1877,8 +2104,7 @@ void App::setExposures(double normal_s, double bottom_s) {
 std::shared_ptr<const PrintPlan> App::printPlan() {
     if (!doc_ || !doc_->layers.result) return nullptr;
     const auto& lr = doc_->layers.result;
-    const double raft =
-        doc_->placement().on_plate || !doc_->supports.result ? 0.0 : doc_->supports.result->tree.raft_top;
+    const double raft = !doc_->supports.result ? 0.0 : doc_->supports.result->thinnestRaft();
     PrintSettings s = doc_->print.settings;
     s.flip_x = printer_setup_.orientation_confirmed && printer_setup_.flip_x;
     s.flip_y = printer_setup_.orientation_confirmed && printer_setup_.flip_y;
@@ -2154,7 +2380,7 @@ void App::applyPrinterSetup() {
     // a mirrored image would put it on the wrong side.
     SupportChoices c = doc_->supports.choices;
     c.hinge = printer_setup_.orientation_confirmed ? printer_setup_.hinge : std::nullopt;
-    if (!(c == doc_->supports.choices)) setSupportChoices(c);
+    if (!(c == doc_->supports.choices)) setJobChoices(c);
 }
 
 // ---- Settings, About and first-run setup ----

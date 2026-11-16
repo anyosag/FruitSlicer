@@ -570,7 +570,9 @@ TEST_CASE("Quick support: what the controls do to real parts", "[gui][supports][
             if (tips[i] != tips[i + 1]) differs[i] = true;
         }
         // What the panel shows under the stops is what making them gives.
-        const auto counted = tipCounts(*m.doc, SupportChoices{}, m.doc->visibleInPrinter(), fruit::JobControl::none());
+        const SupportSetup setup = oneRaft(*m.doc, SupportChoices{});
+        const auto counted =
+            jobTipCounts(partTipCounts(*m.doc, setup, m.doc->visibleInPrinter(), fruit::JobControl::none()), setup);
         CHECK(counted == tips);
     }
     for (const bool d : differs) CHECK(d);
@@ -613,7 +615,8 @@ TEST_CASE("Quick support: what the controls do to real parts", "[gui][supports][
     }
 }
 
-TEST_CASE("Quick support: raft and lift are the job's, in every part, and undo", "[gui][supports][quick]") {
+TEST_CASE("Quick support: each part has its own raft and lift, a part added takes the job's, and undo",
+          "[gui][supports][quick]") {
     const auto doc = bracket("quick_bracket2.stl");
     CHECK_FALSE(doc->placement().on_plate);
     CHECK(doc->placement().elevation == 5);  // the default lift
@@ -624,17 +627,21 @@ TEST_CASE("Quick support: raft and lift are the job's, in every part, and undo",
     doc->undo();
     CHECK(doc->placement().elevation == 5);
     doc->redo();
-    // A second part takes the same lift, and the same raft choice.
+    CHECK(doc->jobLift().elevation == 8);  // one part: the job's lift is its own
+    // A second part takes the job's lift, and its raft choice.
     fruit::Placement other;
     other.offset = {40, 0};
     other.elevation = 3;
     const int b = doc->addPart(NewPart{"b", "", makePartModel(fruit::prepareModel(fruit::makeBox({0, 0, 0}, {10, 10, 10}))), other});
     REQUIRE(b >= 0);
     for (const Part& part : doc->parts()) CHECK(part.placement().elevation == 8);
+    // The selected part's lift is its own: the other keeps the job's.
     p = doc->placement();
     p.elevation = 6;
     doc->edit(p);
-    for (const Part& part : doc->parts()) CHECK(part.placement().elevation == 6);
+    CHECK(doc->findPart(b)->placement().elevation == 6);
+    CHECK(doc->parts().front().placement().elevation == 8);
+    CHECK(doc->jobLift().elevation == 8);
     doc->undo();
     for (const Part& part : doc->parts()) CHECK(part.placement().elevation == 8);
     doc->undo();  // the part's addition
@@ -665,6 +672,20 @@ TEST_CASE("Quick support: raft and lift are the job's, in every part, and undo",
     CHECK(doc->revision() != before);
     doc->undo();
     CHECK(doc->placement().elevation == 8);
+    CHECK(doc->revision() == before);
+    // All parts' slider: the job's lift and every part with it, dragged as one undo step.
+    doc->beginDrag();
+    for (const double mm : {7.0, 4.0})
+        doc->previewParts([&](PartsEdit& e) {
+            e.job.elevation = mm;
+            for (PartState& s : e.parts()) s.placement.elevation = mm;
+        });
+    doc->endDrag();
+    CHECK(doc->jobLift().elevation == 4);
+    for (const Part& part : doc->parts()) CHECK(part.placement().elevation == 4);
+    doc->undo();
+    CHECK(doc->jobLift().elevation == 8);
+    for (const Part& part : doc->parts()) CHECK(part.placement().elevation == 8);
     CHECK(doc->revision() == before);
 }
 
@@ -773,13 +794,14 @@ TEST_CASE("Quick support: supports made ahead from the tip counts' plans are the
     const auto doc = bracket("ahead");
     const SupportChoices c = at(3);
     const auto visible = doc->visibleInPrinter();
-    std::array<SupportPlan, kQuickStops> plans;
-    const auto counts = tipCounts(*doc, c, visible, fruit::JobControl::none(), {}, nullptr, &plans);
+    std::map<int, std::array<SupportPlan, kQuickStops>> plans;
+    const auto counts = partTipCounts(*doc, oneRaft(*doc, c), visible, fruit::JobControl::none(), {}, nullptr, &plans);
+    REQUIRE(plans.size() == 1);
     for (const int stop : {1, 3, 5}) {
         CAPTURE(stop);
         const SupportResult fresh = made(*doc, at(stop));
-        const SupportResult ahead = finishWithEdits(*doc, at(stop), plans[static_cast<std::size_t>(stop - 1)], {},
-                                                    fruit::JobControl::none());
+        const SupportResult ahead = finishWithEdits(*doc, at(stop), plans.begin()->second[static_cast<std::size_t>(stop - 1)],
+                                                    {}, fruit::JobControl::none());
         CHECK(ahead.tips == fresh.tips);
         CHECK(ahead.mesh.faces.size() == fresh.mesh.faces.size());
         REQUIRE(ahead.points.size() == fresh.points.size());
@@ -788,7 +810,8 @@ TEST_CASE("Quick support: supports made ahead from the tip counts' plans are the
             CHECK(ahead.points[i].pos.z == fresh.points[i].pos.z);
             CHECK(ahead.points[i].tip_diameter == fresh.points[i].tip_diameter);
         }
-        const KnownPlan known{stop, planOf(fresh)};
-        CHECK(tipCounts(*doc, c, visible, fruit::JobControl::none(), {}, &known) == counts);
+        // The plan made at this stop is the part's known one: the counts reuse it.
+        const JobPlan known = planOf(fresh);
+        CHECK(partTipCounts(*doc, oneRaft(*doc, at(stop)), visible, fruit::JobControl::none(), {}, &known) == counts);
     }
 }

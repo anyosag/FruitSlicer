@@ -413,8 +413,17 @@ TEST_CASE("Advanced settings: a value of your own makes the supports out of date
     CHECK(s.fresh(1, 0));
     s.choices.advanced["head_length"] = 1.5;
     CHECK_FALSE(s.fresh(1, 0));
+    r->setup = s.setup();  // made with it: what a result records it was made from
     r->choices = s.choices;
     CHECK(s.fresh(1, 0));
+    // A part's own value does too.
+    s.own[7].advanced["head_length"] = 2.0;
+    CHECK_FALSE(s.fresh(1, 0));
+    r->setup = s.setup();
+    CHECK(s.fresh(1, 0));
+    // And so does sharing a raft.
+    s.shared = {{7, 8}};
+    CHECK_FALSE(s.fresh(1, 0));
 }
 
 TEST_CASE("Advanced settings: every value at its lower limit, then its upper, still makes supports",
@@ -641,7 +650,7 @@ TEST_CASE("Supports: a tip built smaller than planned, or a little way off, show
     plan.points = {tip};
     SupportChoices c;
     c.usual_tip = 3;  // 0.6 mm
-    const SupportResult r = finishSupports(*doc, c, plan, fruit::JobControl::none());
+    const SupportResult r = finishWithEdits(*doc, c, plan, {}, fruit::JobControl::none());
     CHECK(r.tree.dropped_points == 0);
     std::size_t smaller = 0;
     for (const fruit::SupportPoint& p : r.points)

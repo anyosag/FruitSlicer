@@ -715,32 +715,7 @@ void Builder::mergePillars() {
 
 void Builder::raft() {
     if (cfg_.raft == RaftStyle::None) return;
-    // Join pads along a minimum spanning tree so the raft is one piece.
-    std::vector<int> idx;
-    for (size_t i = 0; i < out_.pillars.size(); ++i)
-        if (!out_.pillars[i].on_model && !out_.pillars[i].merged) idx.push_back(static_cast<int>(i));
-    const size_t n = idx.size();
-    if (n < 2) return;
-    std::vector<double> best(n, 1e300);
-    std::vector<int> parent(n, -1);
-    std::vector<char> in(n, 0);
-    best[0] = 0;
-    for (size_t it = 0; it < n; ++it) {
-        int u = -1;
-        for (size_t i = 0; i < n; ++i)
-            if (!in[i] && (u < 0 || best[i] < best[u])) u = static_cast<int>(i);
-        in[u] = 1;
-        for (size_t v = 0; v < n; ++v) {
-            if (in[v]) continue;
-            const double d = distance(out_.pillars[idx[u]].xy, out_.pillars[idx[v]].xy);
-            if (d < best[v]) { best[v] = d; parent[v] = u; }
-        }
-    }
-    const double zc = out_.raft_top / 2;
-    for (size_t v = 1; v < n; ++v) {
-        const Vec2 a = out_.pillars[idx[parent[v]]].xy, b = out_.pillars[idx[v]].xy;
-        out_.raft_links.push_back({{a.x, a.y, zc}, {b.x, b.y, zc}, out_.raft_top * 0.9});
-    }
+    linkRaft(out_);
 }
 
 Builder::Ahead Builder::workOut(const SupportPoint& p) const {
@@ -1039,7 +1014,57 @@ Paths SupportTree::fullRaftOutline(const TreeConfig& cfg, double inset) const {
     return u;
 }
 
-TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
+namespace {
+
+// The legacy Full raft's slab: stacked prisms of the outline, each pulled in a
+// little more than the one below, a ~45° edge for the scraper. They overlap
+// the cones and links; the slicer fills overlaps as a union.
+void appendFullSlab(TriangleMesh& m, const SupportTree& t, const TreeConfig& cfg) {
+    const double inset = t.fullRaftInset(cfg);
+    const int steps = std::max(1, static_cast<int>(std::ceil(t.raft_top / 0.2 - 1e-9)));
+    const double h = t.raft_top / steps;
+    for (int k = 0; k < steps; ++k) {
+        const double z0 = k * h;
+        const Paths outline = t.fullRaftOutline(cfg, inset * z0 / t.raft_top);
+        for (const ExPolygon& ex : toExPolygons(outline)) {
+            std::vector<std::vector<Vec2>> polys;
+            auto add = [&](const Path& p) {
+                std::vector<Vec2> v;
+                for (const Point64& q : p) v.push_back(toVec(q));
+                polys.push_back(std::move(v));
+            };
+            add(ex.contour);
+            for (const Path& hole : ex.holes) add(hole);
+            const ops::Solid prism = ops::extrude(polys, h);
+            if (!prism.valid() || prism.empty()) continue;
+            TriangleMesh pm = prism.toMesh();
+            for (Vec3& v : pm.vertices) v.z += z0;
+            m.append(pm);
+        }
+    }
+}
+
+// The legacy rafts' links: flat bars from the plate up, so the raft's first
+// layers are already one piece.
+void appendLinks(TriangleMesh& m, const SupportTree& t, const TreeConfig& cfg) {
+    for (const Rod& r : t.raft_links) {
+        const Vec2 a = r.a.xy(), b = r.b.xy();
+        const Vec2 d = normalized(b - a);
+        const Vec2 n{-d.y * cfg.link_width / 2, d.x * cfg.link_width / 2};
+        const double z1 = t.raft_top * 0.8;
+        const Vec3 v[8] = {{a.x - n.x, a.y - n.y, 0},  {b.x - n.x, b.y - n.y, 0},  {b.x + n.x, b.y + n.y, 0},
+                           {a.x + n.x, a.y + n.y, 0},  {a.x - n.x, a.y - n.y, z1}, {b.x - n.x, b.y - n.y, z1},
+                           {b.x + n.x, b.y + n.y, z1}, {a.x + n.x, a.y + n.y, z1}};
+        appendHexahedron(m, v);
+    }
+}
+
+// A legacy pad under a trunk's foot: its radius at the plate.
+double padRadius(const TreeConfig& cfg) { return cfg.base_diameter / 2 + cfg.pad_brim; }
+
+}  // namespace
+
+TriangleMesh SupportTree::mesh(const TreeConfig& cfg, bool with_raft) const {
     TriangleMesh m;
     const GeometryQuality& q = cfg.quality;
     // The joint balls: under each head, at the top and merged bottom of each
@@ -1106,8 +1131,8 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
         } else {
             const double base = P.base_diameter > 0 ? std::max(P.base_diameter, P.diameter) : cfg.base_diameter;
             appendBaseCone(m, bottom, P.diameter, base, std::max(0.0, raft_top - 0.1), q);
-            if (cfg.raft == RaftStyle::Pads && !cfg.raft_spec) {  // (Full has one slab for all, below)
-                const double r = cfg.base_diameter / 2 + cfg.pad_brim;
+            if (with_raft && cfg.raft == RaftStyle::Pads && !cfg.raft_spec) {  // (Full has one slab for all, below)
+                const double r = padRadius(cfg);
                 appendFrustum(m, {P.xy.x, P.xy.y, 0}, r, {P.xy.x, P.xy.y, raft_top}, std::max(0.5, r - 0.4),
                               q.segments(r));
             }
@@ -1118,50 +1143,114 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
         appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
         ball(r.b, r.diameter / 2);
     }
-    if (cfg.raft == RaftStyle::Full && raft_top > 0 && !cfg.raft_spec) {
-        // One slab, built as stacked prisms of the outline, each pulled in a
-        // little more than the one below: a ~45° edge for the scraper. They
-        // overlap the cones and links; the slicer fills overlaps as a union.
-        const double inset = fullRaftInset(cfg);
-        const int steps = std::max(1, static_cast<int>(std::ceil(raft_top / 0.2 - 1e-9)));
-        const double h = raft_top / steps;
-        for (int k = 0; k < steps; ++k) {
-            const double z0 = k * h;
-            const Paths outline = fullRaftOutline(cfg, inset * z0 / raft_top);
-            for (const ExPolygon& ex : toExPolygons(outline)) {
-                std::vector<std::vector<Vec2>> polys;
-                auto add = [&](const Path& p) {
-                    std::vector<Vec2> v;
-                    for (const Point64& q : p) v.push_back(toVec(q));
-                    polys.push_back(std::move(v));
-                };
-                add(ex.contour);
-                for (const Path& hole : ex.holes) add(hole);
-                const ops::Solid prism = ops::extrude(polys, h);
-                if (!prism.valid() || prism.empty()) continue;
-                TriangleMesh pm = prism.toMesh();
-                for (Vec3& v : pm.vertices) v.z += z0;
-                m.append(pm);
-            }
-        }
-    }
-    // Raft links: flat bars from the plate up, so the raft's first layers are
-    // already one piece.
+    if (!with_raft) return m;
+    if (cfg.raft == RaftStyle::Full && raft_top > 0 && !cfg.raft_spec) appendFullSlab(m, *this, cfg);
     if (cfg.raft_spec) {  // the Raft page's raft: built in layers, its bars with it
         if (raft_top > 0) appendSpecRaft(m, *this, cfg);
         return m;
     }
-    for (const Rod& r : raft_links) {
-        const Vec2 a = r.a.xy(), b = r.b.xy();
+    appendLinks(m, *this, cfg);
+    return m;
+}
+
+TriangleMesh SupportTree::raftMesh(const TreeConfig& cfg) const {
+    TriangleMesh m;
+    if (cfg.raft == RaftStyle::None || raft_top <= 0) return m;
+    if (cfg.raft_spec) {
+        appendSpecRaft(m, *this, cfg);
+        return m;
+    }
+    if (cfg.raft == RaftStyle::Pads) {
+        const double r = padRadius(cfg);
+        for (const Pillar& P : pillars)
+            if (!P.merged && !P.on_model)
+                appendFrustum(m, {P.xy.x, P.xy.y, 0}, r, {P.xy.x, P.xy.y, raft_top}, std::max(0.5, r - 0.4),
+                              cfg.quality.segments(r));
+    } else {
+        appendFullSlab(m, *this, cfg);
+    }
+    appendLinks(m, *this, cfg);
+    return m;
+}
+
+Paths SupportTree::raftFootprint(const TreeConfig& cfg) const {
+    if (cfg.raft == RaftStyle::None || raft_top <= 0) return {};
+    if (cfg.raft_spec) return specRaftShape(*this, cfg).base;
+    Paths parts = cfg.raft == RaftStyle::Full ? fullRaftOutline(cfg, 0) : Paths{};
+    if (cfg.raft == RaftStyle::Pads) {
+        const double r = padRadius(cfg);
+        const int n = std::max(16, cfg.quality.segments(r));
+        for (const Pillar& P : pillars) {
+            if (P.merged || P.on_model) continue;
+            Path d;
+            for (int i = 0; i < n; ++i) {
+                const double a = 2 * M_PI * i / n;
+                d.push_back(toPoint({P.xy.x + r * std::cos(a), P.xy.y + r * std::sin(a)}));
+            }
+            parts.push_back(std::move(d));
+        }
+    }
+    for (const Rod& l : raft_links) {
+        const Vec2 a = l.a.xy(), b = l.b.xy();
         const Vec2 d = normalized(b - a);
         const Vec2 n{-d.y * cfg.link_width / 2, d.x * cfg.link_width / 2};
-        const double z1 = raft_top * 0.8;
-        const Vec3 v[8] = {{a.x - n.x, a.y - n.y, 0},  {b.x - n.x, b.y - n.y, 0},  {b.x + n.x, b.y + n.y, 0},
-                           {a.x + n.x, a.y + n.y, 0},  {a.x - n.x, a.y - n.y, z1}, {b.x - n.x, b.y - n.y, z1},
-                           {b.x + n.x, b.y + n.y, z1}, {a.x + n.x, a.y + n.y, z1}};
-        appendHexahedron(m, v);
+        parts.push_back({toPoint(a - n), toPoint(b - n), toPoint(b + n), toPoint(a + n)});
     }
-    return m;
+    return unionNonZero(parts);
+}
+
+void linkRaft(SupportTree& t) {
+    t.raft_links.clear();
+    // Join pads along a minimum spanning tree so the raft is one piece.
+    std::vector<int> idx;
+    for (size_t i = 0; i < t.pillars.size(); ++i)
+        if (!t.pillars[i].on_model && !t.pillars[i].merged) idx.push_back(static_cast<int>(i));
+    const size_t n = idx.size();
+    if (n < 2) return;
+    std::vector<double> best(n, 1e300);
+    std::vector<int> parent(n, -1);
+    std::vector<char> in(n, 0);
+    best[0] = 0;
+    for (size_t it = 0; it < n; ++it) {
+        int u = -1;
+        for (size_t i = 0; i < n; ++i)
+            if (!in[i] && (u < 0 || best[i] < best[u])) u = static_cast<int>(i);
+        in[u] = 1;
+        for (size_t v = 0; v < n; ++v) {
+            if (in[v]) continue;
+            const double d = distance(t.pillars[idx[u]].xy, t.pillars[idx[v]].xy);
+            if (d < best[v]) { best[v] = d; parent[v] = u; }
+        }
+    }
+    const double zc = t.raft_top / 2;
+    for (size_t v = 1; v < n; ++v) {
+        const Vec2 a = t.pillars[idx[parent[v]]].xy, b = t.pillars[idx[v]].xy;
+        t.raft_links.push_back({{a.x, a.y, zc}, {b.x, b.y, zc}, t.raft_top * 0.9});
+    }
+}
+
+void appendTree(SupportTree& into, const SupportTree& from, int point_offset) {
+    const int head_offset = static_cast<int>(into.heads.size());
+    for (Head h : from.heads) {
+        if (h.point >= 0) h.point += point_offset;
+        into.heads.push_back(h);
+    }
+    for (Pillar P : from.pillars) {
+        for (int& h : P.heads) h += head_offset;
+        into.pillars.push_back(std::move(P));
+    }
+    auto more = [](std::vector<Rod>& a, const std::vector<Rod>& b) { a.insert(a.end(), b.begin(), b.end()); };
+    more(into.bridges, from.bridges);
+    more(into.braces, from.braces);
+    more(into.branches, from.branches);
+    more(into.stubs, from.stubs);
+    more(into.raft_links, from.raft_links);
+    into.warnings.insert(into.warnings.end(), from.warnings.begin(), from.warnings.end());
+    into.raft_top = std::max(into.raft_top, from.raft_top);
+    into.dropped_points += from.dropped_points;
+    into.smaller_heads += from.smaller_heads;
+    into.moved_heads += from.moved_heads;
+    into.braces_skipped_trap += from.braces_skipped_trap;
 }
 
 SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<SupportPoint>& points, const TreeConfig& cfg,

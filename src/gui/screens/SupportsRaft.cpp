@@ -743,7 +743,7 @@ void deletePrompt(App& app) {
 
 void supportsRaft(App& app, Document& doc, ImVec2 size) {
     beginPanel("raft_page", ImVec2(0, size.y), col::App, ImVec2(28, 18));
-    const SupportChoices& c = doc.supports.choices;
+    const SupportChoices c = app.supportChoicesShown();  // the job's raft, or the selected part's
     const auto& pr = app.raftPrompt();
     const bool waiting = pr && pr->kind == App::RaftNamePrompt::Kind::SaveChange;
     const std::string current = c.raft_preset.name;
@@ -760,9 +760,22 @@ void supportsRaft(App& app, Document& doc, ImVec2 size) {
     ImGui::Dummy(ImVec2(0, 2));
     const float ty = ImGui::GetCursorPosY();
     text("Raft settings", fonts().bold, size::DialogTitle + 2, col::Text);
+    // Which raft: with several parts, the selected part's raft, or every raft with the job's settings.
+    std::string whose = doc.name;
+    if (doc.partCount() > 1) {
+        const auto& r = doc.supports.result;
+        const std::size_t raft = app.raftShown();
+        if (app.supportsForPart())
+            whose = r && raft < r->rafts.size() && r->rafts[raft].parts.size() > 1
+                        ? strf("raft %zu (%s and the parts it shares with)", raft + 1, doc.part().name().c_str())
+                        : doc.part().name() + "'s raft";
+        else
+            whose = "every raft with All parts' settings";
+    }
     const std::string for_what =
-        pv.have ? strf("For: %s · %d trunks on the raft", doc.name.c_str(), static_cast<int>(pv.rp->shape.trunks.size()))
-                : strf("For: %s", doc.name.c_str());
+        pv.have ? strf("For: %s · %d trunks on %s", whose.c_str(), static_cast<int>(pv.rp->shape.trunks.size()),
+                       doc.partCount() > 1 && !app.supportsForPart() ? "the first" : "the raft")
+                : strf("For: %s", whose.c_str());
     text(for_what.c_str(), fonts().regular, size::Body, col::TextMuted);
     {
         const float right = ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x;

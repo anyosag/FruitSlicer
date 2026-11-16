@@ -124,6 +124,76 @@ int partFrom(const Document& doc, const json& j) {
     return slot >= 0 && slot < static_cast<int>(doc.partCount()) ? doc.parts()[static_cast<std::size_t>(slot)].id() : -1;
 }
 
+// A part's own support values (only those it has).
+json partChoicesJson(const PartChoices& o) {
+    json j = json::object();
+    if (o.how_many) j["how_many"] = *o.how_many;
+    if (o.usual_tip) j["usual_tip"] = *o.usual_tip;
+    if (o.look_further) j["look_further"] = *o.look_further;
+    if (!o.advanced.empty()) j["advanced"] = o.advanced;
+    if (o.raft) {
+        json r = fruit::raftSpecToJson(*o.raft);
+        r["preset"] = o.raft_preset.name;
+        j["raft"] = std::move(r);
+    }
+    return j;
+}
+
+PartChoices partChoicesFrom(const json& j) {
+    PartChoices o;
+    if (!j.is_object()) return o;
+    if (j.contains("how_many") && j["how_many"].is_number_integer())
+        o.how_many = std::clamp(j["how_many"].get<int>(), 1, kQuickStops);
+    if (j.contains("usual_tip") && j["usual_tip"].is_number_integer()) o.usual_tip = std::clamp(j["usual_tip"].get<int>(), 0, 3);
+    if (j.contains("look_further") && j["look_further"].is_boolean()) o.look_further = j["look_further"].get<bool>();
+    if (j.contains("advanced") && j["advanced"].is_object())
+        for (const auto& [k, v] : j["advanced"].items())
+            if (v.is_number()) o.advanced[k] = v.get<double>();
+    if (j.contains("raft") && j["raft"].is_object()) {
+        o.raft = fruit::raftSpecFromJson(j["raft"]);
+        o.raft_preset.name = j["raft"].value("preset", std::string());
+    }
+    return o;
+}
+
+// A plan's tips, the edits it was planned around and its warnings.
+json planJson(const Document& doc, const SupportPlan& plan, bool on_plate) {
+    json j;
+    j["tips"] = fruit::pointsToJson(plan.points);  // the planner's; the edits apply on top
+    // With no raft: the counts of the model's layers in the bottom layers these tips are right for.
+    if (on_plate) j["held_layers"] = {plan.held_min, plan.held_max};
+    j["planned_around"] = editsJson(doc, plan.edits);  // the edits the planner worked around
+    json ws = json::array();
+    for (const auto& w : plan.warnings)
+        ws.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}});
+    j["warnings"] = ws;
+    return j;
+}
+
+std::vector<TipEdit> editsFrom(const Document& doc, const json& a);
+
+SupportPlan planFrom(const Document& doc, const json& j, bool on_plate) {
+    SupportPlan plan;
+    plan.points = fruit::pointsFromJson(j.at("tips"));
+    if (const auto held = j.find("held_layers"); held != j.end() && held->is_array() && held->size() == 2) {
+        plan.held_min = (*held)[0].get<int>();
+        plan.held_max = (*held)[1].get<int>();
+    } else if (on_plate) {
+        // An older job does not say: its tips are taken to be right for the bottom layers it has now only.
+        plan.held_min = plan.held_max = plateHeldLayers(modelInBottomLayers(doc));
+    }
+    plan.edits = editsFrom(doc, j.value("planned_around", json::array()));
+    for (const auto& w : j.value("warnings", json::array())) {
+        fruit::Warning wn;
+        wn.code = w.value("code", "");
+        wn.message = w.value("message", "");
+        wn.layer = w.value("layer", -1);
+        if (w.contains("where")) wn.where = vecFrom(w["where"]);
+        plan.warnings.push_back(wn);
+    }
+    return plan;
+}
+
 std::vector<TipEdit> editsFrom(const Document& doc, const json& a) {
     std::vector<TipEdit> out;
     for (const json& j : a) {
@@ -308,18 +378,45 @@ void saveJob(const std::string& path, const Document& doc) {
     // The resin's name and a copy of its measured values: the job keeps them.
     if (!c.resin.empty()) sup["choices"]["resin"] = c.resin;
     if (c.profile.is_object()) sup["choices"]["profile"] = c.profile;
+    if (doc.partCount() > 1) {
+        // Each part's own values (by its place in the list), the rafts parts
+        // share by choice, and the job's lift and raft. A job of several parts
+        // saved before them had every part on one raft, with the job's values.
+        json own = json::array();
+        for (const Part& part : doc.parts()) {
+            const auto it = doc.supports.own.find(part.id());
+            own.push_back(it != doc.supports.own.end() ? partChoicesJson(it->second) : json::object());
+        }
+        sup["own"] = std::move(own);
+        json shared = json::array();
+        for (const std::vector<int>& ids : doc.supports.shared) {
+            json slots = json::array();
+            for (const int id : ids)
+                if (const int slot = partSlot(doc, id); slot >= 0) slots.push_back(slot);
+            if (slots.size() > 1) shared.push_back(std::move(slots));
+        }
+        sup["shared_rafts"] = std::move(shared);
+        sup["job_lift"] = {{"elevation", doc.jobLift().elevation}, {"on_plate", doc.jobLift().on_plate}};
+    }
     // Tips only for supports made for the job as it is now.
     sup["edits"] = editsJson(doc, doc.supports.edits);
     if (doc.supports.fresh(doc.revision(), doc.supportSettings())) {
         const SupportResult& r = *doc.supports.result;
-        sup["tips"] = fruit::pointsToJson(r.planned);  // the planner's; the edits apply on top
-        // With no raft: the counts of the model's layers in the bottom layers these tips are right for.
-        if (doc.placement().on_plate) sup["held_layers"] = {r.held_min, r.held_max};
-        sup["planned_around"] = editsJson(doc, r.plan_edits);  // the edits the planner worked around
-        json ws = json::array();
-        for (const auto& w : r.plan_warnings)
-            ws.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}});
-        sup["warnings"] = ws;
+        if (doc.partCount() == 1) {  // as before, so older FruitSlicers open it
+            const json one = planJson(doc, r.plans.begin()->second, doc.placement().on_plate);
+            for (const auto& [k, v] : one.items()) sup[k] = v;
+        } else {
+            json plans = json::array();
+            for (std::size_t i = 0; i < doc.partCount(); ++i) {
+                const Part& part = doc.parts()[i];
+                const auto it = r.plans.find(part.id());
+                if (it == r.plans.end()) continue;
+                json pj = planJson(doc, it->second, part.placement().on_plate);
+                pj["part"] = i;
+                plans.push_back(std::move(pj));
+            }
+            sup["plans"] = std::move(plans);
+        }
     }
     j["supports"] = sup;
     // The Hollow screen's choices, and the holes placed by hand (in their
@@ -509,6 +606,33 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         convertOldQuick(c, q.value("hold", 3), q.value("amount", 3), q.value("sturdy", kSturdyDefault));
     }
     doc->supports.edits = editsFrom(*doc, sj.value("edits", json::array()));
+    if (doc->partCount() > 1) {
+        SupportState& st = doc->supports;
+        if (sj.contains("own") && sj["own"].is_array())
+            for (std::size_t i = 0; i < sj["own"].size() && i < doc->partCount(); ++i)
+                if (PartChoices o = partChoicesFrom(sj["own"][i]); !o.empty()) st.own[doc->parts()[i].id()] = std::move(o);
+        if (sj.contains("shared_rafts") && sj["shared_rafts"].is_array()) {
+            for (const json& list : sj["shared_rafts"]) {
+                std::vector<int> ids;
+                for (const json& slot : list.is_array() ? list : json::array())
+                    if (slot.is_number_integer() && slot.get<int>() >= 0 && slot.get<int>() < static_cast<int>(doc->partCount()))
+                        ids.push_back(doc->parts()[static_cast<std::size_t>(slot.get<int>())].id());
+                if (ids.size() > 1) st.shared.push_back(std::move(ids));
+            }
+        } else {
+            // Saved before parts had rafts of their own: every part on one raft, as it printed.
+            std::vector<int> all;
+            for (const Part& part : doc->parts()) all.push_back(part.id());
+            st.shared.push_back(std::move(all));
+        }
+        if (sj.contains("job_lift") && sj["job_lift"].is_object())
+            doc->setJobLift({std::clamp(sj["job_lift"].value("elevation", fruit::Placement{}.elevation), 0.0, 100.0),
+                             sj["job_lift"].value("on_plate", false)});
+        SupportSetup t = st.setup();
+        tidy(t);
+        st.own = std::move(t.own);
+        st.shared = std::move(t.shared);
+    }
     if (j.contains("hollow")) {
         const json& hj = j["hollow"];
         HollowState& hs = doc->hollow;
@@ -561,24 +685,17 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         if (!s.sample) s.sample_path.clear();
     }
 
-    if (sj.contains("tips")) {
-        SupportPlan plan;
-        plan.points = fruit::pointsFromJson(sj["tips"]);
-        if (const auto held = sj.find("held_layers"); held != sj.end() && held->is_array() && held->size() == 2) {
-            plan.held_min = (*held)[0].get<int>();
-            plan.held_max = (*held)[1].get<int>();
-        } else if (doc->placement().on_plate) {
-            // An older job does not say: its tips are taken to be right for the bottom layers it has now only.
-            plan.held_min = plan.held_max = plateHeldLayers(modelInBottomLayers(*doc));
-        }
-        plan.edits = editsFrom(*doc, sj.value("planned_around", json::array()));
-        for (const auto& w : sj.value("warnings", json::array())) {
-            fruit::Warning wn;
-            wn.code = w.value("code", "");
-            wn.message = w.value("message", "");
-            wn.layer = w.value("layer", -1);
-            if (w.contains("where")) wn.where = vecFrom(w["where"]);
-            plan.warnings.push_back(wn);
+    if (sj.contains("tips") || sj.contains("plans")) {
+        JobPlan plans;
+        if (sj.contains("plans") && sj["plans"].is_array()) {
+            for (const json& pj : sj["plans"]) {
+                const int part = partFrom(*doc, pj);
+                if (part < 0) continue;
+                plans[part] = planFrom(*doc, pj, doc->findPart(part)->placement().on_plate);
+            }
+        } else {
+            // One plan for every part (a job of one part, or saved before each part had its own): split by part.
+            plans = splitPlan(*doc, planFrom(*doc, sj, doc->placement().on_plate));
         }
         // Planned on the hollowed or drilled model: that is made again, so
         // the layers and the print file use it too.
@@ -588,11 +705,15 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
                 planHollow(*doc, doc->hollow.choices, doc->hollow.manual, kLayerHeight, ctl.sub(0.3, 0.6)));
             doc->hollow.plan = hp;
             doc->hollow.plan_revision = doc->revision();
-            if (hp->changes()) plan.hollow = hp;
+            if (hp->changes())
+                for (auto& [id, plan] : plans) plan.hollow = hp;
             rest = ctl.sub(0.6, 1.0);
         }
-        auto r = std::make_shared<SupportResult>(
-            finishWithEdits(*doc, c, std::move(plan), doc->supports.edits, rest));
+        // A part with no plan saved (none can be missing, but should one be): its tips are planned now.
+        auto r = std::make_shared<SupportResult>(finishWithEdits(
+            *doc, doc->supports.setup(),
+            planJob(*doc, doc->supports.setup(), doc->visibleInPrinter(), rest.silent(), doc->supports.edits, &plans),
+            doc->supports.edits, rest));
         doc->supports.result = std::move(r);
         doc->supports.result_revision = doc->revision();
         doc->supports.result_settings = doc->supportSettings();
@@ -655,7 +776,9 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     other.usual_tip = resin ? a.choices.usual_tip : other.usual_tip;  // a resin sets its usual tip
     if (a.supports != b.supports && a.edits == b.edits)
         out.push_back(a.supports ? "generated the supports again" : "generated supports");
-    else if (a.supports == b.supports && !(a.choices == other)) out.push_back("changed support settings");
+    else if (a.supports == b.supports && (!(a.choices == other) || a.own != b.own || a.shared != b.shared))
+        out.push_back("changed support settings");
+    if (!(a.job == b.job)) out.push_back("changed the lift or raft for all parts");
     if (a.hollow_applied != b.hollow_applied || !(a.hollow == b.hollow) || a.holes != b.holes)
         out.push_back("changed how its hollows print");
     if (a.sample_path != b.sample_path || a.print != b.print)

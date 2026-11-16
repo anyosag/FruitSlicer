@@ -117,12 +117,26 @@ TEST_CASE("Parts: adding, selecting, removing, and the job's placed mesh", "[gui
     CHECK(doc->findPart(a)->placement().scale == 2);
     CHECK(doc->findPart(b)->placement().scale == 1);
     CHECK(doc->findPart(a)->fit().size.x == Approx(20));
-    // The lift is the job's: flat on the plate goes for every part.
+    // Each part has its own lift and raft: flat on the plate goes for that part only.
     p = doc->placement();
     p.on_plate = true;
     doc->edit(p);
+    CHECK(doc->findPart(a)->placement().on_plate);
+    CHECK_FALSE(doc->findPart(b)->placement().on_plate);
+    CHECK_FALSE(doc->jobLift().on_plate);  // the job's (All parts) is as it was
+    // The job's, with the parts that follow it, is one undo step.
+    CHECK(doc->editParts([&](PartsEdit& e) {
+        e.job.on_plate = true;
+        for (PartState& s : e.parts()) s.placement.on_plate = true;
+    }));
+    CHECK(doc->jobLift().on_plate);
     CHECK(doc->findPart(b)->placement().on_plate);
     CHECK(doc->placed().bbox().min.z == Approx(0));
+    doc->undo();
+    CHECK_FALSE(doc->jobLift().on_plate);
+    CHECK_FALSE(doc->findPart(b)->placement().on_plate);
+    doc->redo();
+    CHECK(doc->jobLift().on_plate);
 
     CHECK(doc->removePart(b));
     CHECK(doc->partCount() == 1);
@@ -131,7 +145,7 @@ TEST_CASE("Parts: adding, selecting, removing, and the job's placed mesh", "[gui
     doc->undo();  // the removal
     REQUIRE(doc->partCount() == 2);
     CHECK(doc->findPart(b)->placement().on_plate);
-    // A part added to a job flat on the plate stands flat too.
+    // A part added takes the job's lift and raft: on the plate here.
     const int c = doc->addPart(partOf(cube(5), "c", {0, 40}));
     CHECK(doc->findPart(c)->placement().on_plate);
 }
@@ -361,9 +375,10 @@ TEST_CASE("Parts: tip edits and holes stay on their part", "[gui][parts]") {
 TEST_CASE("Parts: two parts slice into layers that hold both", "[gui][parts][slow]") {
     // Flat on the plate, no supports: a 10 mm cube and a 20 × 10 × 5 mm slab.
     const auto doc = jobOf({partOf(cube(10), "cube", {-25, 0}), partOf(fruit::makeBox({0, 0, 0}, {20, 10, 5}), "slab", {25, 0})});
-    fruit::Placement p = doc->placement();
-    p.on_plate = true;
-    doc->edit(p);
+    doc->editParts([&](PartsEdit& e) {  // both on the plate
+        e.job.on_plate = true;
+        for (PartState& s : e.parts()) s.placement.on_plate = true;
+    });
     const LayerResult r = sliceLayers(*doc, fruit::TriangleMesh{}, 0.0, fruit::JobControl::none());
     REQUIRE(r.layers);
     const fruit::LayerStack& ls = *r.layers;
@@ -566,7 +581,7 @@ TEST_CASE("Jobs: several parts are saved as version 3 and come back", "[gui][par
     h.part = c;
     doc->hollow.manual = {h};
     auto r = std::make_shared<SupportResult>(
-        generate(*doc, doc->supports.choices, doc->visibleInPrinter(), fruit::JobControl::none(), {e}));
+        generate(*doc, doc->supports.setup(), doc->visibleInPrinter(), fruit::JobControl::none(), {e}));
     doc->supports.edits = {e};
     doc->supports.result = r;
     doc->supports.result_revision = doc->revision();

@@ -14,9 +14,11 @@
 //   merges overlapping shells with a NonZero union). The parts stay separate
 //   for editing.
 //
-//   The lift and the raft are the job's: every part stands at the same
-//   height above the plate (Placement::elevation and on_plate are kept the
-//   same on every part; changing them on one changes them on all).
+//   Each part has its own lift and stands on a raft or on the plate
+//   (Placement::elevation and on_plate). The job has a lift and a raft of its
+//   own too (JobLift, "All parts" on the Supports panel): a part added to the
+//   job takes them, and a change to them goes to every part that has the
+//   job's (Document::jobLift, PartsEdit::job).
 //
 //   Tip edits and drain holes placed by hand are kept in their part's own
 //   coordinates and name the part (TipEdit::part, DrainHole::part), so they
@@ -109,6 +111,13 @@ struct PartState {
     fruit::Placement placement;              // where it sits (the lift is the job's)
 };
 
+// The job's lift and raft: what a part has unless it has its own.
+struct JobLift {
+    double elevation = fruit::Placement{}.elevation;  // mm above the plate, on a raft
+    bool on_plate = false;                             // no raft: flat on the plate
+    bool operator==(const JobLift&) const = default;
+};
+
 // A part to add: Document::addPart gives it an id.
 struct NewPart {
     std::string name, path;
@@ -166,6 +175,7 @@ public:
     int add(NewPart p);
     bool remove(int id);
     int selected = -1;  // the part selected once it is done (an id; another is chosen if it is gone)
+    JobLift job;        // the job's lift and raft (a part keeps its own placement)
 
 private:
     friend class Document;

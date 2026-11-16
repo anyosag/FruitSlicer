@@ -13,19 +13,6 @@
 
 namespace gui {
 
-namespace {
-
-bool sameLift(const fruit::Placement& a, const fruit::Placement& b) {
-    return a.elevation == b.elevation && a.on_plate == b.on_plate;
-}
-
-void takeLift(fruit::Placement& p, const fruit::Placement& from) {
-    p.elevation = from.elevation;
-    p.on_plate = from.on_plate;
-}
-
-}  // namespace
-
 const Part* Document::findPart(int id) const {
     for (const Part& p : parts_)
         if (p.id() == id) return &p;
@@ -43,7 +30,7 @@ void Document::select(int id) {
 }
 
 Document::Snapshot Document::snapshot() const {
-    Snapshot s{parts_, selected_, revision_};
+    Snapshot s{parts_, selected_, revision_, base_};
     for (Part& p : s.parts) {
         p.placed_.reset();  // an undo step keeps no meshes it can make again
         p.footprint_.reset();
@@ -61,6 +48,7 @@ void Document::restore(Snapshot s) {
     parts_ = std::move(s.parts);
     selected_ = std::clamp(s.selected, 0, static_cast<int>(parts_.size()) - 1);
     revision_ = s.revision;
+    base_ = s.base;
     changed();
 }
 
@@ -78,17 +66,10 @@ void Document::changed() {
 
 void Document::setPlacement(std::size_t i, const fruit::Placement& p) {
     Part& part = parts_[i];
-    const bool lift = !sameLift(p, part.placement());
     part.s_.placement = p;
     part.update(printer);
     part.revision_ = ++last_revision_;
-    if (lift)  // the lift is the job's
-        for (std::size_t j = 0; j < parts_.size(); ++j) {
-            if (j == i) continue;
-            takeLift(parts_[j].s_.placement, p);
-            parts_[j].update(printer);
-            parts_[j].revision_ = ++last_revision_;
-        }
+    if (parts_.size() == 1) base_ = {p.elevation, p.on_plate};  // one part: the job's lift and raft are its own
     changed();
 }
 
@@ -211,7 +192,7 @@ bool Document::orientDecided() const {
 
 std::int64_t Document::supportSettings() const {
     const std::int64_t picked = orientSettings() * 100003LL + (hollow.applied ? 1 + hollow.settings : 0);
-    const int held = !parts_.empty() && placement().on_plate ? 1 + plateHeldLayers(modelInBottomLayers(*this)) : 0;
+    const int held = anyOnPlate() ? 1 + plateHeldLayers(modelInBottomLayers(*this)) : 0;
     return picked * kHeldSpan + std::min<std::int64_t>(held, kHeldSpan - 1);
 }
 
@@ -291,7 +272,8 @@ void Document::endDrag() {
     if (!dragging()) return;
     Snapshot from = std::move(*drag_from_);
     drag_from_.reset();
-    if (sameParts(parts_, from.parts)) restore(std::move(from));  // dragged back to where it started: nothing changed
+    if (sameParts(parts_, from.parts) && base_ == from.base)
+        restore(std::move(from));  // dragged back to where it started: nothing changed
     else record(std::move(from));
     prepare();
 }
@@ -316,8 +298,11 @@ bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
     for (const Part& p : parts_) e.parts_.push_back(p.state());
     e.selected = selectedId();
     e.next_id_ = next_id_;
+    e.job = base_;
     fn(e);
     std::vector<PartState>& now = e.parts_;
+    // One part: the job's lift and raft are its own.
+    if (now.size() == 1) e.job = {now.front().placement.elevation, now.front().placement.on_plate};
     std::erase_if(now, [](const PartState& s) { return !s.model || s.model->model.mesh.empty(); });
     if (now.empty()) return false;  // a job keeps a part
     // Every part a new id of its own; ids are never used twice in a job.
@@ -328,25 +313,15 @@ bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
         if (taken) now[i].id = next++;
         next = std::max(next, now[i].id + 1);
     }
-    // The lift is the job's: a part that had one and changed it gives it to
-    // all; new parts take the job's.
-    std::optional<fruit::Placement> lift;
-    if (!parts_.empty()) lift = placement();
-    for (const PartState& s : now)
-        if (const Part* old = findPart(s.id); old && !sameLift(s.placement, old->placement())) {
-            lift = s.placement;
-            break;
-        }
-    if (!lift) lift = now.front().placement;
-    for (PartState& s : now) takeLift(s.placement, *lift);
     // Nothing changed: nothing to undo.
-    bool same = now.size() == parts_.size(), shape = !same;
-    for (std::size_t i = 0; i < now.size() && same; ++i) {
+    bool shape = now.size() != parts_.size(), same = !shape;
+    for (std::size_t i = 0; i < now.size() && !shape; ++i) {
         const Part& p = parts_[i];
         const PartState& s = now[i];
         if (s.id != p.id() || s.model != p.shared() || !(s.placement == p.placement())) shape = true;
         if (shape || s.name != p.name() || s.path != p.path()) same = false;
     }
+    same = same && e.job == base_;
     next_id_ = next;
     if (same) {
         select(e.selected);
@@ -368,6 +343,7 @@ bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
     }
     const int old_index = selected_;
     parts_ = std::move(parts);
+    base_ = e.job;
     selected_ = std::clamp(old_index, 0, static_cast<int>(parts_.size()) - 1);
     if (const int i = partIndex(e.selected); i >= 0) selected_ = i;
     if (shape) revision_ = ++last_revision_;
@@ -377,7 +353,40 @@ bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
     return true;
 }
 
+void Document::previewParts(const std::function<void(PartsEdit&)>& fn) {
+    if (!dragging()) return;
+    PartsEdit e;
+    for (const Part& p : parts_) e.parts_.push_back(p.state());
+    e.selected = selectedId();
+    e.next_id_ = next_id_;
+    e.job = base_;
+    fn(e);
+    bool any = !(e.job == base_);
+    base_ = e.job;
+    for (const PartState& s : e.parts_) {
+        const int i = partIndex(s.id);
+        if (i < 0 || s.placement == parts_[static_cast<std::size_t>(i)].placement()) continue;
+        setPlacement(static_cast<std::size_t>(i), s.placement);
+        any = true;
+    }
+    if (any) revision_ = ++last_revision_;
+}
+
+bool Document::anyOnPlate() const {
+    for (const Part& p : parts_)
+        if (p.placement().on_plate) return true;
+    return false;
+}
+
+bool Document::allOnPlate() const {
+    for (const Part& p : parts_)
+        if (!p.placement().on_plate) return false;
+    return !parts_.empty();
+}
+
 int Document::addPart(NewPart p) {
+    p.placement.elevation = base_.elevation;
+    p.placement.on_plate = base_.on_plate;
     int id = -1;
     editParts([&](PartsEdit& e) {
         id = e.add(std::move(p));
@@ -403,6 +412,8 @@ bool Document::replaceMesh(int id, fruit::LoadedModel m) { return replaceMesh(id
 void Document::replaceParts(std::vector<NewPart> parts) {
     editParts([&](PartsEdit& e) {
         e.parts().clear();
+        // A new job's lift and raft: its first part's (a job saved with its own says so after).
+        if (!parts.empty()) e.job = {parts.front().placement.elevation, parts.front().placement.on_plate};
         int first = -1;
         for (NewPart& p : parts) {
             const int id = e.add(std::move(p));
@@ -432,6 +443,9 @@ JobStamp Document::stamp() const {
     s.orient_settings = orientSettings();
     s.supports = supports.result.get();
     s.choices = supports.choices;
+    s.own = supports.own;
+    s.shared = supports.shared;
+    s.job = base_;
     s.edits = supports.edits;
     s.hollow_applied = hollow.applied;
     s.hollow = hollow.choices;

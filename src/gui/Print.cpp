@@ -97,7 +97,7 @@ double modelInBottomLayers(const Document& doc) {
 }
 
 int baseLayers(const Document& doc, double layer_height) {
-    if (doc.parts().empty() || !doc.placement().on_plate) return 0;
+    if (!doc.anyOnPlate()) return 0;  // under the whole print, rafts too: one first layer for all
     return fruit::heightCorrectionLayers(heightCorrection(doc.print.settings), layer_height);
 }
 
@@ -132,7 +132,7 @@ PrintPlan planPrint(const Document& doc, const LayerResult& layers, double raft_
     p.print_time_s = fruit::estimatePrintSeconds(p.setup.header, static_cast<uint32_t>(p.layers), o);
     const fruit::GooHeader& h = p.setup.header;
     p.raft_needed = fruit::minRaftThickness(h.print.bottom_layers, h.print.transition_layers, p.layer_height);
-    p.raft_thick_enough = doc.placement().on_plate || raft_top + 1e-9 >= p.raft_needed;
+    p.raft_thick_enough = doc.allOnPlate() || raft_top + 1e-9 >= p.raft_needed;
     return p;
 }
 

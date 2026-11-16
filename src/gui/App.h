@@ -61,6 +61,8 @@ enum class OrientView { Settings, Results, Hollow };
 
 // How the Supports step draws the result. Risk: what may not print, painted on the model.
 enum class SupportsView { Supports, TipsOnly, Why, Risk };
+// The Supports panel's sections, each folded to a line of what it has, or open.
+enum SupportsSection { kSectionTips = 0, kSectionRaft = 1, kSectionRafts = 2 };
 
 struct HealthDialog {
     bool open = false;
@@ -169,6 +171,8 @@ public:
     void shapeCancel();
     void turnQuarter();                        // 90° about the vertical, slid back onto the plate if need be
     void slideOntoPlate();                     // over the edge: the least move that puts it back on
+    // Raft or On the plate, for what the Supports panel's switch picks: every
+    // part that has the job's (All parts), or the selected part. One undo step.
     void setOnPlate(bool on_plate);
     // On plate: the selected part turned so its `region`-th flat face (0-based, largest first: see
     // LayFace.h) lies on the plate; one undoable edit. False when there is no such face or it is
@@ -289,7 +293,9 @@ public:
     // Supports panel shows them under the stops. Null while they are being
     // counted, and once the job has changed since. The count starts by itself
     // on the Supports step and gives way to any other work.
-    const std::array<std::size_t, kQuickStops>* tipCountsByStop() const;
+    // For what the panel's switch picks: the job (parts with a How many of
+    // their own keep their stop) or the selected part.
+    std::optional<TipCounts> tipCountsByStop() const;
     bool countingTips() const;
     // On the Supports step, the supports Make supports would make are made in
     // the background first (before the tip counts), and kept aside: pressed
@@ -386,9 +392,31 @@ public:
     unsigned orientPicture(int option);
     // Supports.
     void generateSupports();
+    // The Supports panel's switch: settings for every part (All parts: the
+    // job's, which a part keeps unless it has its own) or for the selected
+    // part alone. A job of one part has only All parts.
+    bool supportsForPart() const;
+    void setSupportsForPart(bool part) { supports_for_part_ = part; }
+    // The choices the panel shows and sets: the job's, or the selected part's
+    // (the job's with its own over them).
+    SupportChoices supportChoicesShown() const;
+    // Sets them. For one part, what differs from the job's becomes its own
+    // (its raft for every part on that raft); for All parts, the job's change
+    // and the parts' own values stay.
     void setSupportChoices(const SupportChoices& c);
-    // Quick support: the lift (1 to 10 mm, the job's) is a placement edit like
-    // the raft's (setOnPlate); dragging its slider is one undo step.
+    // Part `part` back to the job's values: its own choices, lift and raft go.
+    void useJobValues(int part);
+    // Rafts: the parts on `part`'s raft go onto `with`'s (any part on it),
+    // with its settings; a shared raft's parts each on their own again.
+    void shareRaft(int part, int with);
+    void separateRaft(int part);
+    void leaveRaft(int part);  // that part alone on a raft of its own; the others on it stay together
+    // The panel's sections (SupportsSection): folded to a line, or open.
+    bool supportsSectionOpen(int section) const;
+    void setSupportsSectionOpen(int section, bool open);
+    // Quick support: the lift (1 to 10 mm), for what the switch picks, is a
+    // placement edit like the raft's (setOnPlate); dragging its slider is one
+    // undo step.
     void setLift(double mm);
     void beginLift();
     void previewLift(double mm);  // every frame the slider is held, moved or not: the drag lasts while it is
@@ -428,6 +456,9 @@ public:
     const RaftPresets& raftPresets() const { return raft_presets_; }
     void useRaftPreset(const std::string& name);  // the job's raft becomes that preset's
     void editRaft(const fruit::RaftSpec& s);      // a value changed on the Raft page
+    // The raft the Raft page is for (an index into the supports' rafts): the
+    // selected part's, or for All parts the first with the job's settings.
+    std::size_t raftShown() const;
     struct RaftNamePrompt {
         enum class Kind { SaveChange, Copy, Rename } kind = Kind::Copy;
         std::string of;       // the preset it is a copy (or the new name) of
@@ -720,6 +751,8 @@ private:
     int hollow_generation_ = 0;
     std::shared_ptr<const OrientSearch> pictures_for_;
     std::vector<unsigned> pictures_;  // options, then how it sits now
+    bool supports_for_part_ = false;               // the Supports panel's switch: the selected part, not All parts
+    std::array<bool, 3> supports_sections_{true, true, true};  // the panel's sections open
     SupportsView supports_view_ = SupportsView::Supports;
     bool problems_open_ = false;
     bool advanced_open_ = false;
@@ -730,6 +763,7 @@ private:
     unsigned raft_picture_ = 0;
     struct RaftPreviewKey {
         std::shared_ptr<const SupportResult> result;
+        std::size_t raft = 0;  // which of its rafts
         fruit::RaftSpec spec;
         double min_thick = 0;
         int w = 0, h = 0;
@@ -746,6 +780,8 @@ private:
     ViewRect view_rect_;
     bool lifting_ = false;    // the drag is the lift slider's, not a handle's
     bool lift_held_ = false;  // its slider said so since maintain() last looked
+    std::vector<int> lift_followers_;  // All parts: the parts the drag moves (those with the job's lift when it began)
+    void setJobChoices(const SupportChoices& c);  // the job's, whatever the switch says
     SliderTrack lift_track_;
     Handle hover_handle_ = Handle::None;
     bool mouse_spent_ = false;
@@ -799,12 +835,12 @@ private:
     struct TipCountKey {
         int revision = -1;
         std::int64_t settings = -1;
-        SupportChoices choices;
+        SupportSetup setup;  // every How many at the centre: the counts are for every stop
         std::vector<TipEdit> edits;
         bool operator==(const TipCountKey&) const = default;
     };
     std::optional<TipCountKey> tip_counts_for_, tip_counts_tried_;  // counted for; started for (it may have been cancelled)
-    std::array<std::size_t, kQuickStops> tip_counts_{};
+    std::map<int, TipCounts> tip_counts_;  // by part id
     int tip_counts_generation_ = 0;
     std::optional<TipCountKey> tipCountKey() const;  // none: no counts wanted now
     void startTipCounts();
@@ -813,7 +849,7 @@ private:
     struct SupportInputs {
         int revision = -1;
         std::int64_t settings = -1;
-        SupportChoices choices;
+        SupportSetup setup;  // the job's choices, each part's own, the shared rafts
         std::vector<TipEdit> edits;
         std::vector<fruit::Vec3> visible;
         int bottom_layers = 0, transition_layers = 0;
@@ -827,8 +863,8 @@ private:
     std::shared_ptr<const SupportResult> ahead_;      // made ahead, for ahead_for_
     std::shared_ptr<SupportResult> ahead_out_;        // where the one being made goes
     int ahead_generation_ = 0;
-    // The plans the tip counts made, by stop, for these inputs (How many at the centre).
-    std::array<SupportPlan, kQuickStops> tip_plans_;
+    // The plans the tip counts made, by part and stop, for these inputs (every How many at the centre).
+    std::map<int, std::array<SupportPlan, kQuickStops>> tip_plans_;
     std::optional<SupportInputs> tip_plans_for_;
     void startSupportsAhead();
     void installSupports(const std::shared_ptr<Document>& d, std::shared_ptr<const SupportResult> r, int rev,

@@ -37,9 +37,9 @@ void App::placeAddedPart() {
     adding_part_ = false;
     if (!doc_ || !add || add->parts().empty()) return;
     if (placing()) endPlacing();
-    // Beside the others, on the job's lift.
-    p.elevation = doc_->placement().elevation;
-    p.on_plate = doc_->placement().on_plate;
+    // Beside the others, on the job's lift and raft (All parts).
+    p.elevation = doc_->jobLift().elevation;
+    p.on_plate = doc_->jobLift().on_plate;
     const fruit::PlateFit f = fruit::checkFit(add->part().mesh(), p, doc_->printer);
     std::vector<fruit::BBox2> taken;
     for (const Part& part : doc_->parts()) taken.push_back(part.footprintBox());

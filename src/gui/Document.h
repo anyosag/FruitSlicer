@@ -53,7 +53,9 @@ inline constexpr std::int64_t kHeldSpan = 100000;
 
 // The Supports step's choices and result for this job.
 struct SupportState {
-    SupportChoices choices;                     // for the next run
+    SupportChoices choices;                     // for the next run: All parts
+    std::map<int, PartChoices> own;             // each part's own values, by part id
+    std::vector<std::vector<int>> shared;       // parts that share a raft by choice (ids)
     std::vector<TipEdit> edits;                 // made by hand, in model coordinates
     std::shared_ptr<const SupportResult> result;
     int result_revision = -1;           // what it was made for: the parts as they were,
@@ -66,8 +68,10 @@ struct SupportState {
     // Made for this placement, these picks and these choices. Made with no
     // raft for another count of the model's layers in the bottom layers, they
     // still count while that count gives the same tips.
+    // Everything the next run is made from besides the parts.
+    SupportSetup setup() const { return SupportSetup{choices, own, shared}; }
     bool fresh(int revision, std::int64_t settings) const {
-        if (!result || result_revision != revision || !(result->choices == choices) || !(result->edits == edits))
+        if (!result || result_revision != revision || !(result->setup == setup()) || !(result->edits == edits))
             return false;
         if (result_settings == settings) return true;
         const std::int64_t held = settings % kHeldSpan;
@@ -124,6 +128,9 @@ struct JobStamp {
     std::vector<bool> orient_decided;      // each part's
     const void* supports = nullptr;  // the supports result, by identity
     SupportChoices choices;
+    std::map<int, PartChoices> own;
+    std::vector<std::vector<int>> shared;
+    JobLift job;
     std::vector<TipEdit> edits;
     bool hollow_applied = false;  // the Hollow screen
     HollowChoices hollow;
@@ -175,8 +182,8 @@ public:
     int partIndex(int id) const;  // -1 when it is not in the job
     // Selects a part (not an edit: nothing to undo).
     void select(int id);
-    // Adds a part (undoable) and selects it; its placement's lift is the
-    // job's. Returns its id.
+    // Adds a part (undoable) and selects it; its placement's lift and raft
+    // are the job's. Returns its id.
     int addPart(NewPart p);
     // Removes a part (undoable); false for the last one: a job keeps one.
     bool removePart(int id);
@@ -185,10 +192,21 @@ public:
     bool replaceMesh(int id, std::shared_ptr<const PartModel> m);
     // Every part at once (undoable): the first is selected.
     void replaceParts(std::vector<NewPart> parts);
-    // Any change to the parts as one undo step: `fn` gets a working copy of
-    // the list. Nothing is recorded, and false comes back, when it is left
-    // as it was. A part whose lift changed gives every part that lift.
+    // Any change to the parts, and to the job's lift and raft, as one undo
+    // step: `fn` gets a working copy of the list. Nothing is recorded, and
+    // false comes back, when it is left as it was.
     bool editParts(const std::function<void(PartsEdit&)>& fn);
+    // While dragging (beginDrag): placements and the job's lift changed by
+    // `fn` at once, not recorded (endDrag records the whole drag). Parts are
+    // neither added nor removed.
+    void previewParts(const std::function<void(PartsEdit&)>& fn);
+    // The job's lift and raft (All parts): what an added part takes.
+    const JobLift& jobLift() const { return base_; }
+    // Loading a job: its lift and raft as saved (nothing to undo).
+    void setJobLift(const JobLift& l) { base_ = l; }
+    // Some part stands on the plate; every part does.
+    bool anyOnPlate() const;
+    bool allOnPlate() const;
     // Each part's model -> printer transform.
     PartFrames frames() const;
 
@@ -277,17 +295,19 @@ private:
         std::vector<Part> parts;  // without their placed meshes
         int selected = 0;
         int revision = 0;
+        JobLift base;
     };
     Snapshot snapshot() const;
     void restore(Snapshot s);
     void record(Snapshot before);         // an undo step
     void changed();                       // outline, fit, the placed mesh later
-    void setPlacement(std::size_t i, const fruit::Placement& p);  // and the lift on every part
+    void setPlacement(std::size_t i, const fruit::Placement& p);
     void prepare() const;                 // every placed mesh made
     std::vector<Part> parts_;
     int selected_ = 0;  // index into parts_
     int next_id_ = 0;
     std::map<int, OrientState> orient_;
+    JobLift base_;  // the job's lift and raft
     mutable std::shared_ptr<const fruit::TriangleMesh> placed_;
     mutable std::vector<std::size_t> face_start_;  // where each part's faces begin in placed_
     fruit::BBox3 box_;

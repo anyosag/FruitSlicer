@@ -7,6 +7,10 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <cctype>
+#include <limits>
+#include <memory>
+#include <numeric>
 #include <optional>
 
 #include "Document.h"
@@ -14,6 +18,7 @@
 #include "Orient.h"
 #include "Print.h"
 #include "core/Parallel.h"
+#include "mesh/AabbTree.h"
 #include "support/CosmeticField.h"
 #include "support/PointGenerator.h"
 #include "support/SupportSettings.h"
@@ -989,6 +994,126 @@ std::optional<fruit::Vec3> yourTip(const TipEdit& e) {
 
 }  // namespace
 
+// ---- The parts' settings and rafts ----
+
+SupportChoices SupportSetup::forPart(int part) const {
+    SupportChoices c = choices;
+    const auto it = own.find(part);
+    if (it == own.end()) return c;
+    const PartChoices& o = it->second;
+    if (o.how_many) c.how_many = *o.how_many;
+    if (o.usual_tip) c.usual_tip = *o.usual_tip;
+    if (o.look_further) c.look_further = *o.look_further;
+    for (const auto& [k, v] : o.advanced) c.advanced[k] = v;
+    if (o.raft) {
+        c.raft = *o.raft;
+        c.raft_preset = o.raft_preset;
+    }
+    return c;
+}
+
+void tidy(SupportSetup& s) {
+    const SupportChoices& c = s.choices;
+    for (auto it = s.own.begin(); it != s.own.end();) {
+        PartChoices& o = it->second;
+        if (o.how_many == c.how_many) o.how_many.reset();
+        if (o.usual_tip == c.usual_tip) o.usual_tip.reset();
+        if (o.look_further == c.look_further) o.look_further.reset();
+        std::erase_if(o.advanced, [&](const auto& kv) {
+            const auto j = c.advanced.find(kv.first);
+            return j != c.advanced.end() && j->second == kv.second;
+        });
+        if (o.raft && *o.raft == c.raft && o.raft_preset.name == c.raft_preset.name) o.raft.reset();
+        it = o.empty() ? s.own.erase(it) : std::next(it);
+    }
+    for (auto& ids : s.shared) {
+        std::vector<int> once;
+        for (int id : ids)
+            if (std::find(once.begin(), once.end(), id) == once.end()) once.push_back(id);
+        ids = std::move(once);
+    }
+    std::erase_if(s.shared, [](const std::vector<int>& ids) { return ids.size() < 2; });
+}
+
+SupportSetup centred(SupportSetup s) {
+    s.choices.how_many = kHowManyCentre;
+    for (auto& [id, o] : s.own) o.how_many.reset();
+    tidy(s);
+    return s;
+}
+
+std::vector<RaftGroup> chosenRafts(const Document& doc, const SupportSetup& s) {
+    const std::vector<Part>& parts = doc.parts();
+    std::vector<std::size_t> up(parts.size());
+    std::iota(up.begin(), up.end(), std::size_t{0});
+    const auto find = [&](std::size_t i) {
+        while (up[i] != i) i = up[i] = up[up[i]];
+        return i;
+    };
+    for (const std::vector<int>& ids : s.shared) {
+        std::optional<std::size_t> first;
+        for (const int id : ids) {
+            const int i = doc.partIndex(id);
+            if (i < 0 || parts[static_cast<std::size_t>(i)].placement().on_plate) continue;
+            const std::size_t at = find(static_cast<std::size_t>(i));
+            if (!first) first = at;
+            else if (at != find(*first)) up[std::max(at, find(*first))] = std::min(at, find(*first));
+        }
+    }
+    std::vector<RaftGroup> out;
+    std::map<std::size_t, std::size_t> group_of;  // a part's root -> its raft
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (parts[i].placement().on_plate) continue;
+        const auto [it, added] = group_of.try_emplace(find(i), out.size());
+        if (added) out.emplace_back();
+        out[it->second].parts.push_back(parts[i].id());
+    }
+    for (RaftGroup& g : out) {
+        const SupportChoices c = s.forPart(g.parts.front());
+        g.spec = c.raft;
+        g.preset = c.raft_preset.name;
+    }
+    return out;
+}
+
+SupportSetup oneRaft(const Document& doc, const SupportChoices& c) {
+    SupportSetup s;
+    s.choices = c;
+    std::vector<int> all;
+    for (const Part& p : doc.parts()) all.push_back(p.id());
+    if (all.size() > 1) s.shared.push_back(std::move(all));
+    return s;
+}
+
+const SupportResult::PartMade* SupportResult::partOfTip(std::size_t i) const {
+    for (const PartMade& p : parts)
+        if (i >= p.first && i < p.first + p.tips) return &p;
+    return nullptr;
+}
+
+const SupportResult::PartMade* SupportResult::partMade(int id) const {
+    for (const PartMade& p : parts)
+        if (p.part == id) return &p;
+    return nullptr;
+}
+
+fruit::SupportTree raftTreeOf(const SupportResult& r, std::size_t raft) {
+    fruit::SupportTree t;
+    if (raft >= r.rafts.size()) return t;
+    const SupportResult::RaftMade& g = r.rafts[raft];
+    for (const std::size_t i : g.pillars)
+        if (i < r.tree.pillars.size()) t.pillars.push_back(r.tree.pillars[i]);
+    t.raft_top = g.top;
+    fruit::linkRaft(t);
+    return t;
+}
+
+double SupportResult::thinnestRaft() const {
+    double t = 0;
+    for (const RaftMade& g : rafts) t = t == 0 ? g.top : std::min(t, g.top);
+    return t;
+}
+
 int plateHeldLayers(double held_mm) {
     // The planner's rule: a layer is held when its underside is below `held_mm` (PointGenerator, to 1e-9).
     return std::max(0, static_cast<int>(std::ceil((held_mm - 1e-9) / kLayerHeight)));
@@ -996,13 +1121,91 @@ int plateHeldLayers(double held_mm) {
 
 namespace {
 
+// Where a plan is made: one part, or the whole job as one model, with what
+// prints of it when the Hollow screen changed it.
+struct PlanOn {
+    const fruit::TriangleMesh* mesh = nullptr;        // placed, printer coordinates
+    std::shared_ptr<const fruit::LayerStack> layers;  // hollowed, drilled or filled (null: the mesh as it is)
+    int part = -1;                                    // its part (-1: every part): only its hand edits count
+    bool on_plate = false;
+};
+
+// The Hollow screen's plan, when it changes what prints: the one it has, or
+// one made now (`rest` is then what is left of `ctl` after it).
+std::shared_ptr<const HollowPlan> jobHollow(const Document& doc, const fruit::JobControl& ctl, fruit::JobControl& rest) {
+    rest = ctl;
+    if (!doc.hollow.applied) return nullptr;
+    std::shared_ptr<const HollowPlan> hollow;
+    if (doc.hollow.planFresh(doc.revision()) && doc.hollow.plan->layer_height == kLayerHeight) {
+        hollow = doc.hollow.plan;
+    } else {
+        hollow = std::make_shared<const HollowPlan>(
+            planHollow(doc, doc.hollow.choices, doc.hollow.manual, kLayerHeight, ctl.sub(0.0, 0.3)));
+        rest = ctl.sub(0.3, 1.0);
+    }
+    if (!hollow->changes()) hollow.reset();
+    return hollow;
+}
+
+// What prints of one part of a hollowed job: the job's layers inside the
+// part's outline (its own cavities and holes stay in them).
+std::shared_ptr<const fruit::LayerStack> partLayers(const HollowPlan& h, const Part& part) {
+    const fruit::LayerStack own = fruit::sliceModel(part.placed(), h.layer_height);
+    auto out = std::make_shared<fruit::LayerStack>(*h.layers);
+    for (std::size_t i = 0; i < out->slices.size(); ++i) {
+        fruit::Paths outline;
+        if (i < own.size())
+            for (const fruit::ExPolygon& ex : fruit::toExPolygons(own.slices[i])) outline.push_back(ex.contour);
+        out->slices[i] = outline.empty() ? fruit::Paths{} : fruit::intersection(out->slices[i], fruit::offset(outline, 0.02));
+    }
+    return out;
+}
+
+// Part `i` of the job, to plan on. A job of one part is planned as the whole
+// job always was.
+PlanOn planOn(const Document& doc, std::size_t i, const std::shared_ptr<const HollowPlan>& hollow) {
+    const Part& p = doc.parts()[i];
+    const bool one = doc.partCount() == 1;
+    PlanOn on;
+    on.mesh = one ? &doc.placed() : &p.placed();
+    if (hollow) on.layers = one ? hollow->layers : partLayers(*hollow, p);
+    on.part = one ? -1 : p.id();
+    on.on_plate = p.placement().on_plate;
+    return on;
+}
+
+fruit::Placement standing(bool on_plate) {
+    fruit::Placement p;
+    p.on_plate = on_plate;
+    return p;
+}
+
+// A part's choices with its raft's settings (the first part's, on a shared raft).
+SupportChoices choicesOn(const SupportSetup& s, const std::vector<RaftGroup>& rafts, int part) {
+    SupportChoices c = s.forPart(part);
+    for (const RaftGroup& g : rafts)
+        if (std::find(g.parts.begin(), g.parts.end(), part) != g.parts.end()) {
+            c.raft = g.spec;
+            c.raft_preset.name = g.preset;
+        }
+    return c;
+}
+
+std::vector<TipEdit> editsOn(const std::vector<TipEdit>& edits, int part) {
+    if (part < 0) return edits;
+    std::vector<TipEdit> out;
+    for (const TipEdit& e : edits)
+        if (e.part == part) out.push_back(e);
+    return out;
+}
+
 // The planner's own tips for these choices, as they are.
-SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
-                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+SupportPlan planTipsAt(const Document& doc, const PlanOn& on, const SupportChoices& c,
+                       const std::vector<fruit::Vec3>& visible, const fruit::JobControl& rest,
+                       const std::vector<TipEdit>& all_edits, const std::shared_ptr<const HollowPlan>& hollow) {
     fruit::SupportConfig cfg;
     fruit::TreeConfig tc;
-    const fruit::Placement& p = doc.placement();
-    resolve(p, c, cfg, tc);
+    resolve(standing(on.on_plate), c, cfg, tc);
     cfg.plate_hold_height = modelInBottomLayers(doc);  // on the plate: the job's own bottom layers hold what they print
     fruit::CosmeticSpec cos;
     cos.visible_from = visible;
@@ -1011,6 +1214,7 @@ SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::
     // Hand edits: your tips are pinned, and the planner's own stay out of the
     // zones. Each is where its part is now.
     const PartFrames frames = doc.frames();
+    std::vector<TipEdit> edits = editsOn(all_edits, on.part);
     for (const TipEdit& e : edits) {
         const fruit::Transform* t = frames.find(e.part);
         if (!t) continue;
@@ -1020,20 +1224,8 @@ SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::
     }
     // Hollowed, drilled or filled on the Hollow screen: the tips are planned
     // on those layers, none goes in a hole's mouth, and none inside a hollow.
-    std::shared_ptr<const HollowPlan> hollow;
-    fruit::JobControl rest = ctl;
-    if (doc.hollow.applied) {
-        if (doc.hollow.planFresh(doc.revision()) && doc.hollow.plan->layer_height == kLayerHeight) {
-            hollow = doc.hollow.plan;
-        } else {
-            hollow = std::make_shared<const HollowPlan>(
-                planHollow(doc, doc.hollow.choices, doc.hollow.manual, kLayerHeight, ctl.sub(0.0, 0.3)));
-            rest = ctl.sub(0.3, 1.0);
-        }
-        if (!hollow->changes()) hollow.reset();
-    }
     if (hollow) {
-        po.layers = hollow->layers;
+        po.layers = on.layers;
         if (!hollow->filling()) po.hollows = &hollow->cavities().interior;  // their ceilings get no tips
         for (std::size_t i = 0; i < hollow->holes.size(); ++i)
             if (const fruit::Transform* t = frames.find(hollow->holes[i].part); t && hollow->placed[i].cavity >= 0)
@@ -1046,11 +1238,11 @@ SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::
     po.support_lengths = [&](const std::vector<fruit::SupportPoint>& pts) {
         return fruit::supportLengthsOnModel(doc.placed(), pts, tc, min_raft, quiet);
     };
-    fruit::PointGenResult pg = fruit::generateSupportPoints(doc.placed(), cfg, po, rest);
+    fruit::PointGenResult pg = fruit::generateSupportPoints(*on.mesh, cfg, po, rest);
     // Your tips come back as the planner placed them; applyEdits puts back the edits' own.
     std::erase_if(pg.points, [](const fruit::SupportPoint& q) { return q.category == fruit::PointCategory::Manual; });
-    return SupportPlan{std::move(pg.points), std::move(pg.warnings), edits, std::move(hollow),
-                       pg.held_layers_min, pg.held_layers_max};
+    return SupportPlan{std::move(pg.points), std::move(pg.warnings), std::move(edits), hollow, pg.held_layers_min,
+                       pg.held_layers_max};
 }
 
 // The plan to keep for a stop of How many below the centre, given the one
@@ -1059,22 +1251,23 @@ SupportPlan planTipsAt(const Document& doc, const SupportChoices& c, const std::
 // ends up with a tip or two more under looser rules. So: whichever has fewer.
 bool keepsOwn(const SupportPlan& own, const SupportPlan& above) { return own.points.size() <= above.points.size(); }
 
-}  // namespace
-
-SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
-                     const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+// The tips for `c`'s stop of How many.
+SupportPlan planStops(const Document& doc, const PlanOn& on, const SupportChoices& c,
+                      const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
+                      const std::vector<TipEdit>& edits, const std::shared_ptr<const HollowPlan>& hollow) {
     const int stop = clampStop(c.how_many);
-    if (stop >= kHowManyCentre) return planTipsAt(doc, c, visible, ctl, edits);
+    if (stop >= kHowManyCentre) return planTipsAt(doc, on, c, visible, ctl, edits, hollow);
     // This stop's plan and each one above it up to the centre: none depends on
-    // another, so they are made side by side. (The placed model is made once,
-    // here, not by each of them at once.)
+    // another, so they are made side by side. (The placed models are made
+    // already: a Document copy makes them.)
     const int n = kHowManyCentre - stop + 1;
     std::vector<SupportPlan> plans(static_cast<std::size_t>(n));
     doc.placed();
     fruit::parallelFor(plans.size(), static_cast<unsigned>(n), [&](std::size_t i) {
         SupportChoices one = c;
         one.how_many = stop + static_cast<int>(i);
-        plans[i] = planTipsAt(doc, one, visible, ctl.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n), edits);
+        plans[i] = planTipsAt(doc, on, one, visible, ctl.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n),
+                              edits, hollow);
     });
     // From the centre down, each stop keeps its own plan or the one kept for the stop above.
     for (int i = n - 2; i >= 0; --i) {
@@ -1084,63 +1277,153 @@ SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::ve
     return std::move(plans.front());
 }
 
-std::array<std::size_t, kQuickStops> tipCounts(const Document& doc, const SupportChoices& c,
-                                               const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
-                                               const std::vector<TipEdit>& edits, const KnownPlan* known,
-                                               std::array<SupportPlan, kQuickStops>* plans) {
-    std::array<std::size_t, kQuickStops> tips{};
-    std::array<SupportPlan, kQuickStops> kept;
+}  // namespace
+
+SupportPlan planTips(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
+                     const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+    fruit::JobControl rest = ctl;
+    const auto hollow = jobHollow(doc, ctl, rest);
+    PlanOn on;
+    on.mesh = &doc.placed();
+    if (hollow) on.layers = hollow->layers;
+    on.on_plate = !doc.parts().empty() && doc.placement().on_plate;
+    return planStops(doc, on, c, visible, rest, edits, hollow);
+}
+
+JobPlan planJob(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
+                const fruit::JobControl& ctl, const std::vector<TipEdit>& edits, const JobPlan* known) {
+    JobPlan out;
+    fruit::JobControl rest = ctl;
+    const auto hollow = jobHollow(doc, ctl, rest);
+    const std::vector<RaftGroup> rafts = chosenRafts(doc, s);
+    doc.placed();
+    const std::size_t n = doc.partCount();
+    for (std::size_t i = 0; i < n; ++i) {
+        const int id = doc.parts()[i].id();
+        if (known)
+            if (const auto it = known->find(id); it != known->end()) {
+                out[id] = it->second;
+                continue;
+            }
+        out[id] = planStops(doc, planOn(doc, i, hollow), choicesOn(s, rafts, id), visible,
+                            rest.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n), edits, hollow);
+    }
+    return out;
+}
+
+std::map<int, TipCounts> partTipCounts(const Document& doc, const SupportSetup& s,
+                                       const std::vector<fruit::Vec3>& visible, const fruit::JobControl& ctl,
+                                       const std::vector<TipEdit>& edits, const JobPlan* known,
+                                       std::map<int, std::array<SupportPlan, kQuickStops>>* plans) {
+    std::map<int, TipCounts> out;
+    fruit::JobControl rest = ctl;
+    const auto hollow = jobHollow(doc, ctl, rest);
+    const std::vector<RaftGroup> rafts = chosenRafts(doc, s);
+    const PartFrames frames = doc.frames();
     // Every stop's own plan, side by side (none depends on another)...
     const int order[kQuickStops] = {kHowManyCentre, 2, 1, 4, 5};
     doc.placed();
-    fruit::parallelFor(kQuickStops, kQuickStops, [&](std::size_t i) {
-        const int stop = order[i];
-        // (One made already is planTips' for its stop: it is what the
-        // comparison below keeps for that stop, and what the stop below is
-        // compared with, either way.)
-        if (known && known->stop == stop) {
-            kept[static_cast<std::size_t>(stop - 1)] = known->plan;
-            return;
+    const std::size_t n = doc.partCount();
+    for (std::size_t i = 0; i < n; ++i) {
+        const int id = doc.parts()[i].id();
+        const PlanOn on = planOn(doc, i, hollow);
+        const SupportChoices c = choicesOn(s, rafts, id);
+        const fruit::JobControl part = rest.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n);
+        const SupportPlan* made = nullptr;
+        if (known)
+            if (const auto it = known->find(id); it != known->end()) made = &it->second;
+        std::array<SupportPlan, kQuickStops> kept;
+        fruit::parallelFor(kQuickStops, kQuickStops, [&](std::size_t j) {
+            const int stop = order[j];
+            // (One made already is planJob's for the part's stop: it is what the
+            // comparison below keeps for that stop, and what the stop below is
+            // compared with, either way.)
+            if (made && stop == clampStop(c.how_many)) {
+                kept[static_cast<std::size_t>(stop - 1)] = *made;
+                return;
+            }
+            SupportChoices one = c;
+            one.how_many = stop;
+            kept[static_cast<std::size_t>(stop - 1)] = planTipsAt(
+                doc, on, one, visible, part.sub(j / double(kQuickStops), (j + 1) / double(kQuickStops)), edits, hollow);
+        });
+        // ...then the centre first, then down from it, so each lighter stop has the one above to compare with.
+        TipCounts tips{};
+        const std::vector<TipEdit> mine = editsOn(edits, on.part);
+        for (int j = 0; j < kQuickStops; ++j) {
+            const int stop = order[j];
+            const auto at = static_cast<std::size_t>(stop - 1);
+            if (stop < kHowManyCentre && !keepsOwn(kept[at], kept[at + 1])) kept[at] = kept[at + 1];
+            tips[at] = applyEdits(kept[at].points, mine, frames).size();
         }
-        SupportChoices one = c;
-        one.how_many = stop;
-        kept[static_cast<std::size_t>(stop - 1)] =
-            planTipsAt(doc, one, visible, ctl.sub(i / double(kQuickStops), (i + 1) / double(kQuickStops)), edits);
-    });
-    // ...then the centre first, then down from it, so each lighter stop has the one above to compare with.
-    for (int i = 0; i < kQuickStops; ++i) {
-        const int stop = order[i];
-        const auto at = static_cast<std::size_t>(stop - 1);
-        if (stop < kHowManyCentre && !keepsOwn(kept[at], kept[at + 1])) kept[at] = kept[at + 1];
-        tips[at] = applyEdits(kept[at].points, edits, doc.frames()).size();
+        out[id] = tips;
+        if (plans) (*plans)[id] = std::move(kept);
     }
-    if (plans) *plans = std::move(kept);
-    return tips;
+    return out;
 }
 
-SupportPlan planOf(const SupportResult& r) {
-    return SupportPlan{r.planned, r.plan_warnings, r.plan_edits, r.hollow, r.held_min, r.held_max};
+TipCounts jobTipCounts(const std::map<int, TipCounts>& counts, const SupportSetup& s) {
+    TipCounts out{};
+    for (const auto& [id, t] : counts) {
+        const auto o = s.own.find(id);
+        const std::optional<int> own = o != s.own.end() ? o->second.how_many : std::nullopt;
+        for (std::size_t k = 0; k < kQuickStops; ++k)
+            out[k] += own ? t[static_cast<std::size_t>(clampStop(*own) - 1)] : t[k];
+    }
+    return out;
 }
 
-SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
+JobPlan planOf(const SupportResult& r) { return r.plans; }
+
+JobPlan splitPlan(const Document& doc, SupportPlan plan) {
+    JobPlan out;
+    if (doc.parts().empty()) return out;
+    if (doc.partCount() == 1) {
+        out[doc.parts().front().id()] = std::move(plan);
+        return out;
+    }
+    std::vector<std::unique_ptr<fruit::AabbTree>> trees;
+    for (const Part& p : doc.parts()) {
+        SupportPlan& q = out[p.id()];
+        q.hollow = plan.hollow;
+        q.held_min = plan.held_min;
+        q.held_max = plan.held_max;
+        for (const TipEdit& e : plan.edits)
+            if (e.part == p.id()) q.edits.push_back(e);
+        trees.push_back(std::make_unique<fruit::AabbTree>(p.placed()));
+    }
+    // Each tip and warning to the part it is on (nearest).
+    const auto owner = [&](const fruit::Vec3& at) {
+        std::size_t best = 0;
+        double best_d = std::numeric_limits<double>::max();
+        for (std::size_t i = 0; i < trees.size(); ++i)
+            if (const double d = trees[i]->closest(at).distance; d < best_d) {
+                best_d = d;
+                best = i;
+            }
+        return doc.parts()[best].id();
+    };
+    for (fruit::SupportPoint& p : plan.points) out[owner(p.pos)].points.push_back(std::move(p));
+    for (fruit::Warning& w : plan.warnings) out[owner(w.where)].warnings.push_back(std::move(w));
+    return out;
+}
+
+SupportResult generate(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
                        const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
     const auto t0 = std::chrono::steady_clock::now();
-    SupportResult r =
-        finishWithEdits(doc, c, planTips(doc, c, visible, ctl.sub(0.0, 0.55), edits), edits, ctl.sub(0.55, 1.0));
+    SupportResult r = finishWithEdits(doc, s, planJob(doc, s, visible, ctl.sub(0.0, 0.55), edits), edits, ctl.sub(0.55, 1.0));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
 }
 
+SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+    return generate(doc, oneRaft(doc, c), visible, ctl, edits);
+}
+
 SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
-    std::vector<fruit::SupportPoint> planned = plan.points;
-    std::vector<TipEdit> plan_edits = plan.edits;
-    plan.points = applyEdits(std::move(plan.points), edits, doc.frames());
-    SupportResult r = finishSupports(doc, c, std::move(plan), ctl);
-    r.planned = std::move(planned);
-    r.plan_edits = std::move(plan_edits);
-    r.edits = edits;
-    return r;
+    return finishWithEdits(doc, oneRaft(doc, c), splitPlan(doc, std::move(plan)), edits, ctl);
 }
 
 std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pts, const std::vector<TipEdit>& edits,
@@ -1356,64 +1639,260 @@ std::string describeCounts(const EditCounts& n) {
     return out;
 }
 
-SupportResult finishSupports(const Document& doc, const SupportChoices& c, SupportPlan plan,
-                             const fruit::JobControl& ctl) {
+namespace {
+
+// One part's supports as they are made.
+struct Making {
+    int id = -1;
+    SupportChoices c;
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    SupportPlan plan;                         // the planner's tips, before hand edits
+    std::vector<fruit::SupportPoint> points;  // with them
+    fruit::SupportTree tree;
+    int raft = -1;  // index into the rafts (-1: on the plate)
+    PlanOn on;
+};
+
+// The trees of the parts on `g`, joined, with the raft's bars under them all.
+fruit::SupportTree raftTree(const RaftGroup& g, const std::vector<Making>& made) {
+    fruit::SupportTree t;
+    for (const int id : g.parts)
+        for (const Making& m : made)
+            if (m.id == id) {
+                for (const fruit::Pillar& P : m.tree.pillars) t.pillars.push_back(P);
+                t.raft_top = std::max(t.raft_top, m.tree.raft_top);
+            }
+    fruit::linkRaft(t);
+    return t;
+}
+
+const char* pieceWords(int n) { return n == 1 ? "piece" : "pieces"; }
+
+std::string partNames(const Document& doc, const std::vector<int>& ids) {
+    std::string out;
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        const Part* p = doc.findPart(ids[i]);
+        out += (i == 0 ? "" : i + 1 == ids.size() ? " and " : ", ") + (p ? p->name() : std::string("a part"));
+    }
+    return out;
+}
+
+}  // namespace
+
+SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPlan plans,
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
     const auto t0 = std::chrono::steady_clock::now();
     SupportResult r;
-    r.choices = c;
-    const fruit::Placement& p = doc.placement();
-    resolve(p, c, r.cfg, r.tree_cfg);
-    r.cfg.plate_hold_height = modelInBottomLayers(doc);  // as the plan was made
-    r.held_min = plan.held_min;
-    r.held_max = plan.held_max;
-    r.points = std::move(plan.points);
-    r.plan_warnings = std::move(plan.warnings);
-    r.hollow = std::move(plan.hollow);
+    r.setup = s;
+    r.choices = s.choices;
+    r.edits = edits;
+    const std::size_t n = doc.partCount();
+    const PartFrames frames = doc.frames();
+    std::vector<RaftGroup> rafts = chosenRafts(doc, s);
+    const auto raftOf = [&](int id) {
+        for (std::size_t g = 0; g < rafts.size(); ++g)
+            if (std::find(rafts[g].parts.begin(), rafts[g].parts.end(), id) != rafts[g].parts.end())
+                return static_cast<int>(g);
+        return -1;
+    };
+    // Each part's settings, and its tips with the hand edits.
+    std::vector<Making> made(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        Making& m = made[i];
+        const Part& p = doc.parts()[i];
+        m.id = p.id();
+        m.raft = raftOf(m.id);
+        m.c = choicesOn(s, rafts, m.id);
+        resolve(p.placement(), m.c, m.cfg, m.tc);
+        m.cfg.plate_hold_height = modelInBottomLayers(doc);  // as the plan was made
+        if (auto it = plans.find(m.id); it != plans.end()) m.plan = std::move(it->second);
+        m.on = planOn(doc, i, m.plan.hollow);
+        m.points = applyEdits(m.plan.points, editsOn(edits, m.on.part), frames);
+        if (!r.hollow) r.hollow = m.plan.hollow;
+    }
 
-    // Progress as generate() reports it: the tree from 0.55, the check from 0.85.
+    // The trees. Progress as generate() reports it: the trees from 0.55, the check from 0.85.
     const double min_raft =
         fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight);
-    r.tree = fruit::buildSupportTree(doc.placed(), r.points, r.tree_cfg, min_raft, ctl.sub(0.0, 0.55));
-    // Tips the tree built smaller, or a little way off, so that they got a way down at all: as built.
-    for (const fruit::Head& h : r.tree.heads)
-        if (h.point >= 0 && h.point < static_cast<int>(r.points.size()) && (h.smaller || h.moved > 0)) {
-            fruit::SupportPoint& pt = r.points[static_cast<std::size_t>(h.point)];
-            pt.tip_diameter = h.spec.tip_diameter;
-            pt.built_smaller = h.smaller;
-            pt.built_moved = h.moved;
+    const auto build = [&](Making& m, const fruit::JobControl& c) {
+        m.points = applyEdits(m.plan.points, editsOn(edits, m.on.part), frames);
+        m.tree = fruit::buildSupportTree(doc.placed(), m.points, m.tc, min_raft, c);
+        // Tips the tree built smaller, or a little way off, so that they got a way down at all: as built.
+        for (const fruit::Head& h : m.tree.heads)
+            if (h.point >= 0 && h.point < static_cast<int>(m.points.size()) && (h.smaller || h.moved > 0)) {
+                fruit::SupportPoint& pt = m.points[static_cast<std::size_t>(h.point)];
+                pt.tip_diameter = h.spec.tip_diameter;
+                pt.built_smaller = h.smaller;
+                pt.built_moved = h.moved;
+            }
+    };
+    for (std::size_t i = 0; i < n; ++i)
+        build(made[i], ctl.sub(0.55 * static_cast<double>(i) / n, 0.55 * static_cast<double>(i + 1) / n));
+
+    // Rafts that would meet print as one piece: they are one raft, with the
+    // first one's settings. A part whose raft is thicker or thinner then has
+    // its tree made again for it.
+    if (rafts.size() > 1) {
+        std::vector<fruit::Paths> feet(rafts.size());
+        for (std::size_t g = 0; g < rafts.size(); ++g) {
+            const Making* first = nullptr;
+            for (const Making& m : made)
+                if (m.raft == static_cast<int>(g) && !first) first = &m;
+            if (first) feet[g] = fruit::offset(raftTree(rafts[g], made).raftFootprint(first->tc), kRaftsMeet / 2);
         }
-    ctl.step("mesh", 0.55);
-    r.mesh = r.tree.mesh(r.tree_cfg);
-    ctl.step("check", 0.67);
-    fruit::PointGenOptions po;  // the layers the tips were planned on
-    if (r.hollow) {
-        po.layers = r.hollow->layers;
-        if (!r.hollow->filling()) po.hollows = &r.hollow->cavities().interior;
+        std::vector<std::size_t> up(rafts.size());
+        std::iota(up.begin(), up.end(), std::size_t{0});
+        const auto find = [&](std::size_t i) {
+            while (up[i] != i) i = up[i] = up[up[i]];
+            return i;
+        };
+        bool joined = false;
+        for (std::size_t a = 0; a < rafts.size(); ++a)
+            for (std::size_t b = a + 1; b < rafts.size(); ++b) {
+                if (feet[a].empty() || feet[b].empty() || find(a) == find(b)) continue;
+                if (fruit::intersection(feet[a], feet[b]).empty()) continue;
+                up[std::max(find(a), find(b))] = std::min(find(a), find(b));
+                joined = true;
+            }
+        if (joined) {
+            std::vector<RaftGroup> now;
+            std::map<std::size_t, std::size_t> at;
+            for (std::size_t g = 0; g < rafts.size(); ++g) {
+                const auto [it, added] = at.try_emplace(find(g), now.size());
+                if (added) now.push_back(rafts[g]);
+                else {
+                    RaftGroup& into = now[it->second];
+                    into.parts.insert(into.parts.end(), rafts[g].parts.begin(), rafts[g].parts.end());
+                    into.touching = true;
+                }
+            }
+            for (RaftGroup& g : now)  // in the job's order
+                std::sort(g.parts.begin(), g.parts.end(),
+                          [&](int a, int b) { return doc.partIndex(a) < doc.partIndex(b); });
+            rafts = std::move(now);
+            for (std::size_t i = 0; i < n; ++i) {
+                Making& m = made[i];
+                m.raft = raftOf(m.id);
+                const SupportChoices c = choicesOn(s, rafts, m.id);
+                if (c.raft == m.c.raft) continue;
+                m.c = c;
+                m.cfg = {};
+                m.tc = {};
+                resolve(doc.parts()[i].placement(), m.c, m.cfg, m.tc);
+                m.cfg.plate_hold_height = modelInBottomLayers(doc);
+                if (std::abs(std::max(m.tc.raft_thickness, min_raft) - m.tree.raft_top) > 1e-9) build(m, ctl.silent());
+            }
+        }
     }
+
+    ctl.step("mesh", 0.55);
+    // The tips, the trees and the meshes, part by part in the job's order;
+    // each shared raft once, after the last of its parts.
+    const auto shared = [&](const Making& m) {
+        return m.raft >= 0 && rafts[static_cast<std::size_t>(m.raft)].parts.size() > 1;
+    };
+    std::vector<std::size_t> pillar_start(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Making& m = made[i];
+        SupportResult::PartMade pm;
+        pm.part = m.id;
+        pm.first = r.points.size();
+        pm.tips = m.points.size();
+        pm.trunks = m.tree.trunks();
+        pm.raft = m.raft;
+        pm.cfg = m.cfg;
+        pm.tree_cfg = m.tc;
+        r.points.insert(r.points.end(), m.points.begin(), m.points.end());
+        pillar_start[i] = r.tree.pillars.size();
+        fruit::SupportTree t = m.tree;
+        if (shared(m)) t.raft_links.clear();  // the shared raft's bars are its own, below
+        fruit::appendTree(r.tree, t, static_cast<int>(pm.first));
+        const fruit::TriangleMesh mesh = m.tree.mesh(m.tc, !shared(m));
+        pm.ml = std::max(0.0, mesh.volume()) / 1000.0;
+        r.mesh.append(mesh);
+        if (shared(m) && rafts[static_cast<std::size_t>(m.raft)].parts.back() == m.id) {
+            const fruit::SupportTree under = raftTree(rafts[static_cast<std::size_t>(m.raft)], made);
+            r.mesh.append(under.raftMesh(m.tc));
+            r.tree.raft_links.insert(r.tree.raft_links.end(), under.raft_links.begin(), under.raft_links.end());
+        }
+        r.parts.push_back(pm);
+        r.planned.insert(r.planned.end(), m.plan.points.begin(), m.plan.points.end());
+        r.plan_warnings.insert(r.plan_warnings.end(), m.plan.warnings.begin(), m.plan.warnings.end());
+        r.plan_edits.insert(r.plan_edits.end(), m.plan.edits.begin(), m.plan.edits.end());
+        r.held_min = std::max(r.held_min, m.plan.held_min);
+        r.held_max = std::min(r.held_max, m.plan.held_max);
+        r.plans[m.id] = m.plan;
+    }
+    if (!made.empty()) {
+        r.cfg = made.front().cfg;
+        r.tree_cfg = made.front().tc;
+    }
+    for (std::size_t g = 0; g < rafts.size(); ++g) {
+        SupportResult::RaftMade rm;
+        static_cast<RaftGroup&>(rm) = rafts[g];
+        for (std::size_t i = 0; i < n; ++i) {
+            const Making& m = made[i];
+            if (m.raft != static_cast<int>(g)) continue;
+            rm.top = m.tree.raft_top;
+            rm.tree_cfg = m.tc;
+            for (std::size_t k = 0; k < m.tree.pillars.size(); ++k)
+                if (!m.tree.pillars[k].merged && !m.tree.pillars[k].on_model) rm.pillars.push_back(pillar_start[i] + k);
+        }
+        r.rafts.push_back(std::move(rm));
+    }
+    // Several rafts, or a raft and parts on the plate: each raft's pieces on the plate.
+    std::vector<int> on_plate;
+    for (const Making& m : made)
+        if (m.raft < 0) on_plate.push_back(m.id);
+    const bool one_raft = r.rafts.size() == 1 && on_plate.empty();
+    if (!one_raft)
+        for (std::size_t g = 0; g < r.rafts.size(); ++g) {
+            const fruit::Paths foot = raftTree(rafts[g], made).raftFootprint(r.rafts[g].tree_cfg);
+            r.rafts[g].pieces = static_cast<int>(fruit::toExPolygons(foot).size());
+        }
+
+    ctl.step("check", 0.67);
     // The checks below each read the supports as built and nothing else, so
     // they run side by side; each says what it found as it did one by one.
-    // Tips the tree could not build: what only they held has nothing now.
-    fruit::DropCheck drops;
-    std::vector<fruit::SupportPoint> built, dropped;
-    if (r.tree.dropped_points > 0) fruit::splitByTree(r.tree, r.points, built, dropped);
-    // Supports that stand on the model tie two places on the print together:
-    // they hold a ceiling up, but add nothing to what holds it on the raft.
-    std::size_t short_from_raft = 0;
-    fruit::Vec3 first_tied{};
-    std::vector<fruit::SupportPoint> from_raft;
-    std::vector<fruit::TiedTip> tied;
-    fruit::splitByFooting(r.tree, r.points, from_raft, tied);
-    if (!tied.empty()) first_tied = tied.front().tip.pos;
+    // Each part's: tips the tree could not build (what only they held has
+    // nothing now), and supports that stand on the model, which tie two places
+    // on the print together: they hold a ceiling up, but add nothing to what
+    // holds it on the raft.
+    struct PartCheck {
+        fruit::PointGenOptions po;  // the layers the tips were planned on
+        std::vector<fruit::SupportPoint> built, dropped, from_raft;
+        std::vector<fruit::TiedTip> tied;
+        fruit::DropCheck drops;
+        std::size_t short_from_raft = 0;
+    };
+    std::vector<PartCheck> checks(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Making& m = made[i];
+        PartCheck& pc = checks[i];
+        if (m.plan.hollow) {
+            pc.po.layers = m.on.layers;
+            if (!m.plan.hollow->filling()) pc.po.hollows = &m.plan.hollow->cavities().interior;
+        }
+        if (m.tree.dropped_points > 0) fruit::splitByTree(m.tree, m.points, pc.built, pc.dropped);
+        fruit::splitByFooting(m.tree, m.points, pc.from_raft, pc.tied);
+    }
     const double pixel = doc.printer.pixelX() * doc.printer.pixelY();
     // With no raft, what starts inside the bottom layers stands on the plate, as the planner has it.
-    const double plate_holds = p.on_plate ? r.cfg.plate_hold_height : 0.0;
-    fruit::parallelFor(3, 3, [&](std::size_t which) {
-        if (which == 0 && r.tree.dropped_points > 0)
-            drops = fruit::checkDroppedTips(doc.placed(), r.cfg, built, dropped, po, ctl.silent());
-        if (which == 1 && !tied.empty())
-            short_from_raft = fruit::layersShortOfRaftHold(doc.placed(), r.cfg, from_raft, tied, po, ctl.silent());
-        if (which != 2) return;
-        if (r.hollow) {
+    const double plate_holds = !on_plate.empty() ? made.front().cfg.plate_hold_height : 0.0;
+    const std::size_t tasks = 2 * n + 1;
+    fruit::parallelFor(tasks, static_cast<unsigned>(std::min<std::size_t>(tasks, 8)), [&](std::size_t which) {
+        if (which < n) {
+            const Making& m = made[which];
+            PartCheck& pc = checks[which];
+            if (m.tree.dropped_points > 0)
+                pc.drops = fruit::checkDroppedTips(*m.on.mesh, m.cfg, pc.built, pc.dropped, pc.po, ctl.silent());
+        } else if (which < 2 * n) {
+            const Making& m = made[which - n];
+            PartCheck& pc = checks[which - n];
+            if (!pc.tied.empty())
+                pc.short_from_raft = fruit::layersShortOfRaftHold(*m.on.mesh, m.cfg, pc.from_raft, pc.tied, pc.po, ctl.silent());
+        } else if (r.hollow) {
             // The hollowed model's own layers with the supports': nothing floats.
             const fruit::LayerStack print = fruit::unionLayers(
                 *r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9)));
@@ -1424,6 +1903,17 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
                                                     r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0), plate_holds);
         }
     });
+    fruit::DropCheck drops;
+    std::size_t short_from_raft = 0;
+    fruit::Vec3 first_tied{};
+    for (const PartCheck& pc : checks) {
+        drops.tips += pc.drops.tips;
+        drops.samples += pc.drops.samples;
+        drops.short_layers += pc.drops.short_layers;
+        drops.at.insert(drops.at.end(), pc.drops.at.begin(), pc.drops.at.end());
+        short_from_raft += pc.short_from_raft;
+        if (pc.short_from_raft > 0 && short_from_raft == pc.short_from_raft) first_tied = pc.tied.front().tip.pos;
+    }
 
     // Counts.
     r.tips = r.points.size();
@@ -1433,7 +1923,7 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
         r.extra_hold += pt.category == fruit::PointCategory::Capacity;
         ++sizes[std::round(pt.tip_diameter * 100) / 100];
     }
-    for (const auto& [d, n] : sizes) r.tip_sizes.emplace_back(d, n);
+    for (const auto& [d, k] : sizes) r.tip_sizes.emplace_back(d, k);
     std::stable_sort(r.tip_sizes.begin(), r.tip_sizes.end(),
                      [](const auto& a, const auto& b) { return a.second > b.second; });
     r.pillars = r.tree.pillars.size();
@@ -1451,13 +1941,31 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
     r.checks.push_back({v.floating.empty(), "No part starts in mid-air",
                         v.floating.empty() ? "" : fmt("%.0f islands above the first layer have nothing under them",
                                                       static_cast<double>(v.floating.size()))});
-    if (p.on_plate)
-        r.checks.push_back({true, "Stands on the plate", "No raft: the model's flat side is its first layer"});
-    else
+    if (r.rafts.empty()) {
+        if (n <= 1) r.checks.push_back({true, "Stands on the plate", "No raft: the model's flat side is its first layer"});
+        else r.checks.push_back({true, "Every part stands on the plate", "No raft: each part's flat side is its first layer"});
+    } else if (one_raft) {
         r.checks.push_back({v.first_layer_islands <= 1, "Raft comes off in one piece",
                             v.first_layer_islands <= 1 ? ""
                                                        : fmt("The first layer has %.0f separate pieces",
                                                              static_cast<double>(v.first_layer_islands))});
+    } else {
+        std::string bad;
+        for (std::size_t g = 0; g < r.rafts.size(); ++g)
+            if (r.rafts[g].pieces > 1)
+                bad += (bad.empty() ? "" : "; ") +
+                       strf("raft %zu has %d separate %s", g + 1, r.rafts[g].pieces, pieceWords(r.rafts[g].pieces));
+        if (!bad.empty()) bad[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(bad[0])));
+        r.checks.push_back({bad.empty(), r.rafts.size() == 1 ? "The raft comes off in one piece" : "Each raft comes off in one piece",
+                            bad.empty() ? strf("%zu %s, each one piece on the plate", r.rafts.size(),
+                                               r.rafts.size() == 1 ? "raft" : "rafts")
+                                        : bad});
+        if (!on_plate.empty())
+            r.checks.push_back({true,
+                                partNames(doc, on_plate) + (on_plate.size() == 1 ? " stands on the plate" : " stand on the plate"),
+                                on_plate.size() == 1 ? "No raft: its flat side is its first layer"
+                                                     : "No raft: their flat sides are their first layers"});
+    }
     r.checks.push_back({r.on_model == 0, "No support stands on the model",
                         r.on_model == 0 ? "" : fmt("%.0f stand on it and leave marks there", static_cast<double>(r.on_model))});
     r.checks.push_back({true, "No brace loops around the model",
@@ -1467,8 +1975,8 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
 
     // Problems, grouped by kind.
     std::map<std::string, SupportProblem> by_code;
-    addWarnings(r.plan_warnings, by_code);
-    addWarnings(r.tree.warnings, by_code);
+    for (const Making& m : made) addWarnings(m.plan.warnings, by_code);
+    for (const Making& m : made) addWarnings(m.tree.warnings, by_code);
     if (!v.floating.empty()) {
         SupportProblem fp;
         fp.level = SupportProblem::Level::Blocks;
@@ -1510,13 +2018,13 @@ SupportResult finishSupports(const Document& doc, const SupportChoices& c, Suppo
                       -1, first_tied}},
                     by_code);
     if (v.subpixel) {
-        SupportProblem n;
-        n.level = SupportProblem::Level::Note;
-        n.code = "subpixel";
-        n.title = v.subpixel == 1 ? "One sliver thinner than a pixel" : "Slivers thinner than a pixel";
-        n.body = "Smaller than one 14 × 19 µm pixel, so it won't print. Nothing to do.";
-        n.count = v.subpixel;
-        by_code["subpixel"] = n;
+        SupportProblem sp;
+        sp.level = SupportProblem::Level::Note;
+        sp.code = "subpixel";
+        sp.title = v.subpixel == 1 ? "One sliver thinner than a pixel" : "Slivers thinner than a pixel";
+        sp.body = "Smaller than one 14 × 19 µm pixel, so it won't print. Nothing to do.";
+        sp.count = v.subpixel;
+        by_code["subpixel"] = sp;
     }
     for (auto& [code, pr] : by_code) r.problems.push_back(std::move(pr));
     std::stable_sort(r.problems.begin(), r.problems.end(),

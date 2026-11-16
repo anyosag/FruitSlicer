@@ -162,7 +162,15 @@ struct SupportTree {
         return n;
     }
 
-    TriangleMesh mesh(const TreeConfig& cfg) const;
+    // The supports and their raft; with `raft` false, the supports alone (each
+    // trunk's foot as ever, but no pads, slab or bars under them).
+    TriangleMesh mesh(const TreeConfig& cfg, bool raft = true) const;
+    // The raft alone: what mesh() adds for it (pads, slab or the Raft page's
+    // raft, and the bars that join it), under every trunk of this tree.
+    TriangleMesh raftMesh(const TreeConfig& cfg) const;
+    // What the raft covers on the plate (empty with none): to tell whether two
+    // rafts would meet.
+    Paths raftFootprint(const TreeConfig& cfg) const;
 
     // The Full raft's outline at height `inset` mm up its sloped edge (0 = on
     // the plate): the footprint of the pads, closed over gaps and pulled in
@@ -171,6 +179,15 @@ struct SupportTree {
     // How far the sloped edge pulls in by the top of the slab.
     double fullRaftInset(const TreeConfig& cfg) const;
 };
+
+// Joins the trunks' feet along a minimum spanning tree (raft_links), so the
+// raft under them is one piece: what the builder does for its own tree, for a
+// tree put together from several (parts that share a raft).
+void linkRaft(SupportTree& tree);
+// `from` added at the end of `into`: its heads' points are `point_offset`
+// further on (where its points are in the joined list), and its pillars'
+// heads where its heads are now. The raft's top is the higher of the two.
+void appendTree(SupportTree& into, const SupportTree& from, int point_offset);
 
 // How deep a tip of diameter `tip_d` sinks into the part: the nearest
 // measured value from the profile, or half the diameter within 0.08–0.2 mm.
