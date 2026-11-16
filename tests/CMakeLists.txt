@@ -11,6 +11,7 @@ add_executable(fruit_tests
   test_fresh_edges.cpp
   test_tree.cpp
   test_full_raft.cpp
+  test_raft_spec.cpp
   test_orient.cpp
   test_fit.cpp
   test_safety.cpp

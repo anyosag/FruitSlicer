@@ -36,6 +36,7 @@ add_library(fruit_core
   support/PointGenerator.cpp
   support/SupportIO.cpp
   support/SupportTree.cpp
+  support/Raft.cpp
   support/SupportValidator.cpp
   support/OrientationSearch.cpp
   support/SupportSettings.cpp

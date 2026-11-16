@@ -25,6 +25,7 @@
 // whole support comes off in one piece. A tip nearer the plate than a head
 // is long stands on the plate on its head alone: nothing reaches below z = 0.
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@
 #include "mesh/AabbTree.h"
 #include "geometry/Polygon.h"
 #include "mesh/TriangleMesh.h"
+#include "support/Raft.h"
 #include "support/SupportGeometry.h"
 #include "support/SupportPoint.h"
 
@@ -84,6 +86,9 @@ struct TreeConfig {
     double link_width = 1.2;          // raft link bar width
     double full_raft_margin = 1.0;    // Full: the slab reaches this far past each pad's brim
     double full_raft_gap = 10.0;      // Full: gaps up to this wide between pads are filled in
+    // A raft other than the old Pads and Full ones, from the Raft page's
+    // settings (applyRaftSpec): built by appendSpecRaft. Empty: the fields above.
+    std::optional<RaftSpec> raft_spec;
     // Measured (tip diameter, penetration) pairs from a resin profile; empty =
     // 0.5 × diameter clamped to [0.08, 0.2] mm.
     std::vector<std::pair<double, double>> penetration_table;

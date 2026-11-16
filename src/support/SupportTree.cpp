@@ -1010,7 +1010,7 @@ double SupportTree::fullRaftInset(const TreeConfig& cfg) const {
 }
 
 Paths SupportTree::fullRaftOutline(const TreeConfig& cfg, double inset) const {
-    if (cfg.raft != RaftStyle::Full) return {};
+    if (cfg.raft != RaftStyle::Full || cfg.raft_spec) return {};
     const double r = cfg.base_diameter / 2 + cfg.pad_brim + cfg.full_raft_margin;
     const int n = std::max(16, cfg.quality.segments(r));
     Paths discs;
@@ -1106,7 +1106,7 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
         } else {
             const double base = P.base_diameter > 0 ? std::max(P.base_diameter, P.diameter) : cfg.base_diameter;
             appendBaseCone(m, bottom, P.diameter, base, std::max(0.0, raft_top - 0.1), q);
-            if (cfg.raft == RaftStyle::Pads) {  // (Full has one slab for all, below)
+            if (cfg.raft == RaftStyle::Pads && !cfg.raft_spec) {  // (Full has one slab for all, below)
                 const double r = cfg.base_diameter / 2 + cfg.pad_brim;
                 appendFrustum(m, {P.xy.x, P.xy.y, 0}, r, {P.xy.x, P.xy.y, raft_top}, std::max(0.5, r - 0.4),
                               q.segments(r));
@@ -1118,7 +1118,7 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
         appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
         ball(r.b, r.diameter / 2);
     }
-    if (cfg.raft == RaftStyle::Full && raft_top > 0) {
+    if (cfg.raft == RaftStyle::Full && raft_top > 0 && !cfg.raft_spec) {
         // One slab, built as stacked prisms of the outline, each pulled in a
         // little more than the one below: a ~45° edge for the scraper. They
         // overlap the cones and links; the slicer fills overlaps as a union.
@@ -1147,6 +1147,10 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg) const {
     }
     // Raft links: flat bars from the plate up, so the raft's first layers are
     // already one piece.
+    if (cfg.raft_spec) {  // the Raft page's raft: built in layers, its bars with it
+        if (raft_top > 0) appendSpecRaft(m, *this, cfg);
+        return m;
+    }
     for (const Rod& r : raft_links) {
         const Vec2 a = r.a.xy(), b = r.b.xy();
         const Vec2 d = normalized(b - a);
