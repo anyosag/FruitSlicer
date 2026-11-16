@@ -24,6 +24,7 @@
 #include "Collisions.h"
 #include "Preferences.h"
 #include "RaftPresets.h"
+#include "RaftPreview.h"
 #include "ShapeTools.h"
 #include "ABTest.h"
 #include "Arranging.h"
@@ -445,6 +446,18 @@ public:
     void deleteRaftPreset(const std::string& name);
     void setNewJobsRaft(const std::string& name);
     void applyRaft();  // back to the Supports step, making supports with this raft
+    // The Raft page's preview of `s` round the trunks of the supports made
+    // last, w × h pixels. Drawn off the UI thread (at once in a scripted
+    // run): until a newer one is ready this is the last one drawn, and
+    // *current says whether it is this one.
+    struct RaftPreview {
+        bool have = false;
+        fruit::RaftShape shape;
+        double height = 0;
+        unsigned tex = 0;
+    };
+    const RaftPreview& raftPreview(const fruit::RaftSpec& s, double min_thick, int w, int h, bool* current);
+    void pollSideJobs() { raft_jobs_.poll(); }  // each frame, with jobs().poll()
     // Scripts: open a preset's ··· menu on the next frame the Raft page draws.
     void openRaftMenu(const std::string& name) { raft_menu_for_ = name.empty() ? std::string("\x01") : name; }  // "": close it
     std::string takeRaftMenu() { return std::exchange(raft_menu_for_, std::string()); }
@@ -677,6 +690,7 @@ private:
     SDL_Window* window_;
     AppOptions opts_;
     JobRunner jobs_;
+    JobRunner raft_jobs_;  // the Raft page's preview: never in the way of the job's own work
     fruit::PrinterProfile printer_ = fruit::PrinterProfile::saturn4Ultra16k();
     Screen screen_ = Screen::Home;
     Step step_ = Step::Model;
@@ -713,6 +727,17 @@ private:
     RaftPresets raft_presets_;
     std::optional<RaftNamePrompt> raft_prompt_;
     std::string raft_menu_for_;
+    unsigned raft_picture_ = 0;
+    struct RaftPreviewKey {
+        std::shared_ptr<const SupportResult> result;
+        fruit::RaftSpec spec;
+        double min_thick = 0;
+        int w = 0, h = 0;
+        bool operator==(const RaftPreviewKey&) const = default;
+    };
+    RaftPreviewKey raft_preview_key_, raft_preview_asked_;
+    RaftPreview raft_preview_;
+    unsigned raftPictureTexture(const JobPicture& p);
     std::string raftPresetsFile() const;
     void saveRaftPresetsFile();
     bool panel_scroll_end_ = false;

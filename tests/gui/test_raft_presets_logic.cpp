@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "RaftPresets.h"
+#include "RaftPreview.h"
 
 using namespace gui;
 namespace fs = std::filesystem;
@@ -97,4 +98,41 @@ TEST_CASE("Raft presets: what a raft is, in a sentence, and one change in words"
     fruit::RaftSpec a = builtIn("Least resin");
     a.side_angle = 90;
     CHECK(raftChange(builtIn("Least resin"), a) == "Side angle 112° → 90°");
+}
+
+TEST_CASE("Raft preview: the raft from straight above, the same every time, its windows dark notches", "[gui][raft]") {
+    fruit::SupportTree t;
+    t.raft_top = 2.0;
+    for (double x : {4.0, 9.0, 14.0, 19.0, 24.0})
+        for (double y : {4.0, 9.0, 14.0}) {
+            fruit::Pillar P;
+            P.xy = {x, y};
+            P.bottom = 3.0;
+            P.top = 8;
+            P.diameter = 1.0;
+            t.pillars.push_back(P);
+        }
+    fruit::RaftSpec s = builtIn("Easy release");
+    s.windows = fruit::RaftWindows::EveryTip;
+    const RaftPreviewPicture a = drawRaftPreview(t, fruit::TreeConfig{}, s, 0.4, 200, 120);
+    REQUIRE_FALSE(a.picture.empty());
+    CHECK(a.picture.w == 200);
+    CHECK_FALSE(a.shape.windows.empty());
+    CHECK(drawRaftPreview(t, fruit::TreeConfig{}, s, 0.4, 200, 120).picture.rgba == a.picture.rgba);
+    s.windows = fruit::RaftWindows::None;
+    const RaftPreviewPicture b = drawRaftPreview(t, fruit::TreeConfig{}, s, 0.4, 200, 120);
+    // The same raft but for its windows: those pixels only are darker.
+    int darker = 0, lighter = 0;
+    for (std::size_t i = 0; i < a.picture.rgba.size(); i += 4) {
+        const int da = a.picture.rgba[i] + a.picture.rgba[i + 1] + a.picture.rgba[i + 2];
+        const int db = b.picture.rgba[i] + b.picture.rgba[i + 1] + b.picture.rgba[i + 2];
+        darker += da + 30 < db;
+        lighter += db + 30 < da;
+    }
+    CHECK(darker > 20);
+    CHECK(lighter < darker / 4);  // (the windows' cut changes a little shading round them too)
+    // Nothing made yet, or a raft too small to see: a picture of the ground alone, never a failure.
+    fruit::SupportTree none;
+    none.raft_top = 2.0;
+    CHECK_FALSE(drawRaftPreview(none, fruit::TreeConfig{}, s, 0.4, 40, 30).picture.empty());
 }

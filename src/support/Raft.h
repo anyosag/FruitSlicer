@@ -111,6 +111,8 @@ struct RaftShape {
     Paths base;     // what touches the plate
     std::vector<RaftWindow> windows;
     std::vector<Vec2> trunks;
+    std::vector<Paths> layers;  // each layer, from the plate up
+    double layer_dz = 0;        // how thick each is, mm
     int pieces = 0;         // separate pieces on the plate
     double volume = 0;      // mm³, the raft alone
     double height = 0;      // its top, lip included, mm
@@ -120,5 +122,8 @@ struct RaftShape {
 void appendSpecRaft(TriangleMesh& m, const SupportTree& tree, const TreeConfig& tc, RaftShape* shape = nullptr);
 // What a spec raft would be under `tree`, without the mesh.
 RaftShape specRaftShape(const SupportTree& tree, const TreeConfig& tc);
+// Where the windows cut the raft's edge, seen from above: each one's shape at
+// the plate, from the edge in, within the top edge. For drawing them.
+Paths raftWindowNotches(const RaftShape& shape, const RaftSpec& s, double raft_top);
 
 }  // namespace fruit

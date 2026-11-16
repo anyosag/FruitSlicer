@@ -379,10 +379,12 @@ RaftShape specRaft(TriangleMesh* m, const SupportTree& tree, const TreeConfig& t
         }
         layer = tidy(layer);
         if (k == 0) shape.base = layer;
+        shape.layers.push_back(layer);
         shape.volume += std::abs(area(layer)) * dz;
         if (m) appendLayer(*m, layer, z0, dz);
     }
     shape.height = top_z;
+    shape.layer_dz = dz;
     shape.pieces = static_cast<int>(toExPolygons(shape.base).size());
     if (m && s.rounded)
         for (const Pillar& P : tree.pillars) {
@@ -612,5 +614,15 @@ void appendSpecRaft(TriangleMesh& m, const SupportTree& tree, const TreeConfig& 
 }
 
 RaftShape specRaftShape(const SupportTree& tree, const TreeConfig& tc) { return specRaft(nullptr, tree, tc); }
+
+Paths raftWindowNotches(const RaftShape& shape, const RaftSpec& s, double raft_top) {
+    if (shape.windows.empty() || shape.top.empty()) return {};
+    const bool full = s.kind == RaftKind::Full;
+    const double edge_h = full ? raft_top : s.frame_height;
+    const double inset = sideInset(edge_h, full ? s.side_angle : s.frame_angle);
+    Paths cut;
+    for (const RaftWindow& w : shape.windows) cut.push_back(windowAt(w, inset, windowHeight(s), 0.0));
+    return intersection(unionNonZero(cut), shape.top);
+}
 
 }  // namespace fruit

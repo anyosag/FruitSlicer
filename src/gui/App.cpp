@@ -45,7 +45,7 @@ std::string preferencesFile() { return (std::filesystem::path(platform::dataDir(
 }  // namespace
 
 App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
-    : window_(window), opts_(opts), jobs_(std::move(wake)) {
+    : window_(window), opts_(opts), jobs_(wake), raft_jobs_(std::move(wake)) {
     camera_.preset(ViewPreset::Angled);
     if (opts_.deterministic) {
         // Each scripted run starts from an empty scratch folder (never this machine's own).
@@ -87,6 +87,7 @@ App::~App() {
     Renderer::freeTexture(orient_tex_[0]);
     Renderer::freeTexture(orient_tex_[1]);
     Renderer::freeTexture(open_picture_.tex);
+    Renderer::freeTexture(raft_picture_);
     for (auto& [path, p] : job_pictures_) Renderer::freeTexture(p.tex);
     for (unsigned t : layout_pictures_) Renderer::freeTexture(t);
 }
@@ -1418,6 +1419,46 @@ void App::setNewJobsRaft(const std::string& name) {
     if (!presetSpec(name, raft_presets_) || raft_presets_.new_jobs == name) return;
     raft_presets_.new_jobs = name;
     saveRaftPresetsFile();
+}
+
+unsigned App::raftPictureTexture(const JobPicture& p) {
+    Renderer::freeTexture(raft_picture_);
+    raft_picture_ = p.empty() ? 0u : renderer_.uploadRgba(p.w, p.h, p.rgba);
+    return raft_picture_;
+}
+
+const App::RaftPreview& App::raftPreview(const fruit::RaftSpec& s, double min_thick, int w, int h, bool* current) {
+    const std::shared_ptr<const SupportResult> r = doc_ ? doc_->supports.result : nullptr;
+    const RaftPreviewKey key{r, s, min_thick, w, h};
+    if (current) *current = key == raft_preview_key_;
+    if (!r || r->tree.raft_top <= 0 || w <= 0 || h <= 0) {
+        if (current) *current = true;
+        static const RaftPreview none;
+        return none;
+    }
+    if (key == raft_preview_key_ || key == raft_preview_asked_) return raft_preview_;
+    raft_preview_asked_ = key;
+    auto take = [this, key](RaftPreviewPicture& p) {
+        raft_preview_.shape = std::move(p.shape);
+        raft_preview_.height = p.height;
+        raft_preview_.have = !raft_preview_.shape.trunks.empty();
+        raft_preview_.tex = raftPictureTexture(p.picture);
+        raft_preview_key_ = key;
+    };
+    if (opts_.deterministic) {  // a scripted picture shows the preview as it is, every time
+        RaftPreviewPicture p = drawRaftPreview(r->tree, r->tree_cfg, s, min_thick, w, h);
+        take(p);
+        if (current) *current = true;
+        return raft_preview_;
+    }
+    auto out = std::make_shared<RaftPreviewPicture>();
+    raft_jobs_.startGivingWay(
+        "Drawing the raft",
+        [out, r, s, min_thick, w, h](const fruit::JobControl&) { *out = drawRaftPreview(r->tree, r->tree_cfg, s, min_thick, w, h); },
+        [this, out, take, key](std::exception_ptr e) {
+            if (!e && raft_preview_asked_ == key) take(*out);  // an older one, overtaken, is dropped
+        });
+    return raft_preview_;
 }
 
 void App::applyRaft() {

@@ -40,7 +40,7 @@ if(FRUIT_BUILD_APP)
     ${PROJECT_SOURCE_DIR}/src/gui/Print.cpp ${PROJECT_SOURCE_DIR}/src/gui/Send.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Calibration.cpp ${PROJECT_SOURCE_DIR}/src/gui/JobFile.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/JobPicture.cpp ${PROJECT_SOURCE_DIR}/src/gui/Home.cpp
-    ${PROJECT_SOURCE_DIR}/src/gui/Preferences.cpp ${PROJECT_SOURCE_DIR}/src/gui/Setup.cpp ${PROJECT_SOURCE_DIR}/src/gui/RaftPresets.cpp
+    ${PROJECT_SOURCE_DIR}/src/gui/Preferences.cpp ${PROJECT_SOURCE_DIR}/src/gui/Setup.cpp ${PROJECT_SOURCE_DIR}/src/gui/RaftPresets.cpp ${PROJECT_SOURCE_DIR}/src/gui/RaftPreview.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Resins.cpp ${PROJECT_SOURCE_DIR}/src/gui/Plates.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/Fit.cpp ${PROJECT_SOURCE_DIR}/src/gui/ABTest.cpp
     ${PROJECT_SOURCE_DIR}/src/gui/GooTools.cpp ${PROJECT_SOURCE_DIR}/src/gui/Hollows.cpp

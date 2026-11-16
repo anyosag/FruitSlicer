@@ -196,6 +196,7 @@ int main(int argc, char** argv) {
             }  // input is ignored in scripted runs
             platform::pumpCallbacks();
             app.jobs().poll();
+            app.pollSideJobs();
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplSDL3_NewFrame();
             io.DisplaySize = ImVec2(static_cast<float>(lw), static_cast<float>(lh));
@@ -258,6 +259,7 @@ int main(int argc, char** argv) {
             }
             platform::pumpCallbacks();
             app.jobs().poll();
+            app.pollSideJobs();
             if (app.quitting()) quit = true;
             if (frames <= 0 && !app.jobs().busy() && !hovering) continue;
             if (frames > 0) --frames;

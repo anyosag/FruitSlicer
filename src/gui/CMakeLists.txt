@@ -96,6 +96,7 @@ set(app_sources
   Plates.cpp
   Preferences.cpp
   RaftPresets.cpp
+  RaftPreview.cpp
   Print.cpp
   Resins.cpp
   Risk.cpp

@@ -145,37 +145,23 @@ const char* windowsWord(RaftWindows w) {
 
 // What the preview and the checks know about the raft on the job's trunks.
 struct Preview {
+    const App::RaftPreview* rp = nullptr;  // the raft round the trunks, and its picture
     bool have = false;
     bool made_last = false;  // the supports are out of date: their trunks still say where the raft goes
-    fruit::RaftShape shape;
-    double height = 0;  // the raft's thickness as it will be built
+    bool drawing = false;    // a newer picture is being drawn: this one is the last drawn
 };
 
-Preview previewFor(const Document& doc, const RaftSpec& s, double min_thick) {
+constexpr float kPictureH = 230;
+
+Preview previewFor(App& app, const Document& doc, const RaftSpec& s, double min_thick, ImVec2 box) {
     Preview p;
-    const auto& r = doc.supports.result;
-    if (!r || r->tree.raft_top <= 0) return p;
-    static std::shared_ptr<const SupportResult> for_result;
-    static RaftSpec for_spec;
-    static Preview cached;
-    static double for_min = -1;
-    if (r == for_result && s == for_spec && min_thick == for_min) {
-        Preview c = cached;
-        c.made_last = !doc.supports.fresh(doc.revision(), doc.supportSettings());
-        return c;
-    }
-    fruit::TreeConfig tc = r->tree_cfg;
-    tc.raft_spec = s;  // the old Pads and Full rafts too: their outline and windows, measured the same way
-    fruit::SupportTree tree = r->tree;
-    tree.raft_top = std::max(s.thickness, min_thick);  // as the tree builder makes it
-    p.shape = fruit::specRaftShape(tree, tc);
-    p.height = tree.raft_top;
-    p.have = !p.shape.trunks.empty();
-    for_result = r;
-    for_spec = s;
-    for_min = min_thick;
-    cached = p;
-    p.made_last = !doc.supports.fresh(doc.revision(), doc.supportSettings());
+    const float fb = std::max(1.0f, ImGui::GetIO().DisplayFramebufferScale.x);
+    bool current = true;
+    p.rp = &app.raftPreview(s, min_thick, static_cast<int>(std::lround(box.x * fb)), static_cast<int>(std::lround(box.y * fb)),
+                            &current);
+    p.have = p.rp->have;
+    p.drawing = !current;
+    p.made_last = doc.supports.result && !doc.supports.fresh(doc.revision(), doc.supportSettings());
     return p;
 }
 
@@ -464,7 +450,7 @@ void settingsColumn(Rows& r, const Preview& pv, double min_thick, int long_layer
         {
             double stop = static_cast<double>(static_cast<int>(s.windows));
             std::string value = windowsWord(s.windows);
-            if (pv.have && s.windows != RaftWindows::None) value += strf(" · %d", static_cast<int>(pv.shape.windows.size()));
+            if (pv.have && s.windows != RaftWindows::None) value += strf(" · %d", static_cast<int>(pv.rp->shape.windows.size()));
             row(r, "How many", "Arched pockets at the plate for a screwdriver, only at lobe tips along the sides.", value,
                 r.origin && r.origin->windows != s.windows, [&](float w) {
                     const float sx = ImGui::GetCursorScreenPos().x;
@@ -513,42 +499,47 @@ void checkLine(int state, const std::string& s, float w) {  // 1 checked, 0 not 
     ImGui::Dummy(ImVec2(0, 3));
 }
 
-void topView(const Preview& pv, ImVec2 size) {
+void pictureView(const Preview& pv, ImVec2 size) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), col::Panel, 12);
-    fruit::BBox2 b = fruit::bbox(pv.shape.top.empty() ? pv.shape.base : pv.shape.top);
-    b.extend(fruit::bbox(pv.shape.base));
-    if (b.empty()) {
-        ImGui::Dummy(size);
-        return;
+    if (pv.rp && pv.rp->tex)
+        dl->AddImageRounded(static_cast<ImTextureID>(static_cast<intptr_t>(pv.rp->tex)), p, ImVec2(p.x + size.x, p.y + size.y),
+                            ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 12);
+    dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), col::Border, 12);
+    if (pv.drawing) {  // the last picture stays until the new one is ready
+        ImGui::PushFont(fonts().regular, size::Label);
+        const char* t = "Drawing the new raft…";
+        const ImVec2 ts = ImGui::CalcTextSize(t);
+        dl->AddRectFilled(ImVec2(p.x + 10, p.y + 10), ImVec2(p.x + 22 + ts.x, p.y + 16 + ts.y), IM_COL32(0x0E, 0x10, 0x14, 210), 6);
+        dl->AddText(ImVec2(p.x + 16, p.y + 13), col::TextSecondary, t);
+        ImGui::PopFont();
     }
-    const float pad = 14;
-    const float k = std::min((size.x - 2 * pad) / static_cast<float>(b.size().x), (size.y - 2 * pad) / static_cast<float>(b.size().y));
-    const float ox = p.x + (size.x - k * static_cast<float>(b.size().x)) / 2, oy = p.y + (size.y - k * static_cast<float>(b.size().y)) / 2;
-    auto at = [&](const fruit::Vec2& v) {
-        return ImVec2(ox + k * static_cast<float>(v.x - b.min.x), oy + k * static_cast<float>(b.max.y - v.y));
-    };
-    auto fill = [&](const fruit::Paths& paths, ImU32 c) {
-        for (const fruit::ExPolygon& e : fruit::toExPolygons(paths)) {
-            std::vector<ImVec2> pts;
-            for (const auto& q : e.contour) pts.push_back(at(fruit::toVec(q)));
-            if (pts.size() >= 3) dl->AddConcavePolyFilled(pts.data(), static_cast<int>(pts.size()), c);
-            for (const auto& h : e.holes) {
-                std::vector<ImVec2> hp;
-                for (const auto& q : h) hp.push_back(at(fruit::toVec(q)));
-                if (hp.size() >= 3) dl->AddConcavePolyFilled(hp.data(), static_cast<int>(hp.size()), col::Panel);
-            }
-        }
-    };
-    if (!pv.shape.top.empty()) fill(pv.shape.top, IM_COL32(0xC8, 0xCE, 0xD6, 255));
-    fill(pv.shape.base, IM_COL32(0x8E, 0x97, 0xA6, 255));
-    for (const fruit::RaftWindow& w : pv.shape.windows) {
-        const fruit::Vec2 tip = w.trunk + w.dir * w.radius;
-        dl->AddCircleFilled(at(tip), 4.5f, IM_COL32(0x0E, 0x10, 0x14, 255), 12);
-    }
-    for (const fruit::Vec2& t : pv.shape.trunks) dl->AddCircle(at(t), std::max(2.0f, 1.5f * k), IM_COL32(0x3A, 0x40, 0x4B, 255), 16, 1.2f);
     ImGui::Dummy(size);
+}
+
+// What the picture shows: a swatch of each, and its name.
+void pictureKey(bool windows, float w) {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGui::PushFont(fonts().regular, size::Help);
+    const float h = ImGui::GetTextLineHeight();
+    float x = p.x;
+    auto item = [&](const std::function<void(ImVec2)>& swatch, const char* label) {
+        swatch(ImVec2(x, p.y + h / 2));
+        dl->AddText(ImVec2(x + 20, p.y), col::TextMuted, label);
+        x += 20 + ImGui::CalcTextSize(label).x + 16;
+    };
+    item([&](ImVec2 c) { dl->AddRectFilled(ImVec2(c.x, c.y - 6), ImVec2(c.x + 14, c.y + 6), IM_COL32(0xAE, 0xB6, 0xC4, 255), 2); },
+         "raft");
+    if (windows)
+        item([&](ImVec2 c) {
+            dl->AddRectFilled(ImVec2(c.x, c.y - 6), ImVec2(c.x + 14, c.y + 6), IM_COL32(0xAE, 0xB6, 0xC4, 255), 2);
+            dl->AddRectFilled(ImVec2(c.x + 4, c.y - 6), ImVec2(c.x + 10, c.y + 3), IM_COL32(0x0E, 0x10, 0x14, 140), 1.5f);
+        }, "windows, under its edge");
+    item([&](ImVec2 c) { dl->AddCircleFilled(ImVec2(c.x + 7, c.y), 5, IM_COL32(0x7D, 0x86, 0x96, 255), 16); },
+         "trunks' feet");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(w, h));
 }
 
 void cutView(const RaftSpec& s, double height, ImVec2 size) {
@@ -590,10 +581,12 @@ void previewColumn(const RaftSpec& s, const Preview& pv, double min_thick, int l
     text("Preview", fonts().semibold, size::Section, col::Text);
     ImGui::Dummy(ImVec2(0, 4));
     if (pv.have) {
-        topView(pv, ImVec2(w, 200));
+        pictureView(pv, ImVec2(w, kPictureH));
+        ImGui::Dummy(ImVec2(0, 6));
+        pictureKey(!pv.rp->shape.windows.empty(), w);
         ImGui::Dummy(ImVec2(0, 2));
-        const fruit::BBox2 b = fruit::bbox(pv.shape.top.empty() ? pv.shape.base : pv.shape.top);
-        text(strf("%s on the plate · raft resin %.1f ml%s", dims2(b.size().x, b.size().y).c_str(), pv.shape.volume / 1000,
+        const fruit::BBox2 b = fruit::bbox(pv.rp->shape.top.empty() ? pv.rp->shape.base : pv.rp->shape.top);
+        text(strf("%s on the plate · raft resin %.1f ml%s", dims2(b.size().x, b.size().y).c_str(), pv.rp->shape.volume / 1000,
                   pv.made_last ? " · on the supports made last" : "")
                  .c_str(),
              fonts().regular, size::Help, col::TextMuted, true);
@@ -628,8 +621,8 @@ void previewColumn(const RaftSpec& s, const Preview& pv, double min_thick, int l
             checkLine(-1, strf("The windows' roof is only %.1f mm: under 0.5 mm it may crack.", roof), iw);
     }
     if (pv.have) {
-        if (pv.shape.pieces <= 1) checkLine(1, "One piece on the plate.", iw);
-        else checkLine(-1, strf("%d separate pieces on the plate.", pv.shape.pieces), iw);
+        if (pv.rp->shape.pieces <= 1) checkLine(1, "One piece on the plate.", iw);
+        else checkLine(-1, strf("%d separate pieces on the plate.", pv.rp->shape.pieces), iw);
     }
     ImGui::Dummy(ImVec2(0, 4));
     groupLabel("Not checked");
@@ -759,7 +752,8 @@ void supportsRaft(App& app, Document& doc, ImVec2 size) {
     const int long_layers = doc.printer.bottom_layers + doc.printer.transition_layers;
     const double min_thick = fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight);
     Rows rows{app, waiting ? pr->spec : c.raft, origin ? &origin->spec : nullptr, 0};
-    const Preview pv = previewFor(doc, rows.now, min_thick);
+    const float preview_w = ImGui::GetContentRegionAvail().x - 270 - std::min(470.0f, std::floor((ImGui::GetContentRegionAvail().x - 270 - 48) * 0.58f)) - 48 - 12;
+    const Preview pv = previewFor(app, doc, rows.now, min_thick, ImVec2(preview_w, kPictureH));
 
     // ---- Header ----
     if (linkButton("‹ Back to supports")) app.showRaft(false);
@@ -767,7 +761,7 @@ void supportsRaft(App& app, Document& doc, ImVec2 size) {
     const float ty = ImGui::GetCursorPosY();
     text("Raft settings", fonts().bold, size::DialogTitle + 2, col::Text);
     const std::string for_what =
-        pv.have ? strf("For: %s · %d trunks on the raft", doc.name.c_str(), static_cast<int>(pv.shape.trunks.size()))
+        pv.have ? strf("For: %s · %d trunks on the raft", doc.name.c_str(), static_cast<int>(pv.rp->shape.trunks.size()))
                 : strf("For: %s", doc.name.c_str());
     text(for_what.c_str(), fonts().regular, size::Body, col::TextMuted);
     {
