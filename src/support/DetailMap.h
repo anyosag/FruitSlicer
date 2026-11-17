@@ -22,6 +22,9 @@ struct DetailRegion {
     BBox2 box;
     double z0 = 0, z1 = 0;  // its height range (mm)
     bool mouth = false;     // the space below a slot's opening, not the slot itself
+    // A hole in a part that stands on the plate, through the bottom layers:
+    // no support stands in it, not even one holding what is right over it.
+    bool plate_hole = false;
 };
 
 class DetailMap {
@@ -45,6 +48,11 @@ public:
     // lies below the contact (and reaches up to within `below` of it) and
     // comes within `r` of it in plan. Sorted.
     std::vector<int> under(const Vec3& contact, double r, double below = 1e9) const;
+    // Holes in the first layer (`first`, of parts standing on the plate) up to
+    // `max_width` across, from the plate to `top`: the bottom layers get many
+    // times the light and cure wide, and a foot standing in such a hole prints
+    // joined to its wall and fills it.
+    void addPlateHoles(const Paths& first, double top, double max_width);
     // The regions as solid prisms (printer coordinates), for the 3D view.
     TriangleMesh mesh(bool with_mouths = false) const;
 

@@ -157,6 +157,7 @@ private:
         double d = cfg_.base_diameter;
         for (double z = z0; z < z0 + h - 1e-9; z += 0.05) {
             const double t = (z - z0) / h;
+            if (inDetail({xy.x, xy.y, z}, r * t)) return 0;  // in a slot, or a hole by the plate
             // (Where the model is further than would narrow the foot, the
             // nearest point need not be found: d stays as it is.)
             const double cap = d * (1 - t) / 2 + r * t + gap + 1e-6;
@@ -915,10 +916,11 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why, const 
         routedPillar(hi, route_end, ahead ? ahead->route_room : footRoom(route_end.xy(), shaft_r));
         return true;
     }
-    if (drop_ok) {
+    if (drop_ok && !inDetail({h.junction.x, h.junction.y, out_.raft_top}, shaft_r)) {
         // Its shaft is clear but nowhere in reach has room for a foot (the
         // model is right beside it down at the plate): a straight foot, at
-        // the shaft's own gap, and it is reported.
+        // the shaft's own gap, and it is reported. Never in a hole kept clear
+        // by the plate, or a slot: there it goes another way, or is dropped.
         newPillar(hi, false);
         out_.pillars.back().base_diameter = h.spec.shaft_diameter;
         std::ostringstream m;

@@ -1786,9 +1786,15 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
     // The slots and holes no support goes into, in the whole job (one between two parts counts too).
     if (n > 0) {
         const fruit::SupportConfig& c0 = made[0].cfg;
-        r.details = std::make_shared<const fruit::DetailMap>(fruit::DetailMap::build(
-            fruit::sliceModel(doc.placed(), c0.layer_height, nullptr, 0, ctl.sub(0, 0.04)), c0.detail_width,
-            c0.detail_mouth_depth, ctl.sub(0.04, 0.05)));
+        const fruit::TreeConfig& t0 = made[0].tc;
+        const fruit::LayerStack ls = fruit::sliceModel(doc.placed(), c0.layer_height, nullptr, 0, ctl.sub(0, 0.04));
+        fruit::DetailMap map = fruit::DetailMap::build(ls, c0.detail_width, c0.detail_mouth_depth, ctl.sub(0.04, 0.05));
+        // Holes in parts that stand on the plate, through the bottom layers, where a foot standing in one would
+        // fill more than half of it: one foot at its full width with the bottom layers' gap on each side, twice.
+        // Wider holes may hold feet, at that gap.
+        if (doc.anyOnPlate() && ls.size() > 0)
+            map.addPlateHoles(ls.slices[0], std::max(min_raft, 0.5), 2 * (t0.base_diameter + 2 * t0.foot_clearance));
+        r.details = std::make_shared<const fruit::DetailMap>(std::move(map));
         for (Making& m : made) m.tc.details = r.details;
     }
     for (std::size_t i = 0; i < n; ++i)

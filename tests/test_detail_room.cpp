@@ -199,3 +199,39 @@ TEST_CASE("something that starts in mid-air right over a slot is held from insid
     const SupportTree u = buildSupportTree(m, {q}, tc, raft);
     for (const Head& h : u.heads) CHECK_FALSE(details->reaches(h.junction, h.spec.shaft_diameter / 2));
 }
+
+TEST_CASE("by the plate, no support stands in a hole a foot would mostly fill; a wider hole may hold one", "[details][plate]") {
+    // A block on the plate with a hole right through it, and a shelf over the hole 5 mm up held by the block.
+    auto holed = [](double w) {
+        MeshResult cut = subtractMeshes(makeBox({-10, -10, 0}, {10, 10, 3}), makeBox({-w / 2, -w / 2, -1}, {w / 2, w / 2, 4}));
+        REQUIRE(cut.ok);
+        TriangleMesh m = cut.mesh;
+        m.append(makeBox({-10, -10, 5}, {10, 10, 6}));
+        m.append(makeBox({-10, -10, 3}, {-8, 10, 5}));
+        return m;
+    };
+    TreeConfig tc;
+    tc.raft = RaftStyle::None;
+    tc.foot_clearance = bottomLayerGap(tc.clearance, 27.5 / 1.5);
+    const double limit = 2 * (tc.base_diameter + 2 * tc.foot_clearance);  // 8.8 mm
+    SupportPoint p;
+    p.pos = {0, 0, 5};
+    p.normal = {0, 0, -1};
+    p.tip_diameter = 0.4;
+    for (const double w : {5.0, 12.0}) {
+        CAPTURE(w);
+        const TriangleMesh m = holed(w);
+        const LayerStack ls = sliceModel(m, 0.05);
+        DetailMap map = DetailMap::build(ls, 2.0, 2.0);
+        map.addPlateHoles(ls.slices[0], 0.5, limit);
+        tc.details = std::make_shared<const DetailMap>(std::move(map));
+        const SupportTree t = buildSupportTree(m, {p}, tc, 0.0);
+        // Over the narrow hole, the only way down is into it: the tip is dropped (and reported) instead.
+        CHECK(t.dropped_points == (w < limit ? 1 : 0));
+        bool in_hole = false;
+        for (const Pillar& P : t.pillars)
+            if (!P.on_model && std::abs(P.xy.x) < w / 2 && std::abs(P.xy.y) < w / 2) in_hole = true;
+        if (w < limit) CHECK_FALSE(in_hole);  // it stands somewhere else (here: on the model)
+        else CHECK(in_hole);                  // room for a foot with its gap: straight down, in the hole
+    }
+}

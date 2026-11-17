@@ -139,6 +139,21 @@ void DetailMap::index() {
     }
 }
 
+void DetailMap::addPlateHoles(const Paths& first, double top, double max_width) {
+    for (const ExPolygon& e : toExPolygons(first))
+        for (const Path& h : e.holes) {
+            ExPolygon hole;
+            hole.contour = h;
+            if (area(hole.contour) < 0) std::reverse(hole.contour.begin(), hole.contour.end());
+            if (hole.area() < 0.01) continue;
+            // Wider than `max_width` (a circle that wide fits in it): left to the feet's gap.
+            if (!offset(hole.toPaths(), -max_width / 2).empty()) continue;
+            DetailRegion d{hole, hole.bbox(), 0, top, false, true};
+            regions_.push_back(d);
+        }
+    index();
+}
+
 std::size_t DetailMap::slotCount() const {
     return static_cast<std::size_t>(std::count_if(regions_.begin(), regions_.end(), [](const DetailRegion& r) { return !r.mouth; }));
 }
@@ -148,6 +163,7 @@ std::vector<int> DetailMap::under(const Vec3& contact, double r, double below) c
     const Vec2 q = contact.xy();
     for (std::size_t i = 0; i < regions_.size(); ++i) {
         const DetailRegion& d = regions_[i];
+        if (d.plate_hole) continue;  // never: what is over it is held from elsewhere
         if (d.z0 > contact.z + 0.05 || d.z1 < contact.z - below) continue;
         if (q.x < d.box.min.x - r || q.x > d.box.max.x + r || q.y < d.box.min.y - r || q.y > d.box.max.y + r) continue;
         bool near = d.shape.contains(q) || edgeDistance(d.shape.contour, q) < r;
