@@ -1,0 +1,23 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"open": "@demo"},
+    {"wait": "jobs"},
+    {"health": "place"},
+    {"step": "supports"},
+    {"supports": "generate"},
+    {"wait": "jobs"},
+    {"lift_custom": true},
+    {"scroll_panel": "end"},
+    {"shot": "g10_custom_lift_field"},
+    {"lift": 15},
+    {"lift_custom": false},
+    {"supports": "generate"},
+    {"wait": "jobs"},
+    {"scroll_panel": "end"},
+    {"shot": "g10_custom_lift_15"},
+    {"lift": 4},
+    {"shot": "g10_lift_back_to_stop"}
+  ]
+}

@@ -609,6 +609,8 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setSupportChoices(c);
         } else if (step.contains("height_correction")) {
             app.setHeightCorrection(step["height_correction"].get<double>());
+        } else if (step.contains("lift_custom")) {
+            app.liftCustomOpen() = step["lift_custom"].get<bool>();  // the Lift row's Custom… field
         } else if (step.contains("lift")) {
             app.setLift(step["lift"].get<double>());
         } else if (step.contains("lift_slide")) {

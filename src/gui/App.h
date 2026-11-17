@@ -428,6 +428,7 @@ public:
         int lo = 0, hi = 0;
     };
     SliderTrack& liftTrack() { return lift_track_; }
+    bool& liftCustomOpen() { return lift_custom_open_; }  // the Lift row's field for a lift of your own
     // The height correction (0 to 0.5 mm, the job's, used with no raft): the same, beginLift/endLift
     // bracket the slider's drag.
     void setHeightCorrection(double mm);  // the job's print setting
@@ -813,6 +814,7 @@ private:
     std::vector<int> lift_followers_;  // All parts: the parts the drag moves (those with the job's lift when it began)
     void setJobChoices(const SupportChoices& c);  // the job's, whatever the switch says
     SliderTrack lift_track_;
+    bool lift_custom_open_ = false;
     Handle hover_handle_ = Handle::None;
     bool mouse_spent_ = false;
     bool tip_editing_ = false;

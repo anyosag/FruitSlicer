@@ -573,10 +573,10 @@ void raftSection(App& app, Document& doc) {
     const bool for_part = app.supportsForPart();
     bool on_plate = for_part ? doc.placement().on_plate : doc.jobLift().on_plate;
     const SupportChoices c = app.supportChoicesShown();
-    const int lift = static_cast<int>(std::lround(for_part ? doc.placement().elevation : doc.jobLift().elevation));
+    const double lift = for_part ? doc.placement().elevation : doc.jobLift().elevation;
     const std::string summary =
         on_plate ? std::string("On the plate")
-                 : strf("Raft · %s · %d mm", c.raft_preset.name.empty() ? "its own" : c.raft_preset.name.c_str(), lift);
+                 : strf("Raft · %s · %g mm", c.raft_preset.name.empty() ? "its own" : c.raft_preset.name.c_str(), lift);
     if (!sectionHeader(app, kSectionRaft, "Raft and lift", summary, false)) return;
     if (baseTiles(&on_plate)) app.setOnPlate(on_plate);
     ownLines(app, doc, Field::Base);
@@ -683,8 +683,23 @@ void raftSection(App& app, Document& doc) {
     const float y = ImGui::GetCursorPosY();
     text("Lift", fonts().semibold, size::Body, col::Text);
     const bool differs = std::abs(lift - fruit::Placement{}.elevation) > 1e-9;
-    rightText(strf("%d mm", lift).c_str(), fonts().semibold, size::Help, differs ? col::Accent : col::TextSecondary, y);
-    int v = lift;
+    // A lift of your own: past the slider's 10 mm, or between its stops.
+    const bool own = lift > 10 + 1e-9 || std::abs(lift - std::round(lift)) > 1e-9;
+    const std::string value = strf("%g mm", lift);
+    rightText(value.c_str(), fonts().semibold, size::Help, differs ? col::Accent : col::TextSecondary, y);
+    {
+        ImGui::PushFont(fonts().semibold, size::Help);
+        const float vw = ImGui::CalcTextSize(value.c_str()).x;
+        ImGui::PopFont();
+        ImGui::PushFont(fonts().semibold, size::Body);
+        const float cw = ImGui::CalcTextSize("Custom…").x;
+        ImGui::PopFont();
+        ImGui::SetCursorPos(ImVec2(ImGui::GetCursorStartPos().x + ImGui::GetContentRegionAvail().x - vw - 14 - cw, y));
+        if (linkButton("Custom…")) app.liftCustomOpen() = !app.liftCustomOpen();
+        tooltip("Type a lift of your own, up to 50 mm.");
+        ImGui::SetCursorPosY(y + 22);
+    }
+    int v = std::clamp(static_cast<int>(std::lround(lift)), 1, 10);
     bool begin = false, end = false, holding = false;
     const bool moved = stopSlider("##lift", &v, 1, 10, ImGui::GetContentRegionAvail().x, true, &begin, &end, &holding,
                                   &app.liftTrack());
@@ -692,7 +707,33 @@ void raftSection(App& app, Document& doc) {
     if (holding) app.previewLift(v);  // every frame it is held, so the drag lasts until it is let go
     else if (moved) app.setLift(v);   // Left and Right: a stop each, each its own undo step
     if (end) app.endLift();
-    text("From the raft to the part's lowest point: higher snaps off more easily, lower uses less resin.",
+    // A lift of your own: typed, then Use. The field starts at the lift it has when it opens.
+    static double typed = 0;
+    static bool was_open = false;
+    if (app.liftCustomOpen()) {
+        if (!was_open) typed = lift;
+        ImGui::Dummy(ImVec2(0, 2));
+        const float fy = ImGui::GetCursorPosY();
+        numberField("##lift_mm", &typed, 76, "%g", kMinLift, kMaxLift);
+        ImGui::SameLine(0, 6);
+        ImGui::SetCursorPosY(fy + 5);
+        text("mm", fonts().regular, size::Help, col::TextSecondary);
+        ImGui::SameLine(0, 10);
+        ImGui::SetCursorPosY(fy);
+        if (secondaryButton("Use##lift", ImVec2(0, 28))) {
+            app.setLift(typed);
+            app.liftCustomOpen() = false;
+        }
+        text(strf("%g to %g mm, to 0.1 mm.", kMinLift, kMaxLift).c_str(), fonts().regular, size::Help, col::TextMuted);
+    }
+    was_open = app.liftCustomOpen();
+    if (own)
+        text(strf("%s is a lift of your own: the slider goes back to its stops.", value.c_str()).c_str(), fonts().regular,
+             size::Help, col::Accent, true);
+    text(lift > 10 + 1e-9
+             ? "From the raft to the part's lowest point. Past 10 mm the supports are long: more resin, and they bend "
+               "more."
+             : "From the raft to the part's lowest point: higher snaps off more easily, lower uses less resin.",
          fonts().regular, size::Help, col::TextSecondary, true);
     ownLines(app, doc, Field::Lift);
     ImGui::Dummy(ImVec2(0, 10));

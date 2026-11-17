@@ -1281,7 +1281,8 @@ void App::setSupportsSectionOpen(int section, bool open) {
 }
 
 namespace {
-double liftStop(double mm) { return std::clamp(std::round(mm), 1.0, 10.0); }
+// A slider stop (whole mm) or a lift of your own, to 0.1 mm.
+double liftStop(double mm) { return std::clamp(std::round(mm * 10) / 10, kMinLift, kMaxLift); }
 fruit::Placement withLift(fruit::Placement p, double mm) {
     p.elevation = liftStop(mm);
     return p;

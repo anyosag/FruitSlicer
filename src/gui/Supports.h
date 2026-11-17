@@ -120,6 +120,8 @@ std::vector<RaftGroup> chosenRafts(const Document& doc, const SupportSetup& s);
 // cured much longer and come out wider than drawn. ASSUMPTION (0.5 mm), as
 // TreeConfig::foot_clearance; not measured.
 inline constexpr double kRaftsMeet = 0.5;
+// The lift, mm: the slider's stops go from 1 to 10; one of your own (Custom…) up to kMaxLift, to 0.1 mm.
+inline constexpr double kMinLift = 1, kMaxLift = 50;
 
 // Tip sizes are chosen as FruitSlicer's own classes (0.2, 0.3, 0.4, 0.6 mm,
 // by index). A resin profile may have measured other sizes: a choice then
