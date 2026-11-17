@@ -3414,11 +3414,16 @@ unsigned App::orientationPicture(bool ours) {
 
 void App::ejectDrive() {
     if (!doc_ || doc_->print.drive.empty()) return;
+    // The drive the file went to, in the list or, if the list hasn't caught up, as the Mac has it now.
+    if (!opts_.deterministic && std::none_of(drives_.begin(), drives_.end(),
+                                             [&](const platform::Volume& v) { return v.name == doc_->print.drive; }))
+        drives_ = platform::removableVolumes();
     for (const auto& v : drives_)
         if (v.name == doc_->print.drive) {
             ejectDrive(v.path);
             return;
         }
+    showError("Couldn't eject " + doc_->print.drive, "The Mac doesn't list it as a drive any more: it may be ejected already.");
 }
 
 bool App::canEject() const {
@@ -3430,6 +3435,9 @@ void App::ejectDrive(const std::string& path) {
     std::string name;
     for (const auto& v : drives_)
         if (v.path == path) name = v.name;
+    if (name.empty() && !opts_.deterministic)
+        for (const auto& v : platform::removableVolumes())
+            if (v.path == path) name = v.name;
     if (name.empty() || !canEject()) return;
     auto error = std::make_shared<std::string>();
     auto ok = std::make_shared<bool>(false);
@@ -3824,7 +3832,8 @@ void App::frame() {
     if (!placing()) startRiskCheck();       // with supports: what may not print? (after all of it)
     // Scripted captures keep the drive list they set up: the machine's own
     // drives would change the pictures.
-    if (screen_ == Screen::Job && step_ == Step::Print && !opts_.deterministic) {
+    // In the Layers place, where the print file is saved (Layers and Print are one place now).
+    if (screen_ == Screen::Job && inLayersMode(step_) && !opts_.deterministic) {
         const double now = static_cast<double>(SDL_GetTicks()) / 1000.0;
         if (drives_checked_ < 0 || now - drives_checked_ > 2.0) {
             drives_checked_ = now;
