@@ -187,27 +187,36 @@ private:
             }
         return !tree_.nearerThan(j, s.shaft_diameter / 2 + cfg_.clearance);
     }
+    // Room enough for a route: a route costs a longer support (a longer
+    // lever under peel, more resin, a wider footprint), and a shaft twice the
+    // least gap from the model is well clear of it, so routes go no further
+    // than it takes to get that much (heads, which cost nothing to lean, aim
+    // for wanted_gap).
+    double routeRoom() const { return std::min(cfg_.wanted_gap, 2 * cfg_.clearance); }
     // Walk down at 45° from `from` in 16 directions to a clear vertical drop
     // to the raft (PrusaSlicer-style ground route search). Of the drops it
-    // finds, the one whose shaft has the most room (shaftRoom, to the nearest
-    // 0.05 mm), then the nearest: in each direction, past the first clear
-    // drop, a little further while that gains room. With `better_than`, only
-    // a drop with more room than that counts. `room` gets the drop's room.
+    // finds, the nearest with routeRoom() of room; with none, the one with
+    // the most room (to the nearest 0.05 mm), then the nearest. In each
+    // direction, past the first clear drop, a little further while that gains
+    // room. With `better_than`, only a drop with more room than that counts.
+    // `room` gets the drop's room.
     bool groundRoute(const Vec3& from, double r, double max_reach, Vec3& to, double* room = nullptr,
                      double better_than = -1) const {
         double best_room = -1, best_d = 1e9;
+        const double enough = routeRoom();
         for (int k = 0; k < 16; ++k) {
             const double az = 2 * kPi * k / 16;
             const Vec3 step{std::cos(az), std::sin(az), -1.0};
             double first = -1;
             for (double d = 1.0; d <= max_reach; d += 1.0) {
-                if (first >= 0 && (d > first + 2.0 + 1e-9 || best_room >= cfg_.wanted_gap - 1e-9)) break;
+                if (first >= 0 && d > first + 2.0 + 1e-9) break;
+                if (best_room >= enough - 1e-9 && d >= best_d) break;  // no nearer one to find
                 const Vec3 q = from + step * d;
                 if (q.z < out_.raft_top + cfg_.base_height + 1.0) break;
                 if (!segmentClear(from, q, r)) break;
                 if (!dropClear(q, r)) continue;
                 if (first < 0) first = d;
-                const double g = std::floor(shaftRoom(q, r) / 0.05 + 1e-9) * 0.05;
+                const double g = std::min(enough, std::floor(shaftRoom(q, r) / 0.05 + 1e-9) * 0.05);
                 if (g <= better_than + 1e-9) continue;
                 if (g > best_room + 1e-9 || (g > best_room - 1e-9 && d < best_d)) {
                     best_room = g;
@@ -347,9 +356,10 @@ private:
     // (by 0.1 mm at least), within kRoomReach.
     bool roomierDrop(const Vec3& from, double r, Vec3& to, double& foot) const {
         const double straight = shaftRoom(from, r);
-        if (straight >= cfg_.wanted_gap - 1e-9) return false;
+        const double enough = routeRoom();
+        if (straight >= enough - 1e-9) return false;
         double got = 0;
-        if (!groundRoute(from, r, kRoomReach, to, &got, straight + 0.1 - 1e-9)) return false;
+        if (!groundRoute(from, r, kRoomReach, to, &got, std::min(straight + 0.1, enough) - 1e-9)) return false;
         foot = footRoom(to.xy(), r);
         return foot >= 2 * r - 1e-9;
     }
