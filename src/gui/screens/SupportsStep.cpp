@@ -1015,6 +1015,10 @@ void supportsPanel(App& app, Document& doc) {
     } else if (s.result && !running(app) && app.supportsView() == SupportsView::Why) {
         ImGui::Dummy(ImVec2(0, 4));
         text("Click a tip in the view to see why it is there.", fonts().regular, size::Body, col::TextSecondary, true);
+        if (s.result->details && s.result->details->slotCount() > 0)
+            text("Slots and holes narrower than 2 mm are filled in: no tip reaches over their edges, and no "
+                 "support goes into them or just under where they open.",
+                 fonts().regular, size::Body, col::TextSecondary, true);
     }
 }
 
@@ -1167,6 +1171,9 @@ void legend(App& app, const SupportResult& r) {
         item("Extra hold", IM_COL32(0xB4, 0x8E, 0xF0, 255), false);
         item("Steadying", IM_COL32(0x5B, 0xD6, 0x9A, 255), false);
         item("By hand", IM_COL32(0xF2, 0xF4, 0xF7, 255), false);
+        if (r.details && r.details->slotCount() > 0)
+            item("Kept clear", IM_COL32((kKeptClearColour >> 16) & 0xFF, (kKeptClearColour >> 8) & 0xFF, kKeptClearColour & 0xFF, 255),
+                 false);
     } else {
         for (const auto& t : r.tip_sizes) item(strf("%.1f mm", t.first).c_str(), IM_COL32(0xF2, 0xF4, 0xF7, 255), false);
         if (app.supportsView() == SupportsView::Supports) item("Support", IM_COL32(0xE2, 0xE6, 0xED, 255), true);

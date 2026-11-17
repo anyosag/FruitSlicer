@@ -22,6 +22,7 @@
 #include "geometry/Transform.h"
 #include "mesh/Placement.h"
 #include "mesh/TriangleMesh.h"
+#include "support/DetailMap.h"
 #include "support/SupportConfig.h"
 #include "support/SupportSettings.h"
 #include "support/SupportTree.h"
@@ -280,6 +281,9 @@ inline constexpr double kDeletedZone = 0.9;
 inline constexpr double kZoneRadius = 1.5;   // mm, radius: a no-tip zone drawn by hand
 
 // One line of the result's checks.
+// The colour the slots and holes kept clear are drawn in (the Why view and its legend).
+inline constexpr unsigned kKeptClearColour = 0x46C2CB;
+
 struct SupportCheck {
     bool ok = true;
     std::string title, detail;
@@ -322,6 +326,9 @@ struct SupportResult {
     fruit::TreeConfig tree_cfg;
     std::vector<fruit::SupportPoint> points;
     fruit::SupportTree tree;
+    // The slots and holes no support went into (and the space under their
+    // mouths), in the whole job; null when not worked out (an older job).
+    std::shared_ptr<const fruit::DetailMap> details;
     fruit::TriangleMesh mesh;  // the supports, printer coordinates
     fruit::ValidationReport validation;
     std::size_t tips = 0, island_tips = 0, extra_hold = 0;

@@ -283,11 +283,16 @@ TEST_CASE("Supports: the demo bracket gets a raft, tips and a clean check", "[gu
     CHECK_FALSE(r.mesh.empty());
     // Model and supports together reach down to the plate.
     CHECK(r.size_with_supports.z == Approx(doc->placed().bbox().max.z).margin(0.01));
-    REQUIRE(r.checks.size() == 4);
+    REQUIRE(r.checks.size() == 6);
     CHECK(r.checks[0].title == "No part starts in mid-air");
     CHECK(r.checks[0].ok);
     CHECK(r.checks[1].title == "Raft comes off in one piece");
     CHECK(r.checks[1].ok);
+    // The check after making: no support nearer the model than its gap, and no slot to keep open.
+    CHECK(r.checks[2].title == "Supports keep 0.30 mm from the model");
+    CHECK(r.checks[2].ok);
+    CHECK(r.checks[3].title == "Slots and holes stay open");
+    CHECK(r.checks[3].ok);
     // Problems come blocking first, then to review, then notes.
     for (std::size_t i = 1; i < r.problems.size(); ++i) CHECK(r.problems[i - 1].level <= r.problems[i].level);
     CHECK(r.count(SupportProblem::Level::Blocks) == 0);
@@ -439,7 +444,7 @@ TEST_CASE("Advanced settings: every value at its lower limit, then its upper, st
         CHECK(r.tips > 0);
         CHECK(r.pillars > 0);
         CHECK_FALSE(r.mesh.empty());
-        CHECK(r.checks.size() == 4);
+        CHECK(r.checks.size() == 6);
         CHECK(r.tree_cfg.head_length == Approx(high ? 3.0 : 0.4));
     }
 }
@@ -629,8 +634,9 @@ TEST_CASE("Tip edits: when the tips are planned again, the planner works around 
 
 TEST_CASE("Supports: a tip built smaller than planned, or a little way off, shows as built and says why",
           "[gui][supports]") {
-    // A square tube 1.4 mm wide inside, open below, under a cap: in it only a 0.4 mm tip's shaft clears the walls.
-    const double w = 0.7;
+    // A square tube 2.1 mm wide inside (too wide to be a hole supports keep out of), open below, under a cap,
+    // and a 0.5 mm gap to the model: in it only a 0.4 mm tip's shaft clears the walls.
+    const double w = 1.05;
     fruit::TriangleMesh m = fruit::makeBox({-5, -5, 12}, {5, 5, 14});
     m.append(fruit::makeBox({-5, -5, 5}, {-w, 5, 12}));
     m.append(fruit::makeBox({w, -5, 5}, {5, 5, 12}));
@@ -650,6 +656,7 @@ TEST_CASE("Supports: a tip built smaller than planned, or a little way off, show
     plan.points = {tip};
     SupportChoices c;
     c.usual_tip = 3;  // 0.6 mm
+    c.advanced["gap"] = 0.5;
     const SupportResult r = finishWithEdits(*doc, c, plan, {}, fruit::JobControl::none());
     CHECK(r.tree.dropped_points == 0);
     std::size_t smaller = 0;

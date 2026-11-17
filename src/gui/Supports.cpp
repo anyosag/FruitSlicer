@@ -2,6 +2,10 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "Supports.h"
 
+#include "mesh/AabbTree.h"
+#include "support/CosmeticField.h"
+#include "support/SupportCheck.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -449,6 +453,16 @@ const Known kKnown[] = {
      "One layer is large, so it pulls hard on the film as it peels. Tilting the model makes layers smaller."},
     {"flat_face", SupportProblem::Level::Note, "Large flat faces facing down",
      "Flat faces parallel to the film peel all at once. Tilting the model a few degrees helps."},
+    {"shaft_near_model", SupportProblem::Level::Review, "Supports close to the model",
+     "A support runs closer to the model than the gap it should keep, away from its tip. A gap this narrow can fill "
+     "in as it prints and glue the support to the model. Turning or moving the part usually gives it room."},
+    {"tip_over_edge", SupportProblem::Level::Review, "Tips over the edge of a slot or wall",
+     "A tip sits so close to a slot, a hole or a wall going down that its contact reaches over the edge, where it "
+     "can close the slot or glue onto the wall. There was no room to move it in: the face is too narrow, or the "
+     "tip holds where a part starts in mid-air."},
+    {"support_in_slot", SupportProblem::Level::Review, "Supports in slots or holes",
+     "A support goes into a narrow slot or hole, or into the space just under where one opens. It can close the "
+     "slot and trap resin in it."},
     {"manual_point_unattached", SupportProblem::Level::Review, "Hand-placed tips off the model",
      "A tip you placed is no longer on the surface, so it was left out."},
 };
@@ -1755,8 +1769,16 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                 pt.built_moved = h.moved;
             }
     };
+    // The slots and holes no support goes into, in the whole job (one between two parts counts too).
+    if (n > 0) {
+        const fruit::SupportConfig& c0 = made[0].cfg;
+        r.details = std::make_shared<const fruit::DetailMap>(fruit::DetailMap::build(
+            fruit::sliceModel(doc.placed(), c0.layer_height, nullptr, 0, ctl.sub(0, 0.04)), c0.detail_width,
+            c0.detail_mouth_depth, ctl.sub(0.04, 0.05)));
+        for (Making& m : made) m.tc.details = r.details;
+    }
     for (std::size_t i = 0; i < n; ++i)
-        build(made[i], ctl.sub(0.55 * static_cast<double>(i) / n, 0.55 * static_cast<double>(i + 1) / n));
+        build(made[i], ctl.sub(0.05 + 0.5 * static_cast<double>(i) / n, 0.05 + 0.5 * static_cast<double>(i + 1) / n));
 
     // Rafts that would meet print as one piece: they are one raft, with the
     // first one's settings. A part whose raft is thicker or thinner then has
@@ -1808,9 +1830,27 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                 m.cfg = {};
                 m.tc = {};
                 resolve(doc.parts()[i].placement(), m.c, m.cfg, m.tc);
+                m.tc.details = r.details;
                 m.cfg.plate_hold_height = modelInBottomLayers(doc);
                 if (std::abs(std::max(m.tc.raft_thickness, min_raft) - m.tree.raft_top) > 1e-9) build(m, ctl.silent());
             }
+        }
+    }
+
+    // The check after making: what of the supports comes nearer the model
+    // than it should, other than at the tips (as warnings, listed with the rest).
+    std::size_t near_model = 0, over_edge = 0, in_slot = 0;
+    double nearest = 1e9;
+    if (n > 0) {
+        const fruit::TriangleMesh model = doc.placed();
+        fruit::AabbTree at;
+        at.build(model);
+        const fruit::SharpEdgeIndex edges(model, made[0].cfg.sharp_edge_angle_deg);
+        for (Making& m : made) {
+            const fruit::GapCheck g = fruit::checkSupportGaps(model, at, edges, m.tree, m.tc, m.cfg, r.details.get());
+            m.tree.warnings.insert(m.tree.warnings.end(), g.warnings.begin(), g.warnings.end());
+            near_model += g.near_model, over_edge += g.over_edge, in_slot += g.in_slot;
+            nearest = std::min(nearest, g.nearest);
         }
     }
 
@@ -2002,6 +2042,18 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                                 partNames(doc, on_plate) + (on_plate.size() == 1 ? " stands on the plate" : " stand on the plate"),
                                 on_plate.size() == 1 ? "No raft: its flat side is its first layer"
                                                      : "No raft: their flat sides are their first layers"});
+    }
+    {
+        const double gap = n > 0 ? made[0].tc.clearance : 0;
+        r.checks.push_back({near_model == 0, strf("Supports keep %.2f mm from the model", gap),
+                            near_model == 0 ? std::string("Everywhere but at their tips")
+                                            : strf("%zu come closer, the nearest %.2f mm", near_model, std::max(0.0, nearest))});
+        const std::size_t slots = r.details ? r.details->slotCount() : 0;
+        r.checks.push_back({over_edge + in_slot == 0, "Slots and holes stay open",
+                            over_edge + in_slot > 0
+                                ? strf("%zu tips reach over an edge, %zu supports go into a slot", over_edge, in_slot)
+                            : slots == 0 ? std::string("There are none narrower than 2 mm")
+                                         : std::string("No tip reaches over their edges and no support goes into them")});
     }
     r.checks.push_back({r.on_model == 0, "No support stands on the model",
                         r.on_model == 0 ? "" : fmt("%.0f stand on it and leave marks there", static_cast<double>(r.on_model))});

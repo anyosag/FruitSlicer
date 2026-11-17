@@ -31,6 +31,7 @@
 #include "layers/HollowAnalysis.h"
 #include "layers/IslandGraph.h"
 #include "layers/LayerStack.h"
+#include "mesh/AabbTree.h"
 #include "mesh/TriangleMesh.h"
 #include "support/CosmeticField.h"
 #include "support/SupportConfig.h"
@@ -142,6 +143,13 @@ struct DropCheck {
     std::vector<Vec3> at;     // where those `tips` were, lowest first
     bool any() const { return samples > 0 || short_layers > 0; }
 };
+
+// Whether a tip's contact at `p`, beside a sharp edge whose nearest point is
+// `at`, must keep inside that edge (SupportConfig::tip_edge_margin): a slot
+// or hole across it, narrower than `detail_width`, or a wall going down from
+// it. A free edge of the outline need not: there the tip stays on the edge to
+// hold the face's first layer.
+bool edgeWantsRoom(const AabbTree& tree, const TriangleMesh& mesh, const Vec3& p, const Vec3& at, double detail_width);
 
 // `built`: the tips that got a support; `dropped`: those that did not (see
 // splitByTree). `opts` gives the layers and hollows as for planning; its tip

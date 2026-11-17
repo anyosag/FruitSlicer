@@ -101,6 +101,27 @@ struct SupportConfig {
     double skin_advance = 0.5;
     double skin_reach = 1.6;
 
+    // A tip's contact keeps this far inside every edge of the face it sits
+    // on, beyond its own radius, so none of it hangs off the face: a contact
+    // cures a little wider than drawn, and one over an edge pokes into the
+    // slot or hole beside it. (On DishRack6.goo, 0.6 mm tips sat 0.02 mm
+    // inside the edges of 0.6 mm coverslip slots: each poked 0.28 mm into
+    // its slot, and pairs across a slot left 0.05 mm between them.) Where a
+    // face is too narrow for the planned tip, a smaller one that fits is
+    // used; where none fits, the smallest, in the middle, and the check after
+    // making supports lists it. ASSUMPTION (two pixels of a 16K screen), not
+    // measured.
+    double tip_edge_margin = 0.04;
+    // Slots, holes and channels narrower than this, with the model on both
+    // sides, are details supports keep out of (DetailMap), and their edges
+    // are not free edges (skin_reach): the face beside them is held by the
+    // coverage rule, not by a row of tips along each side of the slot.
+    double detail_width = 2.0;
+    // How far below where such a slot opens downwards no support goes: a
+    // head's length and its junction, so heads from either side can't meet
+    // under the slot and close it.
+    double detail_mouth_depth = 2.0;
+
     std::vector<TipClass> tip_classes{{"mini", 0.2}, {"light", 0.3}, {"medium", 0.4}, {"heavy", 0.6}};
     int default_tip = 2;  // medium
     int minima_tip = 3;   // heavy: "larger touchpoints on minima"

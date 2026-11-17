@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #include "support/SupportTree.h"
+#include "support/DetailMap.h"
 
 #include <algorithm>
 #include <array>
@@ -90,9 +91,25 @@ private:
             const double t = static_cast<double>(i) / n;
             if (t * len < skip_start) continue;
             const Vec3 q = a + (b - a) * t;
-            if (tree_.nearerThan(q, r + cfg_.clearance)) return false;
+            if (tree_.nearerThan(q, r + cfg_.clearance) || inDetail(q, r)) return false;
         }
         return true;
+    }
+    // A round of radius `r` at `q` reaches into a slot or hole, or the space
+    // under its mouth, or within half the clearance of one (DetailMap).
+    bool inDetail(const Vec3& q, double r, double gap_share = 1.0) const {
+        return cfg_.details && cfg_.details->reaches(q, r + cfg_.clearance / 2 * gap_share);
+    }
+    // The gap a shaft of radius `r` straight down from `from` keeps to the
+    // model at its nearest, down to where its foot starts; no more than
+    // wanted_gap (it is not looked for further).
+    double shaftRoom(const Vec3& from, double r) const {
+        const double cap = r + cfg_.wanted_gap;
+        const double bottom = out_.raft_top + cfg_.base_height;
+        double room = cfg_.wanted_gap;
+        for (double z = from.z; z >= bottom - 1e-9 && room > 1e-9; z -= 0.25)
+            room = std::min(room, tree_.distanceBelow({from.x, from.y, z}, cap) - r);
+        return std::max(0.0, room);
     }
     // A shaft of radius `r` straight down from `from` keeps its gap to the
     // model all the way to where its foot starts. Rays first (cheap, and they
@@ -160,27 +177,47 @@ private:
             const Vec3 d = b - a;
             if (tree_.anyHit(a, d, norm(d))) return false;
         }
+        // Clear of the slots and holes beside it: from a little below the
+        // contact (which may sit just inside a slot's edge) to the junction,
+        // the cone and a share of the gap growing as it goes.
+        if (cfg_.details)
+            for (const double f : {0.4, 0.6, 0.8, 1.0}) {
+                const Vec3 q = start + (j - start) * f;
+                if (inDetail(q, r0 + (s.shaft_diameter / 2 - r0) * f, f)) return false;
+            }
         return !tree_.nearerThan(j, s.shaft_diameter / 2 + cfg_.clearance);
     }
-    // Walk down at 45° from `from` in 16 directions until a clear vertical
-    // drop to the raft is found (PrusaSlicer-style ground route search).
-    bool groundRoute(const Vec3& from, double r, double max_reach, Vec3& to) const {
-        double best = 1e9;
+    // Walk down at 45° from `from` in 16 directions to a clear vertical drop
+    // to the raft (PrusaSlicer-style ground route search). Of the drops it
+    // finds, the one whose shaft has the most room (shaftRoom, to the nearest
+    // 0.05 mm), then the nearest: in each direction, past the first clear
+    // drop, a little further while that gains room. With `better_than`, only
+    // a drop with more room than that counts. `room` gets the drop's room.
+    bool groundRoute(const Vec3& from, double r, double max_reach, Vec3& to, double* room = nullptr,
+                     double better_than = -1) const {
+        double best_room = -1, best_d = 1e9;
         for (int k = 0; k < 16; ++k) {
             const double az = 2 * kPi * k / 16;
             const Vec3 step{std::cos(az), std::sin(az), -1.0};
-            for (double d = 1.0; d <= max_reach && d < best; d += 1.0) {
+            double first = -1;
+            for (double d = 1.0; d <= max_reach; d += 1.0) {
+                if (first >= 0 && (d > first + 2.0 + 1e-9 || best_room >= cfg_.wanted_gap - 1e-9)) break;
                 const Vec3 q = from + step * d;
                 if (q.z < out_.raft_top + cfg_.base_height + 1.0) break;
                 if (!segmentClear(from, q, r)) break;
-                if (dropClear(q, r)) {
-                    best = d;
+                if (!dropClear(q, r)) continue;
+                if (first < 0) first = d;
+                const double g = std::floor(shaftRoom(q, r) / 0.05 + 1e-9) * 0.05;
+                if (g <= better_than + 1e-9) continue;
+                if (g > best_room + 1e-9 || (g > best_room - 1e-9 && d < best_d)) {
+                    best_room = g;
+                    best_d = d;
                     to = q;
-                    break;
                 }
             }
         }
-        return best < 1e9;
+        if (room) *room = best_room;
+        return best_room >= 0;
     }
     // Where a pillar can stand on the model below `from`: straight down, else
     // the nearest spot a 45° walk reaches (as for the raft). Its shaft keeps
@@ -297,7 +334,28 @@ private:
         double route_room = 0;            // ...and the room for a foot where it lands
         bool stand = false;               // modelStand found a spot
         Vec3 stand_top, foot, foot_n;
+        // A straight drop with less than wanted_gap of room: a short route
+        // to a drop with more (roomierDrop), and the room for a foot there.
+        bool roomier = false;
+        Vec3 roomier_end;
+        double roomier_foot = 0;
     };
+    // How far a shaft that would run close beside the model walks at 45° for
+    // more room (mm).
+    static constexpr double kRoomReach = 3.0;
+    // A route from `from` to a drop with more room than the straight one
+    // (by 0.1 mm at least), within kRoomReach.
+    bool roomierDrop(const Vec3& from, double r, Vec3& to, double& foot) const {
+        const double straight = shaftRoom(from, r);
+        if (straight >= cfg_.wanted_gap - 1e-9) return false;
+        double got = 0;
+        if (!groundRoute(from, r, kRoomReach, to, &got, straight + 0.1 - 1e-9)) return false;
+        foot = footRoom(to.xy(), r);
+        return foot >= 2 * r - 1e-9;
+    }
+    // A pillar where a route from head `hi`'s junction lands: a diagonal
+    // bridge to its top.
+    void routedPillar(int hi, const Vec3& end, double foot_room);
     Ahead workOut(const SupportPoint& p) const;
     // `ahead`: that tip's work, done before (null: done here).
     bool supportTip(const SupportPoint& p, int pi, const char*& why, const Ahead* ahead = nullptr);
@@ -343,9 +401,14 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) const {
 
     // Candidate directions: the preferred one first, then a fan sorted by
     // closeness to it. A head must leave the surface (dir · n > cos 80°).
+    // Of the heads with a clear drop, the first whose shaft has wanted_gap of
+    // room; else the one with the most room (to the nearest 0.05 mm), the
+    // earliest of those.
     const std::vector<Vec3> cands = headDirections(preferred);
     const double min_dot = std::cos(deg2rad(80.0));
     int fallback = -1;
+    double best_room = -1;
+    Head best;
     for (size_t i = 0; i < cands.size(); ++i) {
         const Vec3& d = cands[i];
         if (dot(d, n) < min_dot) continue;
@@ -355,15 +418,25 @@ bool Builder::placeHead(const SupportPoint& p, Head& h, bool& drop_ok) const {
             if (!headClear(p.pos, d, si)) continue;
             const Vec3 j = junctionOf(p.pos, d, si);
             if (shaftClear(j, si.shaft_diameter / 2)) {
-                h = Head{-1, p.pos, d, j, si};
-                drop_ok = true;
-                return true;
+                const double room = std::floor(shaftRoom(j, si.shaft_diameter / 2) / 0.05 + 1e-9) * 0.05;
+                if (room > best_room + 1e-9) {
+                    best_room = room;
+                    best = Head{-1, p.pos, d, j, si};
+                }
+                if (room >= cfg_.wanted_gap - 1e-9) break;
+                continue;
             }
             if (fallback < 0) {
                 fallback = static_cast<int>(i);
                 h = Head{-1, p.pos, d, j, si};
             }
         }
+        if (best_room >= cfg_.wanted_gap - 1e-9) break;
+    }
+    if (best_room >= 0) {
+        h = best;
+        drop_ok = true;
+        return true;
     }
     drop_ok = false;
     return fallback >= 0;
@@ -575,6 +648,23 @@ bool Builder::joinOnModel(int hi, int pi, const Vec3& stand) {
     return true;
 }
 
+void Builder::routedPillar(int hi, const Vec3& end, double foot_room) {
+    const Head& h = out_.heads[static_cast<size_t>(hi)];
+    out_.bridges.push_back({h.junction, end, h.spec.shaft_diameter});
+    Pillar P;
+    P.xy = end.xy();
+    P.top = end.z;
+    P.bottom = out_.raft_top + cfg_.base_height;
+    P.diameter = h.spec.shaft_diameter;
+    P.base_diameter = std::min(cfg_.base_diameter, foot_room);
+    P.heads.push_back(hi);
+    P.bridges = 1;
+    // The bridge lands on its top: a later head may raise the top, and a
+    // merge into a trunk must still start below where this bridge lands.
+    P.lowest_attach = end.z;
+    out_.pillars.push_back(P);
+}
+
 void Builder::newPillar(int hi, bool on_model, const Vec3& anchor, const Vec3& anchor_n, const Vec3* top) {
     const Head& h = out_.heads[hi];
     const Vec3 t = top ? *top : h.junction;
@@ -687,6 +777,10 @@ void Builder::mergePillars() {
                 if (!segmentClear({A.xy.x, A.xy.y, zs}, m, A.diameter / 2)) continue;
                 if (!segmentClear({B.xy.x, B.xy.y, zs}, m, B.diameter / 2)) continue;
                 if (!dropClear(m, r_new)) continue;
+                // ...and keeps the room its two pillars had (up to wanted_gap).
+                const double had = std::min({cfg_.wanted_gap, shaftRoom({A.xy.x, A.xy.y, zs}, A.diameter / 2),
+                                             shaftRoom({B.xy.x, B.xy.y, zs}, B.diameter / 2)});
+                if (shaftRoom(m, r_new) < had - 0.05) continue;
                 ba = static_cast<int>(i);
                 bb = static_cast<int>(j);
                 bd = d;
@@ -729,7 +823,10 @@ Builder::Ahead Builder::workOut(const SupportPoint& p) const {
     }
     const double shaft_r = a.h.spec.shaft_diameter / 2;
     a.room = a.drop_ok ? footRoom(a.h.junction.xy(), shaft_r) : 0;
-    if (a.drop_ok && a.room >= 2 * shaft_r - 1e-9) return a;
+    if (a.drop_ok && a.room >= 2 * shaft_r - 1e-9) {
+        a.roomier = roomierDrop(a.h.junction, shaft_r, a.roomier_end, a.roomier_foot);
+        return a;
+    }
     a.route = groundRoute(a.h.junction, shaft_r, cfg_.max_route_length, a.route_end);
     if (a.route) {
         a.route_room = footRoom(a.route_end.xy(), shaft_r);
@@ -768,6 +865,15 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why, const 
     const double shaft_r = h.spec.shaft_diameter / 2;
     const double room = ahead ? ahead->room : drop_ok ? footRoom(h.junction.xy(), shaft_r) : 0;
     if (drop_ok && room >= 2 * shaft_r - 1e-9) {
+        // Straight down, unless that runs close beside the model and a short
+        // route reaches a drop with more room.
+        Vec3 end;
+        double foot = 0;
+        if (ahead ? ahead->roomier : roomierDrop(h.junction, shaft_r, end, foot)) {
+            if (ahead) end = ahead->roomier_end, foot = ahead->roomier_foot;
+            routedPillar(hi, end, foot);
+            return true;
+        }
         newPillar(hi, false);
         out_.pillars.back().base_diameter = std::min(cfg_.base_diameter, room);
         return true;
@@ -776,19 +882,7 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why, const 
     if (ahead) route_end = ahead->route_end;
     if (ahead ? ahead->route : groundRoute(h.junction, shaft_r, cfg_.max_route_length, route_end)) {
         // Diagonal bridge to a new pillar standing where the drop is clear.
-        out_.bridges.push_back({h.junction, route_end, h.spec.shaft_diameter});
-        Pillar P;
-        P.xy = route_end.xy();
-        P.top = route_end.z;
-        P.bottom = out_.raft_top + cfg_.base_height;
-        P.diameter = h.spec.shaft_diameter;
-        P.base_diameter = std::min(cfg_.base_diameter, ahead ? ahead->route_room : footRoom(P.xy, shaft_r));
-        P.heads.push_back(hi);
-        P.bridges = 1;
-        // The bridge lands on its top: a later head may raise the top, and a
-        // merge into a trunk must still start below where this bridge lands.
-        P.lowest_attach = route_end.z;
-        out_.pillars.push_back(P);
+        routedPillar(hi, route_end, ahead ? ahead->route_room : footRoom(route_end.xy(), shaft_r));
         return true;
     }
     if (drop_ok) {

@@ -61,14 +61,16 @@ SharpEdgeIndex::SharpEdgeIndex(const TriangleMesh& mesh, double angle_deg, doubl
     std::sort(cells_.begin(), cells_.end());
 }
 
-static double segDistance(const Vec3& p, const Vec3& a, const Vec3& b) {
+static Vec3 segClosest(const Vec3& p, const Vec3& a, const Vec3& b) {
     const Vec3 ab = b - a;
     const double l2 = norm2(ab);
     const double t = l2 > 0 ? std::clamp(dot(p - a, ab) / l2, 0.0, 1.0) : 0.0;
-    return norm(p - (a + ab * t));
+    return a + ab * t;
 }
 
-double SharpEdgeIndex::distance(const Vec3& p, double limit) const {
+double SharpEdgeIndex::distance(const Vec3& p, double limit) const { return nearest(p, limit, nullptr); }
+
+double SharpEdgeIndex::nearest(const Vec3& p, double limit, Vec3* at) const {
     if (segs_.empty()) return limit;
     double best = limit;
     const int64_t r = static_cast<int64_t>(std::ceil(limit / cell_));
@@ -80,8 +82,14 @@ double SharpEdgeIndex::distance(const Vec3& p, double limit) const {
             for (int64_t z = cz - r; z <= cz + r; ++z) {
                 const uint64_t k = key(x, y, z);
                 auto it = std::lower_bound(cells_.begin(), cells_.end(), std::make_pair(k, int32_t{-1}));
-                for (; it != cells_.end() && it->first == k; ++it)
-                    best = std::min(best, segDistance(p, segs_[it->second].a, segs_[it->second].b));
+                for (; it != cells_.end() && it->first == k; ++it) {
+                    const Vec3 c = segClosest(p, segs_[it->second].a, segs_[it->second].b);
+                    const double d = norm(p - c);
+                    if (d < best) {
+                        best = d;
+                        if (at) *at = c;
+                    }
+                }
             }
     return best;
 }

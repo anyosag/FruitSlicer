@@ -925,6 +925,7 @@ private:
     fruit::Vec3 cut_mid_;
     std::vector<Renderer::CapGroup> cut_cap_;
     int cut_key_ = 0;
+    fruit::TriangleMesh detail_mesh_;  // the slots and holes no support went into (the Why view)
     std::vector<fruit::TriangleMesh> tip_meshes_;      // one per tip kind
     int scene_key_ = 0;
     std::shared_ptr<const SupportResult> sliced_for_;  // last slicing started (it may have been cancelled)

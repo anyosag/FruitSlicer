@@ -530,14 +530,15 @@ TEST_CASE("how long a support is, for the planner: only where it stands on the m
 
 TEST_CASE("a tip whose junction lies in another's goes down with it instead of standing on the model", "[tree]") {
     // A ceiling over a floor that ends 3 mm from the tips, with two thin walls between floor and ceiling that
-    // leave a corridor 1.4 mm wide towards the floor's edge. The first tip's support walks down that corridor
-    // (0.7 mm to each wall, a hair more than it needs) to a pillar past the edge. The second tip is 0.12 mm
-    // beside the first: too near one wall to walk the corridor, and with no other way to the raft.
+    // leave a corridor 1.7 mm wide towards the floor's edge. The first tip's support walks down that corridor
+    // (0.85 mm to each wall, a hair more than its 1 mm shaft and the 0.3 mm gap need) to a pillar past the
+    // edge. The second tip is 0.12 mm beside the first: too near one wall to walk the corridor, and with no
+    // other way to the raft.
     TriangleMesh m = makeBox({-20, -20, 0}, {3, 20, 2});           // floor
     m.append(makeBox({-20, -20, 8}, {20, 20, 10}));                // ceiling
     m.append(makeBox({-20, -20, 2}, {-18, 20, 8}));                // the wall that joins them
-    m.append(makeBox({0.5, 0.70, 2}, {2.5, 1.10, 8}));             // the corridor's two walls
-    m.append(makeBox({0.5, -1.10, 2}, {2.5, -0.70, 8}));
+    m.append(makeBox({0.5, 0.85, 2}, {2.5, 1.25, 8}));             // the corridor's two walls
+    m.append(makeBox({0.5, -1.25, 2}, {2.5, -0.85, 8}));
     placeOnPlate(m, {0, 0, 0}, 5.0);
     auto tip = [](double y) {
         SupportPoint p;
@@ -562,7 +563,7 @@ TEST_CASE("a tip whose junction lies in another's goes down with it instead of s
     REQUIRE(t.pillars.size() == 1);
     const Pillar& P = t.pillars[0];
     CHECK_FALSE(P.on_model);
-    CHECK(P.xy.x > 3.6);  // past the floor's edge, with its gap
+    CHECK(P.xy.x > 3.0 + 0.5 + tc.clearance);  // past the floor's edge, with its gap
     CHECK(P.heads.size() == 2);
     CHECK(P.tips == 2);
     for (const Warning& w : t.warnings) CHECK(w.code != "anchor_on_model");
@@ -800,11 +801,11 @@ TEST_CASE("on the plate, tips just above it stand on it and nothing reaches belo
 
 namespace {
 
-// A square tube 1.4 mm wide inside, open at the bottom, under a cap: its
-// ceiling is at z 12. A shaft needs its radius and the gap (0.15 mm) to the
-// walls: 0.75 mm for a 0.6 mm tip's 1.2 mm shaft, 0.65 mm for a 0.4 mm tip's.
+// A square tube 1.7 mm wide inside, open at the bottom, under a cap: its
+// ceiling is at z 12. A shaft needs its radius and the gap (0.3 mm) to the
+// walls: 0.9 mm for a 0.6 mm tip's 1.2 mm shaft, 0.8 mm for a 0.4 mm tip's.
 TriangleMesh tube() {
-    const double w = 0.7;
+    const double w = 0.85;
     TriangleMesh m = makeBox({-5, -5, 12}, {5, 5, 14});  // the cap
     m.append(makeBox({-5, -5, 5}, {-w, 5, 12}));
     m.append(makeBox({w, -5, 5}, {5, 5, 12}));

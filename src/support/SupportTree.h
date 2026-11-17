@@ -25,6 +25,7 @@
 // whole support comes off in one piece. A tip nearer the plate than a head
 // is long stands on the plate on its head alone: nothing reaches below z = 0.
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -39,6 +40,8 @@
 
 namespace fruit {
 
+class DetailMap;
+
 // Pads: a small pad under each trunk, joined by bars. Full: one solid slab
 // under all the trunks with a sloped edge. None: no raft.
 enum class RaftStyle { Pads, None, Full };
@@ -47,7 +50,26 @@ struct TreeConfig {
     double max_head_tilt_deg = 45.0;
     double head_length = 1.0;          // contact → junction cone length
     double flex_zone = 2.0;            // no bracing within this distance below a junction
-    double clearance = 0.15;           // min distance from support to model (except at the tip)
+    // The least gap a support keeps to the model, except at its tip: the gap
+    // that fuses on the printer, plus a pixel (an edge drawn without
+    // anti-aliasing can land half a pixel nearer, on each side). The resin's
+    // gap test measures it (Resin::gap_test); this is the stand-in until it
+    // is. It was 0.15 mm: on DishRack6.goo that let shafts stand 0.17-0.22
+    // mm from the walls of hollow posts, and they printed glued to them; so
+    // the stand-in is wider than that. ASSUMPTION, not measured.
+    double clearance = 0.30;
+    // A shaft goes where it has the most room, up to this gap: no more than
+    // the first spot that keeps `clearance` (DishRack6: shafts 0.17 mm from a
+    // post's wall where the middle of the post had 2.4 mm). Further than this
+    // from the model a shaft is clear of every way it could stick to it: the
+    // light that spills into a narrow gap and the sway of a long shaft (a few
+    // tenths of a mm), and the liquid a narrow gap holds through the wash (in
+    // a 9 mm deep post, any gap under about 0.7 mm).
+    double wanted_gap = 1.0;
+    // Slots, holes and the space under where they open downwards, that no
+    // support enters (by half `clearance`, so heads from either side of a
+    // slot stay that far apart). Null: none.
+    std::shared_ptr<const DetailMap> details;
     // The gap a foot that stands on the plate itself keeps to the model. Wider
     // than `clearance`, because the first layers are cured much longer and
     // come out wider than drawn: a foot nearer than this may print joined to

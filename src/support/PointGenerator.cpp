@@ -39,6 +39,9 @@ struct Sample {
     int tip_class = 0;
     double cost = 1.0;
     int tip = -1;  // tip placed on this sample, if any
+    // Where a tip for this sample sits: on it, or moved in from an edge so
+    // that its contact keeps tip_edge_margin inside every edge (tipSpot).
+    Vec3 spot, spot_normal;
 };
 
 struct Tip {
@@ -153,6 +156,36 @@ private:
     void sampleRegion(const Paths& region, int layer, int part, bool island, std::vector<int>& out,
                       const Paths* fresh = nullptr, bool all_fresh = false);
     int addTip(int sample, PointCategory cat, bool pinned);
+    // Where a tip of class `cls` for a sample at `pos` sits so its contact
+    // stays on the face: moved along the face away from the nearest sharp
+    // edge until the contact keeps tip_edge_margin inside it, as far as the
+    // face allows; a smaller class where the planned one doesn't fit there.
+    struct Spot {
+        Vec3 pos, normal;
+        int cls = 0;
+    };
+    Spot tipSpot(const Vec3& pos, const Vec3& normal, int cls) const;
+    // The largest class up to `sp.cls` whose contact keeps inside the edge
+    // beside `sp.pos`, where that edge wants the room.
+    void fitClass(Spot& sp) const;
+    // Whether the edge nearest a tip at `p` (its nearest point `at`) needs
+    // the contact kept inside it: a slot or hole across it (narrower than
+    // detail_width) or a wall going down from it. A free edge of the outline
+    // does not.
+    bool edgeWantsRoom(const Vec3& p, const Vec3& at) const;
+    // How far inside the face's edges a tip of class `cls` must keep.
+    double edgeNeed(int cls) const { return cfg_.tip_classes[static_cast<size_t>(cls)].diameter / 2 + cfg_.tip_edge_margin; }
+    // A tip of class `cls` at `pos` keeps inside every edge that wants the room.
+    bool fitsAt(const Vec3& pos, int cls) const {
+        const double need = edgeNeed(cls);
+        Vec3 at;
+        if (edges_.nearest(pos, need + 1e-6, &at) >= need - 1e-6) return true;
+        return !edgeWantsRoom(pos, at);
+    }
+    // The band along `shape`'s outline whose edge is free: less the stretches
+    // that face more of `shape` across a slot or hole narrower than
+    // detail_width (those are not free edges).
+    Paths freeRim(const Paths& shape) const;
     int addTipAt(const Vec3& pos, const Vec3& normal, int layer, int part, int cls, PointCategory cat, bool pinned);
 
     // ---- per layer
@@ -279,8 +312,14 @@ bool Generator::segmentInside(const Vec3& a, const Vec3& na, const Vec3& b, cons
 
 bool Generator::covers(const Tip& t, const Sample& s) const {
     if (t.removed) return false;
-    if (t.pos.z > s.pos.z + 1e-6) return false;
-    const double dz = s.pos.z - t.pos.z;
+    // On a tilted face the contact reaches lower than its centre (by its
+    // radius, and the margin it cures wider by, times the face's tilt): a tip
+    // moved in from the lowest edge (tipSpot) still holds the edge's first
+    // layer through its contact.
+    const double drop = (t.diameter / 2 + std::max(0.0, cfg_.tip_edge_margin)) *
+                        std::sqrt(std::max(0.0, 1 - t.normal.z * t.normal.z));
+    if (t.pos.z - drop > s.pos.z + 1e-6) return false;
+    const double dz = std::max(0.0, s.pos.z - t.pos.z);
     double r = cfg_.coverage.radius(std::min(dz, t.thickness));
     if (s.fresh_edge) r = std::min(r, skinReach());
     if (norm2((s.pos - t.pos).xy()) > r * r) return false;
@@ -353,11 +392,46 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     s.part = part;
     s.island = island;
     s.fresh_edge = fresh_edge && needs_cover && cfg_.skin_reach > 0;
-    s.excluded = costf_.excluded(s.pos);
+
     const double r_default = cfg_.tip_classes[cfg_.default_tip].diameter / 2;
     const bool delicate = costf_.isCosmetic(s.pos, s.normal) || costf_.nearEdge(s.pos, r_default);
     s.tip_class = island ? cfg_.minima_tip : (delicate ? cfg_.edge_tip : cfg_.default_tip);
-    s.cost = costf_.cost(s.pos, s.normal, cfg_.tip_classes[s.tip_class].diameter / 2);
+    Spot sp = tipSpot(s.pos, s.normal, s.tip_class);
+    // A tip for this sample must still hold it from where it moved to: no
+    // higher than its contact reaches down, and through the model. Else it
+    // moves back towards the sample, as far as that takes.
+    auto holds = [&](const Spot& t) {
+        Tip probe;
+        probe.pos = t.pos;
+        probe.normal = t.normal;
+        probe.diameter = cfg_.tip_classes[static_cast<size_t>(t.cls)].diameter;
+        probe.thickness = 1e9;
+        return covers(probe, s);
+    };
+    if (distance(sp.pos, s.pos) > 1e-9 && !holds(sp)) {
+        // Where it can't move in all the way: as far as it still holds the
+        // sample. A tip where a part starts in mid-air keeps its size there
+        // (the part's first layers hang on it; the check after making lists
+        // its contact over the edge); others take the size that fits.
+        const Spot moved = sp;
+        sp = Spot{s.pos, s.normal, s.tip_class};
+        if (!island) fitClass(sp);
+        for (const double f : {0.75, 0.5, 0.25}) {
+            const ClosestPoint cp = tree_.closest(s.pos + (moved.pos - s.pos) * f);
+            if (cp.face < 0) continue;
+            Spot t{cp.point, mesh_.faceNormal(cp.face), s.tip_class};
+            if (!island) fitClass(t);
+            if (dot(t.normal, s.normal) >= 0.8 && holds(t)) {
+                sp = t;
+                break;
+            }
+        }
+    }
+    s.spot = sp.pos;
+    s.spot_normal = sp.normal;
+    s.tip_class = sp.cls;
+    s.excluded = costf_.excluded(s.pos) || costf_.excluded(s.spot);
+    s.cost = costf_.cost(s.spot, s.spot_normal, cfg_.tip_classes[s.tip_class].diameter / 2);
     const int id = static_cast<int>(samples_.size());
     samples_.push_back(s);
     sample_grid_.insert(id, s.pos.xy());
@@ -431,10 +505,75 @@ int Generator::addTipAt(const Vec3& pos, const Vec3& normal, int layer, int part
 
 int Generator::addTip(int si, PointCategory cat, bool pinned) {
     Sample& s = samples_[si];
-    const int id = addTipAt(s.pos, s.normal, s.layer, s.part, s.tip_class, cat, pinned);
+    const int id = addTipAt(s.spot, s.spot_normal, s.layer, s.part, s.tip_class, cat, pinned);
     tips_[id].cost = s.cost;
     s.tip = id;
     return id;
+}
+
+bool Generator::edgeWantsRoom(const Vec3& p, const Vec3& at) const {
+    return fruit::edgeWantsRoom(tree_, mesh_, p, at, cfg_.detail_width);
+}
+
+Generator::Spot Generator::tipSpot(const Vec3& pos, const Vec3& normal, int cls) const {
+    Spot sp{pos, normal, cls};
+    if (edges_.edgeCount() == 0 || cfg_.tip_edge_margin < 0) return sp;
+    const double need = edgeNeed(cls), reach = need + 0.05;
+    Vec3 at;
+    double d = edges_.nearest(pos, reach, &at);
+    if (d >= need) return sp;
+    // Walk along the face away from the nearest edge; keep the spot furthest
+    // from every edge (between two edges, the middle of the rib). Beside a
+    // slot, a hole or a wall going down it moves however the face lies. From
+    // a free edge (the outline, nothing across it) it moves only where that
+    // doesn't lift the tip off the layer it holds: at the lowest edge of a
+    // tilted face, a tip moved up the face would leave the face's first
+    // layers there in mid-air, so it stays on the edge, as before.
+    const double max_rise = layers().layer_height / 2;
+    Vec3 p = pos, pn = normal, best = pos, best_n = normal;
+    double best_d = d;
+    for (int it = 0; it < 6 && best_d < need; ++it) {
+        const bool wants = edgeWantsRoom(p, at);
+        Vec3 away = p - at;
+        away = away - pn * dot(away, pn);
+        if (norm(away) < 1e-6) break;
+        const ClosestPoint cp = tree_.closest(p + normalized(away) * (need - d + 0.01));
+        if (cp.face < 0) break;
+        const Vec3 qn = mesh_.faceNormal(cp.face);
+        if (dot(qn, normal) < 0.8) break;  // walked off the face
+        if (!wants && cp.point.z > pos.z + max_rise) break;
+        p = cp.point;
+        pn = qn;
+        d = edges_.nearest(p, reach, &at);
+        if (d > best_d + 1e-9) {
+            best_d = d;
+            best = p;
+            best_n = pn;
+        }
+    }
+    sp.pos = best;
+    sp.normal = best_n;
+    fitClass(sp);
+    return sp;
+}
+
+void Generator::fitClass(Spot& sp) const {
+    // The planned size if it fits there, else the largest that does, else
+    // the smallest. Only beside an edge that wants the room: at a free edge
+    // the tip keeps its size, as it keeps its place.
+    Vec3 at;
+    const double d = edges_.nearest(sp.pos, edgeNeed(sp.cls) + 1e-6, &at);
+    if (d < edgeNeed(sp.cls) && edgeWantsRoom(sp.pos, at))
+        while (sp.cls > 0 && edgeNeed(sp.cls) > d + 1e-9) --sp.cls;
+}
+
+Paths Generator::freeRim(const Paths& shape) const {
+    const Paths rim = difference(shape, offset(shape, -kRimBand));
+    if (rim.empty() || cfg_.detail_width <= 0) return rim;
+    const double h = cfg_.detail_width / 2;
+    const Paths across = difference(offset(offset(shape, h), -h), shape);
+    if (across.empty()) return rim;
+    return difference(rim, offset(across, kRimBand + 0.01));
 }
 
 // ---------------------------------------------------------------- per layer
@@ -608,7 +747,10 @@ void Generator::processIsland(int part, std::vector<int>& layer_samples,
     // Large island: cover its whole first layer like an overhang, then make
     // sure it has at least `large_island_min_tips` tips.
     std::vector<int> mine;
-    sampleRegion(P.shape.toPaths(), L, part, true, mine, nullptr, true);  // nothing behind any of it
+    // Nothing behind any of it: every edge is fresh, but for those across a
+    // slot or hole from more of it.
+    const Paths island_rim = freeRim(P.shape.toPaths());
+    sampleRegion(P.shape.toPaths(), L, part, true, mine, &island_rim, false);
     layer_samples.insert(layer_samples.end(), mine.begin(), mine.end());
     large_islands.push_back({part, std::move(mine)});
     if (P.area > cfg_.warn_flat_area) {
@@ -717,9 +859,7 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     // is held along that side and needs nothing closer.
     Paths fresh;
     if (cfg_.skin_reach > 0) {
-        const Paths shape = P.shape.toPaths();
-        const Paths rim = difference(shape, offset(shape, -kRimBand));
-        fresh = intersection(difference(N, offset(below_union, cfg_.skin_advance)), rim);
+        fresh = intersection(difference(N, offset(below_union, cfg_.skin_advance)), freeRim(P.shape.toPaths()));
     }
     // Sampled on its own first, so that even a short fresh end (shorter than
     // the spacing of the edge samples) has a sample on it.
@@ -743,10 +883,11 @@ void Generator::coverLayer(const std::vector<int>& layer_samples) {
         const Sample& c = samples_[U[i]];
         if (c.excluded) continue;
         Tip t;
-        t.pos = c.pos;
-        t.normal = c.normal;
-        t.thickness = localThickness(tree_, c.pos, c.normal, 100.0);
-        local.query(c.pos.xy(), r, [&](int j) {
+        t.pos = c.spot;
+        t.normal = c.spot_normal;
+        t.diameter = cfg_.tip_classes[static_cast<size_t>(c.tip_class)].diameter;
+        t.thickness = localThickness(tree_, c.spot, c.spot_normal, 100.0);
+        local.query(c.spot.xy(), r, [&](int j) {
             if (covers(t, samples_[U[j]])) cover[i].push_back(j);
         });
     }
@@ -842,6 +983,7 @@ void Generator::enforceCapacity(int layer) {
                 const Tip& t = tips_[ti];
                 if (t.removed || t.tip_class < 0 || t.tip_class + 1 >= static_cast<int>(cfg_.tip_classes.size()))
                     continue;
+                if (!t.pinned && !fitsAt(t.pos, t.tip_class + 1)) continue;  // would hang off the face
                 if (best < 0 || t.diameter < tips_[best].diameter) best = ti;
             }
             if (best < 0) break;
@@ -1406,6 +1548,7 @@ void Generator::relieve() {
             auto bigger = [&]() {
                 Tip& t = tips_[static_cast<size_t>(o.tip)];
                 if (t.tip_class < 0 || t.tip_class + 1 >= classes) return false;
+                if (!fitsAt(t.pos, t.tip_class + 1)) return false;  // its contact would hang off the face
                 Comp& C = comp_[find(t.part)];
                 C.capacity -= capacityOf(t);
                 ++t.tip_class;
@@ -1422,7 +1565,7 @@ void Generator::relieve() {
             {
                 const Tip& t = tips_[static_cast<size_t>(o.tip)];
                 const bool small_on_purpose = t.tip_class >= 0 && t.tip_class < cfg_.default_tip;
-                if (t.tip_class >= 0 && t.tip_class + 1 < classes && !small_on_purpose &&
+                if (t.tip_class >= 0 && t.tip_class + 1 < classes && !small_on_purpose && fitsAt(t.pos, t.tip_class + 1) &&
                     o.load <= kReliefSlack * limit * cfg_.capacity.capacity(cfg_.tip_classes[static_cast<size_t>(t.tip_class) + 1].diameter)) {
                     bigger();
                     continue;
@@ -1519,6 +1662,24 @@ DropCheck checkDroppedTips(const TriangleMesh& mesh, const SupportConfig& cfg, c
     Generator g(mesh, cfg, o, ctl, &dropped);
     g.run();
     return g.dropCheck();
+}
+
+bool edgeWantsRoom(const AabbTree& tree, const TriangleMesh& mesh, const Vec3& p, const Vec3& at, double detail_width) {
+    Vec2 out = (at - p).xy();
+    if (norm(out) < 1e-9) return true;
+    out = normalized(out);
+    // Concave: past the edge and just below the face is model (a wall goes
+    // down from the edge): a contact there glues onto that wall.
+    const Vec3 q{at.x + out.x * 0.05, at.y + out.y * 0.05, at.z - 0.05};
+    const ClosestPoint cp = tree.closest(q);
+    if (cp.face >= 0 && dot(q - cp.point, mesh.faceNormal(cp.face)) < 0) return true;
+    // A slot or hole: just past the edge, inside the face's thickness, more
+    // of the model lies across the gap within detail_width.
+    if (detail_width > 0) {
+        const Vec3 o{at.x + out.x * 0.02, at.y + out.y * 0.02, at.z + 0.02};
+        if (tree.anyHit(o, {out.x, out.y, 0}, detail_width)) return true;
+    }
+    return false;
 }
 
 }  // namespace fruit

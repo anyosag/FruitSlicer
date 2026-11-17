@@ -33,6 +33,9 @@ public:
     SharpEdgeIndex(const TriangleMesh& mesh, double angle_deg, double cell = 1.0);
     // Distance to the nearest sharp edge, or `limit` if none is closer.
     double distance(const Vec3& p, double limit) const;
+    // The same, and where on that edge the nearest point is (`at`, left as it
+    // was when no edge is nearer than `limit`).
+    double nearest(const Vec3& p, double limit, Vec3* at) const;
     size_t edgeCount() const { return segs_.size(); }
 
 private:

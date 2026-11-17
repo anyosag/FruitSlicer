@@ -2149,6 +2149,7 @@ void App::syncScene() {
             tip_meshes_.assign(5, fruit::TriangleMesh{});
             for (const auto& p : s.result->points)
                 addMarker(tip_meshes_[static_cast<std::size_t>(p.category)], p.pos, 0.3 + 0.5 * p.tip_diameter);
+            detail_mesh_ = s.result->details ? s.result->details->mesh() : fruit::TriangleMesh{};
         }
         // The tips that may let go, by how likely: a little bigger than a tip's own mark, so they show over it.
         risk_tip_meshes_.assign(3, fruit::TriangleMesh{});
@@ -2169,6 +2170,8 @@ void App::syncScene() {
     for (int of = 0; of < 2; ++of)
         for (int st = 0; st < kHeatSteps; ++st)
             meshes.push_back(replay && st > 0 ? &replay->heat[of].steps[st] : nullptr);
+    // The slots and holes kept clear, filled in (the Why view).
+    meshes.push_back(&detail_mesh_);
     renderer_.setExtras(meshes, scene_key_);
     const bool fresh = s.fresh(doc_->revision(), doc_->supportSettings());
     const bool why = supports_view_ == SupportsView::Why;
@@ -2190,6 +2193,7 @@ void App::syncScene() {
         for (int st = 0; st < kHeatSteps; ++st)
             renderer_.setExtraStyle(12 + static_cast<std::size_t>(of * kHeatSteps + st), heatStepColour(st),
                                     heat && st > 0 && static_cast<int>(risk_heat_of_) == of, true);
+    renderer_.setExtraStyle(12 + 2 * static_cast<std::size_t>(kHeatSteps), kKeptClearColour, why && fresh && !tip_editing_);
 }
 
 void App::chooseSample() {

@@ -38,6 +38,8 @@ add_library(fruit_core
   support/SupportTree.cpp
   support/Raft.cpp
   support/SupportValidator.cpp
+  support/DetailMap.cpp
+  support/SupportCheck.cpp
   support/OrientationSearch.cpp
   support/SupportSettings.cpp
   stability/Stability.cpp
