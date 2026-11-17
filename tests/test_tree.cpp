@@ -884,3 +884,27 @@ TEST_CASE("a ball where one of the same size already is is drawn once", "[tree]"
     }
     CHECK(shared > 0);
 }
+
+TEST_CASE("the gap down where the bottom layers print widens with their light", "[tree][plate]") {
+    // The width that fuses grows with the log of the light: 27.5 s bottom layers over 1.5 s ones.
+    CHECK(bottomLayerGap(0.30, 27.5 / 1.5) == Approx(0.70).margin(0.005));
+    CHECK(bottomLayerGap(0.30, 1.0) == Approx(0.30));  // no more light, no more gap
+    CHECK(bottomLayerGap(0.30, 0.0) == Approx(0.30));  // not known
+    CHECK(bottomLayerGap(0.30, 9.0) == Approx(0.60));  // one more contrast's worth: twice the gap
+    // A foot on the plate (no raft) beside a wall keeps it.
+    const TriangleMesh wall = makeBox({-5, -5, 0}, {0, 5, 10});
+    TriangleMesh m = wall;
+    m.append(makeBox({0, -5, 9}, {6, 5, 10}));  // a shelf over the plate, held from below
+    SupportPoint p;
+    p.pos = {1.6, 0, 9};
+    p.normal = {0, 0, -1};
+    p.tip_diameter = 0.4;
+    TreeConfig tc;
+    tc.raft = RaftStyle::None;
+    tc.foot_clearance = bottomLayerGap(tc.clearance, 27.5 / 1.5);
+    const SupportTree t = buildSupportTree(m, {p}, tc, 0.0);
+    REQUIRE(t.pillars.size() == 1);
+    const Pillar& P = t.pillars[0];
+    const double foot = (P.base_diameter > 0 ? P.base_diameter : tc.base_diameter) / 2;
+    CHECK(P.xy.x - foot >= tc.foot_clearance - 0.02);
+}

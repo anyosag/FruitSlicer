@@ -1672,6 +1672,15 @@ struct Making {
     PlanOn on;
 };
 
+// The gap a foot on the plate keeps to the model, from the job's exposures:
+// the bottom layers get many times the light of the others, and the gap that
+// fuses widens with it (bottomLayerGap). Not known: the tree's own 0.5 mm.
+// One set by hand on the Advanced page stays.
+void footGapFor(const Document& doc, fruit::TreeConfig& tc) {
+    const double ratio = bottomLightRatio(doc.print.settings);
+    if (ratio > 1) tc.foot_clearance = std::max(tc.clearance, fruit::bottomLayerGap(tc.clearance, ratio));
+}
+
 // The trees of the parts on `g`, joined, with the raft's bars under them all.
 fruit::SupportTree raftTree(const RaftGroup& g, const std::vector<Making>& made) {
     fruit::SupportTree t;
@@ -1752,6 +1761,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         m.c = choicesOn(s, rafts, m.id);
         resolve(p.placement(), m.c, m.cfg, m.tc);
         m.cfg.plate_hold_height = modelInBottomLayers(doc);  // as the plan was made
+        footGapFor(doc, m.tc);
         if (auto it = plans.find(m.id); it != plans.end()) m.plan = std::move(it->second);
         m.on = planOn(doc, i, m.plan.hollow);
         m.points = applyEdits(m.plan.points, editsOn(edits, m.on.part), frames);
@@ -1834,6 +1844,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                 m.cfg = {};
                 m.tc = {};
                 resolve(doc.parts()[i].placement(), m.c, m.cfg, m.tc);
+                footGapFor(doc, m.tc);
                 m.tc.details = r.details;
                 m.cfg.plate_hold_height = modelInBottomLayers(doc);
                 if (std::abs(std::max(m.tc.raft_thickness, min_raft) - m.tree.raft_top) > 1e-9) build(m, ctl.silent());

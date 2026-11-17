@@ -105,6 +105,12 @@ double modelInBottomLayers(const Document& doc) {
     return std::max(0, b.count - under) * b.height;
 }
 
+double bottomLightRatio(const PrintSettings& s) {
+    const double e = s.exposure > 0 ? s.exposure : s.sample ? s.sample->print.exposure : 0;
+    const double b = s.bottom_exposure > 0 ? s.bottom_exposure : s.sample ? s.sample->print.bottom_exposure : 0;
+    return e > 0 && b > 0 ? b / e : 0;
+}
+
 int baseLayers(const Document& doc, double layer_height) {
     if (!doc.anyOnPlate()) return 0;  // under the whole print, rafts too: one first layer for all
     return fruit::heightCorrectionLayers(heightCorrection(doc.print.settings), layer_height);

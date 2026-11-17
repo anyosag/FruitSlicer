@@ -1050,6 +1050,11 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
 
 double tipPenetration(double tip_d, const TreeConfig& cfg) { return penetrationFor(tip_d, cfg); }
 
+double bottomLayerGap(double gap, double light_ratio) {
+    if (!(light_ratio > 1)) return gap;
+    return gap * (1 + std::log(light_ratio) / std::log(kSpillContrast));
+}
+
 std::vector<double> supportLengthsOnModel(const TriangleMesh& model, const std::vector<SupportPoint>& points,
                                           const TreeConfig& cfg, double min_raft_thickness, const JobControl& ctl) {
     std::vector<double> len(points.size(), 0.0);

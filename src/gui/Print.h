@@ -71,6 +71,9 @@ double bottomLayersHeight(const Document& doc);
 // which go under the model and are bottom layers themselves. 0 when the
 // correction takes them all.
 double modelInBottomLayers(const Document& doc);
+// How many times the light of the other layers the bottom layers get (their
+// exposure over the others'), from the edits or the sample; 0: not known.
+double bottomLightRatio(const PrintSettings& s);
 // The resin density for the weight: the edited one, else FruitSlicer's.
 double resinDensity(const PrintEdits& e);
 // The height correction, mm: the edited one, else FruitSlicer's typical value.
