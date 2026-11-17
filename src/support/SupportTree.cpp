@@ -98,8 +98,24 @@ private:
     // A round of radius `r` at `q` reaches into a slot or hole, or the space
     // under its mouth, or within half the clearance of one (DetailMap).
     bool inDetail(const Vec3& q, double r, double gap_share = 1.0) const {
-        return cfg_.details && cfg_.details->reaches(q, r + cfg_.clearance / 2 * gap_share);
+        return cfg_.details && cfg_.details->reaches(q, r + cfg_.clearance / 2 * gap_share, t_own_details);
     }
+    // The slots the support being placed may go into: those its own tip sits
+    // right over (its contact's centre inside the slot, seen from above). Something that starts in mid-air there
+    // can only be held from inside the slot; a tip beside a slot keeps out of
+    // it. Per thread, as tips are worked out side by side.
+    static thread_local const std::vector<int>* t_own_details;
+    struct OwnDetails {
+        std::vector<int> mine;
+        const std::vector<int>* was;
+        OwnDetails(const TreeConfig& c, const SupportPoint& p) : was(t_own_details) {
+            if (c.details) mine = c.details->under(p.pos, 0);
+            t_own_details = &mine;
+        }
+        ~OwnDetails() { t_own_details = was; }
+        OwnDetails(const OwnDetails&) = delete;
+        OwnDetails& operator=(const OwnDetails&) = delete;
+    };
     // The gap a shaft of radius `r` straight down from `from` keeps to the
     // model at its nearest, down to where its foot starts; no more than
     // wanted_gap (it is not looked for further).
@@ -822,7 +838,10 @@ void Builder::raft() {
     linkRaft(out_);
 }
 
+thread_local const std::vector<int>* Builder::t_own_details = nullptr;
+
 Builder::Ahead Builder::workOut(const SupportPoint& p) const {
+    const OwnDetails own(cfg_, p);
     // As supportTip goes, up to what depends on the supports built before it.
     Ahead a;
     a.head = placeHead(p, a.h, a.drop_ok);
@@ -848,6 +867,7 @@ Builder::Ahead Builder::workOut(const SupportPoint& p) const {
 }
 
 bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why, const Ahead* ahead) {
+    const OwnDetails own(cfg_, p);
     Head h;
     bool drop_ok = false;
     if (ahead) {

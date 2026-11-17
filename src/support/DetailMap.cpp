@@ -143,12 +143,27 @@ std::size_t DetailMap::slotCount() const {
     return static_cast<std::size_t>(std::count_if(regions_.begin(), regions_.end(), [](const DetailRegion& r) { return !r.mouth; }));
 }
 
-bool DetailMap::reaches(const Vec3& p, double r) const {
+std::vector<int> DetailMap::under(const Vec3& contact, double r, double below) const {
+    std::vector<int> out;
+    const Vec2 q = contact.xy();
+    for (std::size_t i = 0; i < regions_.size(); ++i) {
+        const DetailRegion& d = regions_[i];
+        if (d.z0 > contact.z + 0.05 || d.z1 < contact.z - below) continue;
+        if (q.x < d.box.min.x - r || q.x > d.box.max.x + r || q.y < d.box.min.y - r || q.y > d.box.max.y + r) continue;
+        bool near = d.shape.contains(q) || edgeDistance(d.shape.contour, q) < r;
+        for (const Path& hole : d.shape.holes) near = near || edgeDistance(hole, q) < r;
+        if (near) out.push_back(static_cast<int>(i));
+    }
+    return out;
+}
+
+bool DetailMap::reaches(const Vec3& p, double r, const std::vector<int>* except) const {
     if (by_z_.empty()) return false;
     const double k = std::floor((p.z - z_base_) / kBand);
     if (k < 0 || k >= static_cast<double>(by_z_.size())) return false;
     const Vec2 q = p.xy();
     for (const int i : by_z_[static_cast<std::size_t>(k)]) {
+        if (except && std::binary_search(except->begin(), except->end(), i)) continue;
         const DetailRegion& d = regions_[static_cast<std::size_t>(i)];
         if (p.z < d.z0 || p.z > d.z1) continue;
         if (q.x < d.box.min.x - r || q.x > d.box.max.x + r || q.y < d.box.min.y - r || q.y > d.box.max.y + r) continue;

@@ -169,3 +169,33 @@ TEST_CASE("the check after making lists supports near the model, tips over a slo
     CHECK(c.over_edge == 0);
     CHECK(c.in_slot == 0);
 }
+
+TEST_CASE("something that starts in mid-air right over a slot is held from inside it", "[details][tree]") {
+    // A floor 5 mm up with a 1.8 mm slot right through it, and a small block in mid-air 2 mm over the slot:
+    // the only way down from the block is through the slot.
+    MeshResult cut = subtractMeshes(makeBox({0, 0, 5}, {16, 12, 6.5}), makeBox({7.1, 1, 4}, {8.9, 11, 7.5}));
+    REQUIRE(cut.ok);
+    TriangleMesh m = cut.mesh;
+    m.append(makeBox({7.7, 5.7, 8.5}, {8.3, 6.3, 9.5}));
+    auto details = std::make_shared<const DetailMap>(DetailMap::build(sliceModel(m, 0.05), 2.0, 2.0));
+    REQUIRE(details->slotCount() > 0);
+    SupportPoint p;
+    p.pos = {8, 6, 8.5};
+    p.normal = {0, 0, -1};
+    p.tip_diameter = 0.3;
+    p.category = PointCategory::Island;
+    TreeConfig tc;
+    tc.details = details;
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    const SupportTree t = buildSupportTree(m, {p}, tc, raft);
+    CHECK(t.dropped_points == 0);
+    REQUIRE(t.pillars.size() == 1);
+    // ...and the check after making doesn't list it: it is in the slot on purpose.
+    CHECK(checkSupportGaps(m, t, tc, SupportConfig{}, details.get()).in_slot == 0);
+    // A tip beside the slot (not over it) still keeps out.
+    SupportPoint q = p;
+    q.pos = {6.4, 6, 5};
+    q.category = PointCategory::Overhang;
+    const SupportTree u = buildSupportTree(m, {q}, tc, raft);
+    for (const Head& h : u.heads) CHECK_FALSE(details->reaches(h.junction, h.spec.shaft_diameter / 2));
+}

@@ -42,6 +42,16 @@ GapCheck checkSupportGaps(const TriangleMesh& model, const AabbTree& at, const S
                           const DetailMap* details) {
     GapCheck g;
     if (model.faces.empty()) return g;
+    // Slots a tip sits right over: its support goes in to hold what starts there, on purpose.
+    std::vector<int> held;
+    if (details) {
+        for (const Head& h : tree.heads) {
+            const std::vector<int> u = details->under(h.contact, 0);
+            held.insert(held.end(), u.begin(), u.end());
+        }
+        std::sort(held.begin(), held.end());
+        held.erase(std::unique(held.begin(), held.end()), held.end());
+    }
     std::vector<Piece> pieces;
     for (const Pillar& P : tree.pillars)
         if (P.top > P.bottom) pieces.push_back({{P.xy.x, P.xy.y, P.bottom}, {P.xy.x, P.xy.y, P.top}, P.diameter / 2});
@@ -63,7 +73,7 @@ GapCheck checkSupportGaps(const TriangleMesh& model, const AabbTree& at, const S
                 close += len / n;
                 if (d < least) least = d, where = q;
             }
-            if (details && !in_slot && details->reaches(q, p.r)) in_slot = true, slot_at = q;
+            if (details && !in_slot && details->reaches(q, p.r, &held)) in_slot = true, slot_at = q;
         }
         if (least < 1e9) {
             ++g.near_model;
@@ -98,7 +108,7 @@ GapCheck checkSupportGaps(const TriangleMesh& model, const AabbTree& at, const S
             for (const double f : {0.4, 0.7, 1.0}) {
                 const Vec3 q = start + (h.junction - start) * f;
                 const double r = h.spec.tip_diameter / 2 + (h.spec.shaft_diameter - h.spec.tip_diameter) / 2 * f;
-                if (details->reaches(q, r)) {
+                if (details->reaches(q, r, &held)) {
                     ++g.in_slot;
                     g.warnings.push_back({"support_in_slot", "a support head reaches into a narrow slot or hole, or under where one opens",
                                           -1, h.contact});

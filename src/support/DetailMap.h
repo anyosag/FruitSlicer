@@ -37,8 +37,14 @@ public:
     // The slots themselves, without the mouths below them.
     std::size_t slotCount() const;
     // Whether a disc of radius `r` around `p` (in plan, at height p.z)
-    // reaches into a detail.
-    bool reaches(const Vec3& p, double r) const;
+    // reaches into a detail; one of `except` (region indices, sorted) does
+    // not count.
+    bool reaches(const Vec3& p, double r, const std::vector<int>* except = nullptr) const;
+    // The details under a tip at `contact`: those its own support may go
+    // into, as the only way to hold what starts there in mid-air. Any that
+    // lies below the contact (and reaches up to within `below` of it) and
+    // comes within `r` of it in plan. Sorted.
+    std::vector<int> under(const Vec3& contact, double r, double below = 1e9) const;
     // The regions as solid prisms (printer coordinates), for the 3D view.
     TriangleMesh mesh(bool with_mouths = false) const;
 
