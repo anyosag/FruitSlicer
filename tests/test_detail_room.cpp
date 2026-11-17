@@ -218,7 +218,7 @@ TEST_CASE("by the plate, no support stands in a hole a foot would mostly fill; a
     p.pos = {0, 0, 5};
     p.normal = {0, 0, -1};
     p.tip_diameter = 0.4;
-    for (const double w : {5.0, 12.0}) {
+    for (const double w : {5.0, 6.0, 12.0}) {  // 6 mm: one Clipper once shrank to stray pieces
         CAPTURE(w);
         const TriangleMesh m = holed(w);
         const LayerStack ls = sliceModel(m, 0.05);

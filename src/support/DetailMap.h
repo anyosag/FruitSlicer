@@ -49,7 +49,7 @@ public:
     // comes within `r` of it in plan. Sorted.
     std::vector<int> under(const Vec3& contact, double r, double below = 1e9) const;
     // Holes in the first layer (`first`, of parts standing on the plate) up to
-    // `max_width` across, from the plate to `top`: the bottom layers get many
+    // `max_width` across their narrower side, from the plate to `top`: the bottom layers get many
     // times the light and cure wide, and a foot standing in such a hole prints
     // joined to its wall and fills it.
     void addPlateHoles(const Paths& first, double top, double max_width);

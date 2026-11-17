@@ -146,9 +146,11 @@ void DetailMap::addPlateHoles(const Paths& first, double top, double max_width) 
             hole.contour = h;
             if (area(hole.contour) < 0) std::reverse(hole.contour.begin(), hole.contour.end());
             if (hole.area() < 0.01) continue;
-            // Wider than `max_width` (a circle that wide fits in it): left to the feet's gap.
-            if (!offset(hole.toPaths(), -max_width / 2).empty()) continue;
-            DetailRegion d{hole, hole.bbox(), 0, top, false, true};
+            // Wider than `max_width` across its narrower side: left to the feet's gap. (Not by shrinking it:
+            // Clipper, asked to shrink a small hole by far more than its radius, gives back stray pieces.)
+            const BBox2 b = hole.bbox();
+            if (std::min(b.size().x, b.size().y) > max_width) continue;
+            DetailRegion d{hole, b, 0, top, false, true};
             regions_.push_back(d);
         }
     index();
