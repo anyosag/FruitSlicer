@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "layers/HollowAnalysis.h"
 
+#include <algorithm>
 #include <numeric>
 
 #include "core/Parallel.h"
@@ -10,12 +11,40 @@ namespace fruit {
 
 namespace {
 
+namespace C = Clipper2Lib;
+
 struct Hollow {
     int layer;
-    Paths shape;  // positive (CCW) region
+    Paths shape;  // the region (non-zero): the hole counter-clockwise, the islands in it clockwise
     BBox2 box;
     double area;
 };
+
+Path oriented(const Path& p, bool ccw) {
+    Path out = p;
+    if ((C::Area(out) > 0) != ccw) std::reverse(out.begin(), out.end());
+    return out;
+}
+
+// The hollows under `node` (the layer's root, or a hole), the deepest first:
+// each hole of each polygon as the open region it leaves, which is the hole
+// less the islands standing in it. A groove round a solid block is the
+// groove, not all of its outline.
+void collectHollows(const C::PolyPath64& node, int layer, std::vector<Hollow>& out) {
+    for (size_t i = 0; i < node.Count(); ++i) {
+        const C::PolyPath64& polygon = *node.Child(i);
+        for (size_t j = 0; j < polygon.Count(); ++j) collectHollows(*polygon.Child(j), layer, out);
+        for (size_t j = 0; j < polygon.Count(); ++j) {
+            const C::PolyPath64& hole = *polygon.Child(j);
+            Paths shape{oriented(hole.Polygon(), true)};
+            for (size_t k = 0; k < hole.Count(); ++k) shape.push_back(oriented(hole.Child(k)->Polygon(), false));
+            const double a = area(shape);
+            if (a < 1e-6) continue;
+            const BBox2 box = bbox(shape.front());
+            out.push_back({layer, std::move(shape), box, a});
+        }
+    }
+}
 
 }  // namespace
 
@@ -30,18 +59,14 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
     // Each layer on its own (in parallel), then numbered in layer order.
     std::vector<std::vector<Hollow>> holes_in(n);
     parallelFor(n, threads, [&](size_t L) {
-        Paths outers;
-        for (const ExPolygon& e : toExPolygons(layers.slices[L])) {
-            outers.push_back(e.contour);
-            for (const Path& h : e.holes) {
-                Path pos = h;
-                std::reverse(pos.begin(), pos.end());
-                const double a = area(pos);
-                if (a < 1e-6) continue;
-                holes_in[L].push_back({static_cast<int>(L), {pos}, bbox(pos), a});
-            }
-        }
-        filled[L] = unionNonZero(outers);
+        if (layers.slices[L].empty()) return;
+        C::Clipper64 clipper;
+        clipper.AddSubject(layers.slices[L]);
+        C::PolyTree64 tree;
+        clipper.Execute(C::ClipType::Union, C::FillRule::NonZero, tree);
+        collectHollows(tree, static_cast<int>(L), holes_in[L]);
+        // Every hole filled: the outlines of the outermost polygons.
+        for (size_t i = 0; i < tree.Count(); ++i) filled[L].push_back(oriented(tree.Child(i)->Polygon(), true));
     });
     for (size_t L = 0; L < n; ++L)
         for (Hollow& h : holes_in[L]) {

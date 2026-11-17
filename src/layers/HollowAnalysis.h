@@ -3,8 +3,9 @@
 #pragma once
 // Hollow regions of a sliced model: suction cups and resin traps.
 //
-// A hollow is a hole inside a layer's polygons. Hollows overlapping between
-// adjacent layers form one component. Following the two-pass idea of
+// A hollow is a hole inside a layer's polygons, less the islands standing in
+// it (a groove round a solid block is the groove). Hollows overlapping
+// between adjacent layers form one component. Following the two-pass idea of
 // UVtools' resin-trap / suction-cup detection (IssueManager), but on
 // polygons instead of pixels:
 //
@@ -36,7 +37,8 @@ struct HollowComponent {
 struct HollowReport {
     std::vector<HollowComponent> components;  // only cups and traps above the size limits
     // Per layer, the hollow regions belonging to resin traps (for skipping
-    // supports on cavity ceilings).
+    // supports on cavity ceilings). Non-zero: the islands standing in a
+    // hollow are clockwise holes of it.
     std::vector<Paths> trap_regions;
     // Per layer, the hollow regions belonging to suction cups.
     std::vector<Paths> cup_regions;

@@ -3,6 +3,9 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+
+#include "layers/Hollow.h"
 #include "layers/HollowAnalysis.h"
 #include "mesh/AabbTree.h"
 #include "mesh/Placement.h"
@@ -27,6 +30,35 @@ TriangleMesh cup(bool mouth_up) {
     appendBox(m, {0, 0, 0}, {20, 2, 10});
     appendBox(m, {0, 18, 0}, {20, 20, 10});
     return m;
+}
+
+// A 3 mm slab with a groove 1 mm deep in its top: a closed ring 2 mm wide,
+// the slab solid inside and outside it. The groove's outline is 30 × 20 mm
+// and the block inside 26 × 16, so the ring is 600 − 416 = 184 mm².
+// `pocket`: the block has a pocket of its own, 16 × 10 mm and 0.5 mm deep.
+TriangleMesh ringGroove(bool pocket) {
+    TriangleMesh m;
+    appendBox(m, {0, 0, 0}, {40, 30, 2});  // under the groove
+    appendBox(m, {0, 0, 2}, {40, 5, 3});   // outside it
+    appendBox(m, {0, 25, 2}, {40, 30, 3});
+    appendBox(m, {0, 5, 2}, {5, 25, 3});
+    appendBox(m, {35, 5, 2}, {40, 25, 3});
+    if (!pocket) {
+        appendBox(m, {7, 7, 2}, {33, 23, 3});  // inside it
+    } else {
+        appendBox(m, {7, 7, 2}, {33, 23, 2.5});
+        appendBox(m, {7, 7, 2.5}, {33, 10, 3});
+        appendBox(m, {7, 20, 2.5}, {33, 23, 3});
+        appendBox(m, {7, 10, 2.5}, {12, 20, 3});
+        appendBox(m, {28, 10, 2.5}, {33, 20, 3});
+    }
+    return m;
+}
+
+double regionVolume(const std::vector<Paths>& regions, double layer_height) {
+    double v = 0;
+    for (const Paths& p : regions) v += area(p) * layer_height;
+    return v;
 }
 
 TriangleMesh closedCavity() {
@@ -71,6 +103,57 @@ TEST_CASE("hollows: cup facing the film is a suction cup, facing the plate it dr
         const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
         REQUIRE(r.components.size() == 1);
         CHECK(r.components[0].kind == HollowKind::ResinTrap);
+    }
+}
+
+TEST_CASE("hollows: a groove round a solid block holds the groove's resin, not its outline's", "[safety]") {
+    // The dipper's loading cradle: a ring groove in the top of its base,
+    // reported as a 600 mm² pocket when the block inside it was not taken out.
+    {
+        TriangleMesh m = ringGroove(false);
+        placeOnPlate(m, {0, 0, 0}, 5);
+        const LayerStack ls = sliceModel(m, 0.1);
+        const HollowReport r = analyzeHollows(ls);
+        REQUIRE(r.components.size() == 1);
+        CHECK(r.components[0].kind == HollowKind::SuctionCup);
+        CHECK(r.components[0].volume == Approx(184 * 1).epsilon(0.01));
+        CHECK(r.components[0].max_area == Approx(184).epsilon(0.01));
+        CHECK(r.components[0].last_layer - r.components[0].first_layer + 1 == 10);
+        CHECK(regionVolume(r.cup_regions, ls.layer_height) == Approx(184).epsilon(0.01));
+        // The Hollow panel's cavity, from the same regions.
+        const HollowResult own = closedHollows(ls);
+        REQUIRE(own.cavities.size() == 1);
+        CHECK(own.cavities[0].opens_up);
+        CHECK(own.volume == Approx(184).epsilon(0.01));
+    }
+    // A pocket in the block is a cup of its own, not part of the groove.
+    {
+        TriangleMesh m = ringGroove(true);
+        placeOnPlate(m, {0, 0, 0}, 5);
+        const LayerStack ls = sliceModel(m, 0.1);
+        const HollowReport r = analyzeHollows(ls);
+        REQUIRE(r.components.size() == 2);
+        std::vector<double> volumes;
+        for (const HollowComponent& c : r.components) {
+            CHECK(c.kind == HollowKind::SuctionCup);
+            volumes.push_back(c.volume);
+        }
+        std::sort(volumes.begin(), volumes.end());
+        CHECK(volumes[0] == Approx(16 * 10 * 0.5).epsilon(0.01));
+        CHECK(volumes[1] == Approx(184).epsilon(0.01));
+        CHECK(regionVolume(r.cup_regions, ls.layer_height) == Approx(80 + 184).epsilon(0.01));
+        CHECK(closedHollows(ls).volume == Approx(80 + 184).epsilon(0.01));
+    }
+    // A plain cup, nothing standing in it: all of its hole, as before.
+    {
+        TriangleMesh m = cup(true);
+        placeOnPlate(m, {0, 0, 0}, 5);
+        const LayerStack ls = sliceModel(m, 0.1);
+        const HollowReport r = analyzeHollows(ls);
+        REQUIRE(r.components.size() == 1);
+        CHECK(r.components[0].volume == Approx(16 * 16 * 8).epsilon(0.01));
+        CHECK(r.components[0].max_area == Approx(16 * 16).epsilon(0.01));
+        CHECK(closedHollows(ls).volume == Approx(16 * 16 * 8).epsilon(0.01));
     }
 }
 
