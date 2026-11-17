@@ -11,6 +11,8 @@
 
 #include "Fit.h"
 #include "Plates.h"
+#include "calibration/CalibrationFit.h"
+#include "support/SupportTree.h"
 
 using Catch::Approx;
 using Catch::Matchers::ContainsSubstring;
@@ -116,10 +118,11 @@ TEST_CASE("each tip size's hold says how it was found, and bounds and guesses sa
     REQUIRE(s.unsure.size() == 2);
     CHECK(s.unsure[0] == "0.2 mm tips let go even at the lightest load, 5 mm², so their 2.5 mm² is only a guess.");
     CHECK_THAT(s.unsure[1], ContainsSubstring("0.6 mm tips never let go"));
-    // The other two plates are worth printing next.
-    REQUIRE(s.next.size() == 2);
+    // The other plates are worth printing next.
+    REQUIRE(s.next.size() == 3);
     CHECK_THAT(s.next[0], StartsWith("The spacing plate:"));
     CHECK_THAT(s.next[1], StartsWith("The islands plate:"));
+    CHECK_THAT(s.next[2], StartsWith("The gap plate:"));
 }
 
 TEST_CASE("spacing and islands values say how they were found", "[fit]") {
@@ -156,8 +159,9 @@ TEST_CASE("spacing and islands values say how they were found", "[fit]") {
     REQUIRE(two);
     CHECK(two->value == "up to 3 mm");
     CHECK(s.unsure.empty());
-    REQUIRE(s.next.size() == 1);
+    REQUIRE(s.next.size() == 2);
     CHECK_THAT(s.next[0], StartsWith("The tips plate:"));
+    CHECK_THAT(s.next[1], StartsWith("The gap plate:"));
 }
 
 TEST_CASE("bounds on the spacing plate are said to be bounds", "[fit]") {
@@ -182,10 +186,11 @@ TEST_CASE("a plate scored in part fits what is scored, and says the rest is left
     const FitSummary s = summarizeFit({scored("tips", tipsHold, 20), scored("spacing", tipsHold, 0)}, options(), r);
     CHECK(s.kinds == std::vector<std::string>{"tips"});
     CHECK(s.from == "From the tips plate (20 of 48 scored).");
-    REQUIRE(s.next.size() == 3);
+    REQUIRE(s.next.size() == 4);
     CHECK(s.next[0] == "The rest of the tips plate: 28 coupons are not scored yet.");
     CHECK(s.next[1] == "Score the spacing plate: it's saved, but nothing is scored yet.");
     CHECK_THAT(s.next[2], StartsWith("The islands plate:"));
+    CHECK_THAT(s.next[3], StartsWith("The gap plate:"));
 
     const FitSummary none = summarizeFit({scored("tips", tipsHold, 0)}, options(), r);
     CHECK(none.kinds.empty());
@@ -228,4 +233,36 @@ TEST_CASE("numbers are rounded the same way everywhere", "[fit]") {
     CHECK(oneDecimal(10.5) == "10.5");
     CHECK(oneDecimal(14.0) == "14");
     CHECK(oneDecimal(2.775) == "2.8");
+}
+
+TEST_CASE("the gap plate gives the narrowest gap every shaft came off cleanly from, and a pixel", "[fit][gaps]") {
+    const fruit::CalibrationPlate plate = fruit::gapsPlate(fruit::GapsPlateOptions{}, fruit::PrinterProfile::saturn4Ultra16k());
+    CHECK(plate.coupons.size() == 48);  // 6 gaps × 2 lengths × wall and cup × 2
+    fruit::PlateResults res;
+    res.kind = "gaps";
+    res.settings = plate.settings;
+    for (const auto& c : plate.coupons) {
+        fruit::CouponResult r;
+        r.id = c.id;
+        r.params = c.params;
+        r.recorded = true;
+        const double g = c.params["gap"].get<double>();
+        // Stuck up to 0.20 mm; at 0.25 the long shaft in the cup stuck too; from 0.30 all came off.
+        r.ok = g > 0.26 || (g > 0.21 && !(c.params["place"] == "cup" && c.params["height"].get<double>() > 10));
+        res.coupons.push_back(r);
+    }
+    Resin resin;
+    const FitSummary s = summarizeFit({res}, options(), resin);
+    const double pixel = fruit::PrinterProfile::saturn4Ultra16k().pixelY();
+    REQUIRE(s.profile.contains("shaft_gap"));
+    CHECK(s.profile["shaft_gap"].get<double>() == Approx(0.30 + std::max(pixel, fruit::PrinterProfile::saturn4Ultra16k().pixelX())));
+    const FitValue* v = valueOf(s, "Gap to the model");
+    REQUIRE(v);
+    CHECK(v->value == "0.32 mm");
+    CHECK_THAT(v->how, StartsWith("Shafts 0.3 mm from the model came off cleanly, and so did every one further; at 0.25 mm one stuck."));
+    // The resin's gap is what supports keep then.
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    fruit::applyProfile(s.profile, cfg, &tc, nullptr);
+    CHECK(tc.clearance == Approx(s.profile["shaft_gap"].get<double>()));
 }

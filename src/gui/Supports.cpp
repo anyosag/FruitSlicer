@@ -290,11 +290,15 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  .fields = {{"head_length", "", "mm", 0.4, 3, 1, [](const C&, const T& t) { return t.head_length; },
                              [](C&, T& t, double x) { t.head_length = x; }}},
                  .help = [](const X&) { return std::string("From the tip to where it joins the support."); }});
-    v.push_back({.group = "Heads", .label = "Gap to the model", .kind = K::Number, .source = S::Default,
+    v.push_back({.group = "Heads", .label = "Gap to the model", .kind = K::Number, .source = S::Assumption,
                  .fields = {{"gap", "", "mm", 0.05, 1, 2, [](const C&, const T& t) { return t.clearance; },
                              [](C&, T& t, double x) { t.clearance = x; }}},
                  .help = [](const X&) {
-                     return std::string("Supports keep this clear of the model everywhere except at the tip.");
+                     return std::string(
+                         "Supports keep this clear of the model everywhere except at the tip; narrower gaps can fill "
+                         "in and glue a support to the model. The gap plate measures it for your resin (Calibrate). "
+                         "Until then it is 0.30 mm, wider than the 0.17-0.22 mm at which shafts printed stuck to a "
+                         "hollow post's wall.");
                  }});
     // ---- Pillars and trunks ----
     // First of the rows it presets, so that a value of their own wins over it.
@@ -2045,9 +2049,12 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
     }
     {
         const double gap = n > 0 ? made[0].tc.clearance : 0;
+        const bool measured = n > 0 && made[0].c.profile.is_object() && made[0].c.profile.contains("shaft_gap");
         r.checks.push_back({near_model == 0, strf("Supports keep %.2f mm from the model", gap),
-                            near_model == 0 ? std::string("Everywhere but at their tips")
-                                            : strf("%zu come closer, the nearest %.2f mm", near_model, std::max(0.0, nearest))});
+                            (near_model == 0 ? std::string("Everywhere but at their tips")
+                                             : strf("%zu come closer, the nearest %.2f mm", near_model, std::max(0.0, nearest))) +
+                                (measured ? ". Measured for this resin with the gap plate"
+                                          : ". Not measured for this resin yet: the gap plate measures it")});
         const std::size_t slots = r.details ? r.details->slotCount() : 0;
         r.checks.push_back({over_edge + in_slot == 0, "Slots and holes stay open",
                             over_edge + in_slot > 0

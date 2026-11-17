@@ -79,10 +79,12 @@ SetupChecks setupChecks(const fruit::PrinterProfile& printer, const PrinterSetup
 
     // Support values: measured on the resin by its test plates, or starting ones.
     std::vector<std::string> measured, not_yet;
+    bool gap_not_yet = false;
     for (const char* kind : kPlateKinds) {
         const bool m = plateMeasured(resin.profile, kind);
-        out.plates.push_back({capital(kind), m});
-        (m ? measured : not_yet).push_back(kind);
+        out.plates.push_back({capital(plateWord(kind)), m});
+        (m ? measured : not_yet).push_back(std::string(kind) == "gaps" ? "the gap to the model" : kind);
+        gap_not_yet |= !m && std::string(kind) == "gaps";
     }
     auto list = [](const std::vector<std::string>& v) {
         std::string s;
@@ -91,16 +93,19 @@ SetupChecks setupChecks(const fruit::PrinterProfile& printer, const PrinterSetup
     };
     if (not_yet.empty()) {
         out.rows.push_back({S::Ok, "Support values measured on your resin",
-                            "Tips, spacing and islands, from its test plates.", "", G::None});
+                            "Tips, spacing, islands and the gap to the model, from its test plates.", "", G::None});
     } else if (measured.empty()) {
         out.rows.push_back({S::Note, "Supports use starting values",
-                            "Borrowed from PrusaSlicer: nothing is measured on your resin yet. Three test plates "
-                            "measure it.",
+                            "Borrowed from PrusaSlicer, and FruitSlicer's own for the gap to the model: nothing is "
+                            "measured on your resin yet. Four test plates measure it.",
                             "Open calibration", G::Calibrate});
     } else {
         out.rows.push_back({S::Note, "Some support values measured",
                             capital(list(measured)) + " measured on your resin; " + list(not_yet) +
-                                " still use starting values, borrowed from PrusaSlicer.",
+                                (!gap_not_yet            ? " still use starting values, borrowed from PrusaSlicer."
+                                 : not_yet.size() == 1 ? " is still FruitSlicer's own starting value."
+                                                       : " still use starting values, borrowed from PrusaSlicer and, "
+                                                         "for the gap, FruitSlicer's own."),
                             "Open calibration", G::Calibrate});
     }
     for (const SetupCheck& c : out.rows)

@@ -414,6 +414,32 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
             if (one == 0) notes.push_back("no island size held reliably on one tip; every island gets at least two");
             notes.push_back("islands plate does not test the next-layer absorption rule; it stays an assumption");
             fits["islands"] = detail;
+        } else if (plate.kind == "gaps") {
+            // By gap: how many shafts, and how many came off cleanly.
+            std::map<double, std::pair<int, int>> by_gap;
+            for (const auto* c : rec) {
+                auto& e = by_gap[num(c->params, "gap")];
+                ++e.first;
+                e.second += c->ok ? 1 : 0;
+            }
+            // The narrowest gap from which every gap as wide or wider came off
+            // cleanly; and the widest at which any stuck.
+            double clean = 0, stuck = 0;
+            for (auto it = by_gap.rbegin(); it != by_gap.rend(); ++it)
+                if (it->second.second == it->second.first) clean = it->first;
+                else break;
+            json detail = json::array();
+            for (const auto& [g, e] : by_gap) {
+                if (e.second < e.first) stuck = g;
+                detail.push_back({{"gap", g}, {"shafts", e.first}, {"clean", e.second}});
+            }
+            const double pixel = plate.settings.value("pixel", 0.0);
+            if (clean > 0) {
+                prof["shaft_gap"] = clean + pixel;
+            } else {
+                notes.push_back("on the gap plate a shaft stuck even at the widest gap; the gap stays as it was");
+            }
+            fits["gaps"] = {{"gaps", detail}, {"clean", clean}, {"stuck", stuck}, {"pixel", pixel}};
         } else {
             notes.push_back("unknown plate kind '" + plate.kind + "' skipped");
         }
@@ -461,6 +487,7 @@ void applyProfile(const json& p, SupportConfig& cfg, TreeConfig* tree, std::vect
     if (p.contains("island_one_tip_length")) cfg.island_one_tip_length = p.at("island_one_tip_length").get<double>();
     if (p.contains("island_two_tip_length")) cfg.island_two_tip_length = p.at("island_two_tip_length").get<double>();
     if (tree && p.contains("penetration_table")) tree->penetration_table = pairs(p.at("penetration_table"));
+    if (tree && p.contains("shaft_gap")) tree->clearance = p.at("shaft_gap").get<double>();
     if (notes && p.contains("layer_height") && std::abs(p.at("layer_height").get<double>() - cfg.layer_height) > 1e-9)
         notes->push_back("profile was measured at " + fmt(p.at("layer_height").get<double>()) +
                          " mm layers but this run uses " + fmt(cfg.layer_height) + " mm");

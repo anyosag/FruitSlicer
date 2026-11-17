@@ -15,6 +15,10 @@
 //             wedges → self-supporting overhang angle.
 //   islands — island minimums: small columns starting in mid-air held by
 //             1–3 tips → how many tips each island size needs.
+//   gaps    — the shaft gap: thin shafts standing a known gap from a wall,
+//             short and long, beside an open wall and inside a cup → the
+//             narrowest gap at which a shaft doesn't print stuck to the model
+//             (TreeConfig::clearance).
 //
 // Cell (row 0, col 0) holds an L-shaped orientation marker; rows grow along
 // +Y, columns along +X. The manifest maps every cell to its parameters.
@@ -92,9 +96,24 @@ struct IslandsPlateOptions {
     double column_height = 2.0;
 };
 
+struct GapsPlateOptions {
+    PlateCommon common;
+    std::vector<double> gaps{0.15, 0.20, 0.25, 0.30, 0.40, 0.50};  // shaft to wall (mm)
+    // How far each shaft runs beside the wall (mm): a short one, and one as
+    // long as the shafts that stuck in DishRack_Top's posts, which can sway.
+    std::vector<double> heights{3.0, 15.0};
+    // Beside an open wall, and inside a cup open only near the raft, as a
+    // shaft inside a hollow post is: resin that stays in the gap through the
+    // wash can glue the shaft there when it is cured.
+    std::vector<std::string> places{"wall", "cup"};
+    double shaft_diameter = 0.8;  // the thinnest shaft supports have: it sways the most
+    double wall = 1.5;            // the wall's thickness (mm)
+};
+
 // Throws std::runtime_error if the coupons do not fit on the printer plate.
 CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& printer);
 CalibrationPlate spacingPlate(const SpacingPlateOptions& o, const PrinterProfile& printer);
 CalibrationPlate islandsPlate(const IslandsPlateOptions& o, const PrinterProfile& printer);
+CalibrationPlate gapsPlate(const GapsPlateOptions& o, const PrinterProfile& printer);
 
 }  // namespace fruit

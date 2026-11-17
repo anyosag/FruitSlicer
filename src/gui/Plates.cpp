@@ -126,6 +126,7 @@ fruit::CalibrationPlate makePlate(const std::string& kind, const fruit::PrinterP
     if (kind == "tips") return fruit::tipsPlate(fruit::TipsPlateOptions{}, printer);
     if (kind == "spacing") return fruit::spacingPlate(fruit::SpacingPlateOptions{}, printer);
     if (kind == "islands") return fruit::islandsPlate(fruit::IslandsPlateOptions{}, printer);
+    if (kind == "gaps") return fruit::gapsPlate(fruit::GapsPlateOptions{}, printer);
     throw std::runtime_error("no plate called " + kind);
 }
 
@@ -133,6 +134,7 @@ std::string plateTitle(const std::string& kind) {
     if (kind == "tips") return "Tips plate";
     if (kind == "spacing") return "Spacing plate";
     if (kind == "islands") return "Islands plate";
+    if (kind == "gaps") return "Gap plate";
     return kind;
 }
 
@@ -168,6 +170,12 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
                                 : strf("Tips %g mm", biggest),
                 strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), n / per, reps, n)};
     }
+    if (p.kind == "gaps")
+        return {"Shafts " + listOf(valuesOf(p, "gap")) + " mm from the model",
+                strf("%g mm thick, the thinnest supports have", p.settings.value("shaft_diameter", 0.8)),
+                "Running " + listOf(valuesOf(p, "height")) + " mm beside it",
+                "Beside an open wall, and inside a cup open only by the raft, as in a hollow post",
+                strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), n / per, reps, n)};
     return {};
 }
 
@@ -212,6 +220,10 @@ std::vector<CouponFact> couponFacts(const std::string& kind, const json& p) {
         return {{"Spot across", strf("%g mm", num(p, "island_diameter"))},
                 {"Tips", strf("%g", num(p, "tips"))},
                 {"Tip size", strf("%g mm", num(p, "tip_diameter"))}};
+    if (kind == "gaps")
+        return {{"Gap to the model", strf("%g mm", num(p, "gap"))},
+                {"Runs beside it", strf("%g mm", num(p, "height"))},
+                {"Where", str(p, "place") == "cup" ? "Inside a cup" : "Beside a wall"}};
     return {};
 }
 
@@ -235,6 +247,11 @@ std::string couponMeaning(const std::string& kind, const json& p) {
                     k == 1 ? "" : "s") +
                "If it prints, spots that size need no more tips than that.";
     }
+    if (kind == "gaps")
+        return strf("A shaft %g mm %s, running %g mm beside it. ", num(p, "gap"),
+                    str(p, "place") == "cup" ? "from the inside of a cup" : "from a wall", num(p, "height")) +
+               "Push it away from the wall: if it moves on its own, it came off cleanly, and supports can stand "
+               "this close to the model in your resin. If the wall moves with it, it stuck.";
     return "";
 }
 

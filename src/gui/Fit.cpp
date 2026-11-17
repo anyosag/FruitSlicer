@@ -27,6 +27,7 @@ std::string mm(double v) { return strf("%g mm", v); }
 const char* plateWhat(const std::string& kind) {
     return kind == "tips"      ? "how much each tip size holds, and which leaves the smallest mark"
            : kind == "spacing" ? "how far apart tips can be, and how steep a face prints without them"
+           : kind == "gaps"    ? "how close to the model a support can stand without printing stuck to it"
                                : "how big a spot that starts in mid-air can be on one tip, or two";
 }
 
@@ -40,6 +41,27 @@ int recordedIn(const fruit::PlateResults& p) {
     int n = 0;
     for (const auto& c : p.coupons) n += c.recorded ? 1 : 0;
     return n;
+}
+
+// The gap plate: the narrowest gap at which every shaft as far or further came off cleanly, and a pixel.
+void gapValues(FitSummary& s, const json& g) {
+    const double clean = num(g, "clean"), stuck = num(g, "stuck"), pixel = num(g, "pixel");
+    if (clean <= 0) {
+        s.unsure.push_back(strf("On the gap plate a shaft stuck even %s from the model: supports need more room than "
+                                "it tests. The gap stays as it was.",
+                                mm(stuck).c_str()));
+        return;
+    }
+    FitValue v;
+    v.label = "Gap to the model";
+    v.value = strf("%.2f mm", clean + pixel);
+    v.how = (stuck > 0 ? strf("Shafts %s from the model came off cleanly, and so did every one further; at %s one "
+                              "stuck. ",
+                              mm(clean).c_str(), mm(stuck).c_str())
+                       : strf("Every shaft came off cleanly, down to %s from the model. ", mm(clean).c_str())) +
+            strf("One pixel (%.3f mm) more, as an edge can land half a pixel nearer on each side.", pixel);
+    v.basis = stuck > 0 ? Basis::Measured : Basis::Bound;
+    s.values.push_back(v);
 }
 
 const fruit::PlateResults* plateOf(const std::vector<fruit::PlateResults>& plates, const std::string& kind) {
@@ -272,19 +294,19 @@ FitSummary summarizeFit(const std::vector<fruit::PlateResults>& plates, const fr
         if (n == 0) continue;
         scored.push_back(p);
         s.kinds.push_back(p.kind);
-        from.push_back(strf("the %s plate (%d of %zu scored)", p.kind.c_str(), n, p.coupons.size()));
+        from.push_back(strf("the %s plate (%d of %zu scored)", plateWord(p.kind).c_str(), n, p.coupons.size()));
     }
     for (const char* kind : kPlateKinds) {
         const fruit::PlateResults* p = plateOf(scored, kind);
         if (p) {
             const int left = static_cast<int>(p->coupons.size()) - recordedIn(*p);
             if (left > 0)
-                s.next.push_back(strf("The rest of the %s plate: %d coupon%s not scored yet.", kind, left,
+                s.next.push_back(strf("The rest of the %s plate: %d coupon%s not scored yet.", plateWord(kind).c_str(), left,
                                       left == 1 ? " is" : "s are"));
         } else if (r.plates.count(kind)) {
-            s.next.push_back("Score the " + std::string(kind) + " plate: it's saved, but nothing is scored yet.");
+            s.next.push_back("Score the " + plateWord(kind) + " plate: it's saved, but nothing is scored yet.");
         } else if (!plateMeasured(r.profile, kind)) {
-            s.next.push_back("The " + std::string(kind) + " plate: " + plateWhat(kind) + ".");
+            s.next.push_back("The " + plateWord(kind) + " plate: " + plateWhat(kind) + ".");
         }
     }
     if (scored.empty()) {
@@ -297,6 +319,7 @@ FitSummary summarizeFit(const std::vector<fruit::PlateResults>& plates, const fr
     if (fits.contains("tips")) tipValues(s, fits["tips"], o);
     if (fits.contains("spacing")) spacingValues(s, fits["spacing"], plateOf(scored, "spacing"));
     if (fits.contains("islands")) islandValues(s, fits["islands"]);
+    if (fits.contains("gaps")) gapValues(s, fits["gaps"]);
     return s;
 }
 
@@ -304,7 +327,8 @@ json mergedProfile(const json& old, const json& fit, const std::vector<std::stri
     static const std::map<std::string, std::vector<const char*>> keys = {
         {"tips", {"capacity_table", "penetration_table", "default_tip_diameter", "minima_tip_diameter"}},
         {"spacing", {"coverage_curve", "critical_angle_deg"}},
-        {"islands", {"island_one_tip_length", "island_two_tip_length"}}};
+        {"islands", {"island_one_tip_length", "island_two_tip_length"}},
+        {"gaps", {"shaft_gap"}}};
     json out = old.is_object() ? old : json::object();
     for (const std::string& kind : kinds) {
         const auto it = keys.find(kind);

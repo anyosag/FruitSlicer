@@ -17,8 +17,10 @@
 namespace gui {
 
 // The plates, in the order the Calibrate page shows them.
-inline const char* const kPlateKinds[] = {"tips", "spacing", "islands"};
+inline const char* const kPlateKinds[] = {"tips", "spacing", "islands", "gaps"};
 bool isPlateKind(const std::string& kind);
+// The plate's name in a sentence: "tips", "spacing", "islands", "gap".
+inline std::string plateWord(const std::string& kind) { return kind == "gaps" ? "gap" : kind; }
 
 // A plate with FruitSlicer's own options (as `fruitslicer calibrate` makes it).
 fruit::CalibrationPlate makePlate(const std::string& kind, const fruit::PrinterProfile& printer);

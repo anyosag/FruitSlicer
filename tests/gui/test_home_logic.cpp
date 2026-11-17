@@ -80,10 +80,11 @@ TEST_CASE("Home: on a first launch only the printer counts as checked", "[gui][h
     CHECK_THAT(row(c, 3).detail, ContainsSubstring("nothing is measured on your resin"));
     CHECK(row(c, 3).go == SetupCheck::Go::Calibrate);
     CHECK(c.checked == 1);
-    REQUIRE(c.plates.size() == 3);
+    REQUIRE(c.plates.size() == 4);
     CHECK(c.plates[0].label == "Tips");
     CHECK(c.plates[1].label == "Spacing");
     CHECK(c.plates[2].label == "Islands");
+    CHECK(c.plates[3].label == "Gap");
     for (const auto& p : c.plates) CHECK_FALSE(p.measured);
 }
 
@@ -145,13 +146,20 @@ TEST_CASE("Home: the orientation check and measured plates count once done", "[g
     CHECK(row(c, 2).action.empty());
     CHECK(row(c, 3).state == SetupCheck::State::Note);
     CHECK(row(c, 3).title == "Some support values measured");
-    CHECK_THAT(row(c, 3).detail, StartsWith("Tips measured on your resin; spacing and islands still use"));
+    CHECK_THAT(row(c, 3).detail, StartsWith("Tips measured on your resin; spacing, islands and the gap to the model "
+                                            "still use starting values, borrowed from PrusaSlicer and, for the gap, "
+                                            "FruitSlicer's own."));
     CHECK(c.checked == 3);
     CHECK(c.plates[0].measured);
     CHECK_FALSE(c.plates[1].measured);
 
     r.profile["coverage_curve"] = nlohmann::json::array({1});
     r.profile["island_one_tip_length"] = 2.0;
+    c = setupChecks(printer, ps, r, &h);
+    CHECK(row(c, 3).title == "Some support values measured");
+    CHECK(row(c, 3).detail == "Tips, spacing and islands measured on your resin; the gap to the model is still "
+                              "FruitSlicer's own starting value.");
+    r.profile["shaft_gap"] = 0.27;
     c = setupChecks(printer, ps, r, &h);
     CHECK(row(c, 3).state == SetupCheck::State::Ok);
     CHECK(row(c, 3).title == "Support values measured on your resin");

@@ -386,6 +386,9 @@ TEST_CASE("the Calibrate page's next step follows the plates", "[plates]") {
     r.profile = {{"coverage_curve", {{0, 3.2}, {15, 5}}}};
     CHECK(nextPlateStep(r).kind == "islands");
     r.profile["island_one_tip_length"] = 1.7;
+    CHECK(nextPlateStep(r).kind == "gaps");
+    CHECK(nextPlateStep(r).text == "Print the gap plate next.");
+    r.profile["shaft_gap"] = 0.27;
     // Every plate done, but the tips plate's scores aren't in the values yet.
     CHECK(nextPlateStep(r).action == Action::Fit);
     CHECK(nextPlateStep(r).text == "Turn the scores into this resin's support values.");

@@ -253,6 +253,7 @@ bool plateMeasured(const json& profile, const std::string& kind) {
     if (kind == "spacing") return hasMeasured(profile, "coverage_curve") || hasMeasured(profile, "critical_angle_deg");
     if (kind == "islands")
         return hasMeasured(profile, "island_one_tip_length") || hasMeasured(profile, "island_two_tip_length");
+    if (kind == "gaps") return hasMeasured(profile, "shaft_gap");
     return false;
 }
 
@@ -260,12 +261,12 @@ PlateStep nextPlateStep(const Resin& r) {
     using Action = PlateStep::Action;
     bool to_fit = false;
     for (const char* kind : kPlateKinds) {
-        const std::string k = kind;
+        const std::string k = plateWord(kind);
         const auto it = r.plates.find(kind);
         const bool measured = plateMeasured(r.profile, kind);
         if (it == r.plates.end()) {
             if (measured) continue;
-            return {Action::Print, k,
+            return {Action::Print, kind,
                     k == "tips" ? "Print the resin test plates, starting with the tips plate."
                                 : "Print the " + k + " plate next."};
         }
@@ -275,7 +276,7 @@ PlateStep nextPlateStep(const Resin& r) {
             continue;
         }
         if (measured) continue;  // fitted from an earlier sheet: scoring this one is up to you
-        return {Action::Score, k,
+        return {Action::Score, kind,
                 f.scored == 0 ? "Score the " + k + " plate once it's printed."
                               : "Score the rest of the " + k + " plate: " + std::to_string(f.scored) + " of " +
                                     std::to_string(f.coupons) + " so far."};

@@ -308,4 +308,46 @@ CalibrationPlate islandsPlate(const IslandsPlateOptions& o, const PrinterProfile
     return plate;
 }
 
+CalibrationPlate gapsPlate(const GapsPlateOptions& o, const PrinterProfile& p) {
+    std::vector<json> combos;
+    for (const std::string& place : o.places)
+        for (double h : o.heights)
+            for (double g : o.gaps) combos.push_back({{"gap", g}, {"height", h}, {"place", place}});
+    const double cell = 10.0;
+    const double r = o.shaft_diameter / 2, t = o.wall;
+    auto build = [&](TriangleMesh& m, const Vec2& c, const json& prm, double raft_top) {
+        const double g = prm["gap"].get<double>(), h = prm["height"].get<double>();
+        const double z0 = raft_top - 0.05;  // into the raft
+        const int seg = segmentsFor(r, 0.007);
+        if (prm["place"].get<std::string>() == "cup") {
+            // A cup 4 × 4 mm inside, its walls `t` thick, capped 1 mm above the
+            // shaft's top; a door 2 mm wide and 1.5 mm tall in its front wall,
+            // by the raft, is its only opening. The shaft stands `g` from the
+            // back wall.
+            const double in = 2.0, top = raft_top + h + 1.0;
+            appendBox(m, {c.x - in - t, c.y - in, z0}, {c.x - in, c.y + in, top});      // left
+            appendBox(m, {c.x + in, c.y - in, z0}, {c.x + in + t, c.y + in, top});      // right
+            appendBox(m, {c.x - in - t, c.y + in, z0}, {c.x + in + t, c.y + in + t, top});  // back
+            appendBox(m, {c.x - in - t, c.y - in - t, z0}, {c.x - 1.0, c.y - in, top});      // front, left of the door
+            appendBox(m, {c.x + 1.0, c.y - in - t, z0}, {c.x + in + t, c.y - in, top});      // front, right of it
+            appendBox(m, {c.x - 1.0, c.y - in - t, raft_top + 1.5}, {c.x + 1.0, c.y - in, top});  // over the door
+            appendBox(m, {c.x - in - t, c.y - in - t, top}, {c.x + in + t, c.y + in + t, top + 1.0});  // the cap
+            const double y = c.y + in - g - r;
+            appendFrustum(m, {c.x, y, z0}, r, {c.x, y, raft_top + h}, r, seg);
+        } else {
+            // A wall 6 mm long, `t` thick, 1 mm taller than the shaft; the shaft `g` in front of it.
+            appendBox(m, {c.x - 3.0, c.y - t, z0}, {c.x + 3.0, c.y, raft_top + h + 1.0});
+            const double y = c.y + g + r;
+            appendFrustum(m, {c.x, y, z0}, r, {c.x, y, raft_top + h}, r, seg);
+        }
+    };
+    PlateCommon common = o.common;
+    common.elevation = std::max(common.elevation, common.raft_thickness + common.head_length + 1.0);
+    CalibrationPlate plate = assemble("gaps", combos, cell, common, p, build);
+    plate.settings["shaft_diameter"] = o.shaft_diameter;
+    plate.settings["wall"] = o.wall;
+    plate.settings["pixel"] = std::max(p.pixelX(), p.pixelY());
+    return plate;
+}
+
 }  // namespace fruit
