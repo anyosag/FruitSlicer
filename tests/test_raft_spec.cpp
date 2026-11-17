@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <random>
 
 #include "support/Raft.h"
 #include "support/SupportTree.h"
@@ -279,4 +280,45 @@ TEST_CASE("raft: every preset's raft starts on the plate, nothing in mid-air", "
     for (const auto& f : v.floating)
         UNSCOPED_INFO("floating at z " << f.z << " (" << f.at.x << ", " << f.at.y << "), " << f.area << " mm²");
     CHECK(v.floating.empty());
+}
+
+TEST_CASE("no piece of a raft starts in mid-air, and its pieces are counted through its height", "[raft][spec]") {
+    // A full raft like the "Gunz" preset: 2 mm thick, sides 60° from flat (the bottom 1.15 mm in from the top),
+    // a window at every lobe's tip. Where a window or a narrow neck leaves a thin strip, the sloped side left it
+    // nothing at the plate: it started higher up on its own (TheDipper_Front: three, 0.4-1.5 mm up).
+    RaftSpec s;
+    s.kind = RaftKind::Full;
+    s.thickness = 2.0;
+    s.side_angle = 60;
+    s.reach = 1.8;
+    s.gap_fill = 10;
+    s.windows = RaftWindows::EveryTip;
+    s.window_pct = 75;
+    s.lip_height = 0.8;
+    s.rounded = true;
+    const TreeConfig tc = withSpec(s);
+    // Trunks on a jittered grid, as a part's supports stand: 3-6 mm apart, the windows and necks falling
+    // anywhere. (Fixed seed: the same layouts every run.)
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> jitter(-1.5, 1.5);
+    int layouts = 0;
+    for (int run = 0; run < 40; ++run) {
+            const double pitch = 3.0 + 0.075 * run;
+            std::vector<Vec2> xy;
+            for (int i = 0; i < 9; ++i)
+                for (int j = 0; j < 5; ++j)
+                    if ((i * 7 + j * 3 + run) % 11 != 0) xy.push_back({i * pitch + jitter(rng), j * pitch + jitter(rng)});
+            const double spread = pitch;
+            const SupportTree t = trunksAt(xy, 2.0);
+            const RaftShape shape = specRaftShape(t, tc);
+            REQUIRE(shape.layers.size() > 1);
+            for (size_t k = 1; k < shape.layers.size(); ++k)
+                for (const ExPolygon& e : toExPolygons(shape.layers[k])) {
+                    CAPTURE(spread, k, e.bbox().center().x, e.bbox().center().y);
+                    CHECK(std::abs(area(intersection(e.toPaths(), shape.layers[k - 1]))) > 1e-6);
+                }
+            CHECK(shape.pieces <= static_cast<int>(toExPolygons(shape.base).size()));
+            ++layouts;
+        }
+    CHECK(layouts == 40);
 }

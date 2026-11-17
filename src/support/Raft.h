@@ -113,7 +113,10 @@ struct RaftShape {
     std::vector<Vec2> trunks;
     std::vector<Paths> layers;  // each layer, from the plate up
     double layer_dz = 0;        // how thick each is, mm
-    int pieces = 0;         // separate pieces on the plate
+    // Separate pieces: parts that don't join anywhere up its height. (Its
+    // footprint can be in more: a sloped side parts lobes at the plate that
+    // join above it.)
+    int pieces = 0;
     double volume = 0;      // mm³, the raft alone
     double height = 0;      // its top, lip included, mm
 };

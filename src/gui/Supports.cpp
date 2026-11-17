@@ -1925,7 +1925,10 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         for (const int id : on_plate) bases.push_back(fruit::offset(baseOnPlate(*doc.findPart(id)), kRaftsMeet / 2));
         for (std::size_t g = 0; g < r.rafts.size(); ++g) {
             const fruit::Paths foot = raftTree(rafts[g], made).raftFootprint(r.rafts[g].tree_cfg);
-            r.rafts[g].pieces = static_cast<int>(fruit::toExPolygons(foot).size());
+            // Pieces through its height (a sloped side parts lobes at the plate that join above it).
+            r.rafts[g].pieces = r.rafts[g].tree_cfg.raft_spec
+                                    ? fruit::specRaftShape(raftTree(rafts[g], made), r.rafts[g].tree_cfg).pieces
+                                    : static_cast<int>(fruit::toExPolygons(foot).size());
             const fruit::Paths near = fruit::offset(foot, kRaftsMeet / 2);
             for (std::size_t k = 0; k < on_plate.size(); ++k)
                 if (!near.empty() && !bases[k].empty() && !fruit::intersection(near, bases[k]).empty())

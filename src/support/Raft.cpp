@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <numeric>
 #include <set>
 
 #include "mesh/Primitives.h"
@@ -350,6 +352,7 @@ RaftShape specRaft(TriangleMesh* m, const SupportTree& tree, const TreeConfig& t
     if (edge) top_z = std::max(top_z, edge_h + s.lip_height);
     const int n = std::max(1, static_cast<int>(std::ceil(top_z / kLayer - 1e-9)));
     const double dz = top_z / n;
+    std::vector<Paths> layers(static_cast<size_t>(n));
     for (int k = 0; k < n; ++k) {
         const double z0 = k * dz, zm = z0 + dz / 2;
         Paths layer = edge ? edgeLayer(shape.top, prof, zm) : Paths{};
@@ -377,15 +380,56 @@ RaftShape specRaft(TriangleMesh* m, const SupportTree& tree, const TreeConfig& t
             // the higher ones, leaning out, kept, so those started in mid-air.)
             layer = difference(layer, unionNonZero(cut));
         }
-        layer = tidy(layer);
+        layers[static_cast<size_t>(k)] = tidy(layer);
+    }
+    // Nothing of the raft starts in mid-air. The sloped side pulls the bottom
+    // in (1.15 mm at 60° on a 2 mm raft), so where a window or a narrow neck
+    // between two feet leaves only a thin strip, that strip has nothing under
+    // it at the plate and starts higher up, on its own (TheDipper_Front: three
+    // such pieces, 0.4-1.5 mm up). Such a piece goes straight down to the
+    // plate instead, its sides upright there.
+    for (int k = n - 1; k >= 1; --k) {
+        Paths& below = layers[static_cast<size_t>(k - 1)];
+        Paths add;
+        for (const ExPolygon& e : toExPolygons(layers[static_cast<size_t>(k)])) {
+            const Paths ep = e.toPaths();
+            if (below.empty() || std::abs(area(intersection(ep, below))) < 1e-4) add.insert(add.end(), ep.begin(), ep.end());
+        }
+        if (!add.empty()) below = tidy(below.empty() ? unionNonZero(add) : unionOf(below, add));
+    }
+    for (int k = 0; k < n; ++k) {
+        const Paths& layer = layers[static_cast<size_t>(k)];
         if (k == 0) shape.base = layer;
         shape.layers.push_back(layer);
         shape.volume += std::abs(area(layer)) * dz;
-        if (m) appendLayer(*m, layer, z0, dz);
+        if (m) appendLayer(*m, layer, k * dz, dz);
     }
     shape.height = top_z;
     shape.layer_dz = dz;
-    shape.pieces = static_cast<int>(toExPolygons(shape.base).size());
+    // Pieces through its height: those of each layer, joined where they meet the layer below.
+    {
+        std::vector<std::vector<ExPolygon>> parts;
+        for (const Paths& l : shape.layers) parts.push_back(toExPolygons(l));
+        std::vector<int> up;
+        std::vector<size_t> first(parts.size() + 1, 0);
+        for (size_t k = 0; k < parts.size(); ++k) first[k + 1] = first[k] + parts[k].size();
+        up.resize(first.back());
+        std::iota(up.begin(), up.end(), 0);
+        const std::function<int(int)> find = [&](int i) { return up[i] == i ? i : up[i] = find(up[i]); };
+        for (size_t k = 1; k < parts.size(); ++k)
+            for (size_t a = 0; a < parts[k].size(); ++a) {
+                const Paths pa = parts[k][a].toPaths();
+                const BBox2 ba = parts[k][a].bbox();
+                for (size_t b = 0; b < parts[k - 1].size(); ++b) {
+                    if (!ba.overlaps(parts[k - 1][b].bbox())) continue;
+                    if (std::abs(area(intersection(pa, parts[k - 1][b].toPaths()))) < 1e-6) continue;
+                    up[find(static_cast<int>(first[k] + a))] = find(static_cast<int>(first[k - 1] + b));
+                }
+            }
+        int n_pieces = 0;
+        for (size_t i = 0; i < up.size(); ++i) n_pieces += find(static_cast<int>(i)) == static_cast<int>(i);
+        shape.pieces = n_pieces;
+    }
     if (m && s.rounded)
         for (const Pillar& P : tree.pillars) {
             if (P.on_model || P.merged) continue;
