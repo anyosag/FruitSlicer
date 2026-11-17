@@ -212,14 +212,13 @@ void calibrate(App& app) {
             "Optional · arrives later", col::TextMuted, "Open", false, "The overlap test arrives in a later update.");
     ImGui::Dummy(ImVec2(0, 10));
     groupLabel("Resin test plates · once per resin");
-    text("They replace the borrowed starting values with numbers from your resin. Print them with your usual "
-         "settings.",
+    text("They replace the starting values with numbers from your resin. Print them with your usual settings.",
          fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 2));
     struct Plate {
         const char* kind;
         const char* name;
-        const char* size;  // plateSubtitle's, kept here so the page needn't make all three (checked by a test)
+        const char* size;  // plateSubtitle's, kept here so the page needn't make them all (checked by a test)
         const char* measures;
     };
     const Plate plates[] = {
@@ -227,10 +226,13 @@ void calibrate(App& app) {
         {"spacing", "Spacing", "37 coupons · 19 mm tall",
          "How far apart tips can be on tilted faces, and how steep a face can print without tips."},
         {"islands", "Islands", "36 coupons · 7 mm tall",
-         "How big a spot that starts in mid-air can be before it needs a second or third tip."}};
+         "How big a spot that starts in mid-air can be before it needs a second or third tip."},
+        {"gaps", "Gap", "48 coupons · 18 mm tall",
+         "How close to the model a support can stand without printing stuck to it."}};
+    constexpr int kPlates = static_cast<int>(sizeof(plates) / sizeof(plates[0]));
     const Resin& resin = app.newJobResin();
-    const float pw = std::floor((w - 2 * 12) / 3), ph = 230;
-    for (int i = 0; i < 3; ++i) {
+    const float pw = std::floor((w - (kPlates - 1) * 12) / kPlates), ph = 230;
+    for (int i = 0; i < kPlates; ++i) {
         ImGui::PushID(i);
         beginCard("plate", ImVec2(pw, ph), 16, col::Panel, col::Border);
         text(plates[i].name, fonts().semibold, size::Section + 1, col::Text);
@@ -269,7 +271,7 @@ void calibrate(App& app) {
         if (!saved) tooltip("Save the plate first: FruitSlicer keeps its score sheet from then on.");
         endCard();
         ImGui::PopID();
-        if (i < 2) ImGui::SameLine(0, 12);
+        if (i < kPlates - 1) ImGui::SameLine(0, 12);
     }
     ImGui::Dummy(ImVec2(0, 4));
     {

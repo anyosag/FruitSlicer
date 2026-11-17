@@ -1,0 +1,10 @@
+{
+  "size": [1440, 900],
+  "scale": 1,
+  "steps": [
+    {"screen": "calibrate"}, {"shot": "g11_hub_gap_plate"},
+    {"plate": "gaps"}, {"plate_select": 3}, {"shot": "g11_plate_gaps"},
+    {"plate_save_to": "@demo-stl"},
+    {"score": "gaps"}, {"score_select": 5}, {"shot": "g11_score_gaps"}
+  ]
+}

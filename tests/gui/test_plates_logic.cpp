@@ -70,6 +70,10 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
     CHECK(plateSubtitle(plateOf("tips")) == "48 coupons · 6 mm tall");
     CHECK(plateSubtitle(plateOf("spacing")) == "37 coupons · 19 mm tall");
     CHECK(plateSubtitle(plateOf("islands")) == "36 coupons · 7 mm tall");
+    CHECK(plateSubtitle(plateOf("gaps")) == "48 coupons · 18 mm tall");
+    const auto gaps = plateTests(plateOf("gaps"));
+    REQUIRE(gaps.size() == 5);
+    CHECK(gaps[0] == "Shafts 0.15, 0.2, 0.25, 0.3, 0.4 and 0.5 mm from the model");
 
     const auto tips = plateTests(plateOf("tips"));
     REQUIRE(tips.size() == 4);

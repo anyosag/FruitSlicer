@@ -460,9 +460,14 @@ void score(App& app) {
             return CellLook{r->ok ? held : r->partial ? partly : fell, r->ok ? col::Ok : r->partial ? col::Warn : col::Error};
         });
         if (c) sel = c;
-        swatch(held, "Held");
-        swatch(partly, "Partly");
-        swatch(fell, "Fell off");
+        if (kind == "gaps") {  // a shaft that came off cleanly, or one stuck to the wall
+            swatch(held, "Came off cleanly");
+            swatch(fell, "Stuck");
+        } else {
+            swatch(held, "Held");
+            swatch(partly, "Partly");
+            swatch(fell, "Fell off");
+        }
         swatch(col::Active, "Not scored");
         ImGui::NewLine();
         if (mirrored)
@@ -497,27 +502,38 @@ void score(App& app) {
         text(strf("Row %d, column %d, counting from the L", cell->row + 1, cell->col + 1).c_str(), fonts().regular,
              size::Help, col::TextMuted);
     ImGui::Dummy(ImVec2(0, 4));
-    text("Did it stay on?", fonts().semibold, size::Body, col::Text);
+    // The gap plate asks one thing: did the shaft come off the wall cleanly. No mark to rate.
+    const bool gaps = kind == "gaps";
+    text(gaps ? "Is the shaft stuck to the wall?" : "Did it stay on?", fonts().semibold, size::Body, col::Text);
     const struct {
         App::Outcome o;
         const char* label;
-    } outs[] = {{App::Outcome::Held, "Held"}, {App::Outcome::Partly, "Partly"}, {App::Outcome::FellOff, "Fell off"}};
-    for (int i = 0; i < 3; ++i) {
+    } outs[] = {{App::Outcome::Held, "Held"}, {App::Outcome::Partly, "Partly"}, {App::Outcome::FellOff, "Fell off"}},
+      gap_outs[] = {{App::Outcome::Held, "Came off cleanly"}, {App::Outcome::FellOff, "Stuck"}};
+    const auto* choices = gaps ? gap_outs : outs;
+    const int n_choices = gaps ? 2 : 3;
+    for (int i = 0; i < n_choices; ++i) {
         ImGui::PushID(i);
-        if (segmentButton(outs[i].label, outcome == outs[i].o)) outcome = outs[i].o;
+        if (segmentButton(choices[i].label, outcome == choices[i].o)) outcome = choices[i].o;
         ImGui::PopID();
-        if (i < 2) ImGui::SameLine(0, 4);
+        if (i < n_choices - 1) ImGui::SameLine(0, 4);
     }
-    const char* hint = outcome == App::Outcome::Held     ? "Held: every tip is still attached."
+    const char* hint = gaps ? (outcome == App::Outcome::Held      ? "Came off cleanly: it moves on its own when you push it away."
+                               : outcome == App::Outcome::FellOff ? "Stuck: the wall moves with it, or it's joined to it."
+                                                                  : "Push the shaft away from the wall with a pick. If it "
+                                                                    "moves on its own, it came off cleanly; if the wall "
+                                                                    "moves with it, it stuck.")
+                       : outcome == App::Outcome::Held     ? "Held: every tip is still attached."
                        : outcome == App::Outcome::Partly  ? "Partly: some tips let go."
                        : outcome == App::Outcome::FellOff ? "Fell off: detached or missing. Look on the film for "
                                                             "cured bits."
                                                           : "Held: every tip still on. Partly: some let go. Fell off: "
                                                             "gone, so look on the film for cured bits.";
     text(hint, fonts().regular, size::Help, col::TextMuted, true);
+    const bool can_mark = !gaps && outcome != App::Outcome::FellOff;
+    if (!gaps) {
     ImGui::Dummy(ImVec2(0, 6));
     text("Mark left on the part", fonts().semibold, size::Body, col::Text);
-    const bool can_mark = outcome != App::Outcome::FellOff;
     static const char* const kMarks[] = {"1: can’t see it", "2: faint, only under raking light", "3: a visible mark",
                                          "4: a clear dent or bump", "5: a pit or torn skin"};
     ImGui::BeginDisabled(!can_mark);
@@ -532,6 +548,7 @@ void score(App& app) {
          : scar >= 1 && scar <= 5 ? kMarks[scar - 1]
                                   : "Look under a low, raking light, always at the same magnification.",
          fonts().regular, size::Help, col::TextMuted, true);
+    }
     ImGui::Dummy(ImVec2(0, 6));
     text("Notes", fonts().semibold, size::Body, col::Text);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
@@ -543,7 +560,7 @@ void score(App& app) {
         app.setScore(id, outcome, can_mark ? scar : 0, notes);
         if (const PlateScores* now = app.scores()) sel = nextToScore(*now, id);
     }
-    if (outcome == App::Outcome::None) tooltip("Choose whether it held first.");
+    if (outcome == App::Outcome::None) tooltip(gaps ? "Choose whether it came off cleanly first." : "Choose whether it held first.");
     endCard();
     endPage();
 }
