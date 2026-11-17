@@ -832,6 +832,11 @@ void App::maintain() {
             o.now = *out;
             o.now_revision = rev;
             o.now_settings = settings;
+            // Scored: the guard against scoring this revision again is for a
+            // score that failed. Kept, it would stop the score coming back
+            // after an undo returns to this revision once another (a rotation
+            // used from the search) has replaced it.
+            if (scored_revision_ == rev && scored_settings_ == settings) scored_revision_ = -1;
         });
 }
 
