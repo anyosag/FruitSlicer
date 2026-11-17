@@ -328,7 +328,8 @@ void saveJob(const std::string& path, const Document& doc) {
     if (doc.parts().empty()) throw std::runtime_error("the job has no model");
     json j;
     j["format"] = "fruitslicer-job";
-    j["name"] = doc.name;
+    // The job's name, the file's (Document::name): older FruitSlicers read it.
+    j["name"] = fs::path(path).stem().string();
     // The meshes exactly as the job uses them, one file each.
     std::vector<std::pair<std::string, std::vector<std::uint8_t>>> meshes;
     auto modelJson = [&](const Part& part, const std::string& file) {
@@ -338,8 +339,10 @@ void saveJob(const std::string& path, const Document& doc) {
         return m;
     };
     if (doc.partCount() == 1) {
-        // One part: as before, so older FruitSlicers open it.
+        // One part: as before, so older FruitSlicers open it. Its name is the
+        // one there is, "name" (see openJob).
         const Part& part = doc.parts().front();
+        j["name"] = part.name();
         // Older FruitSlicers would open a moved or mirrored job as if it were not.
         const fruit::Placement& p = part.placement();
         j["version"] = p.mirrored() ? kVersion : p.centred() ? 1 : 2;
@@ -522,7 +525,8 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
     auto doc = std::make_shared<Document>();
     out.doc = doc;
     doc->job_path = path;
-    doc->name = j.value("name", fs::path(path).stem().string());
+    // Named after its file, whatever it was called when saved (Document::name).
+    doc->name = fs::path(path).stem().string();
     doc->printer = printer;
     // The parts: one ("model", "placement") or several ("parts").
     struct Saved {
@@ -549,7 +553,7 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
             saved.push_back(std::move(s));
         }
     } else {
-        Saved s = readPart(j.at("model"), j.at("placement"), doc->name);
+        Saved s = readPart(j.at("model"), j.at("placement"), j.value("name", doc->name));
         s.orient = j.value("orient", json::object());
         saved.push_back(std::move(s));
     }
@@ -800,10 +804,13 @@ std::vector<RecentJob> loadRecentJobs(const std::string& file) {
         const json j = json::parse(in);
         std::vector<RecentJob> out;
         for (const auto& e : j.value("jobs", json::array()))
-            if (e.is_object() && !e.value("path", "").empty())
-                out.push_back({e.value("path", ""), e.value("name", ""), e.value("state", ""), e.value("when", ""),
+            if (e.is_object() && !e.value("path", "").empty()) {
+                const std::string path = e.value("path", "");
+                // Named after its file, as it opens (Document::name), whatever was remembered.
+                out.push_back({path, fs::path(path).stem().string(), e.value("state", ""), e.value("when", ""),
                                e.value("parts", 0), e.value("on_plate", false), e.value("tips", -1L),
                                e.value("support_ml", -1.0)});
+            }
         return out;
     } catch (const std::exception&) {
         return {};

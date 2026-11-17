@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Layers.h"
@@ -157,7 +158,13 @@ public:
     Document(Document&&) = default;
     Document& operator=(Document&&) = default;
 
-    std::string name;            // the job's: its first model's file name without folder and extension
+    // The job's name. A job opened or saved takes its file's name (without
+    // folder and extension); a new one its first model's. It stays while a
+    // part carries it: one named so, or so and more after a space (a copy, a
+    // piece cut or split off). When the parts change and none carries it any
+    // more, the job takes its first part's name, and a saved one becomes a new
+    // job (its file is left as it was). Undo brings both back.
+    std::string name;
     std::size_t low_points = 0;  // mid-air spots of the first part as first placed (the health dialog)
     fruit::PrinterProfile printer;
     HollowState hollow;
@@ -171,6 +178,11 @@ public:
     // height correction.
     bool layersFresh() const;
     bool unsaved() const { return !saved || !(*saved == stamp()); }
+    // Saved to `path` as it was at `stamp`: the job is that file now, and
+    // named after it.
+    void savedTo(const std::string& path, JobStamp stamp);
+    // What the Job screen's header says under the name.
+    const char* savedState() const { return job_path.empty() ? "Not saved" : unsaved() ? "Edited since saving" : "Saved"; }
 
     // ---- The parts (see Parts.h) ----
     const std::vector<Part>& parts() const { return parts_; }
@@ -292,12 +304,20 @@ public:
     void clearHistory();
 
 private:
+    // The job's name and file (see `name`).
+    struct Named {
+        std::string name, job_path;
+        bool operator==(const Named&) const = default;
+    };
     struct Snapshot {
         std::vector<Part> parts;  // without their placed meshes
         int selected = 0;
         int revision = 0;
         JobLift base;
+        // The step from here named the job after its parts: from, to.
+        std::optional<std::pair<Named, Named>> renamed;
     };
+    bool nameCarried() const;  // some part carries the job's name
     Snapshot snapshot() const;
     void restore(Snapshot s);
     void record(Snapshot before);         // an undo step

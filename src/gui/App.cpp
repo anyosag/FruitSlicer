@@ -256,8 +256,7 @@ void App::saveJobTo(const std::string& path, std::function<void()> then) {
             }
             const auto d = target.lock();
             if (!d) return;
-            d->job_path = path;
-            d->saved = stamp;
+            d->savedTo(path, stamp);
             log::info("job saved: " + path);
             remember(*d);
             if (then) then();

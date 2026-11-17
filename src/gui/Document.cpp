@@ -229,18 +229,31 @@ void Document::mirror(int axis) {
 
 void Document::undo() {
     if (undo_.empty() || dragging()) return;
-    redo_.push_back(snapshot());
     Snapshot u = std::move(undo_.back());
     undo_.pop_back();
+    Snapshot now = snapshot();
+    now.renamed = u.renamed;  // redoing the step names it so again
+    redo_.push_back(std::move(now));
+    // The name and file it had, unless it was saved or renamed since.
+    if (u.renamed && Named{name, job_path} == u.renamed->second) {
+        name = u.renamed->first.name;
+        job_path = u.renamed->first.job_path;
+    }
     restore(std::move(u));
     prepare();
 }
 
 void Document::redo() {
     if (redo_.empty() || dragging()) return;
-    undo_.push_back(snapshot());
     Snapshot r = std::move(redo_.back());
     redo_.pop_back();
+    Snapshot now = snapshot();
+    now.renamed = r.renamed;
+    undo_.push_back(std::move(now));
+    if (r.renamed && Named{name, job_path} == r.renamed->first) {
+        name = r.renamed->second.name;
+        job_path = r.renamed->second.job_path;
+    }
     restore(std::move(r));
     prepare();
 }
@@ -328,6 +341,7 @@ bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
         return false;
     }
     Snapshot before = snapshot();
+    const bool carried = nameCarried();
     std::vector<Part> parts;
     parts.reserve(now.size());
     for (PartState& s : now) {
@@ -348,9 +362,27 @@ bool Document::editParts(const std::function<void(PartsEdit&)>& fn) {
     if (const int i = partIndex(e.selected); i >= 0) selected_ = i;
     if (shape) revision_ = ++last_revision_;
     changed();
+    // None of the parts it was named after is left: named after its first
+    // part, a new job (a saved one's file stays as it was).
+    if (carried && !nameCarried() && !parts_.front().name().empty()) {
+        const Named from{name, job_path};
+        name = parts_.front().name();
+        job_path.clear();
+        before.renamed = std::pair{from, Named{name, job_path}};
+    }
     record(std::move(before));
     prepare();
     return true;
+}
+
+bool Document::nameCarried() const {
+    if (name.empty()) return false;
+    for (const Part& p : parts_) {
+        const std::string& n = p.name();
+        if (n == name || (n.size() > name.size() && n.compare(0, name.size(), name) == 0 && n[name.size()] == ' '))
+            return true;
+    }
+    return false;
 }
 
 void Document::previewParts(const std::function<void(PartsEdit&)>& fn) {
@@ -426,6 +458,12 @@ void Document::replaceParts(std::vector<NewPart> parts) {
 int newGeometryId() {
     static std::atomic<int> next_id{1};
     return next_id++;
+}
+
+void Document::savedTo(const std::string& path, JobStamp stamp) {
+    job_path = path;
+    name = std::filesystem::path(path).stem().string();
+    saved = std::move(stamp);
 }
 
 bool Document::layersFresh() const {
