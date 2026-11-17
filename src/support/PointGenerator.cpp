@@ -3,6 +3,7 @@
 #include "support/PointGenerator.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -1380,16 +1381,52 @@ void Generator::finalize() {
         m.precision(3);
         if (h.kind == HollowKind::SuctionCup) {
             ++st.suction_cups;
-            m << "suction cup: " << h.volume << " mm³ pocket (z " << z0 << "–" << z1
-              << ") is closed towards the plate and open towards the film, so each peel pulls a vacuum; "
-              << "add a vent hole near z " << z0 << " or turn the opening towards the plate";
-            warn("suction_cup", m.str(), h.first_layer, {h.center.x, h.center.y, z0});
+            const CupMeasures& c = h.cup;
+            const CupGrade g = gradeCup(c, h.layers(), {cfg_.cup_note_below, cfg_.cup_problem_from, cfg_.cup_deep_layers});
+            auto num = [](double v, int decimals) {
+                char b[32];
+                std::snprintf(b, sizeof b, "%.*f", decimals, v);
+                return std::string(b);
+            };
+            m << "suction cup (" << gradeName(g) << "): " << num(c.open_area, 0) << " mm² open towards the film on "
+              << h.layers() << " layers (z " << num(z0, 2) << "–" << num(z1, 2) << "), " << std::lround(100 * c.share)
+              << " % of the " << num(c.cured_around, 0) << " mm² cured round it";
+            if (c.channel()) m << "; a groove " << num(c.width, 1) << " mm wide";
+            else m << "; " << num(c.across, 1) << " mm across";
+            if (c.wall >= 0) m << ", " << num(c.wall, 1) << " mm from the outside";
+            if (h.first_layer == 0) m << "; the plate is its floor and seals it";
+            else if (c.floor_on_plate) m << "; its floor stands on the plate, which seals a hole down through it";
+            if (c.channel() && c.wall >= 0)
+                m << ". A notch through that wall lets resin in from the side";
+            else if (!c.floor_on_plate)
+                m << ". A vent hole up through its floor lets resin in, or turn the opening towards the plate";
+            else
+                m << ". A hole through its thinnest side wall at its floor lets resin in, or turn the opening "
+                     "towards the plate";
+            const std::string code = g == CupGrade::Problem   ? "suction_cup"
+                                     : g == CupGrade::Warning ? "suction_cup_warning"
+                                                              : "suction_cup_note";
+            Warning w{code, m.str(), h.first_layer,
+                      {h.inside.x, h.inside.y, 0.5 * (z0 + z1)}, {}};
+            w.values = {{"open_mm2", c.open_area},     {"cured_mm2", c.cured_around}, {"share", c.share},
+                        {"layers", h.layers()},        {"z0", z0},                    {"z1", z1},
+                        {"width", c.width},            {"length", c.length},          {"across", c.across},          {"wall", c.wall},
+                        {"wall_x", c.wall_at.x},       {"wall_y", c.wall_at.y},       {"on_plate", c.floor_on_plate},
+                        {"volume", h.volume},          {"x0", h.box.min.x},           {"y0", h.box.min.y},
+                        {"x1", h.box.max.x},           {"y1", h.box.max.y},           {"ix", h.inside.x},
+                        {"iy", h.inside.y},            {"wz", 0.5 * (z0 + z1)}};
+            result_.warnings.push_back(std::move(w));
         } else {
             ++st.resin_traps;
             m << "resin trap: closed cavity of " << h.volume << " mm³ (z " << z0 << "–" << z1
               << ") keeps uncured resin inside and builds pressure as it closes; add drain holes. "
               << "Its ceiling cannot be supported";
-            warn("resin_trap", m.str(), h.first_layer, {h.center.x, h.center.y, z0});
+            Warning w{"resin_trap", m.str(), h.first_layer, {h.center.x, h.center.y, z0}, {}};
+            // Where it is, so the app knows it again (one the user accepted).
+            w.values = {{"z0", z0},          {"z1", z1},          {"volume", h.volume}, {"x0", h.box.min.x},
+                        {"y0", h.box.min.y}, {"x1", h.box.max.x}, {"y1", h.box.max.y},  {"ix", h.center.x},
+                        {"iy", h.center.y},  {"wz", z0}};
+            result_.warnings.push_back(std::move(w));
         }
     }
     if (cavity_skipped_ > 0) {

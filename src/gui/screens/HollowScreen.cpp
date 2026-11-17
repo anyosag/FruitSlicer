@@ -19,21 +19,43 @@ namespace gui::screens::parts {
 
 namespace {
 
-// A cavity's card: what it is, how big and where, and what it does as it is.
-void cavityCard(const char* id, const fruit::Cavity& c, double layer_height) {
-    beginCard(id, ImVec2(0, 0), 14, col::WarnBg, col::WarnBorder);
+// A cavity's card: what it is, how big and where, what it does as it is,
+// how hard a suction cup pulls and the fix that fits it, and "Accept for
+// this model". Amber while it counts as a problem or is a warning.
+void cavityCard(App& app, const Document& doc, const HollowPlan& plan, bool fresh, std::size_t i) {
+    const fruit::Cavity& c = plan.closed.cavities[i];
+    const bool accepted = plan.isAccepted(i);
+    const fruit::CupGrade g = plan.grade(i);
+    const bool amber = !accepted && g != fruit::CupGrade::Note;
+    ImGui::PushID(static_cast<int>(i));
+    beginCard("own", ImVec2(0, 0), 14, amber ? col::WarnBg : col::Card, amber ? col::WarnBorder : col::Border);
     const float w = ImGui::GetContentRegionAvail().x;
     const ImVec2 p = ImGui::GetCursorScreenPos();
     text(c.opens_up ? "Open hollow" : "Closed hollow", fonts().semibold, size::Body, col::Text);
-    const std::string kind = cavityKind(c, false);
+    const std::string kind = cavityGradeText(plan, i);
     ImGui::PushFont(fonts().semibold, size::Body);
     const float kw = ImGui::CalcTextSize(kind.c_str()).x;
-    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + w - kw, p.y), col::Warn, kind.c_str());
+    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + w - kw, p.y), amber ? col::Warn : col::TextSecondary, kind.c_str());
     ImGui::PopFont();
-    const ImU32 body = IM_COL32(0xE6, 0xD9, 0xA8, 255);
-    text(cavityFacts(c, layer_height).c_str(), fonts().regular, size::Body, body);
+    const ImU32 body = amber ? IM_COL32(0xE6, 0xD9, 0xA8, 255) : col::TextSecondary;
+    text((cavityFacts(c, plan.layer_height) + strf(" · %d layers", c.last_layer - c.first_layer + 1)).c_str(),
+         fonts().regular, size::Body, body);
     text(cavityMeaning(c, false).c_str(), fonts().regular, size::Body, body, true);
+    if (const std::string pull = cavityPull(c, g, cupLimits(doc)); !pull.empty())
+        text(pull.c_str(), fonts().regular, size::Body, body, true);
+    if (const std::string fix = cavityFix(c); !fix.empty()) text(fix.c_str(), fonts().regular, size::Body, body, true);
+    ImGui::Dummy(ImVec2(0, 2));
+    if (accepted) {
+        text("Accepted for this job: it prints as it is, not counted as a problem. Holes and filling leave it.",
+             fonts().regular, size::Help, col::TextMuted, true);
+        if (linkButton("Take it back") && fresh) app.acceptHollow(i, false);
+    } else {
+        if (secondaryButton("Accept for this model", ImVec2(0, 0), fresh)) app.acceptHollow(i, true);
+        tooltip("Prints it as it is. Saved with this job: not counted as a problem, kept as a note. Holes and "
+                "filling leave it. If the hollow changes, it shows again.");
+    }
     endCard();
+    ImGui::PopID();
     ImGui::Dummy(ImVec2(0, 2));
 }
 
@@ -109,8 +131,7 @@ void hollowPanel(App& app, Document& doc) {
              size::Body, col::TextSecondary, true);
         endCard();
     } else {
-        for (std::size_t i = 0; i < plan->closed.cavities.size(); ++i)
-            cavityCard(strf("own%zu", i).c_str(), plan->closed.cavities[i], plan->layer_height);
+        for (std::size_t i = 0; i < plan->closed.cavities.size(); ++i) cavityCard(app, doc, *plan, fresh != nullptr, i);
     }
     bool own = plan && !plan->closed.cavities.empty();
     if (!plan)
@@ -134,8 +155,9 @@ void hollowPanel(App& app, Document& doc) {
                !c.hollow && c.fix == F::Holes, false, F::Holes);
         option("fix_fill", "Fill it", "Print it solid: more resin, no trap.", !c.hollow && c.fix == F::Fill, false,
                F::Fill);
-        option("fix_leave", "Leave it", "Shown as a problem before saving.", !c.hollow && c.fix == F::Leave, false,
-               F::Leave);
+        option("fix_leave", "Leave it",
+               "Shown as a problem before saving, unless it is only a note or a warning, or you accept it above.",
+               !c.hollow && c.fix == F::Leave, false, F::Leave);
         option("fix_hollow", "Hollow the whole model",
                "Take the inside out, keeping a wall all round. This hollow goes with the rest.", c.hollow, true,
                c.fix);
@@ -266,6 +288,25 @@ void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const fl
             dl->AddText(ImVec2(a.x - ts.x / 2, a.y - ts.y / 2), l.ok ? col::TextSecondary : col::Warn, l.title.c_str());
         }
         ImGui::PopFont();
+        // Where a notch would let a groove's resin in from the side.
+        if (!p.hollowing()) {
+            ImGui::PushFont(fonts().regular, size::Help);
+            for (std::size_t i = 0; i < p.closed.cavities.size(); ++i) {
+                const fruit::Cavity& k = p.closed.cavities[i];
+                const bool drains = hs.applied && i < p.drains.size() && p.drains[i];
+                if (!k.opens_up || !k.cup.channel() || k.cup.wall < 0 || p.isAccepted(i) || drains) continue;
+                const double z = (k.first_layer + k.last_layer + 1) * p.layer_height / 2;
+                ImVec2 a;
+                if (!project({k.cup.wall_at.x, k.cup.wall_at.y, z}, &a)) continue;
+                const std::string label = strf("a notch here · %.1f mm wall", k.cup.wall);
+                dl->AddCircle(a, 6, col::Warn, 20, 2.0f);
+                const ImVec2 lp(a.x + 12, a.y - 8), ls = ImGui::CalcTextSize(label.c_str());
+                dl->AddRectFilled(ImVec2(lp.x - 6, lp.y - 3), ImVec2(lp.x + ls.x + 6, lp.y + ls.y + 3),
+                                  IM_COL32(0x0E, 0x10, 0x14, 210), 6);
+                dl->AddText(lp, col::TextSecondary, label.c_str());
+            }
+            ImGui::PopFont();
+        }
         // The holes, where they go in.
         const PartFrames frames = doc.frames();
         ImGui::PushFont(fonts().regular, size::Help);

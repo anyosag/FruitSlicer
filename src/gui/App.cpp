@@ -909,12 +909,14 @@ void App::planHollowPreview() {
     const HollowState& hs = doc_->hollow;
     const int rev = doc_->revision();
     if (hs.planFresh(rev)) return;
-    if (hollow_tried_revision_ == rev && hollow_tried_choices_ == hs.choices && hollow_tried_manual_ == hs.manual)
+    if (hollow_tried_revision_ == rev && hollow_tried_choices_ == hs.choices && hollow_tried_manual_ == hs.manual &&
+        hollow_tried_accepted_ == hs.accepted)
         return;  // being made, or it failed
     if (jobs_.busy() && !planningHollow() && !checkingCollisions() && !checkingRisk()) return;
     hollow_tried_revision_ = rev;
     hollow_tried_choices_ = hs.choices;
     hollow_tried_manual_ = hs.manual;
+    hollow_tried_accepted_ = hs.accepted;
     const int generation = ++hollow_generation_;
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<HollowPlan>();
@@ -975,6 +977,24 @@ void App::addHoleAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
     doc_->hollow.manual.push_back(h);
     if (doc_->hollow.applied) ++doc_->hollow.settings;
     planHollowPreview();
+}
+
+bool App::acceptHollow(std::size_t i, bool accept) {
+    if (!doc_) return false;
+    HollowState& hs = doc_->hollow;
+    if (!hs.planFresh(doc_->revision()) || i >= hs.plan->closed.cavities.size()) return false;
+    const HollowPlan& p = *hs.plan;
+    const PartFrames frames = doc_->frames();
+    std::vector<AcceptedHollow> next;
+    for (const AcceptedHollow& a : hs.accepted)
+        if (!acceptedIs(a, p.closed, i, frames, p.layer_height)) next.push_back(a);  // drop what is there for it
+    if (accept) next.push_back(acceptedFor(*doc_, p, i));
+    if (next == hs.accepted) return true;
+    hs.accepted = std::move(next);
+    // Holes and filling now leave it (or take it back): what prints changes.
+    if (hs.applied) ++hs.settings;
+    planHollowPreview();
+    return true;
 }
 
 void App::removeHole(int index) {

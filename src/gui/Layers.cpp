@@ -19,6 +19,22 @@ std::size_t LayerResult::cups() const {
                                                   [](const auto& c) { return c.kind == fruit::HollowKind::SuctionCup; }));
 }
 
+std::size_t LayerResult::hollowProblems(const Document& doc) const {
+    if (!layers) return 0;
+    const fruit::CupLimits limits = cupLimits(doc);
+    const PartFrames frames = doc.frames();
+    std::size_t n = 0;
+    for (const fruit::HollowComponent& c : hollows.components) {
+        if (c.kind == fruit::HollowKind::SuctionCup && fruit::gradeCup(c.cup, c.layers(), limits) != fruit::CupGrade::Problem)
+            continue;
+        bool accepted = false;
+        for (const AcceptedHollow& a : doc.hollow.accepted)
+            accepted = accepted || acceptedIs(a, c, layers->layer_height, frames);
+        n += !accepted;
+    }
+    return n;
+}
+
 std::size_t LayerResult::traps() const {
     return static_cast<std::size_t>(std::count_if(hollows.components.begin(), hollows.components.end(),
                                                   [](const auto& c) { return c.kind == fruit::HollowKind::ResinTrap; }));
@@ -57,6 +73,10 @@ LayerResult sliceLayers(const Document& doc, const fruit::TriangleMesh& supports
         if (r.area[i] > r.area[r.biggest]) r.biggest = i;
     ctl.step("hollows", 0.8);
     r.hollows = fruit::analyzeHollows(*ls);
+    // A pocket within the raft's own layers is left out: the plate holds the
+    // raft, and nothing of the model is in it.
+    std::erase_if(r.hollows.components,
+                  [&](const fruit::HollowComponent& c) { return static_cast<std::size_t>(c.last_layer) < r.raft_layers; });
     for (const auto& c : r.hollows.components) r.marks.push_back(static_cast<std::size_t>(std::max(0, c.first_layer)));
     if (!r.area.empty()) r.marks.push_back(r.biggest);
     std::sort(r.marks.begin(), r.marks.end());

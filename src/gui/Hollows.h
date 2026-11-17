@@ -15,6 +15,7 @@
 #include "layers/Drain.h"
 #include "layers/Hollow.h"
 #include "layers/LayerStack.h"
+#include "support/SupportPoint.h"
 
 namespace gui {
 
@@ -37,10 +38,29 @@ struct HollowChoices {
     bool operator==(const HollowChoices&) const = default;
 };
 
+// A hollow chosen to print as it is ("Accept for this model"), kept with
+// the job: a point inside it in its part's coordinates, and how big it was.
+// A hollow found later is the same one when that point is inside it, it is
+// still a suction cup (or still a resin trap) and its volume is within a
+// third of this; one that changed shows again.
+struct AcceptedHollow {
+    int part = 0;           // the app's part id
+    fruit::Vec3 at;         // part coordinates
+    double volume = 0;      // mm³
+    bool cup = false;       // a suction cup (else a resin trap)
+    bool operator==(const AcceptedHollow&) const = default;
+};
+
 // The model as it will print with those choices.
 struct HollowPlan {
     HollowChoices choices;
     std::vector<fruit::DrainHole> manual;             // the hand-placed holes it was made with
+    std::vector<AcceptedHollow> accepted_with;        // and the hollows accepted then
+    // For each of closed.cavities: accepted (it prints as it is, whatever
+    // the fix), and how a suction cup is graded (a resin trap: Problem).
+    std::vector<char> accepted;
+    std::vector<fruit::CupGrade> grades;
+    fruit::HollowResult fixing;                       // `closed` less the accepted: what holes and filling work on
     double layer_height = 0;
     std::shared_ptr<const fruit::LayerStack> solid;   // the placed model, sliced
     fruit::HollowResult closed;                       // its own hollows that hold resin
@@ -58,6 +78,11 @@ struct HollowPlan {
     bool drilling() const { return choices.hollow || choices.fix == HollowChoices::Fix::Holes; }
     bool filling() const { return !choices.hollow && choices.fix == HollowChoices::Fix::Fill; }
     std::size_t undrained() const;  // cavities that still hold resin
+    // The model's own hollows that count as problems: not drained, not
+    // accepted, and a resin trap or a suction cup graded a problem.
+    std::size_t toFix() const;
+    bool isAccepted(std::size_t i) const { return i < accepted.size() && accepted[i]; }
+    fruit::CupGrade grade(std::size_t i) const { return i < grades.size() ? grades[i] : fruit::CupGrade::Problem; }
     std::size_t missed() const;     // holes that reach no cavity (not drilled)
     // Whether anything prints but the model as it is.
     bool changes() const { return layers && layers != solid; }
@@ -78,9 +103,29 @@ std::vector<fruit::PlacedHole> placeHoles(const std::vector<fruit::DrainHole>& h
 // with this much room around its edge.
 inline constexpr double kHoleMouthMargin = 0.5;  // mm
 
+// Whether `a` is cavity `i` of `closed`, sliced at `layer_height` with the
+// parts placed as `frames` has them.
+bool acceptedIs(const AcceptedHollow& a, const fruit::HollowResult& closed, std::size_t i, const PartFrames& frames,
+                double layer_height);
+// Whether `a` is the suction cup a support warning describes (its "values":
+// the cup's box, heights and volume), the parts placed as `frames` has them.
+bool acceptedIs(const AcceptedHollow& a, const fruit::Warning& w, const PartFrames& frames);
+// Whether `a` is hollow `c` found on slices `layer_height` apart.
+bool acceptedIs(const AcceptedHollow& a, const fruit::HollowComponent& c, double layer_height, const PartFrames& frames);
+// The fingerprint to keep for cavity `i` of p.closed.
+AcceptedHollow acceptedFor(const Document& doc, const HollowPlan& p, std::size_t i);
+// How the job grades suction cups: the Advanced settings' limits.
+fruit::CupLimits cupLimits(const Document& doc);
+
 // Words for the screen.
 // "Resin trap", "Suction cup", "Hollowed".
 std::string cavityKind(const fruit::Cavity& c, bool hollowed);
+// "Suction cup · note"; "Resin trap"; "Suction cup · accepted".
+std::string cavityGradeText(const HollowPlan& p, std::size_t i);
+// What its numbers say: how much harder it pulls, and the limit that grades it.
+std::string cavityPull(const fruit::Cavity& c, fruit::CupGrade g, const fruit::CupLimits& l);
+// A fix that fits its shape (empty for a resin trap).
+std::string cavityFix(const fruit::Cavity& c);
 // "9.1 ml · from 7.0 to 33.0 mm".
 std::string cavityFacts(const fruit::Cavity& c, double layer_height);
 // What it does to the print, as it is.

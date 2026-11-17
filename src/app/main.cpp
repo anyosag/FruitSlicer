@@ -420,9 +420,11 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
                   {"peak_layer", st.peak_layer},
                   {"seconds", st.seconds}};
     json warnings = json::array();
-    for (const auto& w : res.warnings)
-        warnings.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer},
-                            {"at", {w.where.x, w.where.y, w.where.z}}});
+    for (const auto& w : res.warnings) {
+        json one = {{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"at", {w.where.x, w.where.y, w.where.z}}};
+        if (!w.values.empty()) one["values"] = w.values;
+        warnings.push_back(one);
+    }
     r["warnings"] = warnings;
     r["output"] = o.out;
     if (!o.report.empty()) std::ofstream(o.report) << r.dump(2) << "\n";

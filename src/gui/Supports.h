@@ -226,6 +226,8 @@ struct AdvancedSetting {
 const std::vector<AdvancedSetting>& advancedSettings();
 // The key of the usual tip size, which lives in SupportChoices::usual_tip.
 inline constexpr const char* kUsualTipKey = "usual_tip";
+// How suction cups are graded with `c`'s Advanced values.
+fruit::CupLimits cupLimitsOf(const SupportChoices& c);
 // Applies `values` (clamped to each field's range) over `cfg` and `tc`.
 void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportConfig& cfg, fruit::TreeConfig& tc);
 // Whether the row holds a value of the user's own.
@@ -291,7 +293,8 @@ struct SupportCheck {
 
 // Something to look at, grouped by kind. Blocking ones stop saving.
 struct SupportProblem {
-    enum class Level { Blocks, Review, Note };
+    // Warn: worth a look, but not counted as a problem (a suction cup graded a warning).
+    enum class Level { Blocks, Review, Warn, Note };
     Level level = Level::Review;
     std::string code;     // the engine's warning code
     std::string title;    // plain words
@@ -300,6 +303,9 @@ struct SupportProblem {
     std::size_t count = 0;
     bool has_where = false;
     fruit::Vec3 where;    // printer coordinates of the first one
+    // Suction cups and resin traps: each one's warning, so one you accept
+    // on the Hollow screen moves to "Hollows you accepted" (problemsNow).
+    std::vector<fruit::Warning> hollows;
 };
 
 // The tip planner's part: its own tips and what it warned about. Given hand
@@ -482,5 +488,11 @@ int supportStage(const std::string& engine_stage, double fraction);
 std::string tipKind(const fruit::SupportPoint& p);
 std::string tipWhy(const fruit::SupportPoint& p);
 std::string tipNumbers(const fruit::SupportPoint& p, const fruit::SupportConfig& cfg, const fruit::TreeConfig& tc);
+
+// r.problems as they stand now: the hollows accepted on the Hollow screen
+// since the supports were made moved to a note of their own, and each
+// suction cup's card with its numbers.
+std::vector<SupportProblem> problemsNow(const Document& doc, const SupportResult& r);
+std::size_t countOf(const std::vector<SupportProblem>& problems, SupportProblem::Level l);
 
 }  // namespace gui

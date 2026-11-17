@@ -164,8 +164,11 @@ json planJson(const Document& doc, const SupportPlan& plan, bool on_plate) {
     if (on_plate) j["held_layers"] = {plan.held_min, plan.held_max};
     j["planned_around"] = editsJson(doc, plan.edits);  // the edits the planner worked around
     json ws = json::array();
-    for (const auto& w : plan.warnings)
-        ws.push_back({{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}});
+    for (const auto& w : plan.warnings) {
+        json one = {{"code", w.code}, {"message", w.message}, {"layer", w.layer}, {"where", vec(w.where)}};
+        if (!w.values.empty()) one["values"] = w.values;  // a suction cup's numbers
+        ws.push_back(one);
+    }
     j["warnings"] = ws;
     return j;
 }
@@ -189,6 +192,9 @@ SupportPlan planFrom(const Document& doc, const json& j, bool on_plate) {
         wn.message = w.value("message", "");
         wn.layer = w.value("layer", -1);
         if (w.contains("where")) wn.where = vecFrom(w["where"]);
+        if (const auto v = w.find("values"); v != w.end() && v->is_object())
+            for (const auto& [k, x] : v->items())
+                if (x.is_number()) wn.values[k] = x.get<double>();
         plan.warnings.push_back(wn);
     }
     return plan;
@@ -444,6 +450,16 @@ void saveJob(const std::string& path, const Document& doc) {
                    {"hole_diameter", hc.hole_diameter},
                    {"auto_holes", hc.auto_holes},
                    {"holes", holes}};
+    // Hollows accepted to print as they are, each as a point inside it in its part's coordinates.
+    json accepted = json::array();
+    for (const AcceptedHollow& a : hs.accepted) {
+        const int slot = partSlot(doc, a.part);
+        if (slot < 0) continue;
+        json x = {{"at", vec(a.at)}, {"volume", a.volume}, {"kind", a.cup ? "suction_cup" : "resin_trap"}};
+        if (doc.partCount() > 1) x["part"] = slot;
+        accepted.push_back(std::move(x));
+    }
+    if (!accepted.empty()) j["hollow"]["accepted"] = std::move(accepted);
     const PrintSettings& s = doc.print.settings;
     j["print"] = {{"exposure", s.exposure},
                   {"bottom_exposure", s.bottom_exposure},
@@ -648,6 +664,12 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
         hc.ceiling_lean = hj.value("ceiling_lean", hc.ceiling_lean);
         hc.hole_diameter = hj.value("hole_diameter", hc.hole_diameter);
         hc.auto_holes = hj.value("auto_holes", true);
+        for (const auto& a : hj.value("accepted", json::array())) {
+            const int part = partFrom(*doc, a);
+            if (part < 0) throw std::runtime_error("the job has an accepted hollow on a part it doesn't have");
+            hs.accepted.push_back({part, vecFrom(a.at("at")), a.value("volume", 0.0),
+                                   a.value("kind", std::string("suction_cup")) == "suction_cup"});
+        }
         for (const auto& h : hj.value("holes", json::array())) {
             const int part = partFrom(*doc, h);
             if (part < 0) throw std::runtime_error("the job has a drain hole on a part it doesn't have");

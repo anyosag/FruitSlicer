@@ -241,7 +241,10 @@ void collectCavities(std::vector<Paths>& in, double layer_height, double min_vol
             if (volume[root] < min_volume) continue;
             if (index[root] < 0) {
                 index[root] = static_cast<int>(cavities.size());
-                cavities.push_back({static_cast<int>(j), static_cast<int>(j), volume[root]});
+                Cavity c;
+                c.first_layer = c.last_layer = static_cast<int>(j);
+                c.volume = volume[root];
+                cavities.push_back(c);
             }
             cavities[index[root]].last_layer = static_cast<int>(j);
             layer_pieces[j].push_back({static_cast<uint32_t>(in[j].size()),
@@ -385,6 +388,42 @@ HollowResult closedHollows(const LayerStack& layers, double min_volume) {
             if (!r.cavities[k.cavity].opens_up && !nothing(intersection(r.piece(j, k), report.cup_regions[j])))
                 r.cavities[k.cavity].opens_up = true;
     }
+    // Each cavity's own measures: those of the hollow it is (the cup that
+    // pulls hardest, when several make one).
+    for (const HollowComponent& h : report.components) {
+        if (h.inside_layer < 0) continue;
+        const int k = r.cavityAt(static_cast<size_t>(h.inside_layer), h.inside);
+        if (k < 0) continue;
+        Cavity& c = r.cavities[static_cast<size_t>(k)];
+        const bool cup = h.kind == HollowKind::SuctionCup;
+        if (c.inside_layer < 0 || (cup && h.cup.share > c.cup.share)) {
+            c.inside = h.inside;
+            c.inside_layer = h.inside_layer;
+            if (cup) c.cup = h.cup;
+        }
+    }
+    return r;
+}
+
+HollowResult keepCavities(const HollowResult& h, const std::vector<char>& keep) {
+    HollowResult r;
+    std::vector<int> to(h.cavities.size(), -1);
+    for (size_t i = 0; i < h.cavities.size(); ++i)
+        if (i < keep.size() && keep[i]) {
+            to[i] = static_cast<int>(r.cavities.size());
+            r.cavities.push_back(h.cavities[i]);
+            r.volume += h.cavities[i].volume;
+        }
+    r.interior.resize(h.interior.size());
+    r.pieces.resize(h.pieces.size());
+    for (size_t j = 0; j < h.pieces.size(); ++j)
+        for (const InteriorPiece& k : h.pieces[j]) {
+            if (k.cavity < 0 || to[static_cast<size_t>(k.cavity)] < 0) continue;
+            const auto begin = static_cast<uint32_t>(r.interior[j].size());
+            r.interior[j].insert(r.interior[j].end(), h.interior[j].begin() + k.begin,
+                                 h.interior[j].begin() + k.begin + k.count);
+            r.pieces[j].push_back({begin, k.count, to[static_cast<size_t>(k.cavity)]});
+        }
     return r;
 }
 

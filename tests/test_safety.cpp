@@ -157,6 +157,112 @@ TEST_CASE("hollows: a groove round a solid block holds the groove's resin, not i
     }
 }
 
+TEST_CASE("suction cups are graded by their open area against the layer cured round them", "[safety]") {
+    // The groove: 184 mm² open against 1200 − 184 = 1016 mm² cured, 2 mm
+    // wide and 5 mm from the outside. Standing on the plate, its floor does.
+    {
+        TriangleMesh m = ringGroove(false);
+        placeOnPlate(m, {0, 0, 0}, 0);
+        const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+        REQUIRE(r.components.size() == 1);
+        const CupMeasures& c = r.components[0].cup;
+        CHECK(c.open_area == Approx(184).epsilon(0.01));
+        CHECK(c.cured_around == Approx(1016).epsilon(0.01));
+        CHECK(c.share == Approx(184.0 / 1016).epsilon(0.01));
+        CHECK(c.width == Approx(2).margin(0.02));
+        CHECK(c.channel());
+        CHECK(c.wall == Approx(5).margin(0.02));
+        CHECK(c.floor_on_plate);
+        CHECK(gradeCup(c, r.components[0].layers()) == CupGrade::Note);
+        // Its point inside is in the groove, not in the block it runs round.
+        const Vec2 p = r.components[0].inside;
+        const bool in_block = std::abs(p.x) < 13 - 0.01 && std::abs(p.y) < 8 - 0.01;
+        CHECK_FALSE(in_block);
+    }
+    // Lifted off the plate on supports: a hole up through its floor would do.
+    {
+        TriangleMesh m = ringGroove(false);
+        placeOnPlate(m, {0, 0, 0}, 5);
+        const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+        REQUIRE(r.components.size() == 1);
+        CHECK_FALSE(r.components[0].cup.floor_on_plate);
+    }
+    // A cup: 256 mm² open against 144 mm² of walls. Not a channel.
+    {
+        TriangleMesh m = cup(true);
+        placeOnPlate(m, {0, 0, 0}, 5);
+        const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+        REQUIRE(r.components.size() == 1);
+        const CupMeasures& c = r.components[0].cup;
+        CHECK(c.share == Approx(256.0 / 144).epsilon(0.01));
+        CHECK(c.across == Approx(16).margin(0.02));
+        CHECK(c.width == Approx(8).margin(0.02));  // twice 256 mm² over 64 mm of edge
+        CHECK_FALSE(c.channel());
+        CHECK(c.wall == Approx(2).margin(0.02));
+        CHECK(gradeCup(c, r.components[0].layers()) == CupGrade::Problem);
+    }
+    // A tube standing on the plate: the plate is its floor and seals it.
+    {
+        TriangleMesh m;
+        appendBox(m, {0, 0, 0}, {2, 20, 10});
+        appendBox(m, {18, 0, 0}, {20, 20, 10});
+        appendBox(m, {0, 0, 0}, {20, 2, 10});
+        appendBox(m, {0, 18, 0}, {20, 20, 10});
+        placeOnPlate(m, {0, 0, 0}, 0);
+        const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+        REQUIRE(r.components.size() == 1);
+        CHECK(r.components[0].kind == HollowKind::SuctionCup);
+        CHECK(r.components[0].first_layer == 0);
+        CHECK(r.components[0].cup.floor_on_plate);
+        // On supports it is open at both ends.
+        placeOnPlate(m, {0, 0, 0}, 5);
+        CHECK(analyzeHollows(sliceModel(m, 0.1)).components.empty());
+    }
+}
+
+TEST_CASE("cup grades: the limits, and depth", "[safety]") {
+    CupMeasures c;
+    c.share = 0.24;
+    CHECK(gradeCup(c, 1000) == CupGrade::Note);
+    c.share = 0.25;
+    CHECK(gradeCup(c, 299) == CupGrade::Warning);
+    CHECK(gradeCup(c, 300) == CupGrade::Problem);  // deep: many peels
+    c.share = 0.99;
+    CHECK(gradeCup(c, 10) == CupGrade::Warning);
+    c.share = 1.0;
+    CHECK(gradeCup(c, 1) == CupGrade::Problem);
+    // Other limits.
+    const CupLimits l{0.1, 0.5, 50};
+    c.share = 0.2;
+    CHECK(gradeCup(c, 49, l) == CupGrade::Warning);
+    CHECK(gradeCup(c, 50, l) == CupGrade::Problem);
+    c.share = 0.05;
+    CHECK(gradeCup(c, 5000, l) == CupGrade::Note);
+    CHECK(std::string(gradeName(CupGrade::Warning)) == "warning");
+}
+
+TEST_CASE("the generator names a cup by its grade, with its numbers", "[safety]") {
+    TriangleMesh m = ringGroove(false);
+    placeOnPlate(m, {0, 0, 0}, 5);
+    const PointGenResult r = generateSupportPoints(m, fast());
+    CHECK(r.stats.suction_cups == 1);
+    CHECK_FALSE(hasWarning(r, "suction_cup"));
+    REQUIRE(hasWarning(r, "suction_cup_note"));
+    for (const Warning& w : r.warnings)
+        if (w.code == "suction_cup_note") {
+            CHECK(w.values.at("share") == Approx(184.0 / 1016).epsilon(0.02));
+            CHECK(w.values.at("layers") == 10);
+            CHECK(w.values.at("width") == Approx(2).margin(0.02));
+            CHECK(w.values.at("wall") == Approx(5).margin(0.02));
+            CHECK(w.values.at("on_plate") == 0);
+            CHECK(w.message.find("notch") != std::string::npos);
+        }
+    // Limits of its own: a quarter of that and it is a warning.
+    SupportConfig cfg = fast();
+    cfg.cup_note_below = 0.05;
+    CHECK(hasWarning(generateSupportPoints(m, cfg), "suction_cup_warning"));
+}
+
 TEST_CASE("closed cavity: warned, and no tips on its ceiling", "[safety]") {
     TriangleMesh m = closedCavity();
     placeOnPlate(m, {0, 0, 0}, 5);

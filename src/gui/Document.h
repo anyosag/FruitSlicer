@@ -86,13 +86,15 @@ struct SupportState {
 struct HollowState {
     HollowChoices choices;
     std::vector<fruit::DrainHole> manual;    // holes placed by hand, model coordinates
+    std::vector<AcceptedHollow> accepted;    // hollows to print as they are ("Accept for this model")
     bool applied = false;                    // what prints follows these choices
     int settings = 0;                        // bumped whenever what prints would change
     std::shared_ptr<const HollowPlan> plan;  // the latest, for the screen
     int plan_revision = -1;
 
     bool planFresh(int revision) const {
-        return plan && plan_revision == revision && plan->choices == choices && plan->manual == manual;
+        return plan && plan_revision == revision && plan->choices == choices && plan->manual == manual &&
+               plan->accepted_with == accepted;
     }
 };
 

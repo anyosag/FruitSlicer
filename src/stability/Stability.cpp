@@ -1660,7 +1660,8 @@ void Analysis::buildPulls() {
                     ring = id;
                 }
             }
-            if (ring < 0) continue;
+            // A pocket in the supports or the raft: not the model's cup.
+            if (ring < 0 || !model_[ring]) continue;
             cups_[L].push_back({ring, cfg_.cup_pull * m.area * hingeFactor(m.centroid), m.centroid.x - centre_[ring].x,
                                 m.centroid.y - centre_[ring].y});
         }

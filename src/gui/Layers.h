@@ -38,6 +38,10 @@ struct LayerResult {
 
     std::size_t cups() const;
     std::size_t traps() const;
+    // The hollows that count as problems: resin traps, and suction cups
+    // graded a problem with the job's limits, less those accepted on the
+    // Hollow screen.
+    std::size_t hollowProblems(const Document& doc) const;
 };
 
 // Slices the placed model of `doc` together with `supports` (empty when it

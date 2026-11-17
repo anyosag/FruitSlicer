@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,9 @@ struct Warning {
     std::string message;
     int layer = -1;
     Vec3 where;
+    // Numbers behind the message, by name, for the app's own words (a
+    // suction cup's "share", "open_mm2", ...). Empty for most codes.
+    std::map<std::string, double> values = {};
 };
 
 }  // namespace fruit

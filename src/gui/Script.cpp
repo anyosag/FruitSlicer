@@ -572,6 +572,12 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.setCutAway(step["cut"].get<bool>());
         } else if (step.contains("hole_remove")) {
             app.removeHole(step["hole_remove"].get<int>() - 1);  // 1 = the first
+        } else if (step.contains("hollow_accept")) {
+            // 1 = the Hollow screen's first hollow; negative takes it back.
+            const int i = step["hollow_accept"].get<int>();
+            if (i == 0) throw std::runtime_error("hollow_accept: 1 is the first hollow, -1 takes it back");
+            if (!app.acceptHollow(static_cast<std::size_t>(std::abs(i) - 1), i > 0))
+                throw std::runtime_error("hollow_accept: no such hollow, or the hollows aren't found yet");
         } else if (step.contains("use")) {
             app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
         } else if (step.contains("supports")) {

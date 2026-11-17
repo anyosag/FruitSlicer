@@ -281,8 +281,9 @@ void checksTab(App& app, Document* doc) {
     }
     }
     if (const std::size_t n = hollowsToFix(d)) {
-        checkLine("hollows", Tick::Warn, n == 1 ? "A hollow traps resin" : "Hollows trap resin",
-                  "The Hollow tool shows the fixes.");
+        checkLine("hollows", Tick::Warn, n == 1 ? "A hollow to fix" : strf("%zu hollows to fix", n).c_str(),
+                  "A suction cup that pulls hard on each peel, or a hollow that traps resin. The Hollow tool shows "
+                  "the fixes.");
         if (linkButton("Open Hollow")) app.openTool(Tool::Hollow);
     }
     const SupportState& s = d.supports;

@@ -83,6 +83,13 @@ struct SupportConfig {
     // into it). ASSUMPTION — verify with the islands calibration plate.
     double absorb_island_area = 0.12;
     int absorb_island_layers = 1;
+    // How suction cups are graded (fruit::CupLimits). ASSUMPTIONS, not
+    // measured on prints: a cup whose open area is under `cup_note_below` of
+    // the layer cured round it is a note, from `cup_problem_from` a problem,
+    // between a warning (a problem from `cup_deep_layers` layers deep).
+    double cup_note_below = 0.25;
+    double cup_problem_from = 1.0;
+    int cup_deep_layers = 300;
 
     // Tall parts on few tips get side tips (stabilisation).
     double stabilize_min_height = 5.0;  // mm above the lowest tip

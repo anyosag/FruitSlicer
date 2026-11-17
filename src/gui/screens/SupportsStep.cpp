@@ -1066,7 +1066,8 @@ void checkRow(const char* id, const SupportCheck& c) {
 }
 
 void problemCard(App& app, const SupportProblem& p, int i) {
-    const bool review = p.level == SupportProblem::Level::Review, blocks = p.level == SupportProblem::Level::Blocks;
+    const bool review = p.level == SupportProblem::Level::Review || p.level == SupportProblem::Level::Warn,
+               blocks = p.level == SupportProblem::Level::Blocks;
     ImGui::PushID(i);
     beginCard("p", ImVec2(0, 0), 14, blocks ? col::ErrorBg : (review ? col::WarnBg : col::Panel),
               blocks ? IM_COL32(0x6B, 0x2A, 0x2A, 255) : (review ? col::WarnBorder : col::Border));
@@ -1084,7 +1085,8 @@ void problemCard(App& app, const SupportProblem& p, int i) {
     if (p.has_where) {
         if (secondaryButton("Show", ImVec2(0, 0))) app.focusOn(p.where);
     }
-    if (p.code == "suction_cup" || p.code == "resin_trap" || p.code == "cavity_ceiling") {
+    if (p.code.rfind("suction_cup", 0) == 0 || p.code == "resin_trap" || p.code == "cavity_ceiling" ||
+        p.code == "hollow_accepted") {
         if (p.has_where) ImGui::SameLine(0, 8);
         if (secondaryButton("Open Hollows", ImVec2(0, 0))) app.showHollow();
     }
@@ -1118,19 +1120,21 @@ void supportChecks(App& app, Document& doc) {
         if (i == 0) riskChecks(app, doc);
     }
     if (r.checks.empty()) riskChecks(app, doc);
-    if (r.problems.empty()) return;
+    const std::vector<SupportProblem> problems = problemsNow(doc, r);  // with the hollows accepted since
+    if (problems.empty()) return;
     ImGui::Dummy(ImVec2(0, 6));
     int i = 0;
     auto section = [&](SupportProblem::Level level, const char* label) {
-        const std::size_t n = r.count(level);
+        const std::size_t n = countOf(problems, level);
         if (n == 0) return;
         groupLabel(strf("%s · %zu", label, n).c_str());
-        for (const auto& p : r.problems)
+        for (const auto& p : problems)
             if (p.level == level) problemCard(app, p, i++);
         ImGui::Dummy(ImVec2(0, 4));
     };
     section(SupportProblem::Level::Blocks, "Blocks saving");
     section(SupportProblem::Level::Review, "Review");
+    section(SupportProblem::Level::Warn, "Worth a look");
     section(SupportProblem::Level::Note, "Notes");
 }
 

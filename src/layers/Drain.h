@@ -19,6 +19,9 @@
 // beneath it. suggestDrainHoles puts a drain hole at each cavity's lowest
 // point, along the shortest way out that runs level or down, and an air
 // hole at its highest, along the shortest way out that runs level or up.
+// On a model standing on the plate, a way out through its underside ends on
+// the plate, which seals it: it isn't used, and a hole drilled there leaves
+// the cavity closed (analyzeHollows counts the plate as closed).
 
 #include <vector>
 

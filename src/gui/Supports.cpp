@@ -398,6 +398,35 @@ std::vector<AdvancedSetting> makeAdvanced() {
                  .text = [](const X& x) {
                      return x.placement.on_plate ? std::string("on the plate") : strf("%.0f mm", x.placement.lift());
                  }});
+    // ---- Suction cups ----
+    v.push_back({.group = "Suction cups", .label = "A note below", .kind = K::Number, .source = S::Assumption,
+                 .fields = {{"cup_note_below", "", "%", 1, 99, 0,
+                             [](const C& c, const T&) { return c.cup_note_below * 100; },
+                             [](C& c, T&, double x) { c.cup_note_below = x / 100; }}},
+                 .help = [](const X&) {
+                     return std::string("A hollow facing the film pulls on each peel as if its opening were cured "
+                                        "too. When its opening is under this share of the layer cured round it, it "
+                                        "is a note and not counted as a problem. Not measured on prints.");
+                 }});
+    v.push_back({.group = "Suction cups", .label = "A problem from", .kind = K::Number, .source = S::Assumption,
+                 .fields = {{"cup_problem_from", "", "%", 5, 1000, 0,
+                             [](const C& c, const T&) { return c.cup_problem_from * 100; },
+                             [](C& c, T&, double x) { c.cup_problem_from = x / 100; }}},
+                 .help = [](const X&) {
+                     return std::string("From this share of the layer cured round it, a suction cup is a problem: "
+                                        "each peel pulls on it more than on the layer's own resin. Between the two "
+                                        "it is a warning, not counted as a problem. Not measured on prints.");
+                 }});
+    v.push_back({.group = "Suction cups", .label = "A warning is a problem from", .kind = K::Number,
+                 .source = S::Assumption,
+                 .fields = {{"cup_deep_layers", "", "layers", 2, 100000, 0,
+                             [](const C& c, const T&) { return double(c.cup_deep_layers); },
+                             [](C& c, T&, double x) { c.cup_deep_layers = int(std::lround(x)); }}},
+                 .help = [](const X&) {
+                     return std::string("A suction cup graded a warning that pulls on this many layers or more "
+                                        "counts as a problem: more peels, more chances to fail. Not measured on "
+                                        "prints.");
+                 }});
     // ---- Peel side ----
     v.push_back({.group = "Peel side", .label = "Vat hinge", .kind = K::Fixed, .source = S::Default,
                  .help = [](const X&) {
@@ -447,6 +476,11 @@ const Known kKnown[] = {
     {"suction_cup", SupportProblem::Level::Review, "Suction cups",
      "A hollow faces the film, so every layer pulls on a vacuum. Turn the model, or give the hollow a hole on "
      "the Hollow screen."},
+    {"suction_cup_warning", SupportProblem::Level::Warn, "Suction cups worth a look",
+     "A hollow faces the film, so each peel pulls on it as well as on the layer. Not counted as a problem."},
+    {"suction_cup_note", SupportProblem::Level::Note, "Small suction cups",
+     "A hollow faces the film, but its opening is small against the layer cured round it, so each peel pulls only "
+     "a little harder. Not counted as a problem."},
     {"resin_trap", SupportProblem::Level::Review, "Resin traps",
      "A sealed hollow keeps liquid resin inside, and pressure builds as it closes. Drain it or fill it on the "
      "Hollow screen."},
@@ -471,9 +505,12 @@ const Known kKnown[] = {
      "A tip you placed is no longer on the surface, so it was left out."},
 };
 
+bool hollowCode(const std::string& code) { return code.rfind("suction_cup", 0) == 0 || code == "resin_trap"; }
+
 void addWarnings(const std::vector<fruit::Warning>& ws, std::map<std::string, SupportProblem>& by_code) {
     for (const fruit::Warning& w : ws) {
         SupportProblem& p = by_code[w.code];
+        if (hollowCode(w.code)) p.hollows.push_back(w);
         if (p.count++ == 0) {
             p.code = w.code;
             p.engine = w.message;
@@ -514,9 +551,104 @@ std::size_t SupportResult::count(SupportProblem::Level l) const {
     return n;
 }
 
+std::size_t countOf(const std::vector<SupportProblem>& problems, SupportProblem::Level l) {
+    std::size_t n = 0;
+    for (const auto& p : problems) n += p.level == l;
+    return n;
+}
+
+namespace {
+
+std::string cupPct(double share) {
+    const double p = 100 * share;
+    return p < 9.95 && p >= 0.05 ? strf("%.1f %%", p) : strf("%.0f %%", p);
+}
+
+// A suction cup card's words: what its grade means with these limits, and
+// the numbers of the one that pulls hardest.
+std::string cupBody(const SupportProblem& p, const fruit::CupLimits& l) {
+    const std::string lo = cupPct(l.note_below), hi = cupPct(l.problem_from);
+    std::string s;
+    if (p.code == "suction_cup")
+        s = strf("A hollow faces the film, and its opening is %s or more of the layer cured round it, or %s or more "
+                 "on %d layers or more, so each peel pulls hard on it. Turn the model, or let resin in on the Hollow "
+                 "screen.",
+                 hi.c_str(), lo.c_str(), l.deep_layers);
+    else if (p.code == "suction_cup_warning")
+        s = strf("A hollow faces the film. Its opening adds %s to %s to the pull on the layers round it. Not "
+                 "counted as a problem.",
+                 lo.c_str(), hi.c_str());
+    else
+        s = strf("A hollow faces the film, but its opening is under %s of the layer cured round it, so each peel "
+                 "pulls only a little harder. Not counted as a problem.",
+                 lo.c_str());
+    const fruit::Warning* top = nullptr;
+    for (const fruit::Warning& w : p.hollows)
+        if (w.values.count("share") && (!top || w.values.at("share") > top->values.at("share"))) top = &w;
+    if (!top) return s;  // an older job: no numbers kept
+    const auto& v = top->values;
+    auto mm2 = [](double a) { return thousands(static_cast<std::size_t>(std::lround(a))) + " mm²"; };
+    s += strf(" %s %s, %s of the %s cured round it, on %.0f layers (%.1f to %.1f mm).",
+              p.hollows.size() > 1 ? "The opening of the one that pulls hardest is" : "Its opening is",
+              mm2(v.at("open_mm2")).c_str(),
+              cupPct(v.at("share")).c_str(), mm2(v.at("cured_mm2")).c_str(), v.at("layers"), v.at("z0"), v.at("z1"));
+    s += strf(" The %s and %s limits and the %d layers are assumed, not measured on prints: change them under "
+              "Advanced.",
+              lo.c_str(), hi.c_str(), l.deep_layers);
+    return s;
+}
+
+}  // namespace
+
+std::vector<SupportProblem> problemsNow(const Document& doc, const SupportResult& r) {
+    std::vector<SupportProblem> out;
+    const PartFrames frames = doc.frames();
+    const fruit::CupLimits limits = cupLimitsOf(doc.supports.choices);
+    SupportProblem accepted;
+    accepted.level = SupportProblem::Level::Note;
+    accepted.code = "hollow_accepted";
+    accepted.title = "Hollows you accepted";
+    accepted.body = "Left as they are for this job, as you chose on the Hollow screen. Not counted as problems.";
+    for (const SupportProblem& p : r.problems) {
+        if (p.hollows.empty()) {
+            out.push_back(p);
+            continue;
+        }
+        SupportProblem q = p;
+        q.hollows.clear();
+        for (const fruit::Warning& w : p.hollows) {
+            bool is = false;
+            for (const AcceptedHollow& a : doc.hollow.accepted) is = is || acceptedIs(a, w, frames);
+            (is ? accepted : q).hollows.push_back(w);
+        }
+        q.count = q.hollows.size();
+        if (q.count == 0) continue;
+        q.has_where = true;
+        q.where = q.hollows.front().where;
+        if (q.code.rfind("suction_cup", 0) == 0) q.body = cupBody(q, limits);
+        out.push_back(std::move(q));
+    }
+    if (!accepted.hollows.empty()) {
+        accepted.count = accepted.hollows.size();
+        accepted.has_where = true;
+        accepted.where = accepted.hollows.front().where;
+        out.push_back(std::move(accepted));
+    }
+    std::stable_sort(out.begin(), out.end(),
+                     [](const SupportProblem& a, const SupportProblem& b) { return a.level < b.level; });
+    return out;
+}
+
 const std::vector<AdvancedSetting>& advancedSettings() {
     static const std::vector<AdvancedSetting> rows = makeAdvanced();
     return rows;
+}
+
+fruit::CupLimits cupLimitsOf(const SupportChoices& c) {
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    applyAdvanced(c.advanced, cfg, tc);
+    return {cfg.cup_note_below, cfg.cup_problem_from, cfg.cup_deep_layers};
 }
 
 void applyAdvanced(const std::map<std::string, double>& values, fruit::SupportConfig& cfg, fruit::TreeConfig& tc) {

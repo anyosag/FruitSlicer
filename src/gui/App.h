@@ -380,6 +380,10 @@ public:
     void applyHollow();
     void addHoleAt(const fruit::Vec3& pos, const fruit::Vec3& normal);  // printer coordinates, by hand
     void removeHole(int index);                                          // one placed by hand
+    // "Accept for this model" on the Hollow screen's hollow `i` (of the
+    // fresh plan's own hollows), or taken back. False when there is no such
+    // hollow yet.
+    bool acceptHollow(std::size_t i, bool accept);
     // Starts the screen's plan unless it is up to date or being made. It
     // only ever replaces a plan being made for earlier choices, never other
     // work: then maintain() starts it once that is done.
@@ -773,6 +777,7 @@ private:
     int hollow_tried_revision_ = -1;
     HollowChoices hollow_tried_choices_;
     std::vector<fruit::DrainHole> hollow_tried_manual_;
+    std::vector<AcceptedHollow> hollow_tried_accepted_;
     int hollow_generation_ = 0;
     std::shared_ptr<const OrientSearch> pictures_for_;
     std::vector<unsigned> pictures_;  // options, then how it sits now

@@ -53,6 +53,7 @@
 
 #include "core/JobControl.h"
 #include "geometry/Polygon.h"
+#include "layers/HollowAnalysis.h"
 #include "layers/LayerStack.h"
 
 namespace fruit {
@@ -72,6 +73,11 @@ struct Cavity {
     int first_layer = 0, last_layer = 0;
     double volume = 0;      // mm³
     bool opens_up = false;  // closedHollows: open towards the film, a suction cup (else sealed, a resin trap)
+    // closedHollows: analyzeHollows' point inside it (inside_layer -1: none)
+    // and, for a suction cup, how hard it pulls.
+    Vec2 inside;
+    int inside_layer = -1;
+    CupMeasures cup;
 };
 
 // A piece of one layer's interior: paths [begin, begin + count) of that
@@ -106,6 +112,10 @@ LayerStack hollowedLayers(const LayerStack& solid, const HollowResult& h);
 // drilled and checked for them as for a hollowed model's. Their interior is
 // already empty in `layers`.
 HollowResult closedHollows(const LayerStack& layers, double min_volume = 1.0);
+
+// `h` with only the cavities `keep` marks (one flag per cavity), numbered
+// again in their order.
+HollowResult keepCavities(const HollowResult& h, const std::vector<char>& keep);
 
 // The slices with `h`'s interior filled: printed solid.
 LayerStack filledLayers(const LayerStack& layers, const HollowResult& h);

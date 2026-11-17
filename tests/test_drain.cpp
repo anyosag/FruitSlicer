@@ -51,16 +51,18 @@ TEST_CASE("a hole's footprint in a layer: a disc, a strip, or nothing", "[drain]
     CHECK(holeFootprint({0, 0, -1}, {0, 0, 5}, r, 6.0, 6.05).empty());
 }
 
-TEST_CASE("a hollow cube gets a hole straight up through the middle of its floor", "[drain]") {
+TEST_CASE("a hollow cube off the plate gets a hole straight up through the middle of its floor", "[drain]") {
+    // On supports, 5 mm up: nothing under its floor seals a hole there.
     const TriangleMesh cube = makeBox({0, 0, 0}, {20, 20, 20});
-    const LayerStack ls = sliceModel(cube, 0.05);
+    const Transform placed = Transform::translation({0, 0, 5});
+    const TriangleMesh up = makeBox({0, 0, 5}, {20, 20, 25});
+    const LayerStack ls = sliceModel(up, 0.05);
     const HollowResult hollow = hollowInterior(ls, flatCeilings());
     REQUIRE(hollow.cavities.size() == 1);
-    const Transform placed = Transform::identity();
 
-    const std::vector<DrainHole> holes = suggestDrainHoles(cube, placed, ls, hollow, 3.0);
+    const std::vector<DrainHole> holes = suggestDrainHoles(up, placed, ls, hollow, 3.0);
     REQUIRE(holes.size() == 2);
-    CHECK_FALSE(holes[0].air);  // to drain, in the middle of the floor
+    CHECK_FALSE(holes[0].air);  // to drain, in the middle of the floor (model coordinates)
     CHECK(holes[0].at.x == Approx(10).margin(0.05));
     CHECK(holes[0].at.y == Approx(10).margin(0.05));
     CHECK(holes[0].at.z == Approx(0).margin(1e-6));
@@ -74,18 +76,39 @@ TEST_CASE("a hollow cube gets a hole straight up through the middle of its floor
     const std::vector<PlacedHole> drilled = placeHoles(holes, placed, ls, hollow);
     REQUIRE(drilled.size() == 2);
     CHECK(drilled[0].cavity == 0);
-    CHECK(drilled[0].from.z < 0);                          // from outside the floor
-    CHECK(drilled[0].to.z == Approx(2.0 + 3.0).margin(0.06));  // through it, one diameter into the cavity
+    CHECK(drilled[0].from.z < 5);                                 // from outside the floor
+    CHECK(drilled[0].to.z == Approx(5 + 2.0 + 3.0).margin(0.06));  // through it, one diameter into the cavity
     CHECK(drilled[1].cavity == 0);
-    CHECK(drilled[1].to.z == Approx(18.0 - 3.0).margin(0.06));
+    CHECK(drilled[1].to.z == Approx(5 + 18.0 - 3.0).margin(0.06));
     const LayerStack d = drilledLayers(ls, hollow, drilled);
-    CHECK_FALSE(inside(d.slices[10], {10, 10}));  // the floor has a hole...
-    CHECK(inside(d.slices[10], {10, 12}));         // ...3 mm across
-    CHECK(area(d.slices[10]) == Approx(400 - kPi * 1.5 * 1.5).margin(0.05));
-    CHECK(area(d.slices[390]) == Approx(400 - kPi * 1.5 * 1.5).margin(0.05));  // and so has the roof
+    CHECK_FALSE(inside(d.slices[110], {10, 10}));  // the floor has a hole...
+    CHECK(inside(d.slices[110], {10, 12}));         // ...3 mm across
+    CHECK(area(d.slices[110]) == Approx(400 - kPi * 1.5 * 1.5).margin(0.05));
+    CHECK(area(d.slices[490]) == Approx(400 - kPi * 1.5 * 1.5).margin(0.05));  // and so has the roof
 
     CHECK(cavitiesDrain(hollowedLayers(ls, hollow), hollow) == std::vector<char>{0});
     CHECK(cavitiesDrain(d, hollow) == std::vector<char>{1});
+}
+
+TEST_CASE("standing on the plate, a hollow cube's drain hole goes out through a wall, not onto the plate", "[drain]") {
+    const TriangleMesh cube = makeBox({0, 0, 0}, {20, 20, 20});
+    const LayerStack ls = sliceModel(cube, 0.05);
+    const HollowResult hollow = hollowInterior(ls, flatCeilings());
+    REQUIRE(hollow.cavities.size() == 1);
+    // A hole straight up from the plate: the plate seals its mouth, so the
+    // cavity still pulls on every peel.
+    const std::vector<PlacedHole> down = placeHoles({{{10, 10, 0}, {0, 0, 1}, 3.0}}, Transform::identity(), ls, hollow);
+    REQUIRE(down.size() == 1);
+    CHECK(down[0].cavity == 0);
+    CHECK(cavitiesDrain(drilledLayers(ls, hollow, down), hollow) == std::vector<char>{0});
+    // The one suggested runs level through a 2 mm wall, at the cavity's floor.
+    const std::vector<DrainHole> holes = suggestDrainHoles(cube, Transform::identity(), ls, hollow, 3.0);
+    REQUIRE(holes.size() == 2);
+    CHECK_FALSE(holes[0].air);
+    CHECK(holes[0].at.z > 1.9);
+    CHECK(holes[0].axis.z == Approx(0).margin(1e-9));
+    CHECK(cavitiesDrain(drilledLayers(ls, hollow, placeHoles(holes, Transform::identity(), ls, hollow)), hollow) ==
+          std::vector<char>{1});
 }
 
 TEST_CASE("a hole keeps to the model when it is turned, and may then not drain", "[drain]") {
@@ -150,7 +173,8 @@ TEST_CASE("a hole into a shallow cavity stops short of its ceiling", "[drain]") 
     CHECK(drilled[0].to.z == Approx(2.0 + 1.5).margin(0.06));  // half the cavity's depth
     const LayerStack d = drilledLayers(ls, hollow, drilled);
     CHECK(inside(d.slices[ls.layerAt(5.5)], {10, 10}));  // the roof is whole
-    CHECK(cavitiesDrain(d, hollow) == std::vector<char>{1});
+    // Standing on the plate, its mouth is sealed: it doesn't drain.
+    CHECK(cavitiesDrain(d, hollow) == std::vector<char>{0});
 }
 
 TEST_CASE("each cavity gets a hole of its own", "[drain]") {
@@ -202,10 +226,13 @@ TEST_CASE("a model's own closed hollow gets holes, or is filled", "[drain]") {
     CHECK(closed.volume == Approx(12 * 12 * 6).margin(1));
     CHECK(ls.layerBottom(closed.cavities[0].first_layer) == Approx(3.0));
     CHECK(cavitiesDrain(ls, closed) == std::vector<char>{0});
-    // Holes through the 3 mm floor and roof: it drains.
+    // A drain hole level through a 4 mm wall at the void's floor (the block
+    // stands on the plate, which would seal one through its floor), an air
+    // hole through the 3 mm roof: it drains.
     const std::vector<DrainHole> holes = suggestDrainHoles(m, Transform::identity(), ls, closed, 3.0);
     REQUIRE(holes.size() == 2);
-    CHECK(holes[0].at.z == Approx(0).margin(1e-6));
+    CHECK(holes[0].at.z == Approx(3.05).margin(0.01));
+    CHECK(holes[0].axis.z == Approx(0).margin(1e-9));
     CHECK(holes[1].at.z == Approx(12).margin(1e-6));
     const std::vector<PlacedHole> cut = placeHoles(holes, Transform::identity(), ls, closed);
     CHECK(cut[0].cavity == 0);
@@ -229,8 +256,15 @@ TEST_CASE("only hollows that hold resin count as closed", "[drain]") {
         appendBox(m, {0, 18, 0}, {20, 20, 10});
         return m;
     };
-    // Mouth down, towards the plate: it drains.
-    CHECK(closedHollows(sliceModel(box(false), 0.1)).cavities.empty());
+    // Mouth down on supports, 5 mm off the plate: it drains.
+    TriangleMesh lifted = box(false);
+    placeOnPlate(lifted, {0, 0, 0}, 5);
+    CHECK(closedHollows(sliceModel(lifted, 0.1)).cavities.empty());
+    // Mouth down standing on the plate: the plate seals it below and its
+    // top above, so it holds resin like a sealed void.
+    const HollowResult sealed = closedHollows(sliceModel(box(false), 0.1));
+    REQUIRE(sealed.cavities.size() == 1);
+    CHECK_FALSE(sealed.cavities[0].opens_up);
     // Mouth up: a cup that pulls on every peel.
     const HollowResult cup = closedHollows(sliceModel(box(true), 0.1));
     REQUIRE(cup.cavities.size() == 1);

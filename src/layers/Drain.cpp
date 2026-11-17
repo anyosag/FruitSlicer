@@ -83,7 +83,11 @@ Vec2 deepestPoint(const Paths& region) {
     const ExPolygon* biggest = nullptr;
     for (const ExPolygon& e : parts)
         if (!biggest || e.area() > biggest->area()) biggest = &e;
-    return biggest ? biggest->bbox().center() : b.center();
+    if (!biggest || biggest->contour.empty()) return b.center();
+    // Its middle, unless that isn't in it (what is left of a groove round a
+    // block is a ring): then a corner of it.
+    const Vec2 mid = biggest->bbox().center();
+    return biggest->contains(mid) ? mid : toVec(biggest->contour.front());
 }
 
 }  // namespace
@@ -218,6 +222,10 @@ std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Trans
     // it crosses beyond which it is outside every outline. (A model's own
     // sealed hollow has walls in the mesh; the ray crosses those first.)
     Inside outline(solid, true);
+    // A model standing on the plate: a way out through its first layer's
+    // underside ends on the plate, which seals it.
+    const bool on_plate = !solid.slices.empty() && !solid.slices[0].empty();
+    const double plate_z = 0.5 * solid.layer_height;  // `placed` is in printer coordinates
     auto exit = [&](const Vec3& start, const Vec3& w) -> std::optional<RayHit> {
         double t0 = 1e-9;
         for (int k = 0; k < 64; ++k) {
@@ -249,6 +257,7 @@ std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Trans
         Vec3 way;
         for (const Vec3& w : ways) {
             const auto hit = exit(start, w);
+            if (hit && on_plate && hit->point.z < plate_z) continue;
             if (hit && (!shortest || hit->t < 0.99 * shortest->t)) {  // straight down (up) wins a near tie
                 shortest = hit;
                 way = w;

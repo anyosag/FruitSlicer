@@ -95,11 +95,25 @@ void beforeYouSave(App& app, Document& doc, const PrintPlan* plan, float w, floa
                                               : "It stands on the plate: no raft needed.")
                        : strf("The bottom and transition layers need at least %.2f mm", plan->raft_needed).c_str());
     }
-    const std::size_t review = sup.count(SupportProblem::Level::Review);
+    const std::vector<SupportProblem> now = problemsNow(doc, sup);  // with the hollows accepted since
+    const std::size_t review = countOf(now, SupportProblem::Level::Review);
     if (review) {
         verdictRow("review", Verdict::Warn, strf("%zu %s to review", review, review == 1 ? "thing" : "things").c_str(),
                    "Listed under Checks, with the supports. Saving is still allowed.");
         if (linkButton("Review them")) {  // in the Job panel's checks, with Supports open
+            app.openTool(Tool::Supports);
+            app.jobTab() = 0;
+        }
+    }
+    // Worth a look, not counted as problems: suction cups graded a warning.
+    std::size_t look = 0;
+    for (const SupportProblem& p : now)
+        if (p.level == SupportProblem::Level::Warn) look += p.count;
+    if (look) {
+        verdictRow("look", Verdict::Warn,
+                   strf("%zu %s worth a look", look, look == 1 ? "suction cup" : "suction cups").c_str(),
+                   "Each peel pulls harder on its layers, not enough to count as a problem. Listed under Checks.");
+        if (linkButton("Look at them")) {
             app.openTool(Tool::Supports);
             app.jobTab() = 0;
         }

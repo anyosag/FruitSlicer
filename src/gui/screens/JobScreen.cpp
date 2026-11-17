@@ -419,7 +419,7 @@ void statusBar(App& app) {
         text(((fits ? "Fits the plate · " : "Reaches past the plate · ") + dims(lr.bounds.size()) + " with supports")
                  .c_str(),
              fonts().regular, size::Body, col::TextSecondary);
-        problems = static_cast<int>(lr.cups() + lr.traps()) + (fits ? 0 : 1);
+        problems = static_cast<int>(lr.hollowProblems(*doc)) + (fits ? 0 : 1);  // notes, warnings, the accepted don't count
         totals = strf("%s layers · %.1f ml of resin", thousands(lr.layers->size()).c_str(), lr.resin_ml);
         {
             const auto plan = app.printPlan();
@@ -439,7 +439,8 @@ void statusBar(App& app) {
         ImGui::SetCursorPos(ImVec2(x, cy - 8));
         text(("Fits the plate · " + dims(r.size_with_supports) + " with supports").c_str(), fonts().regular, size::Body,
              col::TextSecondary);
-        problems = static_cast<int>(r.count(SupportProblem::Level::Review) + r.count(SupportProblem::Level::Blocks));
+        const std::vector<SupportProblem> now = problemsNow(*doc, r);  // notes, warnings and the accepted don't count
+        problems = static_cast<int>(countOf(now, SupportProblem::Level::Review) + countOf(now, SupportProblem::Level::Blocks));
         totals = strf("%zu tips · %.1f ml of supports at most", r.tips, r.support_ml);
         if (!doc->supports.edits.empty()) {
             totals = strf("%zu tips · %s by you", r.tips, describeCounts(countEdits(doc->supports.edits)).c_str());
