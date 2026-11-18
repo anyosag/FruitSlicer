@@ -61,8 +61,14 @@ struct PlateCommon {
     uint32_t seed = 1;
     int replicates = 2;
     // One raft under every coupon (and the marker), as a job prints on, in
-    // place of a small raft each.
+    // place of a small raft each: a pad under each coupon, the pads in each
+    // row joined by a bar, the rows by one bar at the side; the channels
+    // between the rows open at the other side, so no solid slab or closed
+    // pocket pulls on the film.
     bool one_raft = false;
+    // Each shaft as wide as a job's support with that tip (shaftDiameterFor),
+    // in place of `shaft_diameter`.
+    bool shafts_as_jobs = false;
 };
 
 struct TipsPlateOptions {
@@ -74,28 +80,45 @@ struct TipsPlateOptions {
     // fit can measure how much harder the peel pulls far from the hinge
     // (SupportConfig::peel_bias) as well as each tip's hold. Zero: one set.
     Vec2 peel_axis{0, 0};
-    // Loads per tip in two sets: steps of about 1.41 times, so a difference
-    // of a few tens of percent between the sides shows; once each
-    // per side (each combination twice in all, as one set with replicates 2).
-    // From 2.5 mm²: on the first plate printed (2026-11-18), 0.2-0.4 mm tips
-    // mostly let go at 5, the lightest then, so their holds weren't bracketed.
-    std::vector<double> loads_two_sides{2.5, 3.5, 5, 7, 10, 14, 20};
     // Breakaway necks (PinheadSpec::neck_back): each tip size with each neck,
-    // at three of the loads, on the shallower contact depth; plain tips at
-    // the same loads and depth are on the plate already, to compare marks
-    // and holds with. With two sets, once each, in the middle of the plate;
-    // with one, `replicates` times, shuffled in with the rest.
+    // at three of its loads (TipLoads::neck_loads), on the shallower contact
+    // depth; plain tips at the same loads and depth are on the plate already,
+    // to compare marks and holds with. With two sets, once each, in the
+    // middle of the plate; with one, `replicates` times, shuffled in.
     std::vector<double> neck_backs{0.1, 0.25};
     double neck_ratio = 0.6;
-    std::vector<double> neck_loads{5, 10, 20};
-    std::vector<double> neck_loads_two_sides{5, 10, 20};
     // The coupons stand on one raft, as a job does (PlateCommon::one_raft).
     bool one_raft = true;
     std::vector<double> tip_diameters{0.2, 0.3, 0.4, 0.6};
     std::vector<double> penetrations{0.1, 0.2};
-    std::vector<double> loads_per_tip{2.5, 5, 10, 20};  // mm² of disc area per tip
+    // Loads per tip, mm² of disc per tip, for each tip size: six steps of
+    // about 1.4 times from one ladder (0.9 ... 14), placed per size so that
+    // FruitSlicer's starting value (CapacityModel: 2.8 / 6.2 / 11.1 / 25 mm²)
+    // is at or past the top and a third of it is inside. Nothing is loaded
+    // far past where it is expected to let go: a disc that lets go stays in
+    // the vat, so a small tip never carries a big disc. On the first plate
+    // printed (2026-11-18, one ladder of 5-20 for every size, flat discs)
+    // 106 of 120 discs ended up in the vat.
+    struct TipLoads {
+        double tip;
+        std::vector<double> loads;       // plain coupons
+        std::vector<double> neck_loads;  // necked ones: three of `loads`, the middle ones
+    };
+    std::vector<TipLoads> loads_by_tip{
+        {0.2, {0.9, 1.25, 1.8, 2.5, 3.5, 5}, {1.25, 1.8, 2.5}},
+        {0.3, {1.25, 1.8, 2.5, 3.5, 5, 7}, {1.8, 2.5, 3.5}},
+        {0.4, {1.8, 2.5, 3.5, 5, 7, 10}, {2.5, 3.5, 5}},
+        {0.6, {2.5, 3.5, 5, 7, 10, 14}, {3.5, 5, 7}},
+    };
     int tips_per_coupon = 3;
-    double disc_thickness = 1.0;
+    // The full disc on top of the 45° underside: these layers pull with the
+    // whole load. Thin, as what a disc that lets go leaves in the vat is the
+    // part printed after it let go.
+    double disc_thickness = 0.5;
+    // Tips this high above the plate, as a job's supports stand (the jobs
+    // saved on 2026-11-18 put tips 7.5-25 mm up, on lifts of 7.5-10 mm): a
+    // taller shaft sways more under the peel, and the plate should feel that.
+    double tip_height = 10.0;
 };
 
 struct SpacingPlateOptions {

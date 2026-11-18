@@ -69,7 +69,7 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
     // True capacity 12 mm² for a 0.4 mm tip, scaling with tip area. Loads 5/10/20, as the numbers below.
     TipsPlateOptions to;
-    to.loads_per_tip = {5, 10, 20};
+    for (auto& t : to.loads_by_tip) t.loads = {5, 10, 20}, t.neck_loads = {5, 10, 20};
     const std::string tips = writePlate(tipsPlate(to, printer), "tips", [](const json& p) {
         const double d = p["tip_diameter"].get<double>();
         const bool ok = p["load_per_tip_mm2"].get<double>() < 12.0 * (d / 0.4) * (d / 0.4);
@@ -101,8 +101,11 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     CHECK(cap.at(0.4) == Approx(0.7 * 15));
     // Never failed: half would let go somewhere above 20, so 0.7 × 20 is a
     // true lower bound. (The truth here is 0.7 × 27 = 18.9; reporting 20, as
-    // the fit once did, would overstate it.)
-    CHECK(cap.at(0.6) == Approx(0.7 * 20));
+    // the fit once did, would overstate it.) Below the starting value, which
+    // nothing here contradicts, so that stays, the floor beside it.
+    CHECK(cap.at(0.6) == Approx(CapacityModel{}.capacity(0.6)));
+    for (const auto& t : prof["fits"]["tips"])
+        if (t["tip_diameter"].get<double>() == Approx(0.6)) CHECK(t["floor_mm2"].get<double>() == Approx(0.7 * 20));
     CHECK(cap.at(0.2) == Approx(2.5));     // always failed: half the smallest load
     CHECK(prof["minima_tip_diameter"].get<double>() == Approx(0.6));
     // Default: lowest scar among tips holding >= 4 mm² → 0.3 mm (capacity 0.7 × 7.5).
@@ -139,7 +142,7 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     CHECK(prof["island_two_tip_length"].get<double>() == Approx(3.0));
 
     bool flagged = false;
-    for (const auto& n : prof["notes"]) flagged |= n.get<std::string>().find("lower bound") != std::string::npos;
+    for (const auto& n : prof["notes"]) flagged |= n.get<std::string>().find("test higher loads") != std::string::npos;
     CHECK(flagged);
 
     // Applying it changes the generator settings.

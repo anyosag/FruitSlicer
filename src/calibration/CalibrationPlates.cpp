@@ -12,6 +12,7 @@
 #include "mesh/Primitives.h"
 #include "ops/MeshOps.h"
 #include "support/SupportGeometry.h"
+#include "support/SupportTree.h"
 
 namespace fruit {
 
@@ -57,18 +58,24 @@ void addMarker(TriangleMesh& m, const Layout& L, const PlateCommon& c) {
     appendBox(m, {o.x, o.y, z - 0.1}, {o.x + t, o.y + arm * 0.6, z + 3});
 }
 
-// One raft under the cells at `centers` (each `cell` wide): one slab over the
-// rectangle they span, so empty cells between them don't split it in two.
+// One raft under the cells at `centers` (each `cell` wide), all one piece but
+// no solid slab: a pad under each cell, as the small rafts were, the pads in
+// each row joined by a bar along the row, and the rows by one bar down the
+// first column. The channels between the rows stay open at the far end, so
+// resin flows in under each layer as it lifts and no closed pocket forms
+// (a solid 190 × 106 mm slab would pull on the film as one suction cup).
 void oneRaft(TriangleMesh& m, const std::vector<Vec2>& centers, double cell, const PlateCommon& c) {
     if (centers.empty()) return;
-    Vec2 lo = centers.front(), hi = centers.front();
+    const double h = cell / 2 - 1.0, bar = 2.0;
+    double x0 = centers.front().x, x1 = x0, y0 = centers.front().y, y1 = y0;
+    std::vector<double> rows;
     for (const Vec2& q : centers) {
-        lo = {std::min(lo.x, q.x), std::min(lo.y, q.y)};
-        hi = {std::max(hi.x, q.x), std::max(hi.y, q.y)};
+        appendRaft(m, q - Vec2{h, h}, q + Vec2{h, h}, 0.0, c.raft_thickness, 0.4);
+        x0 = std::min(x0, q.x), x1 = std::max(x1, q.x), y0 = std::min(y0, q.y), y1 = std::max(y1, q.y);
+        if (std::none_of(rows.begin(), rows.end(), [&](double y) { return std::abs(y - q.y) < 1e-6; })) rows.push_back(q.y);
     }
-    // Its edge 1 mm in from the outer cells' edges, as the small rafts' was.
-    const double h = cell / 2 - 1.0;
-    appendRaft(m, lo - Vec2{h, h}, hi + Vec2{h, h}, 0.0, c.raft_thickness, 0.4);
+    for (double y : rows) appendRaft(m, {x0, y - bar / 2}, {x1, y + bar / 2}, 0.0, c.raft_thickness, 0.4);
+    appendRaft(m, {x0 - bar / 2, y0}, {x0 + bar / 2, y1}, 0.0, c.raft_thickness, 0.4);
 }
 
 // Pinhead at `contact` (outward normal `n`), vertical shaft, base cone on the raft.
@@ -80,7 +87,7 @@ void addSupport(TriangleMesh& m, const Vec3& contact, const Vec3& n, double tip_
     s.neck_back = neck_back;
     s.neck_ratio = neck_ratio;
     s.head_length = c.head_length;
-    s.shaft_diameter = std::max(c.shaft_diameter, tip_d * 1.5);
+    s.shaft_diameter = c.shafts_as_jobs ? shaftDiameterFor(tip_d) : std::max(c.shaft_diameter, tip_d * 1.5);
     const Vec3 dir = headDirection(n);
     const Vec3 j = appendPinhead(m, contact, dir, s);
     const double cone_h = 1.0;
@@ -291,11 +298,27 @@ CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>&
 
 CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     const bool sides = norm(o.peel_axis) > 0;
+    // A size with no loads of its own: the nearest listed size's, scaled by tip area (as the starting
+    // values scale, CapacityModel), to 0.05 mm².
+    auto loadsFor = [&](double d) {
+        if (o.loads_by_tip.empty()) throw std::runtime_error("tips plate: no loads");
+        const TipsPlateOptions::TipLoads* near = &o.loads_by_tip.front();
+        for (const auto& t : o.loads_by_tip)
+            if (std::abs(t.tip - d) < std::abs(near->tip - d)) near = &t;
+        TipsPlateOptions::TipLoads out = *near;
+        if (std::abs(near->tip - d) > 1e-9) {
+            const double k = (d / near->tip) * (d / near->tip);
+            for (double& l : out.loads) l = std::max(0.05, std::round(l * k * 20) / 20);
+            for (double& l : out.neck_loads) l = std::max(0.05, std::round(l * k * 20) / 20);
+            out.tip = d;
+        }
+        return out;
+    };
     std::vector<json> combos;
     double max_r = 0;
     for (double d : o.tip_diameters)
         for (double pen : o.penetrations)
-            for (double load : sides ? o.loads_two_sides : o.loads_per_tip) {
+            for (double load : loadsFor(d).loads) {
                 const double disc_area = load * o.tips_per_coupon;
                 max_r = std::max(max_r, std::sqrt(disc_area / kPi));
                 combos.push_back({{"tip_diameter", d}, {"penetration", pen}, {"load_per_tip_mm2", load},
@@ -305,7 +328,7 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     if (!o.penetrations.empty())
         for (double d : o.tip_diameters)
             for (double back : o.neck_backs)
-                for (double load : sides ? o.neck_loads_two_sides : o.neck_loads) {
+                for (double load : loadsFor(d).neck_loads) {
                     const double disc_area = load * o.tips_per_coupon;
                     max_r = std::max(max_r, std::sqrt(disc_area / kPi));
                     necks.push_back({{"tip_diameter", d}, {"penetration", *std::min_element(o.penetrations.begin(), o.penetrations.end())},
@@ -313,7 +336,7 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
                                      {"neck_back", back}, {"neck_ratio", o.neck_ratio}});
                 }
     const double cell = std::ceil(2 * max_r + 3.0);
-    const double z0 = o.common.elevation;
+    const double z0 = std::max(o.common.elevation, o.tip_height);
     auto build = [&](TriangleMesh& m, const Vec2& c, const json& prm, double raft_top) {
         const double area_mm2 = prm["disc_area_mm2"].get<double>();
         const double r = std::sqrt(area_mm2 / kPi);
@@ -360,12 +383,16 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     PlateCommon common = o.common;
     if (sides) common.replicates = 1;
     common.one_raft = o.one_raft;
+    common.elevation = z0;
+    common.shafts_as_jobs = true;
     std::vector<json> all = combos;
     if (!sides) all.insert(all.end(), necks.begin(), necks.end());
     CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build, necks)
                                    : assemble("tips", all, cell, common, p, build);
     plate.settings["disc_thickness"] = o.disc_thickness;
     plate.settings["disc_underside"] = "45deg";
+    plate.settings["shafts_as_jobs"] = true;  // 0.8 / 1.0 / 1.2 mm, by tip (shaftDiameterFor)
+    plate.settings["tip_height"] = z0;
     return plate;
 }
 

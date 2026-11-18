@@ -17,9 +17,11 @@
 
 namespace fruit {
 
+double shaftDiameterFor(double tip_d) { return tip_d <= 0.3 ? 0.8 : (tip_d <= 0.45 ? 1.0 : 1.2); }
+
 namespace {
 
-double shaftFor(double tip_d) { return tip_d <= 0.3 ? 0.8 : (tip_d <= 0.45 ? 1.0 : 1.2); }
+double shaftFor(double tip_d) { return shaftDiameterFor(tip_d); }
 double penetrationFor(double tip_d, const TreeConfig& cfg) {
     if (cfg.penetration_table.empty()) return std::clamp(0.5 * tip_d, 0.08, 0.2);
     // Nearest measured diameter.

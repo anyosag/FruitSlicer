@@ -218,6 +218,10 @@ void linkRaft(SupportTree& tree);
 // heads where its heads are now. The raft's top is the higher of the two.
 void appendTree(SupportTree& into, const SupportTree& from, int point_offset);
 
+// The shaft a head of tip diameter `tip_d` stands on: 0.8 mm up to 0.3 mm
+// tips, 1.0 to 0.45 mm, 1.2 above.
+double shaftDiameterFor(double tip_d);
+
 // How deep a tip of diameter `tip_d` sinks into the part: the nearest
 // measured value from the profile, or half the diameter within 0.08–0.2 mm.
 double tipPenetration(double tip_d, const TreeConfig& cfg);

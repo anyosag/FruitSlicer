@@ -60,7 +60,7 @@ TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[cali
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     TipsPlateOptions o;
     const CalibrationPlate a = tipsPlate(o, p);
-    CHECK(a.coupons.size() == 4 * 2 * 4 * 2 + 4 * 2 * 3 * 2);  // plain (4 loads); and necked (2 necks × 3 loads), twice
+    CHECK(a.coupons.size() == 4 * 2 * 6 * 2 + 4 * 2 * 3 * 2);  // plain (6 loads a size); and necked (2 necks × 3 loads), twice
     requireFitsAndUnique(a, p);
     requireOnlyRaftIslands(a);
     const CalibrationPlate b = tipsPlate(o, p);
@@ -92,10 +92,27 @@ TEST_CASE("tips plate: every disc widens from its tips, with nothing hanging pas
         worst = std::max(worst, std::abs(area(out)));
     }
     CHECK(worst < 0.05);  // mm²: no skin reaches out past the layer below
-    // The heaviest disc's last full layer still has the area its load names.
+    // The heaviest disc (0.6 mm tips at 14 mm² each) still has the area its load names.
     double biggest = 0;
     for (const auto& c : plate.coupons) biggest = std::max(biggest, c.params["disc_area_mm2"].get<double>());
-    CHECK(biggest == Approx(60));
+    CHECK(biggest == Approx(42));
+}
+
+TEST_CASE("tips plate raft: one piece, with no closed pocket and no solid slab", "[calibration]") {
+    TipsPlateOptions o;
+    o.peel_axis = {0, -1};
+    const CalibrationPlate plate = tipsPlate(o, PrinterProfile::saturn4Ultra16k());
+    const LayerStack ls = sliceModel(plate.mesh, 0.1);
+    // Half way up the raft: one outline, and no hole in it (a hole would be a pocket that seals
+    // against the film on every raft layer and pulls as a suction cup).
+    const ExPolygons raft = toExPolygons(ls.slices[ls.layerAt(plate.settings["raft_thickness"].get<double>() / 2)]);
+    REQUIRE(raft.size() == 1);
+    CHECK(raft.front().holes.empty());
+    // Pads and bars, not a slab over the whole grid: well under the rectangle they span.
+    const BBox3 b = plate.mesh.bbox();
+    const double rect = (b.max.x - b.min.x) * (b.max.y - b.min.y);
+    CHECK(area(raft) < 0.75 * rect);
+    CHECK(area(raft) > 0.4 * rect);  // still a raft under every coupon
 }
 
 TEST_CASE("spacing plate: tilted plates and wedges are held by their tips", "[calibration]") {

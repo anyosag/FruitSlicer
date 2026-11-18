@@ -136,10 +136,19 @@ void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
         const double heaviest_held = num(t, "max_held_mm2", -1), lightest_failed = num(t, "min_failed_mm2", -1);
         if (basis == "lower bound") {
             h.basis = Basis::Bound;
-            h.how = strf("All %d held, even at %s, the heaviest load tested. ", n, area(heaviest_held).c_str()) +
-                    "Half would let go somewhere above it, so this is only a floor: 70 % of that load.";
-            s.unsure.push_back(strf("%g mm tips never let go, so their hold is at least %s.", h.tip,
-                                    area(h.yours).c_str()));
+            h.floor = num(t, "floor_mm2", h.yours);
+            if (h.yours > h.floor + 1e-9) {
+                h.how = strf("All %d held, even at %s, the heaviest load tested: they hold at least %s. ", n,
+                             area(heaviest_held).c_str(), area(h.floor).c_str()) +
+                        "That doesn't go against FruitSlicer's starting value, " + area(h.yours) + ", so it stays.";
+                s.unsure.push_back(strf("%g mm tips never let go: they hold at least %s, so the starting %s stays.",
+                                        h.tip, area(h.floor).c_str(), area(h.yours).c_str()));
+            } else {
+                h.how = strf("All %d held, even at %s, the heaviest load tested. ", n, area(heaviest_held).c_str()) +
+                        "Half would let go somewhere above it, so this is only a floor: 70 % of that load.";
+                s.unsure.push_back(strf("%g mm tips never let go, so their hold is at least %s.", h.tip,
+                                        area(h.yours).c_str()));
+            }
         } else if (basis == "upper bound") {
             h.basis = Basis::Guess;
             h.how = strf("None of %d held, even at %s, the lightest load tested, ", n, area(lightest_failed).c_str()) +
@@ -334,7 +343,8 @@ std::string oneDecimal(double v) {
 }
 
 std::string holdText(const TipHold& h) {
-    return h.basis == Basis::Bound   ? "at least " + area(h.yours)
+    return h.basis == Basis::Bound   ? (h.floor >= 0 && h.yours > h.floor + 1e-9 ? area(h.yours) + ", the starting value"
+                                                                                : "at least " + area(h.yours))
            : h.basis == Basis::Guess ? area(h.yours) + ", a guess"
                                      : area(h.yours);
 }

@@ -67,7 +67,7 @@ const fruit::PlateCoupon& couponWhere(const fruit::CalibrationPlate& p, const ch
 
 TEST_CASE("each plate is described as it is made", "[plates]") {
     // The Calibrate page writes these without making the plates.
-    CHECK(plateSubtitle(plateOf("tips")) == "112 coupons · 10 mm tall");
+    CHECK(plateSubtitle(plateOf("tips")) == "144 coupons · 13 mm tall");
     CHECK(plateSubtitle(plateOf("spacing")) == "37 coupons · 19 mm tall");
     CHECK(plateSubtitle(plateOf("islands")) == "36 coupons · 7 mm tall");
     CHECK(plateSubtitle(plateOf("gaps")) == "48 coupons · 18 mm tall");
@@ -76,13 +76,16 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
     CHECK(gaps[0] == "Shafts 0.15, 0.2, 0.25, 0.3, 0.4 and 0.5 mm from the model");
 
     const auto tips = plateTests(plateOf("tips"));
-    REQUIRE(tips.size() == 6);
+    REQUIRE(tips.size() == 7);
     CHECK(tips[0] == "Tip sizes 0.2, 0.3, 0.4 and 0.6 mm");
     CHECK(tips[1] == "Contact depths 0.1 and 0.2 mm");
-    CHECK(tips[2] == "Loads of 2.5, 5, 10 and 20 mm² per tip");
-    CHECK(tips[3] == "Each disc widens from its tips at 45°, so nothing hangs past them: only the tips can let go");
-    CHECK(tips[4] == "Breakaway necks 0.1 and 0.25 mm out from the surface, 60 % of the tip's width, beside plain tips at the same loads");
-    CHECK(tips[5] == "Each combination twice: 32 plain and 24 necked × 2 = 112");
+    CHECK(tips[2] == "Loads per tip by size, lightest to heaviest: 0.9-5 mm² on 0.2 mm, 1.25-7 mm² on 0.3 mm, "
+                     "1.8-10 mm² on 0.4 mm, 2.5-14 mm² on 0.6 mm");
+    CHECK(tips[3] == "Tips 10 mm above the plate, on shafts as wide as a job's (0.8, 1.0 and 1.2 mm by tip size), as "
+                     "supports stand in your jobs");
+    CHECK(tips[4] == "Each disc widens from its tips at 45°, so nothing hangs past them: only the tips can let go");
+    CHECK(tips[5] == "Breakaway necks 0.1 and 0.25 mm out from the surface, 60 % of the tip's width, beside plain tips at the same loads");
+    CHECK(tips[6] == "Each combination twice: 48 plain and 24 necked × 2 = 144");
 
     const auto spacing = plateTests(plateOf("spacing"));
     REQUIRE(spacing.size() == 4);
@@ -182,16 +185,16 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
     const fruit::CalibrationPlate& p = plateOf("tips");
     PlateFiles f = keptAt(d, "tips");
     keepPlate(p, f);
-    CHECK(f.coupons == 112);
+    CHECK(f.coupons == 144);
     CHECK(f.scored == 0);
     // No settings in the sheet, so they can't sway whoever scores.
     CHECK(firstLine(f.results) == "id,row,col,result,scar,notes");
 
     PlateScores s = loadScores(f);
     CHECK(s.kind == "tips");
-    REQUIRE(s.coupons.size() == 112);
+    REQUIRE(s.coupons.size() == 144);
     CHECK(s.scored() == 0);
-    CHECK(s.layout.cells.size() == 112);
+    CHECK(s.layout.cells.size() == 144);
     s.coupons[0].recorded = true;
     s.coupons[0].ok = true;
     s.coupons[0].scar = 2;

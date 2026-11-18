@@ -362,15 +362,19 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 const LogisticFit lf = fitLogistic(x, y);
                 const double min_x = *std::min_element(x.begin(), x.end());
                 const double max_x = *std::max_element(x.begin(), x.end());
-                double cap;
+                double cap, floor_cap = -1;
                 std::string basis;
                 if (std::isinf(lf.l50) && lf.l50 > 0) {
                     // Half would let go somewhere above the heaviest load, so
                     // the usual fraction of that load is a true lower bound.
-                    cap = o.capacity_fraction * max_x;
+                    // Below FruitSlicer's starting value, the floor doesn't contradict it: that stays
+                    // (it is what jobs have printed with), and the floor is kept beside it.
+                    floor_cap = o.capacity_fraction * max_x;
+                    cap = std::max(floor_cap, CapacityModel{}.capacity(d));
                     basis = "lower bound";
-                    notes.push_back("tips " + fmt(d) + " mm: no failures up to " + fmt(max_x) + " mm² per tip; capacity " +
-                                    fmt(cap) + " is a lower bound (test higher loads)");
+                    notes.push_back("tips " + fmt(d) + " mm: no failures up to " + fmt(max_x) + " mm² per tip; at least " +
+                                    fmt(floor_cap) + (cap > floor_cap ? ", so the starting value " + fmt(cap) + " stays" : "") +
+                                    " (test higher loads)");
                 } else if (std::isinf(lf.l50)) {
                     cap = 0.5 * min_x;
                     basis = "upper bound";
@@ -423,6 +427,7 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                                   {"penetrations", depths},
                                   {"load_50pct", std::isfinite(lf.l50) ? json(lf.l50) : json(nullptr)},
                                   {"capacity_mm2", cap},
+                                  {"floor_mm2", floor_cap >= 0 ? json(floor_cap) : json(nullptr)},
                                   {"basis", basis},
                                   {"preferred_penetration", best_pen > 0 ? json(best_pen) : json(nullptr)},
                                   {"mean_scar", scar_n ? json(mean_scar) : json(nullptr)}});

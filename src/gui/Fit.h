@@ -27,6 +27,7 @@ struct TipHold {
     double tip = 0;       // mm
     double yours = 0;     // mm² of layer per tip, as kept
     double borrowed = 0;  // the starting value
+    double floor = -1;    // never let go: 70 % of the heaviest load (yours is the starting value when higher)
     Basis basis = Basis::Measured;
     std::string how;      // one or two sentences
 };

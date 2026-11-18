@@ -155,9 +155,28 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
         for (const auto& c : p.coupons) necked += c.params.value("neck_back", 0.0) > 0 ? 1 : 0;
         const std::size_t plain = n - necked;
         const bool sides = p.settings.value("sides", false);
+        // Loads: one list when every tip size has the same, else each size's lightest to heaviest.
+        std::map<double, std::set<double>> by_tip;
+        for (const auto& c : p.coupons)
+            if (c.params.value("neck_back", 0.0) <= 0)
+                by_tip[c.params["tip_diameter"].get<double>()].insert(c.params["load_per_tip_mm2"].get<double>());
+        bool same = true;
+        for (const auto& [d, ls] : by_tip) same = same && ls == by_tip.begin()->second;
+        std::string loads;
+        if (same || by_tip.empty()) {
+            loads = "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip";
+        } else {
+            loads = "Loads per tip by size, lightest to heaviest:";
+            for (const auto& [d, ls] : by_tip)
+                loads += strf(" %g-%g mm² on %g mm,", *ls.begin(), *ls.rbegin(), d);
+            loads.pop_back();  // the last comma
+        }
         std::vector<std::string> out{"Tip sizes " + listOf(valuesOf(p, "tip_diameter")) + " mm",
-                                     "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm",
-                                     "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip"};
+                                     "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm", loads};
+        if (p.settings.value("shafts_as_jobs", false))
+            out.push_back(strf("Tips %g mm above the plate, on shafts as wide as a job's (0.8, 1.0 and 1.2 mm by tip "
+                               "size), as supports stand in your jobs",
+                               p.settings.value("tip_height", 10.0)));
         if (p.settings.value("disc_underside", "") == "45deg")
             out.push_back("Each disc widens from its tips at 45°, so nothing hangs past them: only the tips can let go");
         if (necked > 0) {
