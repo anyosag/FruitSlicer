@@ -67,7 +67,7 @@ const fruit::PlateCoupon& couponWhere(const fruit::CalibrationPlate& p, const ch
 
 TEST_CASE("each plate is described as it is made", "[plates]") {
     // The Calibrate page writes these without making the plates.
-    CHECK(plateSubtitle(plateOf("tips")) == "48 coupons · 6 mm tall");
+    CHECK(plateSubtitle(plateOf("tips")) == "96 coupons · 6 mm tall");
     CHECK(plateSubtitle(plateOf("spacing")) == "37 coupons · 19 mm tall");
     CHECK(plateSubtitle(plateOf("islands")) == "36 coupons · 7 mm tall");
     CHECK(plateSubtitle(plateOf("gaps")) == "48 coupons · 18 mm tall");
@@ -76,11 +76,12 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
     CHECK(gaps[0] == "Shafts 0.15, 0.2, 0.25, 0.3, 0.4 and 0.5 mm from the model");
 
     const auto tips = plateTests(plateOf("tips"));
-    REQUIRE(tips.size() == 4);
+    REQUIRE(tips.size() == 5);
     CHECK(tips[0] == "Tip sizes 0.2, 0.3, 0.4 and 0.6 mm");
     CHECK(tips[1] == "Contact depths 0.1 and 0.2 mm");
     CHECK(tips[2] == "Loads of 5, 10 and 20 mm² per tip");
-    CHECK(tips[3] == "Each combination twice: 24 × 2 = 48");
+    CHECK(tips[3] == "Breakaway necks 0.1 and 0.25 mm out from the surface, 60 % of the tip's width, beside plain tips at the same loads");
+    CHECK(tips[4] == "Each combination twice: 24 plain and 24 necked × 2 = 96");
 
     const auto spacing = plateTests(plateOf("spacing"));
     REQUIRE(spacing.size() == 4);
@@ -102,9 +103,13 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
 }
 
 TEST_CASE("each coupon is put in words from its own settings", "[plates]") {
-    const auto& t = plateOf("tips").coupons.front().params;
+    nlohmann::json t, n;  // a plain coupon and a necked one
+    for (const auto& c : plateOf("tips").coupons) (c.params.value("neck_back", 0.0) > 0 ? n : t) = c.params;
     const auto tf = couponFacts("tips", t);
     REQUIRE(tf.size() == 4);
+    const auto nf = couponFacts("tips", n);
+    REQUIRE(nf.size() == 5);
+    CHECK(nf[4].label == "Breakaway neck");
     char size[32];
     std::snprintf(size, sizeof size, "%g mm", t["tip_diameter"].get<double>());
     CHECK(tf[0].label == "Tip size");
@@ -176,16 +181,16 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
     const fruit::CalibrationPlate& p = plateOf("tips");
     PlateFiles f = keptAt(d, "tips");
     keepPlate(p, f);
-    CHECK(f.coupons == 48);
+    CHECK(f.coupons == 96);
     CHECK(f.scored == 0);
     // No settings in the sheet, so they can't sway whoever scores.
     CHECK(firstLine(f.results) == "id,row,col,result,scar,notes");
 
     PlateScores s = loadScores(f);
     CHECK(s.kind == "tips");
-    REQUIRE(s.coupons.size() == 48);
+    REQUIRE(s.coupons.size() == 96);
     CHECK(s.scored() == 0);
-    CHECK(s.layout.cells.size() == 48);
+    CHECK(s.layout.cells.size() == 96);
     s.coupons[0].recorded = true;
     s.coupons[0].ok = true;
     s.coupons[0].scar = 2;

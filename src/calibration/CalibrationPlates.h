@@ -75,6 +75,15 @@ struct TipsPlateOptions {
     // difference of a few tens of percent between the sides shows; once each
     // per side (each combination twice in all, as one set with replicates 2).
     std::vector<double> loads_two_sides{5, 6.6, 8.7, 11.5, 15.2, 20};
+    // Breakaway necks (PinheadSpec::neck_back): each tip size with each neck,
+    // at three of the loads, on the shallower contact depth; plain tips at
+    // the same loads and depth are on the plate already, to compare marks
+    // and holds with. With two sets, once each, in the middle of the plate;
+    // with one, `replicates` times, shuffled in with the rest.
+    std::vector<double> neck_backs{0.1, 0.25};
+    double neck_ratio = 0.6;
+    std::vector<double> neck_loads{5, 10, 20};
+    std::vector<double> neck_loads_two_sides{6.6, 11.5, 20};
     std::vector<double> tip_diameters{0.2, 0.3, 0.4, 0.6};
     std::vector<double> penetrations{0.1, 0.2};
     std::vector<double> loads_per_tip{5, 10, 20};  // mm² of disc area per tip

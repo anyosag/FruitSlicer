@@ -14,6 +14,7 @@
 #include "Plates.h"
 #include "calibration/CalibrationFit.h"
 #include "support/SupportTree.h"
+#include "support/SupportGeometry.h"
 #include "support/SupportSettings.h"
 
 using Catch::Approx;
@@ -72,7 +73,7 @@ TEST_CASE("each tip size's hold says how it was found, and bounds and guesses sa
     r.plates["tips"] = PlateFiles{};
     const FitSummary s = summarizeFit({scored("tips", tipsHold)}, options(), r);
     REQUIRE(s.kinds == std::vector<std::string>{"tips"});
-    CHECK(s.from == "From the tips plate (48 of 48 scored).");
+    CHECK(s.from == "From the tips plate (96 of 96 scored).");
     REQUIRE(s.holds.size() == 4);
 
     // 0.4 mm: held at 5 and 10, let go at 20: 70 % of halfway, 15.
@@ -187,9 +188,9 @@ TEST_CASE("a plate scored in part fits what is scored, and says the rest is left
     r.plates["spacing"] = PlateFiles{};  // saved, nothing scored
     const FitSummary s = summarizeFit({scored("tips", tipsHold, 20), scored("spacing", tipsHold, 0)}, options(), r);
     CHECK(s.kinds == std::vector<std::string>{"tips"});
-    CHECK(s.from == "From the tips plate (20 of 48 scored).");
+    CHECK(s.from == "From the tips plate (20 of 96 scored).");
     REQUIRE(s.next.size() == 4);
-    CHECK(s.next[0] == "The rest of the tips plate: 28 coupons are not scored yet.");
+    CHECK(s.next[0] == "The rest of the tips plate: 76 coupons are not scored yet.");
     CHECK(s.next[1] == "Score the spacing plate: it's saved, but nothing is scored yet.");
     CHECK_THAT(s.next[2], StartsWith("The islands plate:"));
     CHECK_THAT(s.next[3], StartsWith("The gap plate:"));
@@ -274,9 +275,14 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
     o.peel_axis = {0, -1};  // hinged at the back (+y): the far side is the front
     const auto printer = fruit::PrinterProfile::saturn4Ultra16k();
     const fruit::CalibrationPlate plate = fruit::tipsPlate(o, printer);
-    REQUIRE(plate.coupons.size() == 96);
-    int hinge = 0, far = 0;
+    REQUIRE(plate.coupons.size() == 120);  // 48 by the hinge, 48 far from it, 24 necked in the middle
+    int hinge = 0, far = 0, middle = 0;
     for (const auto& c : plate.coupons) {
+        if (c.params["side"] == "middle") {
+            ++middle;
+            CHECK(c.params.value("neck_back", 0.0) > 0);
+            continue;
+        }
         const bool h = c.params["side"] == "hinge";
         (h ? hinge : far) += 1;
         // Each set along its own edge: by the hinge, at the back; far from it, at the front.
@@ -286,6 +292,7 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
     }
     CHECK(hinge == 48);
     CHECK(far == 48);
+    CHECK(middle == 24);
     // Scores from a resin whose tips hold, at the hinge's edge, 6 / 9 / 12 / 18 mm² (0.2 / 0.3 / 0.4 / 0.6 mm),
     // where the peel pulls 40 % harder at the far edge than at the hinge's: a disc stays on while its load,
     // times the pull where it is, is under its tips' hold.
@@ -325,4 +332,56 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
     ch.hinge = fruit::HingeSide::PlusY;
     fruit::resolveSettings(&s.profile, ch, cfg, &tc);
     CHECK(cfg.peel_bias == Approx(bias));
+}
+
+TEST_CASE("breakaway necks: kept where they leave less of a mark and hold as well, and drawn on the heads", "[fit][neck]") {
+    const fruit::CalibrationPlate plate = fruit::tipsPlate(fruit::TipsPlateOptions{}, fruit::PrinterProfile::saturn4Ultra16k());
+    // A resin where tips hold 12 mm² (any size, necked or not, on either depth), plain tips leave a 4 (a dent),
+    // a neck 0.1 mm out leaves a 2, and one 0.25 mm out a 3 (the stub shows); except 0.2 mm tips, whose necks
+    // let go at every load.
+    fruit::PlateResults res;
+    res.kind = "tips";
+    res.settings = plate.settings;
+    for (const auto& c : plate.coupons) {
+        fruit::CouponResult r;
+        r.id = c.id;
+        r.params = c.params;
+        r.recorded = true;
+        const double back = c.params.value("neck_back", 0.0), d = c.params["tip_diameter"].get<double>();
+        r.ok = c.params["load_per_tip_mm2"].get<double>() < 12 && !(back > 0 && d < 0.25);
+        r.scar = r.ok ? (back == 0 ? 4 : back < 0.2 ? 2 : 3) : 0;
+        res.coupons.push_back(r);
+    }
+    Resin resin;
+    const FitSummary s = summarizeFit({res}, options(), resin);
+    REQUIRE(s.profile.contains("neck_table"));
+    std::map<double, double> kept;
+    for (const auto& e : s.profile["neck_table"]) kept[e[0].get<double>()] = e[1].get<double>();
+    CHECK(kept.count(0.2) == 0);  // its necks let go: plain it stays
+    for (const double d : {0.3, 0.4, 0.6}) {
+        CAPTURE(d);
+        REQUIRE(kept.count(d) == 1);
+        CHECK(kept[d] == Approx(0.1));  // the shallower neck: the least mark
+    }
+    // The tips' holds come from plain coupons only (a necked 0.2 mm one letting go doesn't lower it).
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    fruit::applyProfile(s.profile, cfg, &tc, nullptr);
+    REQUIRE(tc.neck_table.size() == 3);
+    // Drawn: a head with a neck is thinner just out from the surface than one without.
+    fruit::PinheadSpec plain;
+    plain.tip_diameter = 0.4;
+    plain.penetration = 0.1;
+    fruit::PinheadSpec necked = plain;
+    necked.neck_back = 0.1;
+    fruit::TriangleMesh a, b;
+    fruit::appendPinhead(a, {0, 0, 5}, {0, 0, -1}, plain, {}, false);
+    fruit::appendPinhead(b, {0, 0, 5}, {0, 0, -1}, necked, {}, false);
+    auto widthAt = [](const fruit::TriangleMesh& m, double z) {
+        double w = 0;
+        for (const auto& v : m.vertices) if (std::abs(v.z - z) < 0.02) w = std::max(w, std::hypot(v.x, v.y));
+        return w;
+    };
+    CHECK(widthAt(b, 4.9) < widthAt(a, 4.9));
+    CHECK(widthAt(b, 4.9) == Approx(0.6 * 0.2).margin(0.01));
 }

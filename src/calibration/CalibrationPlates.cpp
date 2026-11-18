@@ -57,10 +57,12 @@ void addMarker(TriangleMesh& m, const Layout& L, const PlateCommon& c) {
 
 // Pinhead at `contact` (outward normal `n`), vertical shaft, base cone on the raft.
 void addSupport(TriangleMesh& m, const Vec3& contact, const Vec3& n, double tip_d, double pen,
-                const PlateCommon& c, double raft_top) {
+                const PlateCommon& c, double raft_top, double neck_back = 0, double neck_ratio = 0.6) {
     PinheadSpec s;
     s.tip_diameter = tip_d;
     s.penetration = pen;
+    s.neck_back = neck_back;
+    s.neck_ratio = neck_ratio;
     s.head_length = c.head_length;
     s.shaft_diameter = std::max(c.shaft_diameter, tip_d * 1.5);
     const Vec3 dir = headDirection(n);
@@ -179,13 +181,14 @@ double peelT(const Vec2& xy, const Vec2& axis, const PrinterProfile& p) {
 // ("peel_t").
 CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>& combos, double cell,
                                const PlateCommon& c, const PrinterProfile& p, const Vec2& axis,
-                               const std::function<void(TriangleMesh&, const Vec2&, const json&, double)>& build) {
+                               const std::function<void(TriangleMesh&, const Vec2&, const json&, double)>& build,
+                               const std::vector<json>& middle = {}) {
     checkCommon(c, p);
     Layout L(cell, p);
     std::vector<json> one;
     for (int r = 0; r < std::max(1, c.replicates); ++r)
         for (const auto& cb : combos) one.push_back(cb);
-    if (2 * static_cast<int>(one.size()) > L.capacity()) {
+    if (2 * static_cast<int>(one.size() + middle.size()) > L.capacity() + static_cast<int>(middle.size())) {
         std::ostringstream msg;
         msg << kind << " plate: two sets of " << one.size() << " coupons but only " << L.capacity() << " cells fit";
         throw std::runtime_error(msg.str());
@@ -230,6 +233,28 @@ CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>&
             plate.coupons.push_back(std::move(pc));
         }
     }
+    // Then `middle`, shuffled, in the cells left nearest the middle of the plate along the peel.
+    if (!middle.empty()) {
+        std::vector<Slot> rest(slots.begin() + static_cast<long>(one.size()), slots.end() - static_cast<long>(one.size()));
+        std::stable_sort(rest.begin(), rest.end(), [](const Slot& a, const Slot& b) { return std::abs(a.t) < std::abs(b.t); });
+        rest.resize(std::min(rest.size(), middle.size()));
+        std::sort(rest.begin(), rest.end(), [](const Slot& a, const Slot& b) { return a.row != b.row ? a.row < b.row : a.col < b.col; });
+        std::vector<json> trials = middle;
+        shuffleDeterministic(trials, c.seed + 2);
+        for (size_t i = 0; i < trials.size() && i < rest.size(); ++i) {
+            PlateCoupon pc;
+            pc.id = ++id;
+            pc.row = rest[i].row;
+            pc.col = rest[i].col;
+            pc.center = L.center(pc.row, pc.col);
+            pc.params = trials[i];
+            pc.params["side"] = "middle";
+            pc.params["peel_t"] = std::round(rest[i].t * 1000) / 1000;
+            appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
+            build(plate.mesh, pc.center, pc.params, c.raft_thickness);
+            plate.coupons.push_back(std::move(pc));
+        }
+    }
     std::sort(plate.coupons.begin(), plate.coupons.end(), [](const PlateCoupon& a, const PlateCoupon& b) { return a.id < b.id; });
     return plate;
 }
@@ -246,6 +271,17 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
                 combos.push_back({{"tip_diameter", d}, {"penetration", pen}, {"load_per_tip_mm2", load},
                                   {"tips", o.tips_per_coupon}, {"disc_area_mm2", disc_area}});
             }
+    std::vector<json> necks;
+    if (!o.penetrations.empty())
+        for (double d : o.tip_diameters)
+            for (double back : o.neck_backs)
+                for (double load : sides ? o.neck_loads_two_sides : o.neck_loads) {
+                    const double disc_area = load * o.tips_per_coupon;
+                    max_r = std::max(max_r, std::sqrt(disc_area / kPi));
+                    necks.push_back({{"tip_diameter", d}, {"penetration", *std::min_element(o.penetrations.begin(), o.penetrations.end())},
+                                     {"load_per_tip_mm2", load}, {"tips", o.tips_per_coupon}, {"disc_area_mm2", disc_area},
+                                     {"neck_back", back}, {"neck_ratio", o.neck_ratio}});
+                }
     const double cell = std::ceil(2 * max_r + 3.0);
     const double z0 = o.common.elevation;
     auto build = [&](TriangleMesh& m, const Vec2& c, const json& prm, double raft_top) {
@@ -257,13 +293,16 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
             const double a = deg2rad(90.0 + 360.0 * i / k);
             const double rr = k == 1 ? 0.0 : r / 2;
             addSupport(m, {c.x + rr * std::cos(a), c.y + rr * std::sin(a), z0}, {0, 0, -1},
-                       prm["tip_diameter"].get<double>(), prm["penetration"].get<double>(), o.common, raft_top);
+                       prm["tip_diameter"].get<double>(), prm["penetration"].get<double>(), o.common, raft_top,
+                       prm.value("neck_back", 0.0), prm.value("neck_ratio", 0.6));
         }
     };
     PlateCommon common = o.common;
     if (sides) common.replicates = 1;
-    CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build)
-                                   : assemble("tips", combos, cell, common, p, build);
+    std::vector<json> all = combos;
+    if (!sides) all.insert(all.end(), necks.begin(), necks.end());
+    CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build, necks)
+                                   : assemble("tips", all, cell, common, p, build);
     plate.settings["disc_thickness"] = o.disc_thickness;
     return plate;
 }

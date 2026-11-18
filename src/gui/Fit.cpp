@@ -43,6 +43,34 @@ int recordedIn(const fruit::PlateResults& p) {
     return n;
 }
 
+// Breakaway necks, per tip size: the one kept, or why none.
+void neckValues(FitSummary& s, const json& necks) {
+    for (const json& t : necks) {
+        const double d = num(t, "tip_diameter");
+        FitValue v;
+        v.label = strf("Breakaway neck on %g mm tips", d);
+        const bool plain_mark = t.contains("plain_mark") && t["plain_mark"].is_number();
+        std::string tried;
+        for (const json& n : t["necks"]) {
+            tried += (tried.empty() ? "" : "; ") + strf("%g mm out: held %d of %d", num(n, "neck_back"),
+                                                        n.value("held", 0), n.value("coupons", 0));
+            if (n.contains("mark") && n["mark"].is_number()) tried += strf(", mark %.1f", n["mark"].get<double>());
+        }
+        const std::string plain = strf("Plain tips at the same loads held %d of %d", t.value("plain_held", 0),
+                                       t.value("plain_coupons", 0)) +
+                                  (plain_mark ? strf(", mark %.1f", t["plain_mark"].get<double>()) : std::string()) + ". ";
+        if (t.contains("kept")) {
+            v.value = strf("%g mm out", t["kept"].get<double>());
+            v.how = plain + "Necks: " + tried + ". The one with the least mark that held as well is kept.";
+        } else {
+            v.value = "none";
+            v.how = plain + "Necks: " + tried + ". None held as well and left a mark half a point less, so these "
+                                                "tips stay plain.";
+        }
+        s.values.push_back(v);
+    }
+}
+
 // The tips plate in two sets: how much harder the peel pulls far from the hinge.
 void peelValues(FitSummary& s, const json& p) {
     if (!p.contains("bias")) {
@@ -342,6 +370,7 @@ FitSummary summarizeFit(const std::vector<fruit::PlateResults>& plates, const fr
     if (fits.contains("islands")) islandValues(s, fits["islands"]);
     if (fits.contains("gaps")) gapValues(s, fits["gaps"]);
     if (fits.contains("peel")) peelValues(s, fits["peel"]);
+    if (fits.contains("necks")) neckValues(s, fits["necks"]);
     return s;
 }
 

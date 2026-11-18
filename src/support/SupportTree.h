@@ -25,6 +25,7 @@
 // whole support comes off in one piece. A tip nearer the plate than a head
 // is long stands on the plate on its head alone: nothing reaches below z = 0.
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -115,6 +116,11 @@ struct TreeConfig {
     // Measured (tip diameter, penetration) pairs from a resin profile; empty =
     // 0.5 × diameter clamped to [0.08, 0.2] mm.
     std::vector<std::pair<double, double>> penetration_table;
+    // Breakaway necks measured on the resin's tips plate: (tip diameter, how
+    // far out from the surface, width as a share of the tip's) for the tip
+    // sizes whose necked heads left a smaller mark and held as well. Others
+    // keep the plain head. Empty: none.
+    std::vector<std::array<double, 3>> neck_table;
     GeometryQuality quality;
 };
 

@@ -32,8 +32,22 @@ Vec3 appendPinhead(TriangleMesh& m, const Vec3& contact, const Vec3& dir_in, con
     const double r_tip = s.tip_diameter / 2;
     const double r_back = s.shaft_diameter / 2;
     const PinheadAt at = pinheadAt(contact, dir_in, s);
-    appendSphere(m, at.front, r_tip, q.segments(r_tip));
-    appendFrustum(m, at.front, r_tip, at.junction, r_back, q.segments(r_back));
+    if (s.neck_back > 0) {
+        // The contact: as wide as the sphere's circle at the surface, from inside the part out to the surface;
+        // then in to the neck, then out to the shaft, ending where the cone would.
+        const Vec3 d = normalized(dir_in);
+        const double pen = std::clamp(s.penetration, 0.0, r_tip);
+        const double r_contact = std::max(0.02, std::sqrt(std::max(0.0, r_tip * r_tip - (r_tip - pen) * (r_tip - pen))));
+        const double r_neck = std::max(0.02, s.neck_ratio * r_tip);
+        const Vec3 in = contact - d * pen, neck = contact + d * s.neck_back;
+        const int n = q.segments(std::max(r_contact, r_neck));
+        appendFrustum(m, in, r_contact, contact, r_contact, n);
+        appendFrustum(m, contact, r_contact, neck, r_neck, n);
+        appendFrustum(m, neck, r_neck, at.junction, r_back, q.segments(r_back));
+    } else {
+        appendSphere(m, at.front, r_tip, q.segments(r_tip));
+        appendFrustum(m, at.front, r_tip, at.junction, r_back, q.segments(r_back));
+    }
     if (joint_ball) appendSphere(m, at.junction, r_back, q.segments(r_back));
     return at.junction;
 }

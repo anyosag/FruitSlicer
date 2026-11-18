@@ -1243,8 +1243,12 @@ TriangleMesh SupportTree::mesh(const TreeConfig& cfg, bool with_raft) const {
         if (h.stub) continue;  // drawn as its column, below
         if (h.on_plate)
             plateHead(h, &m, q);
-        else
-            appendPinhead(m, h.contact, h.dir, h.spec, q, !skip[at++]);
+        else {
+            PinheadSpec s = h.spec;
+            for (const auto& n : cfg.neck_table)
+                if (std::abs(n[0] - s.tip_diameter) < 0.026) s.neck_back = n[1], s.neck_ratio = n[2];
+            appendPinhead(m, h.contact, h.dir, s, q, !skip[at++]);
+        }
     }
     for (const Rod& r : stubs) appendFrustum(m, r.a, r.diameter / 2, r.b, r.diameter / 2, q.segments(r.diameter / 2));
     for (const Rod& r : bridges) {

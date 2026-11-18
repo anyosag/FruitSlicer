@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -219,6 +220,13 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
         }
 
         if (plate.kind == "tips") {
+            // The neck coupons are compared with plain ones (below); the holds and depths come from the plain.
+            std::vector<const CouponResult*> necked;
+            {
+                std::vector<const CouponResult*> plain;
+                for (const auto* c : rec) (c->params.value("neck_back", 0.0) > 0 ? necked : plain).push_back(c);
+                rec = plain;
+            }
             std::map<double, std::vector<const CouponResult*>> by_d;
             for (const auto* c : rec) by_d[num(c->params, "tip_diameter")].push_back(c);
             // A plate in two sets, by the hinge and far from it: how much harder the peel pulls far from the
@@ -423,6 +431,60 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
             else notes.push_back("no tip held " + fmt(o.min_default_capacity) + " mm²; default tip left unchanged");
             if (!cands.empty()) prof["minima_tip_diameter"] = cands.back().d;
             fits["tips"] = detail;
+            // Necks: for each tip size, each neck against plain tips at the same loads and the same depth. A
+            // neck is kept where its discs held at least as often and its mark was at least half a point less;
+            // of those, the one with the least mark. Held as often at those loads, the tip's hold stands.
+            if (!necked.empty()) {
+                json neck_detail = json::array(), neck_table = json::array();
+                std::map<double, std::map<double, std::vector<const CouponResult*>>> by_neck;  // d -> back -> coupons
+                for (const auto* c : necked) by_neck[num(c->params, "tip_diameter")][num(c->params, "neck_back")].push_back(c);
+                for (const auto& [d, backs] : by_neck) {
+                    const auto first = backs.begin()->second.front();
+                    const double pen = num(first->params, "penetration");
+                    std::set<double> loads;
+                    for (const auto& [b, cs] : backs) for (const auto* c : cs) loads.insert(num(c->params, "load_per_tip_mm2"));
+                    int base_n = 0, base_held = 0, base_scar_n = 0;
+                    double base_scar = 0;
+                    if (by_d.count(d))
+                        for (const auto* c : by_d.at(d)) {
+                            if (std::abs(num(c->params, "penetration") - pen) > 1e-9) continue;
+                            if (!loads.count(num(c->params, "load_per_tip_mm2"))) continue;
+                            ++base_n, base_held += c->ok;
+                            if (c->scar > 0) base_scar += c->scar, ++base_scar_n;
+                        }
+                    const double base_mark = base_scar_n ? base_scar / base_scar_n : 0;
+                    json per = {{"tip_diameter", d}, {"plain_held", base_held}, {"plain_coupons", base_n},
+                                {"plain_mark", base_scar_n ? json(base_mark) : json(nullptr)}};
+                    json opts = json::array();
+                    double best_back = 0, best_mark = 1e9, ratio = 0.6;
+                    for (const auto& [b, cs] : backs) {
+                        int held = 0, scar_n = 0;
+                        double scar = 0;
+                        for (const auto* c : cs) {
+                            held += c->ok;
+                            if (c->scar > 0) scar += c->scar, ++scar_n;
+                            ratio = c->params.value("neck_ratio", 0.6);
+                        }
+                        const double mark = scar_n ? scar / scar_n : 0;
+                        opts.push_back({{"neck_back", b}, {"held", held}, {"coupons", cs.size()},
+                                        {"mark", scar_n ? json(mark) : json(nullptr)}});
+                        // Held as often (as a share, so a missing plain coupon doesn't count against it)...
+                        const bool holds = base_n > 0 && static_cast<double>(held) / cs.size() + 1e-9 >=
+                                                             static_cast<double>(base_held) / base_n;
+                        // ...and a mark at least half a point less.
+                        const bool better = scar_n > 0 && base_scar_n > 0 && mark <= base_mark - 0.5 + 1e-9;
+                        if (holds && better && mark < best_mark) best_mark = mark, best_back = b;
+                    }
+                    per["necks"] = opts;
+                    if (best_back > 0) {
+                        per["kept"] = best_back;
+                        neck_table.push_back({d, best_back, ratio});
+                    }
+                    neck_detail.push_back(per);
+                }
+                if (!neck_table.empty()) prof["neck_table"] = neck_table;
+                fits["necks"] = neck_detail;
+            }
         } else if (plate.kind == "spacing") {
             std::map<double, std::map<double, bool>> plates_ok;  // angle -> spacing -> all ok
             std::map<double, bool> wedges_ok;                    // angle -> all ok
@@ -587,6 +649,9 @@ void applyProfile(const json& p, SupportConfig& cfg, TreeConfig* tree, std::vect
     if (p.contains("island_two_tip_length")) cfg.island_two_tip_length = p.at("island_two_tip_length").get<double>();
     if (tree && p.contains("penetration_table")) tree->penetration_table = pairs(p.at("penetration_table"));
     if (p.contains("peel_bias")) cfg.peel_bias = p.at("peel_bias").get<double>();
+    if (tree && p.contains("neck_table"))
+        for (const auto& e : p.at("neck_table"))
+            tree->neck_table.push_back({e.at(0).get<double>(), e.at(1).get<double>(), e.at(2).get<double>()});
     if (tree && p.contains("shaft_gap")) tree->clearance = p.at("shaft_gap").get<double>();
     if (notes && p.contains("layer_height") && std::abs(p.at("layer_height").get<double>() - cfg.layer_height) > 1e-9)
         notes->push_back("profile was measured at " + fmt(p.at("layer_height").get<double>()) +

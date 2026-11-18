@@ -151,13 +151,30 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
     const int reps = std::max(1, p.settings.value("replicates", 1));
     const std::size_t n = p.coupons.size(), per = static_cast<std::size_t>(reps);
     if (p.kind == "tips") {
-        const std::size_t combos = n / per;
-        return {"Tip sizes " + listOf(valuesOf(p, "tip_diameter")) + " mm",
-                "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm",
-                "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip",
-                p.settings.value("sides", false)
-                    ? strf("Each combination once by the hinge and once far from it: %zu × 2 = %zu", n / 2, n)
-                    : strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), combos, reps, n)};
+        std::size_t necked = 0;
+        for (const auto& c : p.coupons) necked += c.params.value("neck_back", 0.0) > 0 ? 1 : 0;
+        const std::size_t plain = n - necked;
+        const bool sides = p.settings.value("sides", false);
+        std::vector<std::string> out{"Tip sizes " + listOf(valuesOf(p, "tip_diameter")) + " mm",
+                                     "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm",
+                                     "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip"};
+        if (necked > 0) {
+            std::set<double> backs;
+            for (const auto& c : p.coupons)
+                if (c.params.value("neck_back", 0.0) > 0) backs.insert(c.params["neck_back"].get<double>());
+            out.push_back("Breakaway necks " + listOf(backs) + " mm out from the surface, " +
+                          strf("%.0f %%", 100 * p.coupons.back().params.value("neck_ratio", 0.6)) +
+                          " of the tip's width, beside plain tips at the same loads");
+        }
+        if (sides)
+            out.push_back(strf("Each plain combination once by the hinge and once far from it, each necked one once "
+                               "in the middle: %zu × 2 + %zu = %zu",
+                               plain / 2, necked, n));
+        else
+            out.push_back(necked > 0 ? strf("Each combination %s: %zu plain and %zu necked × %d = %zu", times(reps).c_str(),
+                                            plain / per, necked / per, reps, n)
+                                     : strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), n / per, reps, n));
+        return out;
     }
     if (p.kind == "spacing") {
         std::size_t plates = 0;
@@ -216,7 +233,10 @@ std::vector<CouponFact> couponFacts(const std::string& kind, const json& p) {
                                   {"Contact depth", strf("%g mm", num(p, "penetration"))},
                                   {"Load per tip", strf("%g mm²", num(p, "load_per_tip_mm2"))},
                                   {"Disc held", strf("%g mm² on %g tips", num(p, "disc_area_mm2"), num(p, "tips"))}};
-        if (p.contains("side")) f.push_back({"Where", str(p, "side") == "hinge" ? "By the hinge" : "Far from the hinge"});
+        if (p.value("neck_back", 0.0) > 0)
+            f.push_back({"Breakaway neck", strf("%g mm out, %.0f %% wide", num(p, "neck_back"), 100 * p.value("neck_ratio", 0.6))});
+        if (p.contains("side"))
+            f.push_back({"Where", str(p, "side") == "hinge" ? "By the hinge" : str(p, "side") == "far" ? "Far from the hinge" : "In the middle"});
         return f;
     }
     if (kind == "spacing") {

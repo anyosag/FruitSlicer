@@ -59,7 +59,7 @@ TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[cali
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     TipsPlateOptions o;
     const CalibrationPlate a = tipsPlate(o, p);
-    CHECK(a.coupons.size() == 4 * 2 * 3 * 2);
+    CHECK(a.coupons.size() == 4 * 2 * 3 * 2 + 4 * 2 * 3 * 2);  // plain; and necked (2 necks × 3 loads), twice
     requireFitsAndUnique(a, p);
     requireOnlyRaftIslands(a);
     const CalibrationPlate b = tipsPlate(o, p);

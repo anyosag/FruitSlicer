@@ -17,6 +17,14 @@ struct PinheadSpec {
     double penetration = 0.2;    // depth the contact sphere sinks into the part
     double head_length = 1.0;    // cone length between contact and shaft (flex zone starts here)
     double shaft_diameter = 1.0; // diameter where the head meets the shaft
+    // A breakaway neck: a waist `neck_ratio` of the tip's width, `neck_back`
+    // mm out from the part's surface, so the support snaps there and leaves a
+    // small stub instead of tearing a pit out of the part. Its contact with
+    // the part is the same: a column as wide as the contact sphere's circle
+    // where it meets the surface, sunk `penetration` into the part. 0: none
+    // (the contact sphere and the cone, as ever).
+    double neck_back = 0;
+    double neck_ratio = 0.6;
 };
 
 struct GeometryQuality {
