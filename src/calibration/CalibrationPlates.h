@@ -64,6 +64,17 @@ struct PlateCommon {
 
 struct TipsPlateOptions {
     PlateCommon common;
+    // The direction from the vat's hinge to the far side, in plate
+    // coordinates (as SupportConfig::peel_axis), when the hinge is known:
+    // then the plate holds two sets, each every combination `replicates`
+    // times, one along the hinge's edge and one along the far edge, so the
+    // fit can measure how much harder the peel pulls far from the hinge
+    // (SupportConfig::peel_bias) as well as each tip's hold. Zero: one set.
+    Vec2 peel_axis{0, 0};
+    // Loads per tip in two sets: finer steps (about 1.32 times each), so a
+    // difference of a few tens of percent between the sides shows; once each
+    // per side (each combination twice in all, as one set with replicates 2).
+    std::vector<double> loads_two_sides{5, 6.6, 8.7, 11.5, 15.2, 20};
     std::vector<double> tip_diameters{0.2, 0.3, 0.4, 0.6};
     std::vector<double> penetrations{0.1, 0.2};
     std::vector<double> loads_per_tip{5, 10, 20};  // mm² of disc area per tip

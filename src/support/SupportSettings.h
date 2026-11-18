@@ -22,6 +22,9 @@ enum class HingeSide { PlusX, MinusX, PlusY, MinusY };
 
 std::optional<HingeSide> parseHinge(std::string_view s);  // "+x", "-x", "+y", "-y"
 const char* hingeName(HingeSide h);
+// The direction from the hinge to the far side, in plate coordinates
+// (SupportConfig::peel_axis): peel stress is highest away from the hinge.
+Vec2 peelAxis(HingeSide h);
 
 struct SupportChoices {
     double layer_height = 0.05;

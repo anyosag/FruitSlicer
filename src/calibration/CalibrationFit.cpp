@@ -221,6 +221,105 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
         if (plate.kind == "tips") {
             std::map<double, std::vector<const CouponResult*>> by_d;
             for (const auto* c : rec) by_d[num(c->params, "tip_diameter")].push_back(c);
+            // A plate in two sets, by the hinge and far from it: how much harder the peel pulls far from the
+            // hinge. For each tip size, the load at which half let go on each side (where both sides measure
+            // it); the peel at a point is 1 + bias × (t + 1) / 2, t from -1 at the hinge's edge to +1 at the far
+            // one, as the planner has it; so the far side's 50 % load over the hinge side's is
+            // peel(t_hinge) / peel(t_far), which gives the bias. The loads are then taken as at the hinge's edge
+            // (load × peel(t)) for each tip's hold, the hold the planner's demand is measured against.
+            double bias = 0;
+            {
+                bool sided = false;
+                double th = 0, tf = 0;
+                int nh = 0, nf = 0;
+                for (const auto* c : rec)
+                    if (c->params.contains("side")) {
+                        sided = true;
+                        const double t = num(c->params, "peel_t");
+                        if (c->params["side"] == "hinge") th += t, ++nh;
+                        else tf += t, ++nf;
+                    }
+                if (sided && nh > 0 && nf > 0) {
+                    th /= nh, tf /= nf;
+                    json per = json::array();
+                    std::vector<double> ratios;
+                    for (const auto& [d, cs] : by_d) {
+                        std::vector<double> xh, xf;
+                        std::vector<int> yh, yf;
+                        for (const auto* c : cs) {
+                            const bool hinge = c->params.value("side", std::string()) == "hinge";
+                            (hinge ? xh : xf).push_back(num(c->params, "load_per_tip_mm2"));
+                            (hinge ? yh : yf).push_back(c->ok ? 1 : 0);
+                        }
+                        if (xh.empty() || xf.empty()) continue;
+                        const LogisticFit h = fitLogistic(xh, yh), f = fitLogistic(xf, yf);
+                        const bool both = std::isfinite(h.l50) && std::isfinite(f.l50) && h.l50 > 0 && f.l50 > 0 && !(h.b > 0) && !(f.b > 0);
+                        per.push_back({{"tip_diameter", d},
+                                       {"load_50pct_hinge", std::isfinite(h.l50) ? json(h.l50) : json(nullptr)},
+                                       {"load_50pct_far", std::isfinite(f.l50) ? json(f.l50) : json(nullptr)}});
+                        if (both) ratios.push_back(h.l50 / f.l50);
+                    }
+                    json peel = {{"t_hinge", th}, {"t_far", tf}, {"tips", per}};
+                    // All coupons at once: for each bias tried, every load as at the hinge's edge
+                    // (load × peel); for each tip size, the threshold that leaves the fewest discs on the
+                    // wrong side of it (held above, or let go below). The bias the fewest disagree with,
+                    // the middle of those that tie: a mixed plate, each tip size let go somewhere.
+                    auto misfits = [&](double b) {
+                        int bad = 0;
+                        for (const auto& [d, cs] : by_d) {
+                            std::vector<std::pair<double, int>> v;
+                            for (const auto* c : cs) {
+                                const double t = c->params.contains("peel_t") ? num(c->params, "peel_t") : 0.0;
+                                v.push_back({num(c->params, "load_per_tip_mm2") * (1 + b * 0.5 * (t + 1)), c->ok ? 1 : 0});
+                            }
+                            std::sort(v.begin(), v.end());
+                            int fails_below = 0, held_above = 0;
+                            for (const auto& e : v) held_above += e.second;
+                            int best = held_above;  // threshold below every load: every held disc is wrong
+                            for (const auto& e : v) {
+                                (e.second ? held_above : fails_below) += e.second ? -1 : 1;
+                                best = std::min(best, fails_below + held_above);
+                            }
+                            bad += best;
+                        }
+                        return bad;
+                    };
+                    bool any_mixed = false;
+                    for (const auto& [d, cs] : by_d) {
+                        int ok = 0;
+                        for (const auto* c : cs) ok += c->ok;
+                        any_mixed = any_mixed || (ok > 0 && ok < static_cast<int>(cs.size()));
+                    }
+                    if (any_mixed) {
+                        int least = 1 << 30;
+                        std::vector<double> at;
+                        for (int k = 0; k <= 150; ++k) {
+                            const double b = k / 100.0;
+                            const int m = misfits(b);
+                            if (m < least) least = m, at = {b};
+                            else if (m == least) at.push_back(b);
+                        }
+                        bias = at[at.size() / 2];
+                        prof["peel_bias"] = bias;
+                        peel["bias"] = bias;
+                        peel["bias_range"] = {at.front(), at.back()};
+                        peel["misfits"] = least;
+                        if (!ratios.empty()) {
+                            std::sort(ratios.begin(), ratios.end());
+                            peel["ratio"] = ratios[ratios.size() / 2];
+                        }
+                        peel["sizes"] = ratios.size();
+                    } else {
+                        notes.push_back("tips plate in two sets: every tip size held at every load, or let go at "
+                                        "every one, so the extra pull far from the hinge stays as it was");
+                    }
+                    fits["peel"] = peel;
+                }
+            }
+            auto atHinge = [&](const CouponResult* c) {
+                const double load = num(c->params, "load_per_tip_mm2");
+                return c->params.contains("peel_t") ? load * (1 + bias * 0.5 * (num(c->params, "peel_t") + 1)) : load;
+            };
             json cap_table = json::array(), pen_table = json::array(), detail = json::array();
             struct Cand { double d, cap, scar; };
             std::vector<Cand> cands;
@@ -231,7 +330,7 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 int scar_n = 0, held = 0;
                 double max_held = -1, min_failed = -1;
                 for (const auto* c : cs) {
-                    const double load = num(c->params, "load_per_tip_mm2");
+                    const double load = atHinge(c);
                     x.push_back(load);
                     y.push_back(c->ok ? 1 : 0);
                     if (c->ok) {
@@ -487,6 +586,7 @@ void applyProfile(const json& p, SupportConfig& cfg, TreeConfig* tree, std::vect
     if (p.contains("island_one_tip_length")) cfg.island_one_tip_length = p.at("island_one_tip_length").get<double>();
     if (p.contains("island_two_tip_length")) cfg.island_two_tip_length = p.at("island_two_tip_length").get<double>();
     if (tree && p.contains("penetration_table")) tree->penetration_table = pairs(p.at("penetration_table"));
+    if (p.contains("peel_bias")) cfg.peel_bias = p.at("peel_bias").get<double>();
     if (tree && p.contains("shaft_gap")) tree->clearance = p.at("shaft_gap").get<double>();
     if (notes && p.contains("layer_height") && std::abs(p.at("layer_height").get<double>() - cfg.layer_height) > 1e-9)
         notes->push_back("profile was measured at " + fmt(p.at("layer_height").get<double>()) +

@@ -35,13 +35,11 @@ std::vector<std::string> resolveSettings(const nlohmann::json* profile, const Su
     if (c.critical_angle > 0) cfg.critical_angle_deg = c.critical_angle;
     if (c.hinge) {
         // Peel stress is highest on the side away from the hinge (Wu 2016).
-        switch (*c.hinge) {
-            case HingeSide::PlusX: cfg.peel_axis = {-1, 0}; break;
-            case HingeSide::MinusX: cfg.peel_axis = {1, 0}; break;
-            case HingeSide::PlusY: cfg.peel_axis = {0, -1}; break;
-            case HingeSide::MinusY: cfg.peel_axis = {0, 1}; break;
-        }
-        cfg.peel_bias = c.peel_bias >= 0 ? c.peel_bias : 0.25;
+        cfg.peel_axis = peelAxis(*c.hinge);
+        // Yours, else the resin's measured one (the tips plate in two sets), else 25 %, an assumption.
+        cfg.peel_bias = c.peel_bias >= 0                                 ? c.peel_bias
+                        : profile && profile->contains("peel_bias") ? profile->at("peel_bias").get<double>()
+                                                                         : 0.25;
     } else if (c.peel_bias >= 0) {
         throw std::invalid_argument("a peel bias needs the hinge side");
     }
@@ -50,6 +48,16 @@ std::vector<std::string> resolveSettings(const nlohmann::json* profile, const Su
         if (tree) tree->raft = RaftStyle::None;
     }
     return notes;
+}
+
+Vec2 peelAxis(HingeSide h) {
+    switch (h) {
+        case HingeSide::PlusX: return {-1, 0};
+        case HingeSide::MinusX: return {1, 0};
+        case HingeSide::PlusY: return {0, -1};
+        case HingeSide::MinusY: return {0, 1};
+    }
+    return {0, 0};
 }
 
 double minRaftThickness(int bottom_layers, int transition_layers, double layer_height) {

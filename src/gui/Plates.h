@@ -5,6 +5,7 @@
 // without the UI: the three plates, each coupon in words, and the scores
 // kept in the plate's blind score sheet.
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "calibration/CalibrationFit.h"
 #include "calibration/CalibrationPlates.h"
 #include "printer/PrinterProfile.h"
+#include "support/SupportSettings.h"
 
 namespace gui {
 
@@ -23,7 +25,10 @@ bool isPlateKind(const std::string& kind);
 inline std::string plateWord(const std::string& kind) { return kind == "gaps" ? "gap" : kind; }
 
 // A plate with FruitSlicer's own options (as `fruitslicer calibrate` makes it).
-fruit::CalibrationPlate makePlate(const std::string& kind, const fruit::PrinterProfile& printer);
+// `hinge`: the vat's hinge side, when it is set: the tips plate then holds two
+// sets, one by the hinge and one far from it.
+fruit::CalibrationPlate makePlate(const std::string& kind, const fruit::PrinterProfile& printer,
+                                  std::optional<fruit::HingeSide> hinge = std::nullopt);
 std::string plateTitle(const std::string& kind);                // "Tips plate"
 std::string plateSubtitle(const fruit::CalibrationPlate& p);    // "48 coupons · 6 mm tall"
 std::vector<std::string> plateTests(const fruit::CalibrationPlate& p);  // what it tests, from its coupons

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <string>
 
@@ -13,6 +14,7 @@
 #include "Plates.h"
 #include "calibration/CalibrationFit.h"
 #include "support/SupportTree.h"
+#include "support/SupportSettings.h"
 
 using Catch::Approx;
 using Catch::Matchers::ContainsSubstring;
@@ -265,4 +267,62 @@ TEST_CASE("the gap plate gives the narrowest gap every shaft came off cleanly fr
     fruit::TreeConfig tc;
     fruit::applyProfile(s.profile, cfg, &tc, nullptr);
     CHECK(tc.clearance == Approx(s.profile["shaft_gap"].get<double>()));
+}
+
+TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how much harder the far side pulls", "[fit][peel]") {
+    fruit::TipsPlateOptions o;
+    o.peel_axis = {0, -1};  // hinged at the back (+y): the far side is the front
+    const auto printer = fruit::PrinterProfile::saturn4Ultra16k();
+    const fruit::CalibrationPlate plate = fruit::tipsPlate(o, printer);
+    REQUIRE(plate.coupons.size() == 96);
+    int hinge = 0, far = 0;
+    for (const auto& c : plate.coupons) {
+        const bool h = c.params["side"] == "hinge";
+        (h ? hinge : far) += 1;
+        // Each set along its own edge: by the hinge, at the back; far from it, at the front.
+        if (h) CHECK(c.center.y > 0);
+        else CHECK(c.center.y < 0);
+        CHECK((c.params["peel_t"].get<double>() < 0) == h);
+    }
+    CHECK(hinge == 48);
+    CHECK(far == 48);
+    // Scores from a resin whose tips hold, at the hinge's edge, 6 / 9 / 12 / 18 mm² (0.2 / 0.3 / 0.4 / 0.6 mm),
+    // where the peel pulls 40 % harder at the far edge than at the hinge's: a disc stays on while its load,
+    // times the pull where it is, is under its tips' hold.
+    const double true_bias = 0.4;
+    const std::map<double, double> hold{{0.2, 6}, {0.3, 9}, {0.4, 12}, {0.6, 18}};
+    fruit::PlateResults res;
+    res.kind = "tips";
+    res.settings = plate.settings;
+    for (const auto& c : plate.coupons) {
+        fruit::CouponResult r;
+        r.id = c.id;
+        r.params = c.params;
+        r.recorded = true;
+        const double pull = 1 + true_bias * 0.5 * (c.params["peel_t"].get<double>() + 1);
+        r.ok = c.params["load_per_tip_mm2"].get<double>() * pull < hold.at(c.params["tip_diameter"].get<double>());
+        r.scar = 2;
+        res.coupons.push_back(r);
+    }
+    Resin resin;
+    const FitSummary s = summarizeFit({res}, options(), resin);
+    REQUIRE(s.profile.contains("peel_bias"));
+    const double bias = s.profile["peel_bias"].get<double>();
+    CAPTURE(bias, s.profile["fits"]["peel"].dump());
+    // The loads step about 1.32 times, so one plate brackets the bias rather than pins it: the true one lies in
+    // the range every disc agrees with, and the middle of that range is kept.
+    const auto range = s.profile["fits"]["peel"]["bias_range"];
+    CHECK(range[0].get<double>() <= true_bias);
+    CHECK(range[1].get<double>() >= true_bias);
+    CHECK(bias == Approx((range[0].get<double>() + range[1].get<double>()) / 2).margin(0.011));
+    CHECK(s.profile["fits"]["peel"]["misfits"] == 0);
+    const FitValue* v = valueOf(s, "Extra hold away from the hinge");
+    REQUIRE(v);
+    // Used: the planner's extra demand far from the hinge, and the replay's, are the measured one.
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    fruit::SupportChoices ch;
+    ch.hinge = fruit::HingeSide::PlusY;
+    fruit::resolveSettings(&s.profile, ch, cfg, &tc);
+    CHECK(cfg.peel_bias == Approx(bias));
 }

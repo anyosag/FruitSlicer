@@ -2831,7 +2831,7 @@ void App::openPlate(const std::string& kind) {
 
 const fruit::CalibrationPlate& App::plate() {
     auto& p = plates_[plate_kind_];
-    if (!p) p = std::make_shared<const fruit::CalibrationPlate>(makePlate(plate_kind_, printer_));
+    if (!p) p = std::make_shared<const fruit::CalibrationPlate>(makePlate(plate_kind_, printer_, printer_setup_.hinge));
     return *p;
 }
 

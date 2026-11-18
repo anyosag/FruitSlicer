@@ -165,12 +165,82 @@ std::string CalibrationPlate::csvTemplate() const {
     return out.str();
 }
 
+// Where a point lies along the peel axis, from -1 at the hinge's edge to +1 at
+// the far edge (as the planner's peelFactor measures it).
+double peelT(const Vec2& xy, const Vec2& axis, const PrinterProfile& p) {
+    const Vec2 a = normalized(axis);
+    const double half = std::max(std::abs(a.x) * p.build_x / 2 + std::abs(a.y) * p.build_y / 2, 1.0);
+    return std::clamp(dot(xy, a) / half, -1.0, 1.0);
+}
+
+// Two sets of `combos`, each shuffled on its own: one in the cells nearest the
+// hinge's edge, one in those nearest the far edge. Each coupon's parameters
+// say which ("side": "hinge" or "far") and where along the peel axis it is
+// ("peel_t").
+CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>& combos, double cell,
+                               const PlateCommon& c, const PrinterProfile& p, const Vec2& axis,
+                               const std::function<void(TriangleMesh&, const Vec2&, const json&, double)>& build) {
+    checkCommon(c, p);
+    Layout L(cell, p);
+    std::vector<json> one;
+    for (int r = 0; r < std::max(1, c.replicates); ++r)
+        for (const auto& cb : combos) one.push_back(cb);
+    if (2 * static_cast<int>(one.size()) > L.capacity()) {
+        std::ostringstream msg;
+        msg << kind << " plate: two sets of " << one.size() << " coupons but only " << L.capacity() << " cells fit";
+        throw std::runtime_error(msg.str());
+    }
+    // The cells, the marker's left out, from the hinge's edge to the far one.
+    struct Slot { int row, col; double t; };
+    std::vector<Slot> slots;
+    for (int r = 0; r < L.rows; ++r)
+        for (int k = 0; k < L.cols; ++k)
+            if (r != 0 || k != 0) slots.push_back({r, k, peelT(L.center(r, k), axis, p)});
+    std::stable_sort(slots.begin(), slots.end(), [](const Slot& a, const Slot& b) { return a.t < b.t; });
+    CalibrationPlate plate;
+    plate.kind = kind;
+    plate.rows = L.rows;
+    plate.cols = L.cols;
+    plate.cell = cell;
+    plate.settings = {{"elevation", c.elevation}, {"raft_thickness", c.raft_thickness},
+                      {"shaft_diameter", c.shaft_diameter}, {"head_length", c.head_length},
+                      {"seed", c.seed}, {"replicates", c.replicates}, {"printer", p.name},
+                      {"sides", true}, {"peel_axis", {axis.x, axis.y}}};
+    addMarker(plate.mesh, L, c);
+    const double half = cell / 2 - 1.0;
+    int id = 0;
+    for (const int side : {0, 1}) {  // 0: by the hinge, 1: far from it
+        std::vector<json> trials = one;
+        shuffleDeterministic(trials, c.seed + static_cast<uint32_t>(side));
+        // This side's cells: the nearest to its edge, in plate order (rows, then columns).
+        std::vector<Slot> mine(side == 0 ? slots.begin() : slots.end() - static_cast<long>(trials.size()),
+                               side == 0 ? slots.begin() + static_cast<long>(trials.size()) : slots.end());
+        std::sort(mine.begin(), mine.end(), [](const Slot& a, const Slot& b) { return a.row != b.row ? a.row < b.row : a.col < b.col; });
+        for (size_t i = 0; i < trials.size(); ++i) {
+            PlateCoupon pc;
+            pc.id = ++id;
+            pc.row = mine[i].row;
+            pc.col = mine[i].col;
+            pc.center = L.center(pc.row, pc.col);
+            pc.params = trials[i];
+            pc.params["side"] = side == 0 ? "hinge" : "far";
+            pc.params["peel_t"] = std::round(mine[i].t * 1000) / 1000;
+            appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
+            build(plate.mesh, pc.center, pc.params, c.raft_thickness);
+            plate.coupons.push_back(std::move(pc));
+        }
+    }
+    std::sort(plate.coupons.begin(), plate.coupons.end(), [](const PlateCoupon& a, const PlateCoupon& b) { return a.id < b.id; });
+    return plate;
+}
+
 CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
+    const bool sides = norm(o.peel_axis) > 0;
     std::vector<json> combos;
     double max_r = 0;
     for (double d : o.tip_diameters)
         for (double pen : o.penetrations)
-            for (double load : o.loads_per_tip) {
+            for (double load : sides ? o.loads_two_sides : o.loads_per_tip) {
                 const double disc_area = load * o.tips_per_coupon;
                 max_r = std::max(max_r, std::sqrt(disc_area / kPi));
                 combos.push_back({{"tip_diameter", d}, {"penetration", pen}, {"load_per_tip_mm2", load},
@@ -190,7 +260,10 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
                        prm["tip_diameter"].get<double>(), prm["penetration"].get<double>(), o.common, raft_top);
         }
     };
-    CalibrationPlate plate = assemble("tips", combos, cell, o.common, p, build);
+    PlateCommon common = o.common;
+    if (sides) common.replicates = 1;
+    CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build)
+                                   : assemble("tips", combos, cell, common, p, build);
     plate.settings["disc_thickness"] = o.disc_thickness;
     return plate;
 }

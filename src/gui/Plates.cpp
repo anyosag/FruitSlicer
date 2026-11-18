@@ -122,8 +122,13 @@ bool isPlateKind(const std::string& kind) {
     return std::any_of(std::begin(kPlateKinds), std::end(kPlateKinds), [&](const char* k) { return kind == k; });
 }
 
-fruit::CalibrationPlate makePlate(const std::string& kind, const fruit::PrinterProfile& printer) {
-    if (kind == "tips") return fruit::tipsPlate(fruit::TipsPlateOptions{}, printer);
+fruit::CalibrationPlate makePlate(const std::string& kind, const fruit::PrinterProfile& printer,
+                                  std::optional<fruit::HingeSide> hinge) {
+    if (kind == "tips") {
+        fruit::TipsPlateOptions o;
+        if (hinge) o.peel_axis = fruit::peelAxis(*hinge);
+        return fruit::tipsPlate(o, printer);
+    }
     if (kind == "spacing") return fruit::spacingPlate(fruit::SpacingPlateOptions{}, printer);
     if (kind == "islands") return fruit::islandsPlate(fruit::IslandsPlateOptions{}, printer);
     if (kind == "gaps") return fruit::gapsPlate(fruit::GapsPlateOptions{}, printer);
@@ -150,7 +155,9 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
         return {"Tip sizes " + listOf(valuesOf(p, "tip_diameter")) + " mm",
                 "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm",
                 "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip",
-                strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), combos, reps, n)};
+                p.settings.value("sides", false)
+                    ? strf("Each combination once by the hinge and once far from it: %zu × 2 = %zu", n / 2, n)
+                    : strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), combos, reps, n)};
     }
     if (p.kind == "spacing") {
         std::size_t plates = 0;
@@ -204,11 +211,14 @@ PlateLayout layoutOf(const json& m) {
 }
 
 std::vector<CouponFact> couponFacts(const std::string& kind, const json& p) {
-    if (kind == "tips")
-        return {{"Tip size", strf("%g mm", num(p, "tip_diameter"))},
-                {"Contact depth", strf("%g mm", num(p, "penetration"))},
-                {"Load per tip", strf("%g mm²", num(p, "load_per_tip_mm2"))},
-                {"Disc held", strf("%g mm² on %g tips", num(p, "disc_area_mm2"), num(p, "tips"))}};
+    if (kind == "tips") {
+        std::vector<CouponFact> f{{"Tip size", strf("%g mm", num(p, "tip_diameter"))},
+                                  {"Contact depth", strf("%g mm", num(p, "penetration"))},
+                                  {"Load per tip", strf("%g mm²", num(p, "load_per_tip_mm2"))},
+                                  {"Disc held", strf("%g mm² on %g tips", num(p, "disc_area_mm2"), num(p, "tips"))}};
+        if (p.contains("side")) f.push_back({"Where", str(p, "side") == "hinge" ? "By the hinge" : "Far from the hinge"});
+        return f;
+    }
     if (kind == "spacing") {
         if (str(p, "kind") == "wedge")
             return {{"Wedge, one side leaning", strf("%g° from upright", num(p, "angle_deg"))},

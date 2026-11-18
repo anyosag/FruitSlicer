@@ -43,6 +43,27 @@ int recordedIn(const fruit::PlateResults& p) {
     return n;
 }
 
+// The tips plate in two sets: how much harder the peel pulls far from the hinge.
+void peelValues(FitSummary& s, const json& p) {
+    if (!p.contains("bias")) {
+        s.unsure.push_back("By the hinge and far from it, no tip size let go at a load both sides measure, so how much "
+                           "harder the peel pulls far from the hinge is still the 25 % guess.");
+        return;
+    }
+    FitValue v;
+    v.label = "Extra hold away from the hinge";
+    v.value = strf("up to +%.0f %%", 100 * num(p, "bias"));
+    const json& r = p.contains("bias_range") ? p["bias_range"] : json::array({num(p, "bias"), num(p, "bias")});
+    const int bad = static_cast<int>(num(p, "misfits"));
+    v.how = strf("With the pull that much harder at the far edge, the discs that held and the ones that let go, by "
+                 "the hinge and far from it, fit each tip size's hold %s; anything from +%.0f %% to +%.0f %% fits as "
+                 "well, the middle is kept.",
+                 bad == 0 ? "with none out of place" : strf("with %d out of place", bad).c_str(),
+                 100 * r[0].get<double>(), 100 * r[1].get<double>());
+    v.basis = Basis::Measured;
+    s.values.push_back(v);
+}
+
 // The gap plate: the narrowest gap at which every shaft as far or further came off cleanly, and a pixel.
 void gapValues(FitSummary& s, const json& g) {
     const double clean = num(g, "clean"), stuck = num(g, "stuck"), pixel = num(g, "pixel");
@@ -320,6 +341,7 @@ FitSummary summarizeFit(const std::vector<fruit::PlateResults>& plates, const fr
     if (fits.contains("spacing")) spacingValues(s, fits["spacing"], plateOf(scored, "spacing"));
     if (fits.contains("islands")) islandValues(s, fits["islands"]);
     if (fits.contains("gaps")) gapValues(s, fits["gaps"]);
+    if (fits.contains("peel")) peelValues(s, fits["peel"]);
     return s;
 }
 

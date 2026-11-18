@@ -437,9 +437,10 @@ std::vector<AdvancedSetting> makeAdvanced() {
     v.push_back({.group = "Peel side", .label = "Extra hold away from the hinge", .kind = K::Fixed,
                  .source = S::Assumption,
                  .help = [](const X&) {
-                     return std::string("Peel pulls hardest on the far side: up to +25 % more hold there once the "
-                                        "hinge side is set and the image orientation confirmed. The right amount "
-                                        "hasn't been measured.");
+                     return std::string("Peel pulls hardest on the far side: more hold there once the hinge side "
+                                        "is set and the image orientation confirmed. +25 % is a guess until the "
+                                        "tips plate, printed with the hinge set, measures it by the hinge and far "
+                                        "from it.");
                  },
                  .text = [](const X& x) {
                      return x.cfg.peel_bias > 0 ? strf("up to +%.0f %%", x.cfg.peel_bias * 100) : std::string("off");
