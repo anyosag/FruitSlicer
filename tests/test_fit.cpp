@@ -67,8 +67,10 @@ TEST_CASE("logistic fit: separable, censored and overlapping data", "[fit]") {
 
 TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
-    // True capacity 12 mm² for a 0.4 mm tip, scaling with tip area.
-    const std::string tips = writePlate(tipsPlate({}, printer), "tips", [](const json& p) {
+    // True capacity 12 mm² for a 0.4 mm tip, scaling with tip area. Loads 5/10/20, as the numbers below.
+    TipsPlateOptions to;
+    to.loads_per_tip = {5, 10, 20};
+    const std::string tips = writePlate(tipsPlate(to, printer), "tips", [](const json& p) {
         const double d = p["tip_diameter"].get<double>();
         const bool ok = p["load_per_tip_mm2"].get<double>() < 12.0 * (d / 0.4) * (d / 0.4);
         const int scar = std::clamp(static_cast<int>(std::lround(1 + 6 * d)), 1, 5);

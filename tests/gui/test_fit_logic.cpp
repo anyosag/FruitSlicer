@@ -71,9 +71,13 @@ fruit::FitOptions options() {
 TEST_CASE("each tip size's hold says how it was found, and bounds and guesses say so", "[fit]") {
     Resin r;
     r.plates["tips"] = PlateFiles{};
-    const FitSummary s = summarizeFit({scored("tips", tipsHold)}, options(), r);
+    // As tipsHold, but 0.2 mm tips hold under 2 mm²: less than the lightest load, so theirs is a guess.
+    const auto hold = [](const nlohmann::json& p) {
+        return p["tip_diameter"].get<double>() < 0.25 ? p["load_per_tip_mm2"].get<double>() < 2.0 : tipsHold(p);
+    };
+    const FitSummary s = summarizeFit({scored("tips", hold)}, options(), r);
     REQUIRE(s.kinds == std::vector<std::string>{"tips"});
-    CHECK(s.from == "From the tips plate (96 of 96 scored).");
+    CHECK(s.from == "From the tips plate (112 of 112 scored).");
     REQUIRE(s.holds.size() == 4);
 
     // 0.4 mm: held at 5 and 10, let go at 20: 70 % of halfway, 15.
@@ -87,20 +91,20 @@ TEST_CASE("each tip size's hold says how it was found, and bounds and guesses sa
     REQUIRE(six);
     CHECK(six->value == "at least 14 mm²");
     CHECK(six->basis == Basis::Bound);
-    CHECK_THAT(six->how, StartsWith("All 12 held, even at 20 mm²"));
-    // 0.2 mm let go at every load: below 70 % of the lightest, 3.5, but how
+    CHECK_THAT(six->how, StartsWith("All 16 held, even at 20 mm²"));
+    // 0.2 mm let go at every load: below 70 % of the lightest, 1.75, but how
     // far below is a guess (half the load).
     const FitValue* two = valueOf(s, "Hold per 0.2 mm tip");
     REQUIRE(two);
-    CHECK(two->value == "2.5 mm²");
+    CHECK(two->value == "1.3 mm²");
     CHECK(two->basis == Basis::Guess);
-    CHECK_THAT(two->how, ContainsSubstring("below 70 % of it, 3.5 mm²"));
+    CHECK_THAT(two->how, ContainsSubstring("below 70 % of it, 1.8 mm²"));
 
     for (const TipHold& h : s.holds) CHECK(h.borrowed == Approx(fruit::CapacityModel{}.capacity(h.tip)));
     CHECK(s.holds[3].basis == Basis::Bound);
     CHECK(s.holds[0].basis == Basis::Guess);
     CHECK(holdText(s.holds[3]) == "at least 14 mm²");
-    CHECK(holdText(s.holds[0]) == "2.5 mm², a guess");
+    CHECK(holdText(s.holds[0]) == "1.3 mm², a guess");
     CHECK(holdText(s.holds[2]) == "10.5 mm²");
 
     // The usual tip: the smallest mark among those holding 4 mm² (0.3 and
@@ -115,11 +119,11 @@ TEST_CASE("each tip size's hold says how it was found, and bounds and guesses sa
     const FitValue* depth = valueOf(s, "Contact depth for 0.4 mm tips");
     REQUIRE(depth);
     CHECK(depth->value == "0.1 mm");
-    CHECK(depth->how == "Each depth held 4 of 6 and left the same mark, so the shallower one is kept.");
+    CHECK(depth->how == "Each depth held 6 of 8 and left the same mark, so the shallower one is kept.");
     CHECK_FALSE(valueOf(s, "Contact depth for 0.2 mm tips"));
 
     REQUIRE(s.unsure.size() == 2);
-    CHECK(s.unsure[0] == "0.2 mm tips let go even at the lightest load, 5 mm², so their 2.5 mm² is only a guess.");
+    CHECK(s.unsure[0] == "0.2 mm tips let go even at the lightest load, 2.5 mm², so their 1.3 mm² is only a guess.");
     CHECK_THAT(s.unsure[1], ContainsSubstring("0.6 mm tips never let go"));
     // The other plates are worth printing next.
     REQUIRE(s.next.size() == 3);
@@ -188,9 +192,9 @@ TEST_CASE("a plate scored in part fits what is scored, and says the rest is left
     r.plates["spacing"] = PlateFiles{};  // saved, nothing scored
     const FitSummary s = summarizeFit({scored("tips", tipsHold, 20), scored("spacing", tipsHold, 0)}, options(), r);
     CHECK(s.kinds == std::vector<std::string>{"tips"});
-    CHECK(s.from == "From the tips plate (20 of 96 scored).");
+    CHECK(s.from == "From the tips plate (20 of 112 scored).");
     REQUIRE(s.next.size() == 4);
-    CHECK(s.next[0] == "The rest of the tips plate: 76 coupons are not scored yet.");
+    CHECK(s.next[0] == "The rest of the tips plate: 92 coupons are not scored yet.");
     CHECK(s.next[1] == "Score the spacing plate: it's saved, but nothing is scored yet.");
     CHECK_THAT(s.next[2], StartsWith("The islands plate:"));
     CHECK_THAT(s.next[3], StartsWith("The gap plate:"));
@@ -275,7 +279,7 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
     o.peel_axis = {0, -1};  // hinged at the back (+y): the far side is the front
     const auto printer = fruit::PrinterProfile::saturn4Ultra16k();
     const fruit::CalibrationPlate plate = fruit::tipsPlate(o, printer);
-    REQUIRE(plate.coupons.size() == 120);  // 48 by the hinge, 48 far from it, 24 necked in the middle
+    REQUIRE(plate.coupons.size() == 136);  // 56 by the hinge, 56 far from it, 24 necked in the middle
     int hinge = 0, far = 0, middle = 0;
     for (const auto& c : plate.coupons) {
         if (c.params["side"] == "middle") {
@@ -290,8 +294,8 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
         else CHECK(c.center.y < 0);
         CHECK((c.params["peel_t"].get<double>() < 0) == h);
     }
-    CHECK(hinge == 48);
-    CHECK(far == 48);
+    CHECK(hinge == 56);
+    CHECK(far == 56);
     CHECK(middle == 24);
     // Scores from a resin whose tips hold, at the hinge's edge, 6 / 9 / 12 / 18 mm² (0.2 / 0.3 / 0.4 / 0.6 mm),
     // where the peel pulls 40 % harder at the far edge than at the hinge's: a disc stays on while its load,
@@ -336,7 +340,9 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
 
 TEST_CASE("tips plate in two sets: a peel bias every value fits is left out", "[fit][peel]") {
     fruit::TipsPlateOptions o;
-    o.peel_axis = {0, -1};  // hinged at the back, as that print was
+    o.peel_axis = {0, -1};  // hinged at the back, and the loads, as that print was
+    o.loads_two_sides = {5, 6.6, 8.7, 11.5, 15.2, 20};
+    o.neck_loads_two_sides = {6.6, 11.5, 20};
     const fruit::CalibrationPlate plate = fruit::tipsPlate(o, fruit::PrinterProfile::saturn4Ultra16k());
     REQUIRE(plate.coupons.size() == 120);
     // A real print (2026-11-18, 1.5 s at 0.03 mm): 14 of 120 discs stayed on, 11 of them on 0.6 mm tips.

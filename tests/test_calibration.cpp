@@ -12,6 +12,7 @@
 #include "calibration/ABPlate.h"
 #include "calibration/CalibrationPlates.h"
 #include "mesh/Primitives.h"
+#include "geometry/Polygon.h"
 #include "layers/IslandGraph.h"
 #include "support/SupportGeometry.h"
 
@@ -59,7 +60,7 @@ TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[cali
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     TipsPlateOptions o;
     const CalibrationPlate a = tipsPlate(o, p);
-    CHECK(a.coupons.size() == 4 * 2 * 3 * 2 + 4 * 2 * 3 * 2);  // plain; and necked (2 necks × 3 loads), twice
+    CHECK(a.coupons.size() == 4 * 2 * 4 * 2 + 4 * 2 * 3 * 2);  // plain (4 loads); and necked (2 necks × 3 loads), twice
     requireFitsAndUnique(a, p);
     requireOnlyRaftIslands(a);
     const CalibrationPlate b = tipsPlate(o, p);
@@ -72,6 +73,29 @@ TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[cali
     CHECK(differs);
     CHECK(a.csvTemplate().find("tip_diameter") != std::string::npos);
     CHECK(a.manifest()["coupons"].size() == a.coupons.size());
+}
+
+TEST_CASE("tips plate: every disc widens from its tips, with nothing hanging past them", "[calibration]") {
+    // A flat disc's first layer reached 1.9-3.8 mm past its tips, more than a part is trusted with
+    // (skin_reach 1.6 mm), so a disc could fail as an overhang before its tips let go. Each layer
+    // must stand on the one below: no more than 45° out. Where a pad starts on a tip it is up to
+    // 0.3 mm wider than the tip's narrowing point under it, as any face is round a tip's contact.
+    TipsPlateOptions o;
+    o.peel_axis = {0, -1};
+    const CalibrationPlate plate = tipsPlate(o, PrinterProfile::saturn4Ultra16k());
+    CHECK(plate.settings["disc_underside"] == "45deg");
+    const double step = 0.05;
+    const LayerStack ls = sliceModel(plate.mesh, step);
+    double worst = 0;
+    for (size_t i = 1; i < ls.size(); ++i) {
+        const Paths out = difference(ls.slices[i], offset(ls.slices[i - 1], step + 0.3));
+        worst = std::max(worst, std::abs(area(out)));
+    }
+    CHECK(worst < 0.05);  // mm²: no skin reaches out past the layer below
+    // The heaviest disc's last full layer still has the area its load names.
+    double biggest = 0;
+    for (const auto& c : plate.coupons) biggest = std::max(biggest, c.params["disc_area_mm2"].get<double>());
+    CHECK(biggest == Approx(60));
 }
 
 TEST_CASE("spacing plate: tilted plates and wedges are held by their tips", "[calibration]") {

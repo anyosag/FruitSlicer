@@ -158,6 +158,8 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
         std::vector<std::string> out{"Tip sizes " + listOf(valuesOf(p, "tip_diameter")) + " mm",
                                      "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm",
                                      "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip"};
+        if (p.settings.value("disc_underside", "") == "45deg")
+            out.push_back("Each disc widens from its tips at 45°, so nothing hangs past them: only the tips can let go");
         if (necked > 0) {
             std::set<double> backs;
             for (const auto& c : p.coupons)
@@ -259,7 +261,7 @@ std::vector<CouponFact> couponFacts(const std::string& kind, const json& p) {
 
 std::string couponMeaning(const std::string& kind, const json& p) {
     if (kind == "tips")
-        return strf("A flat disc hangs from %g tips, %g mm² of it for each. ", num(p, "tips"),
+        return strf("A disc hangs from %g tips, %g mm² of it for each. ", num(p, "tips"),
                     num(p, "load_per_tip_mm2")) +
                "If it stays on, tips like these can hold that much layer area in your resin.";
     if (kind == "spacing") {

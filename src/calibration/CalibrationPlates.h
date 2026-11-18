@@ -74,10 +74,12 @@ struct TipsPlateOptions {
     // fit can measure how much harder the peel pulls far from the hinge
     // (SupportConfig::peel_bias) as well as each tip's hold. Zero: one set.
     Vec2 peel_axis{0, 0};
-    // Loads per tip in two sets: finer steps (about 1.32 times each), so a
-    // difference of a few tens of percent between the sides shows; once each
+    // Loads per tip in two sets: steps of about 1.41 times, so a difference
+    // of a few tens of percent between the sides shows; once each
     // per side (each combination twice in all, as one set with replicates 2).
-    std::vector<double> loads_two_sides{5, 6.6, 8.7, 11.5, 15.2, 20};
+    // From 2.5 mm²: on the first plate printed (2026-11-18), 0.2-0.4 mm tips
+    // mostly let go at 5, the lightest then, so their holds weren't bracketed.
+    std::vector<double> loads_two_sides{2.5, 3.5, 5, 7, 10, 14, 20};
     // Breakaway necks (PinheadSpec::neck_back): each tip size with each neck,
     // at three of the loads, on the shallower contact depth; plain tips at
     // the same loads and depth are on the plate already, to compare marks
@@ -86,12 +88,12 @@ struct TipsPlateOptions {
     std::vector<double> neck_backs{0.1, 0.25};
     double neck_ratio = 0.6;
     std::vector<double> neck_loads{5, 10, 20};
-    std::vector<double> neck_loads_two_sides{6.6, 11.5, 20};
+    std::vector<double> neck_loads_two_sides{5, 10, 20};
     // The coupons stand on one raft, as a job does (PlateCommon::one_raft).
     bool one_raft = true;
     std::vector<double> tip_diameters{0.2, 0.3, 0.4, 0.6};
     std::vector<double> penetrations{0.1, 0.2};
-    std::vector<double> loads_per_tip{5, 10, 20};  // mm² of disc area per tip
+    std::vector<double> loads_per_tip{2.5, 5, 10, 20};  // mm² of disc area per tip
     int tips_per_coupon = 3;
     double disc_thickness = 1.0;
 };

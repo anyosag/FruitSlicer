@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "mesh/Primitives.h"
+#include "ops/MeshOps.h"
 #include "support/SupportGeometry.h"
 
 namespace fruit {
@@ -316,15 +317,45 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     auto build = [&](TriangleMesh& m, const Vec2& c, const json& prm, double raft_top) {
         const double area_mm2 = prm["disc_area_mm2"].get<double>();
         const double r = std::sqrt(area_mm2 / kPi);
-        appendFrustum(m, {c.x, c.y, z0}, r, {c.x, c.y, z0 + o.disc_thickness}, r, segmentsFor(r, 0.007));
+        const double tip = prm["tip_diameter"].get<double>();
         const int k = prm["tips"].get<int>();
+        std::vector<Vec2> at;
         for (int i = 0; i < k; ++i) {
             const double a = deg2rad(90.0 + 360.0 * i / k);
             const double rr = k == 1 ? 0.0 : r / 2;
-            addSupport(m, {c.x + rr * std::cos(a), c.y + rr * std::sin(a), z0}, {0, 0, -1},
-                       prm["tip_diameter"].get<double>(), prm["penetration"].get<double>(), o.common, raft_top,
-                       prm.value("neck_back", 0.0), prm.value("neck_ratio", 0.6));
+            at.push_back({c.x + rr * std::cos(a), c.y + rr * std::sin(a)});
         }
+        // The disc's underside widens at 45° from a pad on each tip, so every layer stands on the one
+        // below and no fresh skin hangs past the tips: the tips carry the disc's whole pull, and only that
+        // is measured. (A flat disc's first layer reached 1.9-3.8 mm past its tips, beyond the 1.6 mm
+        // a part is trusted with: it could fail as an overhang before the tips let go.)
+        const double pad = tip / 2 + 0.1;
+        double reach = 0;  // farthest point of the disc from its nearest tip
+        for (int j = 0; j < 360; ++j) {
+            const Vec2 q{c.x + r * std::cos(deg2rad(j)), c.y + r * std::sin(deg2rad(j))};
+            double nearest = 1e9;
+            for (const Vec2& t : at) nearest = std::min(nearest, norm(q - t));
+            reach = std::max(reach, nearest);
+        }
+        const double rise = std::max(0.0, std::ceil((reach - pad) * 20) / 20);
+        if (rise > 0) {
+            TriangleMesh cones, cyl;
+            ops::Solid fan;
+            for (const Vec2& t : at) {
+                TriangleMesh one;
+                appendFrustum(one, {t.x, t.y, z0}, pad, {t.x, t.y, z0 + rise}, pad + rise, segmentsFor(pad + rise, 0.007));
+                const ops::Solid s(one);
+                fan = fan.valid() ? ops::unite(fan, s) : s;
+            }
+            appendFrustum(cyl, {c.x, c.y, z0}, r, {c.x, c.y, z0 + rise}, r, segmentsFor(r, 0.007));
+            const ops::Solid under = ops::intersect(fan, ops::Solid(cyl));
+            if (!under.valid() || under.empty()) throw std::runtime_error("tips plate: a disc's underside could not be made");
+            m.append(under.toMesh());
+        }
+        appendFrustum(m, {c.x, c.y, z0 + rise}, r, {c.x, c.y, z0 + rise + o.disc_thickness}, r, segmentsFor(r, 0.007));
+        for (const Vec2& t : at)
+            addSupport(m, {t.x, t.y, z0}, {0, 0, -1}, tip, prm["penetration"].get<double>(), o.common, raft_top,
+                       prm.value("neck_back", 0.0), prm.value("neck_ratio", 0.6));
     };
     PlateCommon common = o.common;
     if (sides) common.replicates = 1;
@@ -334,6 +365,7 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build, necks)
                                    : assemble("tips", all, cell, common, p, build);
     plate.settings["disc_thickness"] = o.disc_thickness;
+    plate.settings["disc_underside"] = "45deg";
     return plate;
 }
 
