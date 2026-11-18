@@ -60,6 +60,9 @@ struct PlateCommon {
     double head_length = 1.0;
     uint32_t seed = 1;
     int replicates = 2;
+    // One raft under every coupon (and the marker), as a job prints on, in
+    // place of a small raft each.
+    bool one_raft = false;
 };
 
 struct TipsPlateOptions {
@@ -84,6 +87,8 @@ struct TipsPlateOptions {
     double neck_ratio = 0.6;
     std::vector<double> neck_loads{5, 10, 20};
     std::vector<double> neck_loads_two_sides{6.6, 11.5, 20};
+    // The coupons stand on one raft, as a job does (PlateCommon::one_raft).
+    bool one_raft = true;
     std::vector<double> tip_diameters{0.2, 0.3, 0.4, 0.6};
     std::vector<double> penetrations{0.1, 0.2};
     std::vector<double> loads_per_tip{5, 10, 20};  // mm² of disc area per tip

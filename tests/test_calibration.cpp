@@ -26,10 +26,10 @@ void requireOnlyRaftIslands(const CalibrationPlate& plate) {
     const LayerStack ls = sliceModel(plate.mesh, 0.1);
     const IslandGraph g(ls, 0.0);
     for (int id : g.islands()) CHECK(g.part(id).layer == 0);
-    // One raft per coupon plus the marker raft.
+    // One raft per coupon plus the marker raft; or one raft under them all.
     size_t first_layer = 0;
     for (int id : g.islands()) first_layer += g.part(id).layer == 0;
-    CHECK(first_layer == plate.coupons.size() + 1);
+    CHECK(first_layer == (plate.settings.value("one_raft", false) ? 1 : plate.coupons.size() + 1));
 }
 
 void requireFitsAndUnique(const CalibrationPlate& plate, const PrinterProfile& p) {

@@ -298,7 +298,7 @@ void plate(App& app) {
     const Resin& resin = app.newJobResin();
     const bool has_print = !resin.sample_path.empty() || (resin.print.exposure > 0 && resin.print.bottom_exposure > 0);
     const bool busy = app.jobs().busy();
-    header(app, plateTitle(kind), plateSubtitle(p) + " · each on its own small raft", [&](float right, float y) {
+    header(app, plateTitle(kind), plateSubtitle(p) + (p.settings.value("one_raft", false) ? " · on one raft" : " · each on its own small raft"), [&](float right, float y) {
         const float gw = textWidth("Save .goo to print", fonts().bold, size::Body) + 34;
         ImGui::SetCursorPos(ImVec2(right - gw, y + 4));
         if (primaryButton("Save .goo to print", ImVec2(gw, 38), has_print && !busy)) app.savePlate(true);

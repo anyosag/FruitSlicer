@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 #include "calibration/CalibrationPlates.h"
 
+
 #include <cmath>
 #include <functional>
 #include <random>
@@ -47,12 +48,26 @@ void shuffleDeterministic(std::vector<T>& v, uint32_t seed) {
 void addMarker(TriangleMesh& m, const Layout& L, const PlateCommon& c) {
     const Vec2 ctr = L.center(0, 0);
     const double h = L.cell / 2 - 1.0;
-    appendRaft(m, ctr - Vec2{h, h}, ctr + Vec2{h, h}, 0.0, c.raft_thickness, 0.4);
+    if (!c.one_raft) appendRaft(m, ctr - Vec2{h, h}, ctr + Vec2{h, h}, 0.0, c.raft_thickness, 0.4);
     // "L": long arm along +X, short arm along +Y, from the cell's min corner.
     const double z = c.raft_thickness, t = 1.5, arm = 2 * h - 2;
     const Vec2 o = ctr - Vec2{h - 1, h - 1};
     appendBox(m, {o.x, o.y, z - 0.1}, {o.x + arm, o.y + t, z + 3});
     appendBox(m, {o.x, o.y, z - 0.1}, {o.x + t, o.y + arm * 0.6, z + 3});
+}
+
+// One raft under the cells at `centers` (each `cell` wide): one slab over the
+// rectangle they span, so empty cells between them don't split it in two.
+void oneRaft(TriangleMesh& m, const std::vector<Vec2>& centers, double cell, const PlateCommon& c) {
+    if (centers.empty()) return;
+    Vec2 lo = centers.front(), hi = centers.front();
+    for (const Vec2& q : centers) {
+        lo = {std::min(lo.x, q.x), std::min(lo.y, q.y)};
+        hi = {std::max(hi.x, q.x), std::max(hi.y, q.y)};
+    }
+    // Its edge 1 mm in from the outer cells' edges, as the small rafts' was.
+    const double h = cell / 2 - 1.0;
+    appendRaft(m, lo - Vec2{h, h}, hi + Vec2{h, h}, 0.0, c.raft_thickness, 0.4);
 }
 
 // Pinhead at `contact` (outward normal `n`), vertical shaft, base cone on the raft.
@@ -118,10 +133,16 @@ CalibrationPlate assemble(const std::string& kind, const std::vector<json>& comb
         pc.col = slot % L.cols;
         pc.center = L.center(pc.row, pc.col);
         pc.params = trials[i];
-        appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0,
-                   c.raft_thickness, 0.4);
+        if (!c.one_raft)
+            appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
         build(plate.mesh, pc.center, pc.params, c.raft_thickness);
         plate.coupons.push_back(std::move(pc));
+    }
+    if (c.one_raft) {
+        std::vector<Vec2> at{L.center(0, 0)};
+        for (const auto& pc : plate.coupons) at.push_back(pc.center);
+        oneRaft(plate.mesh, at, cell, c);
+        plate.settings["one_raft"] = true;
     }
     return plate;
 }
@@ -228,7 +249,8 @@ CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>&
             pc.params = trials[i];
             pc.params["side"] = side == 0 ? "hinge" : "far";
             pc.params["peel_t"] = std::round(mine[i].t * 1000) / 1000;
-            appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
+            if (!c.one_raft)
+                appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
             build(plate.mesh, pc.center, pc.params, c.raft_thickness);
             plate.coupons.push_back(std::move(pc));
         }
@@ -250,12 +272,19 @@ CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>&
             pc.params = trials[i];
             pc.params["side"] = "middle";
             pc.params["peel_t"] = std::round(rest[i].t * 1000) / 1000;
-            appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
+            if (!c.one_raft)
+                appendRaft(plate.mesh, pc.center - Vec2{half, half}, pc.center + Vec2{half, half}, 0.0, c.raft_thickness, 0.4);
             build(plate.mesh, pc.center, pc.params, c.raft_thickness);
             plate.coupons.push_back(std::move(pc));
         }
     }
     std::sort(plate.coupons.begin(), plate.coupons.end(), [](const PlateCoupon& a, const PlateCoupon& b) { return a.id < b.id; });
+    if (c.one_raft) {
+        std::vector<Vec2> at{L.center(0, 0)};
+        for (const auto& pc : plate.coupons) at.push_back(pc.center);
+        oneRaft(plate.mesh, at, cell, c);
+        plate.settings["one_raft"] = true;
+    }
     return plate;
 }
 
@@ -299,6 +328,7 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     };
     PlateCommon common = o.common;
     if (sides) common.replicates = 1;
+    common.one_raft = o.one_raft;
     std::vector<json> all = combos;
     if (!sides) all.insert(all.end(), necks.begin(), necks.end());
     CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build, necks)
