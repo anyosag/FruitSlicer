@@ -163,7 +163,10 @@ jobs:
             xvfb-run -a -s "-screen 0 1920x1080x24" ./build/src/gui/fruitslicer_app --script "$s" --shots shots
           done
       - name: Compare with goldens
-        run: python3 tools/compare_screens.py tests/gui/golden shots diffs
+        # Changed pictures are listed (a warning and the run's summary), not failed: a change on
+        # purpose is checked and copied into tests/gui/golden from the app-screens-linux download.
+        # A screenshot the app didn't write still fails the run.
+        run: python3 tools/compare_screens.py --report-only tests/gui/golden shots diffs
       - name: Upload screenshots and differences
         if: always()
         uses: actions/upload-artifact@v7

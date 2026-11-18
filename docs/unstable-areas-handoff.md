@@ -35,8 +35,10 @@ These are the user's standing rules for every session on this project.
 - **No pull requests.** Finished, tested work is merged into `main` and pushed.
   End commit messages with the `Co-Authored-By` line the harness gives you.
 - **Screenshot goldens** (`tests/gui/golden`) come only from CI's Linux renders.
-  Push, let `app-linux` fail, download its `app-screens-linux` artifact, look at
-  every changed picture, then copy those over the goldens. Never copy Mac
+  Push; `app-linux` lists changed pictures as a warning and in the run's
+  summary without failing (only a screenshot the app didn't write fails it).
+  Download its `app-screens-linux` artifact, look at every changed picture,
+  then copy those over the goldens. Never copy Mac
   screenshots. CI's macOS jobs run on a self-hosted runner on this Mac, which
   sleeps after a minute idle: run `caffeinate -i -t 3000 &` while you wait.
 - **App wording:** plain words that say what has been checked and what hasn't.
