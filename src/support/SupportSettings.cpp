@@ -39,7 +39,7 @@ std::vector<std::string> resolveSettings(const nlohmann::json* profile, const Su
         // Yours, else the resin's measured one (the tips plate in two sets), else 25 %, an assumption.
         cfg.peel_bias = c.peel_bias >= 0                                 ? c.peel_bias
                         : profile && profile->contains("peel_bias") ? profile->at("peel_bias").get<double>()
-                                                                         : 0.25;
+                                                                         : kAssumedPeelBias;
     } else if (c.peel_bias >= 0) {
         throw std::invalid_argument("a peel bias needs the hinge side");
     }

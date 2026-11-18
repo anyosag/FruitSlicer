@@ -73,6 +73,11 @@ void neckValues(FitSummary& s, const json& necks) {
 
 // The tips plate in two sets: how much harder the peel pulls far from the hinge.
 void peelValues(FitSummary& s, const json& p) {
+    if (p.value("unpinned", false)) {
+        s.unsure.push_back("By the hinge and far from it, too few discs held to tell the two sides apart: any extra "
+                           "pull far from the hinge fits the scores as well, so it is still the 25 % guess.");
+        return;
+    }
     if (!p.contains("bias")) {
         s.unsure.push_back("By the hinge and far from it, no tip size let go at a load both sides measure, so how much "
                            "harder the peel pulls far from the hinge is still the 25 % guess.");

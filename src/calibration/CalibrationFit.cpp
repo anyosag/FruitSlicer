@@ -235,7 +235,8 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
             // one, as the planner has it; so the far side's 50 % load over the hinge side's is
             // peel(t_hinge) / peel(t_far), which gives the bias. The loads are then taken as at the hinge's edge
             // (load × peel(t)) for each tip's hold, the hold the planner's demand is measured against.
-            double bias = 0;
+            // Until the plate measures the bias, the planner's assumed one: the holds then match its demand.
+            double bias = kAssumedPeelBias;
             {
                 bool sided = false;
                 double th = 0, tf = 0;
@@ -307,11 +308,20 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                             if (m < least) least = m, at = {b};
                             else if (m == least) at.push_back(b);
                         }
-                        bias = at[at.size() / 2];
-                        prof["peel_bias"] = bias;
-                        peel["bias"] = bias;
+                        // Every bias tried, from the first step to the last, fits as well: the plate
+                        // can't tell the two sides apart, so the profile keeps no bias of its own.
+                        const bool open = at.front() <= 0.01 + 1e-9 && at.back() >= 1.5 - 1e-9;
                         peel["bias_range"] = {at.front(), at.back()};
                         peel["misfits"] = least;
+                        if (open) {
+                            peel["unpinned"] = true;
+                            notes.push_back("tips plate in two sets: every peel bias tried fits the scores as well, so "
+                                            "the extra pull far from the hinge stays as it was");
+                        } else {
+                            bias = at[at.size() / 2];
+                            prof["peel_bias"] = bias;
+                            peel["bias"] = bias;
+                        }
                         if (!ratios.empty()) {
                             std::sort(ratios.begin(), ratios.end());
                             peel["ratio"] = ratios[ratios.size() / 2];

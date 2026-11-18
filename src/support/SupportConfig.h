@@ -50,6 +50,10 @@ struct CapacityModel {
 // went with its tips in 281 of 500 replays, at 0.8 in 29, at 0.7 in 3.
 inline constexpr double kMeasuredTipLoadLimit = 0.7;
 
+// How much harder the peel pulls at the edge far from the hinge than at the hinge's, as a share, until a
+// tips plate in two sets measures it: an assumption (Wu 2016 has it highest away from the hinge).
+inline constexpr double kAssumedPeelBias = 0.25;
+
 struct SupportConfig {
     double layer_height = 0.05;
     // Parts in consecutive layers are linked when the upper one overlaps the

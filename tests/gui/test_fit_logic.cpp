@@ -334,6 +334,55 @@ TEST_CASE("the tips plate in two sets: by the hinge and far from it, and how muc
     CHECK(cfg.peel_bias == Approx(bias));
 }
 
+TEST_CASE("tips plate in two sets: a peel bias every value fits is left out", "[fit][peel]") {
+    fruit::TipsPlateOptions o;
+    o.peel_axis = {0, -1};  // hinged at the back, as that print was
+    const fruit::CalibrationPlate plate = fruit::tipsPlate(o, fruit::PrinterProfile::saturn4Ultra16k());
+    REQUIRE(plate.coupons.size() == 120);
+    // A real print (2026-11-18, 1.5 s at 0.03 mm): 14 of 120 discs stayed on, 11 of them on 0.6 mm tips.
+    // By side, tip, contact depth, load per tip and neck.
+    struct Held { const char* side; double tip, depth, load, neck; };
+    const std::vector<Held> held{
+        {"hinge", 0.6, 0.2, 11.5, 0}, {"hinge", 0.6, 0.2, 8.7, 0}, {"hinge", 0.6, 0.2, 6.6, 0},
+        {"hinge", 0.3, 0.2, 5.0, 0},  {"hinge", 0.6, 0.2, 5.0, 0}, {"hinge", 0.6, 0.1, 5.0, 0},
+        {"hinge", 0.4, 0.2, 5.0, 0},  {"far", 0.6, 0.2, 6.6, 0},   {"far", 0.6, 0.2, 8.7, 0},
+        {"far", 0.6, 0.2, 5.0, 0},    {"far", 0.3, 0.2, 20.0, 0},  {"far", 0.6, 0.1, 5.0, 0},
+        {"middle", 0.6, 0.1, 6.6, 0.25}, {"middle", 0.6, 0.1, 6.6, 0.1}};
+    fruit::PlateResults res;
+    res.kind = "tips";
+    res.settings = plate.settings;
+    int ok = 0;
+    for (const auto& c : plate.coupons) {
+        fruit::CouponResult r;
+        r.id = c.id;
+        r.params = c.params;
+        r.recorded = true;
+        for (const Held& h : held)
+            r.ok = r.ok || (c.params["side"] == h.side && c.params["tip_diameter"].get<double>() == Approx(h.tip) &&
+                            c.params["penetration"].get<double>() == Approx(h.depth) &&
+                            c.params["load_per_tip_mm2"].get<double>() == Approx(h.load) &&
+                            c.params.value("neck_back", 0.0) == Approx(h.neck));
+        if (r.ok) r.scar = 4, ++ok;
+        res.coupons.push_back(r);
+    }
+    REQUIRE(ok == 14);
+    Resin resin;
+    const FitSummary s = summarizeFit({res}, options(), resin);
+    CAPTURE(s.profile["fits"]["peel"].dump());
+    // Every bias from the first step to the last fits as well: nothing to keep, the planner's 25 % stays.
+    CHECK(s.profile["fits"]["peel"]["unpinned"] == true);
+    CHECK_FALSE(s.profile.contains("peel_bias"));
+    CHECK_FALSE(valueOf(s, "Extra hold away from the hinge"));
+    fruit::SupportConfig cfg;
+    fruit::TreeConfig tc;
+    fruit::SupportChoices ch;
+    ch.hinge = fruit::HingeSide::PlusY;
+    fruit::resolveSettings(&s.profile, ch, cfg, &tc);
+    CHECK(cfg.peel_bias == Approx(0.25));
+    // The tips themselves are still fitted: 0.6 mm tips hold, by the logistic, about 8 mm².
+    CHECK(s.profile.contains("capacity_table"));
+}
+
 TEST_CASE("breakaway necks: kept where they leave less of a mark and hold as well, and drawn on the heads", "[fit][neck]") {
     const fruit::CalibrationPlate plate = fruit::tipsPlate(fruit::TipsPlateOptions{}, fruit::PrinterProfile::saturn4Ultra16k());
     // A resin where tips hold 12 mm² (any size, necked or not, on either depth), plain tips leave a 4 (a dent),
