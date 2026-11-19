@@ -891,6 +891,11 @@ double startsLoss(const fruit::TipRisk& t) { return t.chance * t.loss_share; }
 
 }  // namespace
 
+double peakWeaker(const fruit::SupportConfig& planner) {
+    static_assert(kPeakWeaker == fruit::kOneLoadStep, "the loop's weaker resin is one step of the tips plate");
+    return fruit::stabilityConfig(planner).capacity.table.empty() ? kPeakWeaker : 1.0;
+}
+
 SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plans, const std::vector<TipEdit>& edits,
                         SupportResult r, const fruit::JobControl& ctl) {
     const auto t0 = std::chrono::steady_clock::now();
@@ -901,11 +906,11 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         return r;
     }
     ctl.step("strengthen", 0);
-    static_assert(kPeakWeaker == fruit::kOneLoadStep, "the loop's weaker resin is one step of the tips plate");
-    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, kPeakWeaker);
     fruit::SupportConfig planner = supportConfig(doc.placement(), r.choices);
+    const double weaker = peakWeaker(planner);
+    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, weaker);
     const int replays = risk.result->stats.replays;
-    fix.weaker = kPeakWeaker;
+    fix.weaker = weaker;
     fix.replays = replays;
     fix.lost_before = fix.lost_after = lostChance(*risk.result);
     fix.mm3_before = fix.mm3_after = risk.result->stats.expected_loss;
@@ -1132,7 +1137,7 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         bool better = false;
         for (int attempt = 0; attempt < 2; ++attempt) {
             tried = finishWithEdits(doc, s, next, edits, ctl.silent());
-            again = checkRisk(doc, tried, ctl.silent(), false, kPeakWeaker);
+            again = checkRisk(doc, tried, ctl.silent(), false, weaker);
             lost = lostChance(*again.result);
             mm3 = again.result->stats.expected_loss;
             // Kept when losing part of the model gets a fifth less likely and no more of it is to be expected
@@ -1186,7 +1191,10 @@ std::string peakLine(const PeakFix& f) {
     const auto oneIn = [&](double c) {
         return c > 0 ? strf("1 in %.0f", std::max(1.0, std::round(1 / c))) : strf("under 1 in %d", std::max(f.replays, 1));
     };
-    std::string out = strf("Replayed with the resin %.2f times weaker than its values (one step of the tips plate): ", f.weaker);
+    std::string out = f.weaker > 1 ? strf("Replayed with the resin %.2f times weaker than its starting values (one step of the "
+                                          "tips plate; nothing measured them for this resin): ",
+                                          f.weaker)
+                                   : std::string("Replayed with the strengths measured for this resin: ");
     if (f.enlarged + f.added > 0) {
         std::string what;
         if (f.added) what = strf("%zu %s added", f.added, f.added == 1 ? "tip" : "tips");

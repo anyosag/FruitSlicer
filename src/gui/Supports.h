@@ -327,7 +327,7 @@ using JobPlan = std::map<int, SupportPlan>;
 struct PeakFix {
     bool ran = false;
     int rounds = 0;           // rounds kept
-    double weaker = 1;        // the resin was taken as this many times weaker than its values (kPeakWeaker)
+    double weaker = 1;        // the resin was taken as this many times weaker than its values (peakWeaker)
     int replays = 0;          // replays each check made
     // What it aims at, with the resin that much weaker: the chance that part of the model (1 mm³ or more) is not
     // on the finished print, and how much of it to expect lost per print (mm³), as first made and at the end.
@@ -466,7 +466,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
 // The same for one plan and `c` for every part, all on one raft.
 SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
-// Replays the print made as `r` (checkRisk, the resin kPeakWeaker times
+// Replays the print made as `r` (checkRisk, the resin peakWeaker() times
 // weaker than its values) and strengthens it where part of the model goes
 // with what lets go, round after round, rebuilding each time. A tip that part
 // of the model went with in the replays, most first, is made a size bigger
@@ -487,11 +487,16 @@ inline constexpr int kPeakRounds = 6;
 std::string peakLine(const PeakFix& f);
 // The chance of losing part of the model the loop aims below.
 inline constexpr double kPeakChance = 0.01;
-// How much weaker than its values the loop takes the resin: one step of the
-// tips plate's loads (fruit::kOneLoadStep). A coupon that held at one load
-// may have been a step from letting go, so the plate can't tell the resin
-// from one that much weaker, and the print should hold either way.
+// How much weaker than its starting values the loop takes a resin whose tip
+// strengths are borrowed (nothing measured them): one step of the tips
+// plate's loads (fruit::kOneLoadStep), the least the plate tells apart.
 inline constexpr double kPeakWeaker = 1.41;
+// What the loop takes: kPeakWeaker with borrowed tip strengths, 1 with
+// measured ones. A measured tip is trusted with 70 % of where half let go
+// (1 / 0.7, about that same step): a step weaker again would count that
+// margin twice, and every tip loaded as far as it is trusted would be as
+// likely to let go as not.
+double peakWeaker(const fruit::SupportConfig& planner);
 
 // `planned` (printer coordinates) with `edits` applied; each part is placed
 // by its frame in `frames` (an edit whose part has none is left out). Each

@@ -552,6 +552,7 @@ TEST_CASE("Risk: replaying the print and strengthening it makes losing part of t
     }
     const SupportResult weak = finishWithEdits(*doc, full.setup, thin, {}, fruit::JobControl::none());
     const RiskReport as_is = checkRisk(*doc, weak, fruit::JobControl::none(), false);
+    REQUIRE(peakWeaker(supportConfig(doc->placement(), weak.choices)) == kPeakWeaker);  // starting values: borrowed
     const RiskReport before = checkRisk(*doc, weak, fruit::JobControl::none(), false, kPeakWeaker);
     const SupportResult strong = lowerPeak(*doc, full.setup, thin, {}, weak, fruit::JobControl::none());
     const PeakFix& f = strong.peak;
@@ -579,9 +580,19 @@ TEST_CASE("Risk: replaying the print and strengthening it makes losing part of t
     for (const auto& [part, plan] : thin) thinned += plan.points.size();
     CHECK(planned == thinned + f.added);
     // Said on the Supports panel.
-    CHECK_THAT(peakLine(f), ContainsSubstring("Replayed with the resin 1.41 times weaker than its values"));
+    CHECK_THAT(peakLine(f), ContainsSubstring("Replayed with the resin 1.41 times weaker than its starting values"));
     CHECK_THAT(peakLine(f), ContainsSubstring("The chance of losing part of the model went from 1 in "));
     CHECK(peakLine(PeakFix{}).empty());
+    // A step weaker only where nothing measured the tips: a measured tip is trusted a step below where half let go
+    // already.
+    fruit::SupportConfig borrowed;
+    CHECK(peakWeaker(borrowed) == kPeakWeaker);
+    fruit::SupportConfig measured;
+    measured.capacity.table = {{0.3, 2.0}, {0.6, 8.0}};
+    CHECK(peakWeaker(measured) == 1.0);
+    PeakFix m = f;
+    m.weaker = 1.0;
+    CHECK_THAT(peakLine(m), ContainsSubstring("Replayed with the strengths measured for this resin: "));
 }
 
 TEST_CASE("Risk: the strengthening loop leaves tips whose letting go costs none of the model", "[gui][risk][slow]") {
