@@ -1564,9 +1564,12 @@ JobPlan splitPlan(const Document& doc, SupportPlan plan) {
 }
 
 SupportResult generate(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
-                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits) {
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits, bool lower_peak) {
     const auto t0 = std::chrono::steady_clock::now();
-    SupportResult r = finishWithEdits(doc, s, planJob(doc, s, visible, ctl.sub(0.0, 0.55), edits), edits, ctl.sub(0.55, 1.0));
+    const double made = lower_peak ? 0.6 : 1.0;
+    JobPlan plans = planJob(doc, s, visible, ctl.sub(0.0, 0.55 * made), edits);
+    SupportResult r = finishWithEdits(doc, s, plans, edits, ctl.sub(0.55 * made, made));
+    if (lower_peak) r = lowerPeak(doc, s, std::move(plans), edits, std::move(r), ctl.sub(made, 1.0));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
 }

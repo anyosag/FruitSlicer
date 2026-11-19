@@ -981,6 +981,8 @@ void statusArea(App& app, Document& doc) {
     if (s.before_ml >= 0 && (s.before_tips != r.tips || std::abs(s.before_ml - r.support_ml) >= 0.05))
         more += (more.empty() ? "" : " · ") + strf("Before: %s tips · %.1f ml", thousands(s.before_tips).c_str(), s.before_ml);
     if (!more.empty()) text(more.c_str(), fonts().regular, size::Label, col::TextMuted, true);
+    const std::string peak = peakLine(r.peak);
+    if (!peak.empty()) text(peak.c_str(), fonts().regular, size::Label, col::TextMuted, true);
 }
 
 }  // namespace

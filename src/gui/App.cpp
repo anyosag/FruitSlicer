@@ -1051,7 +1051,7 @@ void App::generateSupports() {
     jobs_.start(
         kSupportsJob,
         [snap, out, setup, edits](const fruit::JobControl& ctl) {
-            *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits);
+            *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits, true);
         },
         done(out));
 }
@@ -1910,7 +1910,7 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
     jobs_.start(
         replan ? "Planning the tips again" : "Updating the tips",
         [snap, prev, out, setup, edits, replan](const fruit::JobControl& ctl) {
-            if (replan) *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits);
+            if (replan) *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits, true);
             else *out = finishWithEdits(*snap, setup, planOf(*prev), edits, ctl);
         },
         [this, target, out, rev, settings, select](std::exception_ptr err) {

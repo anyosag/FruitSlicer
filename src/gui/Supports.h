@@ -322,6 +322,26 @@ struct SupportPlan {
 // Each part's plan, by part id.
 using JobPlan = std::map<int, SupportPlan>;
 
+// What the replay-and-strengthen loop did (lowerPeak). rounds 0: it didn't
+// run, or found nothing to strengthen.
+struct PeakFix {
+    bool ran = false;
+    int rounds = 0;           // rounds kept
+    double before = 0;        // the weakest joint, as a share of where half let go (closeness), as first made
+    double after = 0;         // the same at the end
+    double target = 0;        // the closeness at which a joint has a 1 in 100 chance of letting go
+    // What it aims at: the likeliest place to fail (a tip letting go, a skin tearing, ...) as a chance, and how
+    // many failures to expect, as first made and at the end.
+    double chance_before = 0, chance_after = 0;
+    double expected_before = 0, expected_after = 0;
+    std::size_t enlarged = 0; // tips made a size bigger
+    std::size_t added = 0;    // tips added beside them, or where a fresh skin or a mid-air piece was short of hold
+    // Places still over the target that more tips don't fix: a thin place in
+    // the model, one bent by an off-centre pull, or a support's own rod.
+    std::size_t left = 0;
+    double seconds = 0;
+};
+
 struct SupportResult {
     SupportChoices choices;  // the job's (All parts): setup.choices
     SupportSetup setup;      // what it was made from
@@ -374,6 +394,7 @@ struct SupportResult {
     };
     std::vector<RaftMade> rafts;
     JobPlan plans;  // each part's tips as planned, before hand edits (planned is them all, in the job's order)
+    PeakFix peak;   // what the replay-and-strengthen loop did, when it ran (generate's lower_peak)
 
     std::size_t count(SupportProblem::Level l) const;
     const PartMade* partOfTip(std::size_t i) const;  // null: no such tip
@@ -397,8 +418,10 @@ fruit::TreeConfig treeConfig(const SupportChoices& c);
 // `visible` are the sides people will see, as printer directions
 // (Document::visibleInPrinter). Progress: tips up to 0.55, the trees up to
 // 0.85, the check after (stage "check").
+// `lower_peak`: then replay the print and strengthen it where a tip is
+// likelier than 1 in 100 to let go (lowerPeak), as the app makes supports.
 SupportResult generate(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
-                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {});
+                       const fruit::JobControl& ctl, const std::vector<TipEdit>& edits = {}, bool lower_peak = false);
 // The same with `c` for every part, all on one raft (as jobs were made before
 // parts had their own): tests, and the orientation search's one part.
 SupportResult generate(const Document& doc, const SupportChoices& c, const std::vector<fruit::Vec3>& visible,
@@ -444,6 +467,24 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
 // The same for one plan and `c` for every part, all on one raft.
 SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
+// Replays the print made as `r` (checkRisk) and strengthens it where it is
+// weakest, round after round, rebuilding each time: a tip likelier than 1 in
+// 100 to let go is made a size bigger (where the bigger contact still sits on
+// its face), or, already bigger or at the biggest size, gets a neighbour on
+// its own piece, as far from the tips there as it can; a fresh skin or a
+// mid-air piece short of hold gets a tip there. A round is kept only when the
+// weakest place, or the expected number of tips letting go, comes down; it
+// stops when nothing is over 1 in 100, a round brings nothing, or after
+// kPeakRounds. The tips it adds are the planner's (in `plans`, saved with the
+// job; a hand-deleted tip stays deleted). Places more tips don't fix (a thin
+// place, bending, a rod) are counted, not changed. Progress: "strengthen".
+SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plans, const std::vector<TipEdit>& edits,
+                        SupportResult r, const fruit::JobControl& ctl);
+inline constexpr int kPeakRounds = 6;
+// What the loop did, in a line for the Supports panel ("" when it didn't run).
+std::string peakLine(const PeakFix& f);
+// The chance of letting go the loop aims every tip below.
+inline constexpr double kPeakChance = 0.01;
 
 // `planned` (printer coordinates) with `edits` applied; each part is placed
 // by its frame in `frames` (an edit whose part has none is left out). Each

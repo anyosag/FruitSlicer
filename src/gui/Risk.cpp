@@ -7,13 +7,17 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <map>
+#include <set>
 
 #include "Document.h"
+#include "Format.h"
 #include "Hollows.h"
 #include "Layers.h"
 #include "Orient.h"
 #include "Supports.h"
 #include "core/Parallel.h"
+#include "mesh/AabbTree.h"
 #include "geometry/Polygon.h"
 #include "layers/LayerStack.h"
 #include "raster/Rasterizer.h"
@@ -851,6 +855,347 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     ctl.report("paint", 1.0);
     return r;
+}
+
+// ---------------------------------------------------------------- the loop
+
+namespace {
+
+// The closeness at which a joint has chance `p` of letting go (breakChance turned round).
+double closenessFor(double p, double steepness) { return std::pow(-std::log2(1 - p), 1.0 / std::max(steepness, 1.0)); }
+
+// Down-facing face found by looking along -n from just off `at` (printer coordinates), within `dz` of its height.
+std::optional<fruit::RayHit> faceAt(const fruit::AabbTree& tree, const fruit::TriangleMesh& mesh, const fruit::Vec3& at,
+                                    const fruit::Vec3& n, double dz) {
+    const auto hit = tree.raycast(at + n * 0.6, n * -1.0, 1.2);
+    if (!hit) return std::nullopt;
+    const fruit::Vec3 hn = mesh.faceNormal(static_cast<std::size_t>(hit->face));
+    if (fruit::dot(hn, n) < 0.8 || hn.z > -0.2 || std::abs(hit->point.z - at.z) > dz) return std::nullopt;
+    return hit;
+}
+
+// The likeliest place to fail, as a chance: a tip letting go, or any weak place the replay lists (a fresh skin
+// tearing, a piece in mid-air, a thin place, a rod). A tip's closeness alone (the "how close" line) leaves out
+// skins: with too few tips, the pull of a skin far from them is discounted from their load and counted as the
+// skin tearing instead, so fewer tips can show a lower line and a likelier failure.
+double worstChance(const fruit::StabilityResult& res) {
+    double w = 0;
+    for (const fruit::TipRisk& t : res.tips) w = std::max(w, t.chance);
+    for (const fruit::WeakSpot& s : res.spots) w = std::max(w, s.chance);
+    return w;
+}
+
+// How many failures to expect: every tip's chance, and every weak place's but the tips' own (counted already).
+double expectedFailures(const fruit::StabilityResult& res) {
+    double e = 0;
+    for (const fruit::TipRisk& t : res.tips) e += t.chance;
+    for (const fruit::WeakSpot& s : res.spots)
+        if (s.cause != fruit::RiskCause::Tip) e += s.chance;
+    return e;
+}
+
+}  // namespace
+
+SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plans, const std::vector<TipEdit>& edits,
+                        SupportResult r, const fruit::JobControl& ctl) {
+    const auto t0 = std::chrono::steady_clock::now();
+    PeakFix fix;
+    fix.ran = true;
+    if (r.tree.heads.empty()) {
+        r.peak = fix;
+        return r;
+    }
+    ctl.step("strengthen", 0);
+    RiskReport risk = checkRisk(doc, r, ctl.silent(), false);
+    fruit::SupportConfig planner = supportConfig(doc.placement(), r.choices);
+    const double steep = fruit::stabilityConfig(planner).steepness;
+    fix.target = closenessFor(kPeakChance, steep);
+    fix.before = fix.after = risk.result->stats.worst_closeness;
+    fix.chance_before = fix.chance_after = worstChance(*risk.result);
+    fix.expected_before = fix.expected_after = expectedFailures(*risk.result);
+    double best = fix.chance_before, best_expected = fix.expected_before;
+
+    const fruit::TriangleMesh& mesh = doc.placed();
+    const fruit::AabbTree tree(mesh);
+    const double share_reach = fruit::stabilityConfig(planner).share_reach;
+    std::vector<double> classes;
+    for (const fruit::TipClass& c : r.cfg.tip_classes) classes.push_back(c.diameter);
+    std::sort(classes.begin(), classes.end());
+    std::set<std::uint64_t> made_bigger;  // a tip made bigger once gets a neighbour next time
+    std::vector<fruit::Vec3> rejected;    // where an added tip only made things worse: not tried again
+
+    auto leftOver = [&](const fruit::StabilityResult& res) {
+        std::size_t n = 0;
+        for (const fruit::WeakSpot& w : res.spots)
+            if (w.chance > kPeakChance && (w.cause == fruit::RiskCause::Neck || w.cause == fruit::RiskCause::Bend ||
+                                           w.cause == fruit::RiskCause::Support))
+                ++n;
+        return n;
+    };
+
+    for (int round = 0; round < kPeakRounds && best > kPeakChance; ++round) {
+        ctl.check();
+        ctl.report("strengthen", static_cast<double>(round) / kPeakRounds);
+        const fruit::StabilityResult& res = *risk.result;
+        JobPlan next = plans;
+        std::size_t bigger = 0, added = 0;
+        std::vector<std::pair<int, std::uint64_t>> new_ids;  // (part, id) of the tips this round adds
+        // Every planned tip, to find the one a replayed tip is, and to keep new ones apart from.
+        struct Ref { int part; std::size_t i; };
+        auto nearestPlanned = [&](const fruit::Vec3& at, double reach) -> std::optional<Ref> {
+            std::optional<Ref> out;
+            double d_best = reach;
+            for (auto& [part, plan] : next)
+                for (std::size_t i = 0; i < plan.points.size(); ++i) {
+                    const fruit::Vec3& q = plan.points[i].pos;
+                    if (std::abs(q.z - at.z) > 0.3) continue;
+                    const double d = std::hypot(q.x - at.x, q.y - at.y);
+                    if (d < d_best) d_best = d, out = Ref{part, i};
+                }
+            return out;
+        };
+        auto roomFrom = [&](const fruit::Vec3& at) {
+            double d_min = 1e9;
+            for (const auto& [part, plan] : next)
+                for (const fruit::SupportPoint& q : plan.points)
+                    if (std::abs(q.pos.z - at.z) < 2.0) d_min = std::min(d_min, fruit::distance(q.pos, at));
+            return d_min;
+        };
+        auto addAt = [&](int part, fruit::SupportPoint q) {
+            q.pinned = true;
+            q.id = fruit::stablePointId(q.pos, q.category);
+            next[part].points.push_back(q);
+            new_ids.push_back({part, q.id});
+            ++added;
+        };
+
+        // The tips likelier than 1 in 100 to let go, worst first: each followed from the replay to the head the
+        // tree built (the replay's tips start with the heads, in order) and from there to its planned tip.
+        std::map<std::uint64_t, Ref> by_id;
+        for (auto& [part, plan] : next)
+            for (std::size_t i = 0; i < plan.points.size(); ++i) by_id[plan.points[i].id] = Ref{part, i};
+        std::vector<const fruit::TipRisk*> over;
+        for (const fruit::TipRisk& t : res.tips)
+            if (!t.foot && t.closeness > fix.target && t.contact >= 0 && static_cast<std::size_t>(t.contact) < r.tree.heads.size())
+                over.push_back(&t);
+        std::sort(over.begin(), over.end(), [](const auto* a, const auto* b) { return a->closeness > b->closeness; });
+        for (const fruit::TipRisk* t : over) {
+            const fruit::Head& h = r.tree.heads[static_cast<std::size_t>(t->contact)];
+            if (h.point < 0 || static_cast<std::size_t>(h.point) >= r.points.size()) continue;
+            const auto it = by_id.find(r.points[static_cast<std::size_t>(h.point)].id);
+            if (it == by_id.end()) continue;  // a tip of yours, not the planner's
+            const Ref ref = it->second;
+            fruit::SupportPoint& p = next[ref.part].points[ref.i];
+            if (p.category == fruit::PointCategory::Manual) continue;
+            // A size bigger where the head stands (moved there by the tree, the planned tip goes there too), where
+            // the bigger contact still sits on that face.
+            if (!made_bigger.count(p.id)) {
+                const fruit::ClosestPoint at = tree.closest(h.contact);
+                const fruit::Vec3 n = at.face >= 0 ? mesh.faceNormal(static_cast<std::size_t>(at.face)) : fruit::normalized(p.normal);
+                const auto up = std::upper_bound(classes.begin(), classes.end(), h.spec.tip_diameter + 1e-9);
+                if (up != classes.end() && n.z < -0.2) {
+                    const fruit::Vec3 a = fruit::normalized(std::abs(n.z) < 0.9 ? fruit::cross(n, {0, 0, 1}) : fruit::cross(n, {1, 0, 0}));
+                    const fruit::Vec3 b = fruit::cross(n, a);
+                    bool fits = true;
+                    for (int k = 0; k < 8 && fits; ++k) {
+                        const double ang = k * 3.14159265358979323846 / 4;
+                        fits = faceAt(tree, mesh, h.contact + (a * std::cos(ang) + b * std::sin(ang)) * (*up / 2 + 0.05), n, 0.05).has_value();
+                    }
+                    if (fits) {
+                        made_bigger.insert(p.id);
+                        if (h.moved > 0) p.pos = h.contact, p.normal = n;
+                        p.tip_diameter = *up;
+                        p.enlarged = true;
+                        ++bigger;
+                        continue;
+                    }
+                }
+            }
+            // A neighbour where the pull comes from. Most of its load from thin, fresh model near it
+            // (TipRisk::near): under that, within the reach over which the replay shares a patch's pull, nearest
+            // the layer it pulls at, as far from the tips there as it can. Most of it its share of the piece it
+            // holds: under that piece (as the replay outlines it), as near this tip as there is room for.
+            const bool patch = t->near > 0.5 * t->load && t->at_layer >= 0;
+            const double z_pull = t->at_layer >= 0 ? (t->at_layer + 0.5) * res.layer_height : h.contact.z;
+            const double reach = patch ? share_reach : 3.0;
+            const double z_hi = patch ? z_pull + 0.1 : h.contact.z + 1.0;
+            // Its share of a piece: only spots under that piece, as the replay outlines it at the tip's layer.
+            const fruit::PrintPart* piece = nullptr;
+            if (!patch) {
+                const auto L = static_cast<std::size_t>(std::max(0.0, std::floor(h.contact.z / res.layer_height + 0.5)));
+                for (std::size_t l = L; l < L + 3 && !piece; ++l) {
+                    const int id = res.partAt(l, h.contact.xy());
+                    if (id >= 0 && res.parts[static_cast<std::size_t>(id)].model) piece = &res.where[static_cast<std::size_t>(id)];
+                }
+            }
+            std::optional<fruit::RayHit> best_hit;
+            double best_score = -1e9;
+            for (double rad = 0.6; rad <= reach + 1e-9; rad += 0.3)
+                for (int k = 0; k < 12; ++k) {
+                    const double ang = k * 3.14159265358979323846 / 6;
+                    const fruit::Vec3 from{h.contact.x + rad * std::cos(ang), h.contact.y + rad * std::sin(ang), h.contact.z - 0.3};
+                    if (piece && !piece->shape->contains(from.xy())) continue;
+                    const auto hit = tree.raycast(from, {0, 0, 1}, z_hi - from.z);
+                    if (!hit) continue;
+                    const fruit::Vec3 hn = mesh.faceNormal(static_cast<std::size_t>(hit->face));
+                    if (hn.z > -0.2 || hit->point.z < h.contact.z - 0.15) continue;
+                    const double room = std::min(roomFrom(hit->point), fruit::distance(hit->point, h.contact));
+                    if (room < 0.5) continue;
+                    bool tried_here = false;
+                    for (const fruit::Vec3& x : rejected) tried_here = tried_here || fruit::distance(x, hit->point) < 0.5;
+                    if (tried_here) continue;
+                    // A patch: as far from the tips there as it can, near the layer it pulls at. A share of the
+                    // piece: right beside this tip, which is what takes some of its load.
+                    const double score = patch ? std::min(room, 1.5) - 0.5 * std::abs(hit->point.z - z_pull)
+                                               : -fruit::distance(hit->point, h.contact);
+                    if (score > best_score) best_score = score, best_hit = hit;
+                }
+            if (!best_hit) continue;
+            fruit::SupportPoint q = p;
+            q.pos = best_hit->point;
+            q.normal = mesh.faceNormal(static_cast<std::size_t>(best_hit->face));
+            q.category = fruit::PointCategory::Capacity;
+            q.tip_diameter = h.spec.tip_diameter;
+            q.enlarged = false;
+            addAt(ref.part, q);
+        }
+        // A fresh skin likelier than 1 in 100 to tear: tips over it, each at the point of it furthest from any
+        // tip, until none of it is further than the planner's skin reach from one (or 20 have gone in).
+        const double skin_reach = r.cfg.skin_reach > 0 ? r.cfg.skin_reach : 1.6;
+        for (std::size_t L = 0; L < res.skins.size(); ++L)
+            for (const fruit::SkinBand& band : res.skins[L]) {
+                if (band.chance <= kPeakChance || band.region.empty()) continue;
+                const double z = (static_cast<double>(L) + 0.5) * res.layer_height;
+                const fruit::BBox2 box = fruit::bbox(band.region);
+                std::vector<fruit::Vec2> near_tips;
+                for (const auto& [part, plan] : next)
+                    for (const fruit::SupportPoint& q : plan.points)
+                        if (std::abs(q.pos.z - z) < 1.0 && q.pos.x > box.min.x - skin_reach && q.pos.x < box.max.x + skin_reach &&
+                            q.pos.y > box.min.y - skin_reach && q.pos.y < box.max.y + skin_reach)
+                            near_tips.push_back(q.pos.xy());
+                for (int k = 0; k < 20; ++k) {
+                    double far = 0;
+                    fruit::Vec2 at;
+                    for (double y = box.min.y; y <= box.max.y; y += 0.4)
+                        for (double x = box.min.x; x <= box.max.x; x += 0.4) {
+                            bool inside = false;
+                            for (const fruit::Path& path : band.region)
+                                inside = inside || Clipper2Lib::PointInPolygon(fruit::toPoint({x, y}), path) != Clipper2Lib::PointInPolygonResult::IsOutside;
+                            if (!inside) continue;
+                            double d = 1e9;
+                            for (const fruit::Vec2& t : near_tips) d = std::min(d, fruit::norm(t - fruit::Vec2{x, y}));
+                            if (d > far) far = d, at = {x, y};
+                        }
+                    if (far <= skin_reach) break;
+                    near_tips.push_back(at);  // counted as covered, whether a tip goes in or not
+                    const auto hit = tree.raycast({at.x, at.y, z - 0.6}, {0, 0, 1}, 0.8);
+                    if (!hit || mesh.faceNormal(static_cast<std::size_t>(hit->face)).z > -0.2) continue;
+                    const auto ref = nearestPlanned(hit->point, 1e9);
+                    if (!ref) continue;
+                    fruit::SupportPoint q = next[ref->part].points[ref->i];
+                    q.pos = hit->point;
+                    q.normal = mesh.faceNormal(static_cast<std::size_t>(hit->face));
+                    q.category = fruit::PointCategory::Overhang;
+                    q.layer = static_cast<int>(L);
+                    q.enlarged = false;
+                    addAt(ref->part, q);
+                }
+            }
+        // A piece in mid-air short of hold: a tip right there.
+        for (const fruit::WeakSpot& w : res.spots) {
+            if (w.chance <= kPeakChance || w.cause != fruit::RiskCause::Unheld) continue;
+            const auto hit = faceAt(tree, mesh, w.at, {0, 0, -1}, 0.5);
+            if (!hit || roomFrom(hit->point) < 0.5) continue;
+            const auto ref = nearestPlanned(hit->point, 1e9);
+            if (!ref) continue;
+            fruit::SupportPoint q = next[ref->part].points[ref->i];
+            q.pos = hit->point;
+            q.normal = mesh.faceNormal(static_cast<std::size_t>(hit->face));
+            q.category = fruit::PointCategory::Island;
+            q.layer = w.layer;
+            q.enlarged = false;
+            addAt(ref->part, q);
+        }
+        if (bigger + added == 0) break;
+        // Built and replayed. Worse? The tips it added that are now weaker than the weakest place was are taken
+        // out (and their spots not tried again), and it is built once more without them.
+        SupportResult tried;
+        RiskReport again;
+        double worst = 0, expected = 0;
+        bool better = false;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            tried = finishWithEdits(doc, s, next, edits, ctl.silent());
+            again = checkRisk(doc, tried, ctl.silent(), false);
+            worst = worstChance(*again.result);
+            expected = expectedFailures(*again.result);
+            // Kept when the likeliest failure comes down, or, no likelier, fewer failures are to be expected.
+            better = worst < 0.95 * best || (worst <= 1.05 * best && expected < 0.9 * best_expected);
+            if (better || new_ids.empty()) break;
+            std::map<std::uint64_t, double> by_point;
+            for (const fruit::TipRisk& t : again.result->tips)
+                if (t.contact >= 0 && static_cast<std::size_t>(t.contact) < tried.tree.heads.size()) {
+                    const fruit::Head& h = tried.tree.heads[static_cast<std::size_t>(t.contact)];
+                    if (h.point >= 0 && static_cast<std::size_t>(h.point) < tried.points.size())
+                        by_point[tried.points[static_cast<std::size_t>(h.point)].id] = t.closeness;
+                }
+            std::size_t dropped = 0;
+            for (const auto& [part, id] : new_ids) {
+                const auto c = by_point.find(id);
+                if (c == by_point.end() || fruit::breakChance(c->second, steep) < best) continue;
+                auto& pts = next[part].points;
+                for (auto it = pts.begin(); it != pts.end(); ++it)
+                    if (it->id == id) {
+                        rejected.push_back(it->pos);
+                        pts.erase(it);
+                        ++dropped;
+                        break;
+                    }
+            }
+            if (dropped == 0) break;
+            added -= std::min(added, dropped);
+        }
+        if (!better) break;
+        r = std::move(tried);
+        plans = std::move(next);
+        risk = std::move(again);
+        best = worst;
+        best_expected = expected;
+        fix.after = risk.result->stats.worst_closeness;
+        fix.chance_after = worst;
+        fix.expected_after = expected;
+        ++fix.rounds;
+        fix.enlarged += bigger;
+        fix.added += added;
+    }
+    fix.left = leftOver(*risk.result);
+    fix.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    r.peak = fix;
+    ctl.report("strengthen", 1.0);
+    return r;
+}
+
+std::string peakLine(const PeakFix& f) {
+    if (!f.ran) return "";
+    const auto oneIn = [](double c) { return c > 0 ? strf("1 in %.0f", std::max(1.0, std::round(1 / c))) : std::string("none"); };
+    std::string out;
+    if (f.enlarged + f.added > 0) {
+        std::string what;
+        if (f.added) what = strf("%zu %s added", f.added, f.added == 1 ? "tip" : "tips");
+        if (f.enlarged) what += (what.empty() ? "" : ", ") + strf("%zu %s a size bigger", f.enlarged, f.enlarged == 1 ? "tip" : "tips");
+        out = "After replaying the print: " + what + ". The likeliest place to fail went from " + oneIn(f.chance_before) + " to " +
+              oneIn(f.chance_after);
+        out += f.chance_after <= kPeakChance + 1e-12 ? ", under 1 in 100."
+                                                     : "; under 1 in 100 is the aim, and more tips here didn't get it lower.";
+    } else if (f.chance_before <= kPeakChance + 1e-12) {
+        out = "After replaying the print: no place is likelier than 1 in 100 to fail.";
+    } else {
+        out = "After replaying the print: the likeliest place to fail is " + oneIn(f.chance_before) +
+              ", and more or bigger tips here didn't make it less likely.";
+    }
+    if (f.left > 0)
+        out += strf(" %zu thin %s in the model %s more tips don't fix: see the places that may not print.", f.left,
+                    f.left == 1 ? "place" : "places", f.left == 1 ? "is one" : "are ones");
+    return out;
 }
 
 }  // namespace gui
