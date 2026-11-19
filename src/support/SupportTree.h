@@ -140,6 +140,10 @@ struct Head {
     // planned (mm, along the surface; `contact` is where it touches).
     bool smaller = false;
     double moved = 0;
+    // It holds something that starts in mid-air (PointCategory::Island) that
+    // had no other way down: it passes under the opening of a slot beside it
+    // (DetailMap), within its own shaft and gap, never into the slot.
+    bool beside_mouth = false;
 };
 
 struct Pillar {
@@ -180,6 +184,13 @@ struct SupportTree {
     double raft_top = 0;
     std::vector<Warning> warnings;
     size_t dropped_points = 0;
+    // Of those, the points (indices into the tree's points) left out only to
+    // keep a slot or hole clear (DetailMap): a head would fit there without
+    // it. They are not checked as spots nothing holds (checkDroppedTips): a
+    // slot is narrower than twice the reach a face holds itself over, so what
+    // is in or beside it is held by its walls; what really starts in mid-air
+    // is still found by the check on the layers (validateSupported).
+    std::vector<int> kept_clear;
     // Tips built a size or two smaller than planned, or moved a little, because
     // at their own size and place no head found a way down (Head::smaller, moved).
     size_t smaller_heads = 0, moved_heads = 0;

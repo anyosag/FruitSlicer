@@ -42,12 +42,17 @@ GapCheck checkSupportGaps(const TriangleMesh& model, const AabbTree& at, const S
                           const DetailMap* details) {
     GapCheck g;
     if (model.faces.empty()) return g;
-    // Slots a tip sits right over: its support goes in to hold what starts there, on purpose.
+    // Slots a tip sits right over: its support goes in to hold what starts there, on purpose. And for a head
+    // the tree let pass beside a slot's opening to hold an island (Head::beside_mouth), that space, as far as its
+    // own shaft and gap reach.
     std::vector<int> held;
     if (details) {
         for (const Head& h : tree.heads) {
             const std::vector<int> u = details->under(h.contact, 0);
             held.insert(held.end(), u.begin(), u.end());
+            if (h.beside_mouth)
+                for (const int i : details->under(h.contact, shaftDiameterFor(h.spec.tip_diameter) / 2 + tc.clearance / 2, 0.1))
+                    if (details->regions()[static_cast<std::size_t>(i)].mouth) held.push_back(i);
         }
         std::sort(held.begin(), held.end());
         held.erase(std::unique(held.begin(), held.end()), held.end());

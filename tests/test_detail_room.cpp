@@ -200,6 +200,90 @@ TEST_CASE("something that starts in mid-air right over a slot is held from insid
     for (const Head& h : u.heads) CHECK_FALSE(details->reaches(h.junction, h.spec.shaft_diameter / 2));
 }
 
+TEST_CASE("teeth that start in mid-air between narrow gaps are held from below, and the gaps stay clear", "[details][tree]") {
+    // A comb: a bar 9-10.5 mm up with seven 0.9 mm teeth hanging from it, 2.25 mm apart (gaps of 1.35 mm, slots),
+    // as on TheDipper_Front. Each tooth starts in mid-air at 8 mm; the gaps between them are slots, and the space
+    // under the gaps their mouths. A tooth's support can only come up from below it, beside those mouths.
+    // The teeth stand in a channel between two walls, 0.75 mm from each, so the gaps are slots (model most of
+    // the way round); the channel runs on 1.5 mm past the end teeth and is closed at both ends, as on the part.
+    TriangleMesh m = makeBox({-1, -0.5, 9}, {18, 3.5, 10.5});
+    m.append(makeBox({-1, -0.5, 8}, {18, 0.3, 9.05}));
+    m.append(makeBox({-1, 2.7, 8}, {18, 3.5, 9.05}));
+    m.append(makeBox({-1, 0.3, 8}, {-0.5, 2.7, 9.05}));
+    m.append(makeBox({17.5, 0.3, 8}, {18, 2.7, 9.05}));
+    for (int i = 0; i < 7; ++i) m.append(makeBox({1 + i * 2.25, 1.05, 8}, {1.9 + i * 2.25, 1.95, 9.05}));
+    auto details = std::make_shared<const DetailMap>(DetailMap::build(sliceModel(m, 0.05), 2.0, 2.0));
+    REQUIRE(details->slotCount() > 0);
+    TreeConfig tc;
+    tc.details = details;
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    std::vector<SupportPoint> teeth;
+    for (int i = 0; i < 7; ++i) {
+        SupportPoint p;
+        p.id = static_cast<uint64_t>(i + 1);
+        p.pos = {1.45 + i * 2.25, 1.5, 8};
+        p.normal = {0, 0, -1};
+        p.tip_diameter = 0.3;
+        p.category = PointCategory::Island;
+        teeth.push_back(p);
+    }
+    // Each tooth gets its own support, straight down from the tooth itself, through the space under the gaps
+    // beside it. (Without this, its tip was moved 0.5-1.5 mm onto the channel's walls, and the teeth printed
+    // with nothing under them.)
+    const SupportTree t = buildSupportTree(m, teeth, tc, raft);
+    CHECK(t.dropped_points == 0);
+    REQUIRE(t.heads.size() == teeth.size());
+    for (const Head& h : t.heads) {
+        // On its own tooth (0.9 mm square), wherever on it the tree found room.
+        const Vec3 at = teeth[static_cast<size_t>(h.point)].pos;
+        CHECK(std::abs(h.contact.x - at.x) <= 0.45 + 1e-6);
+        CHECK(std::abs(h.contact.y - at.y) <= 0.45 + 1e-6);
+        CHECK(std::abs(h.contact.z - at.z) < 0.05);
+    }
+    // None goes into a gap itself, and the check after making doesn't list them.
+    CHECK(checkSupportGaps(m, t, tc, SupportConfig{}, details.get()).in_slot == 0);
+
+    // A tip there that holds no island still keeps out of the space under the gaps: it is moved off, onto the
+    // walls, as before (what it held is the walls' to hold).
+    std::vector<SupportPoint> beside = teeth;
+    for (auto& p : beside) p.category = PointCategory::Overhang;
+    const SupportTree u = buildSupportTree(m, beside, tc, raft);
+    for (const Head& h : u.heads) CHECK(h.moved > 0);
+}
+
+TEST_CASE("a tip left out only to keep a slot clear is said so, and doesn't count as a spot nothing holds", "[details][tree]") {
+    // The floor with six 0.6 mm slots: a tip on a slot's edge, on the floor's underside, beside the slot's opening.
+    const TriangleMesh m = slottedFloor();
+    auto details = std::make_shared<const DetailMap>(DetailMap::build(sliceModel(m, 0.05), 2.0, 2.0));
+    REQUIRE(details->slotCount() > 0);
+    SupportPoint p;
+    p.id = 1;
+    p.pos = {3.25, 6, 5};  // 0.15 mm from the first slot (3.4-4.0)
+    p.normal = {0, 0, -1};
+    p.tip_diameter = 0.3;
+    p.category = PointCategory::Overhang;
+    TreeConfig tc;
+    tc.details = details;
+    tc.max_route_length = 0;  // no way round: down, or nothing
+    const double raft = PrinterProfile::saturn4Ultra16k().minRaftThickness();
+    const SupportTree t = buildSupportTree(m, {p}, tc, raft);
+    TreeConfig open = tc;
+    open.details = nullptr;
+    const SupportTree o = buildSupportTree(m, {p}, open, raft);
+    CAPTURE(t.dropped_points, t.heads.size(), o.dropped_points);
+    if (t.dropped_points == 1 && o.dropped_points == 0) {
+        // The slot alone kept it out: listed as such, not as a tip the model blocks.
+        REQUIRE(t.kept_clear.size() == 1);
+        CHECK(t.kept_clear.front() == 0);
+        bool said = false;
+        for (const Warning& w : t.warnings) said = said || w.code == "kept_clear";
+        CHECK(said);
+    } else {
+        // Built some other way (moved or smaller): then it isn't kept clear.
+        CHECK(t.kept_clear.empty());
+    }
+}
+
 TEST_CASE("by the plate, no support stands in a hole a foot would mostly fill; a wider hole may hold one", "[details][plate]") {
     // A block on the plate with a hole right through it, and a shelf over the hole 5 mm up held by the block.
     auto holed = [](double w) {

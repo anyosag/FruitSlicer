@@ -463,6 +463,10 @@ const Known kKnown[] = {
      "These tips found no clear path to the raft and were left out, so the spot above them is held less."},
     {"head_blocked", SupportProblem::Level::Review, "Tips the model blocks",
      "There was no room for a support head here, so the tip was left out."},
+    {"kept_clear", SupportProblem::Level::Review, "Tips left out to keep a slot clear",
+     "A support here could only stand in a slot or hole narrower than 2 mm, or the space under its opening, which "
+     "supports keep out of so it prints open. What these tips would hold is within 1 mm of the slot's walls, which "
+     "hold it; check it in the layer view."},
     {"anchor_on_model", SupportProblem::Level::Review, "Supports standing on the model",
      "Where nothing reached the raft, a support stands on the model instead. It leaves a mark there."},
     {"foot_near_model", SupportProblem::Level::Review, "Feet close to the model",
@@ -2108,7 +2112,20 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
             pc.po.layers = m.on.layers;
             if (!m.plan.hollow->filling()) pc.po.hollows = &m.plan.hollow->cavities().interior;
         }
-        if (m.tree.dropped_points > 0) fruit::splitByTree(m.tree, m.points, pc.built, pc.dropped);
+        if (m.tree.dropped_points > 0) {
+            fruit::splitByTree(m.tree, m.points, pc.built, pc.dropped);
+            // Left out to keep a slot clear: what they would hold is the slot's walls' to hold (SupportTree::kept_clear).
+            if (!m.tree.kept_clear.empty()) {
+                std::vector<fruit::SupportPoint> left;
+                for (const auto& d : pc.dropped) {
+                    bool kept = false;
+                    for (const int k : m.tree.kept_clear)
+                        kept = kept || (k >= 0 && static_cast<std::size_t>(k) < m.points.size() && m.points[k].id == d.id);
+                    if (!kept) left.push_back(d);
+                }
+                pc.dropped = std::move(left);
+            }
+        }
         fruit::splitByFooting(m.tree, m.points, pc.from_raft, pc.tied);
     }
     const double pixel = doc.printer.pixelX() * doc.printer.pixelY();

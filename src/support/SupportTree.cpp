@@ -100,18 +100,39 @@ private:
     // A round of radius `r` at `q` reaches into a slot or hole, or the space
     // under its mouth, or within half the clearance of one (DetailMap).
     bool inDetail(const Vec3& q, double r, double gap_share = 1.0) const {
-        return cfg_.details && cfg_.details->reaches(q, r + cfg_.clearance / 2 * gap_share, t_own_details);
+        return cfg_.details && !ignore_details_ &&
+               cfg_.details->reaches(q, r + cfg_.clearance / 2 * gap_share, t_own_details);
     }
+    // Set only while asking whether a dropped tip was kept out by a slot alone (run).
+    bool ignore_details_ = false;
     // The slots the support being placed may go into: those its own tip sits
     // right over (its contact's centre inside the slot, seen from above). Something that starts in mid-air there
     // can only be held from inside the slot; a tip beside a slot keeps out of
-    // it. Per thread, as tips are worked out side by side.
+    // it. And, last of all for a tip holding something that starts in mid-air
+    // (an island) that found no way down at its place nor anywhere on its own
+    // piece (run: t_beside_mouths), the space under a slot's opening right
+    // beside it, as far as its own shaft and gap reach: the bar of short
+    // segments on TheDipper_Front, a 1.2 mm slot along one side
+    // (2026-11-18), had its tips moved across gaps onto the next wall and the
+    // segments printed with nothing under them. The slot itself stays clear:
+    // the head is checked from just below the contact down. Per thread, as
+    // tips are worked out side by side.
     static thread_local const std::vector<int>* t_own_details;
+    static thread_local bool t_beside_mouths;
     struct OwnDetails {
         std::vector<int> mine;
         const std::vector<int>* was;
         OwnDetails(const TreeConfig& c, const SupportPoint& p) : was(t_own_details) {
-            if (c.details) mine = c.details->under(p.pos, 0);
+            if (c.details) {
+                mine = c.details->under(p.pos, 0);
+                if (t_beside_mouths && p.category == PointCategory::Island) {
+                    const double r = shaftDiameterFor(p.tip_diameter) / 2 + c.clearance / 2;
+                    for (const int i : c.details->under(p.pos, r, 0.1))
+                        if (c.details->regions()[static_cast<std::size_t>(i)].mouth) mine.push_back(i);
+                    std::sort(mine.begin(), mine.end());
+                    mine.erase(std::unique(mine.begin(), mine.end()), mine.end());
+                }
+            }
             t_own_details = &mine;
         }
         ~OwnDetails() { t_own_details = was; }
@@ -344,6 +365,8 @@ private:
     void settlePlateHead(const SupportPoint& p, Head& h);
 
     bool placeHead(const SupportPoint& p, Head& h, bool& drop_ok) const;
+    // Whether the model runs unbroken just behind the face from contact `a` to contact `b` (outward normal `n`).
+    bool samePiece(const Vec3& a, const Vec3& b, const Vec3& n) const;
     bool placeStub(const SupportPoint& p, int point);
     // A head for `p` at its own size and what it stands on (a pillar, a
     // bridge to one, a route to the raft, or the model below). False, with
@@ -842,6 +865,7 @@ void Builder::raft() {
 }
 
 thread_local const std::vector<int>* Builder::t_own_details = nullptr;
+thread_local bool Builder::t_beside_mouths = false;
 
 Builder::Ahead Builder::workOut(const SupportPoint& p) const {
     const OwnDetails own(cfg_, p);
@@ -963,6 +987,18 @@ bool Builder::supportTip(const SupportPoint& p, int pi, const char*& why, const 
     return false;
 }
 
+bool Builder::samePiece(const Vec3& a, const Vec3& b, const Vec3& n) const {
+    // Just inside the model behind the face, all the way from one contact to the other.
+    const Vec3 in = normalized(n) * -0.03;
+    const int steps = std::max(2, static_cast<int>(std::ceil(distance(a, b) / 0.1)));
+    for (int i = 0; i <= steps; ++i) {
+        const Vec3 q = a + (b - a) * (static_cast<double>(i) / steps) + in;
+        const ClosestPoint c = tree_.closest(q);
+        if (c.face < 0 || dot(q - c.point, mesh_.faceNormal(static_cast<size_t>(c.face))) > 0) return false;
+    }
+    return true;
+}
+
 bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi) {
     // A smaller head is narrower, and so is its shaft: it may find a way down
     // where the planned size found none (beside a wall, inside a cup). Better
@@ -1002,6 +1038,12 @@ bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi) {
             const Vec3 hn = mesh_.faceNormal(static_cast<size_t>(hit->face));
             // The same face, still facing down.
             if (dot(hn, n) < 0.8 || hn.z > -0.2) continue;
+            // What starts in mid-air is held only by a tip on it: an island's tip moves along its own piece,
+            // never across a gap onto another, and stays on the layer where it starts (a face a layer higher,
+            // even joined to it, leaves that first layer with nothing under it).
+            if (p.category == PointCategory::Island &&
+                (std::abs(hit->point.z - p.pos.z) > 0.02 || !samePiece(p.pos, hit->point, n)))
+                continue;
             SupportPoint q = p;
             q.pos = hit->point;
             q.normal = hn;
@@ -1034,11 +1076,39 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
         const char* why = nullptr;
         if (supportTip(p, pi, why, &ahead[static_cast<size_t>(pi)])) continue;
         if (supportSmallerOrMoved(p, pi)) continue;
+        // An island with no way down at its place nor along its own piece: beside a slot's opening (OwnDetails).
+        if (p.category == PointCategory::Island && cfg_.details) {
+            t_beside_mouths = true;
+            const char* w = nullptr;
+            const bool held = supportTip(p, pi, w);
+            t_beside_mouths = false;
+            if (held) {
+                out_.heads.back().beside_mouth = true;
+                continue;
+            }
+        }
         // No head at all: a short column to the model just below, if there is one.
         if (std::string(why) == "head_blocked" && placeStub(p, pi)) continue;
         ++out_.dropped_points;
-        if (std::string(why) == "head_blocked") warn("head_blocked", "no collision-free head direction; point dropped", p.pos);
-        else warn("no_route", "head has no clear path to the raft or a short drop onto the model; point dropped", p.pos);
+        // Kept out by a slot or hole alone: with the details set aside, a head fits.
+        bool kept_clear = false;
+        if (std::string(why) == "head_blocked" && cfg_.details) {
+            const OwnDetails own(cfg_, p);
+            Head h;
+            bool d = false;
+            ignore_details_ = true;
+            kept_clear = placeHead(p, h, d);
+            ignore_details_ = false;
+        }
+        if (kept_clear) {
+            out_.kept_clear.push_back(pi);
+            warn("kept_clear", "a head fits only in a slot or under its opening, which supports keep out of; point "
+                               "left out", p.pos);
+        } else if (std::string(why) == "head_blocked") {
+            warn("head_blocked", "no collision-free head direction; point dropped", p.pos);
+        } else {
+            warn("no_route", "head has no clear path to the raft or a short drop onto the model; point dropped", p.pos);
+        }
     }
     ctl.step("tree", 0.7);
     mergePillars();
