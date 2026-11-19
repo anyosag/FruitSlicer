@@ -136,8 +136,10 @@ std::string riskStrengthsNote(const RiskReport& r);
 // (`paint` false: no paint, for the numbers alone). `weaker`: the resin taken
 // as that many times weaker than its values, its tips, its layers and its
 // fresh skins alike (lowerPeak's check; 1 for what the app shows).
+// `model_layers`: the model's own layers, cut once and given again for the
+// same job (filled in here when empty; a hollowed model's are its own).
 RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint = true,
-                     double weaker = 1.0);
+                     double weaker = 1.0, std::shared_ptr<const fruit::LayerStack>* model_layers = nullptr);
 
 // Its places from the engine's result (checkRisk does this; apart, for tests).
 // `usable` is the share of a tip's half-fail load it is trusted with.

@@ -803,16 +803,20 @@ std::vector<float> heatByLayer(const fruit::StabilityResult& res, HeatOf of) {
 
 // ---------------------------------------------------------------- the check
 
-RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint, double weaker) {
+RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint, double weaker,
+                     std::shared_ptr<const fruit::LayerStack>* model_layers) {
     const auto t0 = std::chrono::steady_clock::now();
     RiskReport r;
     // The model's layers as they print (hollowed or drilled, where the Hollow
     // tool changed them), and the supports' own.
     std::shared_ptr<const fruit::LayerStack> model;
     if (sup.hollow && sup.hollow->layers && sup.hollow->layer_height == kLayerHeight) model = sup.hollow->layers;
-    else
+    else if (model_layers && *model_layers) model = *model_layers;
+    else {
         model = std::make_shared<const fruit::LayerStack>(
             fruit::sliceModel(doc.placed(), kLayerHeight, nullptr, 0, ctl.sub(0.0, 0.1)));
+        if (model_layers) *model_layers = model;
+    }
     const bool with_supports = !sup.mesh.empty();
     fruit::LayerStack supports;
     if (with_supports) supports = fruit::sliceModel(sup.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.1, 0.18));
@@ -908,7 +912,10 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
     ctl.step("strengthen", 0);
     fruit::SupportConfig planner = supportConfig(doc.placement(), r.choices);
     const double weaker = peakWeaker(planner);
-    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, weaker);
+    // Kept from round to round: the model's layers, the job's slots, and the trees of parts whose tips didn't change.
+    std::shared_ptr<const fruit::LayerStack> model_layers;
+    RebuildCache cache;
+    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, weaker, &model_layers);
     const int replays = risk.result->stats.replays;
     fix.weaker = weaker;
     fix.replays = replays;
@@ -1136,8 +1143,8 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         double lost = 0, mm3 = 0;
         bool better = false;
         for (int attempt = 0; attempt < 2; ++attempt) {
-            tried = finishWithEdits(doc, s, next, edits, ctl.silent());
-            again = checkRisk(doc, tried, ctl.silent(), false, weaker);
+            tried = finishWithEdits(doc, s, next, edits, ctl.silent(), &cache);
+            again = checkRisk(doc, tried, ctl.silent(), false, weaker, &model_layers);
             lost = lostChance(*again.result);
             mm3 = again.result->stats.expected_loss;
             // Kept when losing part of the model gets a fifth less likely and no more of it is to be expected

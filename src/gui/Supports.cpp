@@ -1799,6 +1799,21 @@ std::string describeCounts(const EditCounts& n) {
 
 namespace {
 
+// The same tips, exactly: every field the tree reads, and the rest.
+bool samePoints(const std::vector<fruit::SupportPoint>& a, const std::vector<fruit::SupportPoint>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const fruit::SupportPoint &p = a[i], &q = b[i];
+        if (p.id != q.id || p.pos.x != q.pos.x || p.pos.y != q.pos.y || p.pos.z != q.pos.z || p.normal.x != q.normal.x ||
+            p.normal.y != q.normal.y || p.normal.z != q.normal.z || p.tip_diameter != q.tip_diameter ||
+            p.category != q.category || p.pinned != q.pinned || p.layer != q.layer || p.part != q.part ||
+            p.cost != q.cost || p.enlarged != q.enlarged || p.built_smaller != q.built_smaller ||
+            p.built_moved != q.built_moved)
+            return false;
+    }
+    return true;
+}
+
 // One part's supports as they are made.
 struct Making {
     int id = -1;
@@ -1876,7 +1891,7 @@ std::string partNames(const Document& doc, const std::vector<int>& ids) {
 }  // namespace
 
 SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPlan plans,
-                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl) {
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl, RebuildCache* cache) {
     const auto t0 = std::chrono::steady_clock::now();
     SupportResult r;
     r.setup = s;
@@ -1911,8 +1926,15 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
     // The trees. Progress as generate() reports it: the trees from 0.55, the check from 0.85.
     const double min_raft =
         fruit::minRaftThickness(doc.printer.bottom_layers, doc.printer.transition_layers, kLayerHeight);
-    const auto build = [&](Making& m, const fruit::JobControl& c) {
+    // `keep`: the part's tree as last built, used again if its tips and raft are as they were then, and kept.
+    const auto build = [&](Making& m, const fruit::JobControl& c, RebuildCache::Tree* keep) {
         m.points = applyEdits(m.plan.points, editsOn(edits, m.on.part), frames);
+        if (keep && keep->made && keep->raft_thickness == m.tc.raft_thickness && samePoints(keep->from, m.points)) {
+            m.tree = keep->tree;
+            m.points = keep->built;
+            return;
+        }
+        if (keep) keep->from = m.points;
         m.tree = fruit::buildSupportTree(doc.placed(), m.points, m.tc, min_raft, c);
         // Tips the tree built smaller, or a little way off, so that they got a way down at all: as built.
         for (const fruit::Head& h : m.tree.heads)
@@ -1922,9 +1944,16 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                 pt.built_smaller = h.smaller;
                 pt.built_moved = h.moved;
             }
+        if (keep) {
+            keep->made = true;
+            keep->raft_thickness = m.tc.raft_thickness;
+            keep->tree = m.tree;
+            keep->built = m.points;
+        }
     };
     // The slots and holes no support goes into, in the whole job (one between two parts counts too).
-    if (n > 0) {
+    if (n > 0 && cache && cache->details) r.details = cache->details;
+    else if (n > 0) {
         const fruit::SupportConfig& c0 = made[0].cfg;
         const fruit::TreeConfig& t0 = made[0].tc;
         const fruit::LayerStack ls = fruit::sliceModel(doc.placed(), c0.layer_height, nullptr, 0, ctl.sub(0, 0.04));
@@ -1935,10 +1964,18 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         if (doc.anyOnPlate() && ls.size() > 0)
             map.addPlateHoles(ls.slices[0], std::max(min_raft, 0.5), 2 * (t0.base_diameter + 2 * t0.foot_clearance));
         r.details = std::make_shared<const fruit::DetailMap>(std::move(map));
-        for (Making& m : made) m.tc.details = r.details;
+        if (cache) cache->details = r.details;
     }
-    for (std::size_t i = 0; i < n; ++i)
-        build(made[i], ctl.sub(0.05 + 0.5 * static_cast<double>(i) / n, 0.05 + 0.5 * static_cast<double>(i + 1) / n));
+    for (Making& m : made) m.tc.details = r.details;
+    // Each part's tree is its own (the job's model and its slots are only read): side by side.
+    std::vector<RebuildCache::Tree*> keep(n, nullptr);
+    if (cache)
+        for (std::size_t i = 0; i < n; ++i) keep[i] = &cache->trees[made[i].id];
+    doc.placed();
+    fruit::parallelFor(n, static_cast<unsigned>(n), [&](std::size_t i) {
+        build(made[i], ctl.sub(0.05 + 0.5 * static_cast<double>(i) / n, 0.05 + 0.5 * static_cast<double>(i + 1) / n),
+              keep[i]);
+    });
 
     // Rafts that would meet print as one piece: they are one raft, with the
     // first one's settings. A part whose raft is thicker or thinner then has
@@ -1993,7 +2030,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
                 footGapFor(doc, m.tc);
                 m.tc.details = r.details;
                 m.cfg.plate_hold_height = modelInBottomLayers(doc);
-                if (std::abs(std::max(m.tc.raft_thickness, min_raft) - m.tree.raft_top) > 1e-9) build(m, ctl.silent());
+                if (std::abs(std::max(m.tc.raft_thickness, min_raft) - m.tree.raft_top) > 1e-9) build(m, ctl.silent(), nullptr);
             }
         }
     }
@@ -2007,8 +2044,15 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         fruit::AabbTree at;
         at.build(model);
         const fruit::SharpEdgeIndex edges(model, made[0].cfg.sharp_edge_angle_deg);
-        for (Making& m : made) {
-            const fruit::GapCheck g = fruit::checkSupportGaps(model, at, edges, m.tree, m.tc, m.cfg, r.details.get());
+        // Each part's on its own (the model, its index and its edges are only read): side by side, then in order.
+        std::vector<fruit::GapCheck> gaps(n);
+        fruit::parallelFor(n, static_cast<unsigned>(n), [&](std::size_t i) {
+            const Making& m = made[i];
+            gaps[i] = fruit::checkSupportGaps(model, at, edges, m.tree, m.tc, m.cfg, r.details.get());
+        });
+        for (std::size_t i = 0; i < n; ++i) {
+            Making& m = made[i];
+            const fruit::GapCheck& g = gaps[i];
             m.tree.warnings.insert(m.tree.warnings.end(), g.warnings.begin(), g.warnings.end());
             near_model += g.near_model, over_edge += g.over_edge, in_slot += g.in_slot;
             nearest = std::min(nearest, g.nearest);
@@ -2022,6 +2066,9 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         return m.raft >= 0 && rafts[static_cast<std::size_t>(m.raft)].parts.size() > 1;
     };
     std::vector<std::size_t> pillar_start(n);
+    // Each part's mesh is its own: made side by side, joined in the job's order.
+    std::vector<fruit::TriangleMesh> meshes(n);
+    fruit::parallelFor(n, static_cast<unsigned>(n), [&](std::size_t i) { meshes[i] = made[i].tree.mesh(made[i].tc, !shared(made[i])); });
     for (std::size_t i = 0; i < n; ++i) {
         const Making& m = made[i];
         SupportResult::PartMade pm;
@@ -2037,7 +2084,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         fruit::SupportTree t = m.tree;
         if (shared(m)) t.raft_links.clear();  // the shared raft's bars are its own, below
         fruit::appendTree(r.tree, t, static_cast<int>(pm.first));
-        const fruit::TriangleMesh mesh = m.tree.mesh(m.tc, !shared(m));
+        const fruit::TriangleMesh& mesh = meshes[i];
         pm.ml = std::max(0.0, mesh.volume()) / 1000.0;
         r.mesh.append(mesh);
         if (shared(m) && rafts[static_cast<std::size_t>(m.raft)].parts.back() == m.id) {

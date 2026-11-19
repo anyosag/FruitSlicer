@@ -458,11 +458,28 @@ JobPlan planOf(const SupportResult& r);
 // One plan for the whole job (an older job's, or planTips'), split by the
 // part each tip is on.
 JobPlan splitPlan(const Document& doc, SupportPlan plan);
+// What stays the same from one rebuild of a job's supports to the next while
+// only its tips change, as in lowerPeak's rounds: the same job, setup and
+// hand edits. Kept by finishWithEdits when it is given one; only for that.
+struct RebuildCache {
+    std::shared_ptr<const fruit::DetailMap> details;  // the job's slots and holes
+    // By part id: the tips its tree was last built from (hand edits applied),
+    // the raft it stood on, and what was built (the tips as built too).
+    struct Tree {
+        bool made = false;
+        std::vector<fruit::SupportPoint> from, built;
+        double raft_thickness = 0;
+        fruit::SupportTree tree;
+    };
+    std::map<int, Tree> trees;
+};
 // The planners' tips with hand edits applied, then the trees, the rafts, the
 // checks and the problems (keeps both). Used when a saved job comes back with
-// its tips, and after a hand edit.
+// its tips, and after a hand edit. The parts' trees are built side by side;
+// with `cache`, a part whose tips are as they were last time keeps its tree.
 SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPlan plan,
-                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
+                              const std::vector<TipEdit>& edits, const fruit::JobControl& ctl,
+                              RebuildCache* cache = nullptr);
 // The same for one plan and `c` for every part, all on one raft.
 SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, SupportPlan plan,
                               const std::vector<TipEdit>& edits, const fruit::JobControl& ctl);
