@@ -535,7 +535,7 @@ TEST_CASE("Risk: the demo bracket on its own supports is replayed, the same ever
     CHECK(c.result->stats.worst_closeness == Approx(a.result->stats.worst_closeness));
 }
 
-TEST_CASE("Risk: replaying the print and strengthening it brings the weakest tip down", "[gui][risk][slow]") {
+TEST_CASE("Risk: replaying the print and strengthening it makes losing part of the model less likely", "[gui][risk][slow]") {
     // A plate 20 x 20 mm, 1 mm thick, 6 mm up, its supports made as usual and then thinned to every fourth tip:
     // what is left is pulled far harder than its tips are trusted with.
     const auto path = std::filesystem::temp_directory_path() / "risk_test_plate.stl";
@@ -551,31 +551,55 @@ TEST_CASE("Risk: replaying the print and strengthening it brings the weakest tip
         plan.points = kept;
     }
     const SupportResult weak = finishWithEdits(*doc, full.setup, thin, {}, fruit::JobControl::none());
-    const RiskReport before = checkRisk(*doc, weak, fruit::JobControl::none(), false);
+    const RiskReport as_is = checkRisk(*doc, weak, fruit::JobControl::none(), false);
+    const RiskReport before = checkRisk(*doc, weak, fruit::JobControl::none(), false, kPeakWeaker);
     const SupportResult strong = lowerPeak(*doc, full.setup, thin, {}, weak, fruit::JobControl::none());
     const PeakFix& f = strong.peak;
-    CAPTURE(f.chance_before, f.chance_after, f.expected_before, f.expected_after, f.before, f.after, f.rounds, f.enlarged, f.added);
+    CAPTURE(f.lost_before, f.lost_after, f.mm3_before, f.mm3_after, f.rounds, f.enlarged, f.added, f.seconds);
     REQUIRE(f.ran);
-    CHECK(f.before == Approx(before.result->stats.worst_closeness));
-    REQUIRE(f.chance_before > kPeakChance);  // the thinned plate is weak enough to need it
-    // It made tips bigger or added some, kept the rounds that helped, and failures got less likely: the likeliest
-    // one, or how many to expect.
+    CHECK(f.weaker == kPeakWeaker);
+    CHECK(f.replays == before.result->stats.replays);
+    // Its check is the replay with the resin a step weaker: no less of the model lost than with it as it is.
+    CHECK(f.lost_before == Approx(1 - before.result->stats.whole_chance).margin(1e-9));
+    CHECK(f.mm3_before == Approx(before.result->stats.expected_loss).margin(1e-9));
+    CHECK(before.result->stats.whole_chance <= as_is.result->stats.whole_chance);
+    REQUIRE(f.lost_before > kPeakChance);  // the thinned plate is weak enough to need it
+    // It made tips bigger or added some, kept the rounds that helped, and less of the model is to be expected lost.
     CHECK(f.rounds >= 1);
     CHECK(f.enlarged + f.added > 0);
-    CHECK((f.chance_after < f.chance_before || f.expected_after < f.expected_before));
-    CHECK(f.expected_after < f.expected_before);
+    CHECK(f.lost_after <= f.lost_before);
+    CHECK(f.mm3_after < f.mm3_before);
     // The result is what it says: replayed again, it is where the loop left it.
-    const RiskReport again = checkRisk(*doc, strong, fruit::JobControl::none(), false);
-    CHECK(again.result->stats.worst_closeness == Approx(f.after).margin(1e-6));
+    const RiskReport again = checkRisk(*doc, strong, fruit::JobControl::none(), false, kPeakWeaker);
+    CHECK(1 - again.result->stats.whole_chance == Approx(f.lost_after).margin(1e-9));
+    CHECK(again.result->stats.expected_loss == Approx(f.mm3_after).margin(1e-9));
     // The tips it added are the plan's, so they are saved with the job.
     std::size_t planned = 0, thinned = 0;
     for (const auto& [part, plan] : strong.plans) planned += plan.points.size();
     for (const auto& [part, plan] : thin) thinned += plan.points.size();
     CHECK(planned == thinned + f.added);
-    // 1 in 100 is the aim: the target is where a tip's chance of letting go is that.
-    CHECK(fruit::breakChance(f.target, fruit::StabilityConfig{}.steepness) == Approx(kPeakChance).margin(1e-6));
     // Said on the Supports panel.
-    CHECK_THAT(peakLine(f), ContainsSubstring("After replaying the print:"));
-    CHECK_THAT(peakLine(f), ContainsSubstring("The likeliest place to fail went from 1 in "));
+    CHECK_THAT(peakLine(f), ContainsSubstring("Replayed with the resin 1.41 times weaker than its values"));
+    CHECK_THAT(peakLine(f), ContainsSubstring("The chance of losing part of the model went from 1 in "));
     CHECK(peakLine(PeakFix{}).empty());
+}
+
+TEST_CASE("Risk: the strengthening loop leaves tips whose letting go costs none of the model", "[gui][risk][slow]") {
+    // The same plate with all its supports: some of its tips may let go, but their neighbours keep the plate.
+    const auto path = std::filesystem::temp_directory_path() / "risk_test_plate_full.stl";
+    fruit::writeStl(path.string(), fruit::makeBox({0, 0, 6}, {20, 20, 7}));
+    auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    std::filesystem::remove(path);
+    REQUIRE(doc);
+    const SupportResult full = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
+    const RiskReport check = checkRisk(*doc, full, fruit::JobControl::none(), false, kPeakWeaker);
+    double likeliest = 0;
+    for (const fruit::TipRisk& t : check.result->tips) likeliest = std::max(likeliest, t.chance);
+    CAPTURE(likeliest, check.result->stats.whole_chance);
+    REQUIRE(1 - check.result->stats.whole_chance <= kPeakChance);
+    const SupportResult same = lowerPeak(*doc, full.setup, full.plans, {}, full, fruit::JobControl::none());
+    CHECK(same.peak.ran);
+    CHECK(same.peak.rounds == 0);
+    CHECK(same.peak.enlarged + same.peak.added == 0);
+    CHECK_THAT(peakLine(same.peak), ContainsSubstring("so no tips were needed."));
 }

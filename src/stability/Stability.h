@@ -270,6 +270,12 @@ struct TipRisk {
     // tips let go one after another, the model falls with whichever went
     // last, so over many replays every one of them carries a little of it.
     double lost_per_print = 0;
+    // Of the replays in which a tip holding the same piece let go first, under
+    // its own load alone, the share in which part of the model (1 mm³ or
+    // more) was lost with joints that let go: near 0 where the tips beside one
+    // keep the piece when it goes. Times `chance`, about the chance that
+    // losing part of the model starts with this tip.
+    double loss_share = 0;
     double closeness = 0;
     double area = 0;         // mm² it touches the model with
     double load = 0;         // mm² of layer pulling on it at its worst

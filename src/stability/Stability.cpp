@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -575,6 +576,9 @@ private:
     std::vector<Worst> worst_;        // by link
     // By link: mm³ of the model lost with it, averaged over the replays in which it let go, and over all of them.
     std::vector<float> lost_with_, lost_per_print_;
+    // By link (a tip's): of the replays in which a tip on the same piece let go first, under its own load alone,
+    // the share in which part of the model was lost with joints.
+    std::vector<float> loss_share_;
     double tips_cost_chance_ = 0, tips_cost_volume_ = 0;
     std::vector<Seen> seen_;          // by link, then layer
     std::vector<int> worst_link_;     // by part: its most loaded joint
@@ -2498,6 +2502,7 @@ void Analysis::runReplays() {
     whole_ = 1;
     lost_with_.assign(links_.size(), 0.0f);
     lost_per_print_.assign(links_.size(), 0.0f);
+    loss_share_.assign(links_.size(), 0.0f);
     tips_cost_chance_ = tips_cost_volume_ = 0;
     if (in_.standalone_tips) {  // the planner's question is what each tip carries: nothing is replayed
         for (int id = 0; id < n_; ++id) out_.parts[id].lost_chance = held_[id] ? 0.0f : 1.0f;
@@ -2811,6 +2816,9 @@ void Analysis::runReplays() {
     std::vector<double> sizes;
     // By joint: the replays in which it let go, and the model that went with it then (mm³, summed).
     std::vector<int> let_go(nc, 0), lost_by;
+    // By joint: the replays in which it let go under its own load alone (nothing passed on to it yet), and of
+    // those, the ones that lost part of the model.
+    std::vector<int> started(nc, 0), started_loss(nc, 0), started_now;
     std::vector<double> went_with(nc, 0);
     int tips_cost = 0;          // replays in which part of the model went with tips
     double tips_cost_sum = 0;   // and how much, summed over those
@@ -2818,6 +2826,7 @@ void Analysis::runReplays() {
         if ((r & 15) == 0) ctl_.step("replays", static_cast<double>(r) / replays);
         Rng rng(cfg_.seed * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(r) * 0xD1B54A32D192ED03ULL + 1);
         due.clear();
+        started_now.clear();
         for (int c : given_list) given[c] = {};
         given_list.clear();
         for (int c = 0; c < nc; ++c) {
@@ -2839,6 +2848,7 @@ void Analysis::runReplays() {
                     x = c;
             if (x < 0) break;
             const int k = when[x];
+            if (given[x].from.empty() && given[x].fixed == 0) started_now.push_back(x);
             broken[x] = 1;
             ++let_go[x];
             if (tip_group_[cand[x].link] >= 0)
@@ -3022,6 +3032,10 @@ void Analysis::runReplays() {
             }
         }
         whole += model_lost + unheld_volume + skinLost(r, &lost_stamp) < kWorthLosing;
+        for (int c : started_now) {
+            ++started[c];
+            started_loss[c] += model_lost >= kWorthLosing;
+        }
         if (with_tips >= kCountsAsLost) {
             ++tips_cost;
             tips_cost_sum += with_tips;
@@ -3036,6 +3050,20 @@ void Analysis::runReplays() {
         if (let_go[c] > 0) lost_with_[cand[c].link] = static_cast<float>(went_with[c] / let_go[c]);
         lost_per_print_[cand[c].link] = static_cast<float>(went_with[c] / replays);
     }
+    // A tip's share is its piece's: few tips start often enough to have one of their own, and what follows a start
+    // (whether the tips beside it keep the piece) is the piece's.
+    std::map<int, std::pair<int, int>> by_piece;  // child piece: starts, and starts that lost part of the model
+    for (int c = 0; c < nc; ++c)
+        if (tip_group_[cand[c].link] >= 0) {
+            auto& [n, lost] = by_piece[cand[c].child];
+            n += started[c];
+            lost += started_loss[c];
+        }
+    for (int c = 0; c < nc; ++c)
+        if (tip_group_[cand[c].link] >= 0) {
+            const auto& [n, lost] = by_piece[cand[c].child];
+            loss_share_[cand[c].link] = n > 0 ? static_cast<float>(static_cast<double>(lost) / n) : 0.0f;
+        }
     ctl_.step("replays", 1);
 }
 
@@ -3212,6 +3240,7 @@ void Analysis::listTips() {
         t.lost_chance = lostAbove(l.child);
         t.lost_volume = lost_with_[i];
         t.lost_per_print = lost_per_print_[i];
+        t.loss_share = loss_share_[i];
         if (w.step >= 0) {
             t.closeness = w.u;
             t.chance = breakChance(w.u, steep_);

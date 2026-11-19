@@ -16,6 +16,7 @@
 #include "Layers.h"
 #include "Orient.h"
 #include "Supports.h"
+#include "calibration/CalibrationFit.h"
 #include "core/Parallel.h"
 #include "mesh/AabbTree.h"
 #include "geometry/Polygon.h"
@@ -802,7 +803,7 @@ std::vector<float> heatByLayer(const fruit::StabilityResult& res, HeatOf of) {
 
 // ---------------------------------------------------------------- the check
 
-RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint) {
+RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint, double weaker) {
     const auto t0 = std::chrono::steady_clock::now();
     RiskReport r;
     // The model's layers as they print (hollowed or drilled, where the Hollow
@@ -837,7 +838,14 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
     fruit::SupportConfig planner = supportConfig(doc.placement(), choices);
     // With no raft: what the bottom layers print of the model stands on the plate, as these supports were made for.
     planner.plate_hold_height = sup.cfg.plate_hold_height;
-    const fruit::StabilityConfig cfg = fruit::stabilityConfig(planner);
+    fruit::StabilityConfig cfg = fruit::stabilityConfig(planner);
+    if (weaker > 1) {
+        // Every hold over `weaker`: a tip or a joint trusted with the same load is that much nearer where half let
+        // go, and a fresh skin, whose stress goes with the square of its reach, tears at a reach shorter by its root.
+        cfg.usable_fraction = std::min(1.0, cfg.usable_fraction * weaker);
+        cfg.skin_half_reach /= std::sqrt(weaker);
+        cfg.skin_edge_reach /= std::sqrt(weaker);
+    }
     r.borrowed = cfg.capacity.table.empty();
     ctl.step("stress", 0.2);
     auto res = std::make_shared<fruit::StabilityResult>(fruit::analyzeStability(in, cfg, ctl.sub(0.2, 0.9)));
@@ -861,9 +869,6 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
 
 namespace {
 
-// The closeness at which a joint has chance `p` of letting go (breakChance turned round).
-double closenessFor(double p, double steepness) { return std::pow(-std::log2(1 - p), 1.0 / std::max(steepness, 1.0)); }
-
 // Down-facing face found by looking along -n from just off `at` (printer coordinates), within `dz` of its height.
 std::optional<fruit::RayHit> faceAt(const fruit::AabbTree& tree, const fruit::TriangleMesh& mesh, const fruit::Vec3& at,
                                     const fruit::Vec3& n, double dz) {
@@ -874,25 +879,15 @@ std::optional<fruit::RayHit> faceAt(const fruit::AabbTree& tree, const fruit::Tr
     return hit;
 }
 
-// The likeliest place to fail, as a chance: a tip letting go, or any weak place the replay lists (a fresh skin
-// tearing, a piece in mid-air, a thin place, a rod). A tip's closeness alone (the "how close" line) leaves out
-// skins: with too few tips, the pull of a skin far from them is discounted from their load and counted as the
-// skin tearing instead, so fewer tips can show a lower line and a likelier failure.
-double worstChance(const fruit::StabilityResult& res) {
-    double w = 0;
-    for (const fruit::TipRisk& t : res.tips) w = std::max(w, t.chance);
-    for (const fruit::WeakSpot& s : res.spots) w = std::max(w, s.chance);
-    return w;
-}
+// The chance that part of the model (1 mm³ or more) is not on the finished print: what the loop aims at. Not
+// the likeliest tip to let go: one whose neighbours keep the model when it goes costs nothing, and not the "how
+// close" line, which leaves out fresh skins.
+double lostChance(const fruit::StabilityResult& res) { return std::clamp(1.0 - res.stats.whole_chance, 0.0, 1.0); }
 
-// How many failures to expect: every tip's chance, and every weak place's but the tips' own (counted already).
-double expectedFailures(const fruit::StabilityResult& res) {
-    double e = 0;
-    for (const fruit::TipRisk& t : res.tips) e += t.chance;
-    for (const fruit::WeakSpot& s : res.spots)
-        if (s.cause != fruit::RiskCause::Tip) e += s.chance;
-    return e;
-}
+// About the chance that losing part of the model starts with this tip: how likely it is to let go, times how
+// often part of the model went in the replays in which it did. Not who went last (a tip its neighbours' letting
+// go overloaded), and nothing for one whose neighbours keep the model when it goes.
+double startsLoss(const fruit::TipRisk& t) { return t.chance * t.loss_share; }
 
 }  // namespace
 
@@ -906,14 +901,15 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         return r;
     }
     ctl.step("strengthen", 0);
-    RiskReport risk = checkRisk(doc, r, ctl.silent(), false);
+    static_assert(kPeakWeaker == fruit::kOneLoadStep, "the loop's weaker resin is one step of the tips plate");
+    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, kPeakWeaker);
     fruit::SupportConfig planner = supportConfig(doc.placement(), r.choices);
-    const double steep = fruit::stabilityConfig(planner).steepness;
-    fix.target = closenessFor(kPeakChance, steep);
-    fix.before = fix.after = risk.result->stats.worst_closeness;
-    fix.chance_before = fix.chance_after = worstChance(*risk.result);
-    fix.expected_before = fix.expected_after = expectedFailures(*risk.result);
-    double best = fix.chance_before, best_expected = fix.expected_before;
+    const int replays = risk.result->stats.replays;
+    fix.weaker = kPeakWeaker;
+    fix.replays = replays;
+    fix.lost_before = fix.lost_after = lostChance(*risk.result);
+    fix.mm3_before = fix.mm3_after = risk.result->stats.expected_loss;
+    double best = fix.lost_before, best_mm3 = fix.mm3_before;
 
     const fruit::TriangleMesh& mesh = doc.placed();
     const fruit::AabbTree tree(mesh);
@@ -927,8 +923,8 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
     auto leftOver = [&](const fruit::StabilityResult& res) {
         std::size_t n = 0;
         for (const fruit::WeakSpot& w : res.spots)
-            if (w.chance > kPeakChance && (w.cause == fruit::RiskCause::Neck || w.cause == fruit::RiskCause::Bend ||
-                                           w.cause == fruit::RiskCause::Support))
+            if (w.chance > kPeakChance && w.lost_volume >= fruit::kCountsAsLost &&
+                (w.cause == fruit::RiskCause::Neck || w.cause == fruit::RiskCause::Bend || w.cause == fruit::RiskCause::Support))
                 ++n;
         return n;
     };
@@ -969,17 +965,23 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
             ++added;
         };
 
-        // The tips likelier than 1 in 100 to let go, worst first: each followed from the replay to the head the
-        // tree built (the replay's tips start with the heads, in order) and from there to its planned tip.
+        // The tips losing part of the model starts with, likeliest first: each followed from the replay to the head
+        // the tree built (the replay's tips start with the heads, in order) and from there to its planned tip. As
+        // many as start the share of that chance over the aim (1 - aim / chance), at least one. A tip that lets go
+        // while its neighbours keep the model is left as it is, however likely.
         std::map<std::uint64_t, Ref> by_id;
         for (auto& [part, plan] : next)
             for (std::size_t i = 0; i < plan.points.size(); ++i) by_id[plan.points[i].id] = Ref{part, i};
         std::vector<const fruit::TipRisk*> over;
         for (const fruit::TipRisk& t : res.tips)
-            if (!t.foot && t.closeness > fix.target && t.contact >= 0 && static_cast<std::size_t>(t.contact) < r.tree.heads.size())
+            if (!t.foot && startsLoss(t) > 0 && t.contact >= 0 && static_cast<std::size_t>(t.contact) < r.tree.heads.size())
                 over.push_back(&t);
-        std::sort(over.begin(), over.end(), [](const auto* a, const auto* b) { return a->closeness > b->closeness; });
+        std::sort(over.begin(), over.end(), [](const auto* a, const auto* b) { return startsLoss(*a) > startsLoss(*b); });
+        double starts = 0, taken = 0;
+        for (const fruit::TipRisk* t : over) starts += startsLoss(*t);
+        const double wanted = starts * (1 - kPeakChance / best);
         for (const fruit::TipRisk* t : over) {
+            if (taken > 0 && taken >= wanted) break;
             const fruit::Head& h = r.tree.heads[static_cast<std::size_t>(t->contact)];
             if (h.point < 0 || static_cast<std::size_t>(h.point) >= r.points.size()) continue;
             const auto it = by_id.find(r.points[static_cast<std::size_t>(h.point)].id);
@@ -1007,6 +1009,7 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
                         p.tip_diameter = *up;
                         p.enlarged = true;
                         ++bigger;
+                        taken += startsLoss(*t);
                         continue;
                     }
                 }
@@ -1058,13 +1061,17 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
             q.tip_diameter = h.spec.tip_diameter;
             q.enlarged = false;
             addAt(ref.part, q);
+            taken += startsLoss(*t);
         }
-        // A fresh skin likelier than 1 in 100 to tear: tips over it, each at the point of it furthest from any
-        // tip, until none of it is further than the planner's skin reach from one (or 20 have gone in).
+        // A fresh skin likelier than 1 in 100 to tear, over enough of the model to count as losing some: tips over
+        // it, each at the point of it furthest from any tip, until none of it is further than the planner's skin
+        // reach from one (or 20 have gone in).
         const double skin_reach = r.cfg.skin_reach > 0 ? r.cfg.skin_reach : 1.6;
         for (std::size_t L = 0; L < res.skins.size(); ++L)
             for (const fruit::SkinBand& band : res.skins[L]) {
-                if (band.chance <= kPeakChance || band.region.empty()) continue;
+                if (band.chance <= kPeakChance || band.region.empty() ||
+                    std::abs(fruit::area(band.region)) * res.layer_height < fruit::kCountsAsLost)
+                    continue;
                 const double z = (static_cast<double>(L) + 0.5) * res.layer_height;
                 const fruit::BBox2 box = fruit::bbox(band.region);
                 std::vector<fruit::Vec2> near_tips;
@@ -1117,31 +1124,32 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
             addAt(ref->part, q);
         }
         if (bigger + added == 0) break;
-        // Built and replayed. Worse? The tips it added that are now weaker than the weakest place was are taken
-        // out (and their spots not tried again), and it is built once more without them.
+        // Built and replayed. Worse? The tips it added that part of the model now goes with are taken out (and
+        // their spots not tried again), and it is built once more without them.
         SupportResult tried;
         RiskReport again;
-        double worst = 0, expected = 0;
+        double lost = 0, mm3 = 0;
         bool better = false;
         for (int attempt = 0; attempt < 2; ++attempt) {
             tried = finishWithEdits(doc, s, next, edits, ctl.silent());
-            again = checkRisk(doc, tried, ctl.silent(), false);
-            worst = worstChance(*again.result);
-            expected = expectedFailures(*again.result);
-            // Kept when the likeliest failure comes down, or, no likelier, fewer failures are to be expected.
-            better = worst < 0.95 * best || (worst <= 1.05 * best && expected < 0.9 * best_expected);
+            again = checkRisk(doc, tried, ctl.silent(), false, kPeakWeaker);
+            lost = lostChance(*again.result);
+            mm3 = again.result->stats.expected_loss;
+            // Kept when losing part of the model gets a fifth less likely and no more of it is to be expected
+            // lost, or, no likelier, a tenth less of it is.
+            better = (lost < 0.8 * best && mm3 <= 1.05 * best_mm3) || (lost <= best && mm3 < 0.9 * best_mm3);
             if (better || new_ids.empty()) break;
-            std::map<std::uint64_t, double> by_point;
+            std::map<std::uint64_t, const fruit::TipRisk*> by_point;
             for (const fruit::TipRisk& t : again.result->tips)
                 if (t.contact >= 0 && static_cast<std::size_t>(t.contact) < tried.tree.heads.size()) {
                     const fruit::Head& h = tried.tree.heads[static_cast<std::size_t>(t.contact)];
                     if (h.point >= 0 && static_cast<std::size_t>(h.point) < tried.points.size())
-                        by_point[tried.points[static_cast<std::size_t>(h.point)].id] = t.closeness;
+                        by_point[tried.points[static_cast<std::size_t>(h.point)].id] = &t;
                 }
             std::size_t dropped = 0;
             for (const auto& [part, id] : new_ids) {
                 const auto c = by_point.find(id);
-                if (c == by_point.end() || fruit::breakChance(c->second, steep) < best) continue;
+                if (c == by_point.end() || startsLoss(*c->second) * std::max(replays, 1) < 1.0) continue;
                 auto& pts = next[part].points;
                 for (auto it = pts.begin(); it != pts.end(); ++it)
                     if (it->id == id) {
@@ -1158,11 +1166,10 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         r = std::move(tried);
         plans = std::move(next);
         risk = std::move(again);
-        best = worst;
-        best_expected = expected;
-        fix.after = risk.result->stats.worst_closeness;
-        fix.chance_after = worst;
-        fix.expected_after = expected;
+        best = lost;
+        best_mm3 = mm3;
+        fix.lost_after = lost;
+        fix.mm3_after = mm3;
         ++fix.rounds;
         fix.enlarged += bigger;
         fix.added += added;
@@ -1176,21 +1183,22 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
 
 std::string peakLine(const PeakFix& f) {
     if (!f.ran) return "";
-    const auto oneIn = [](double c) { return c > 0 ? strf("1 in %.0f", std::max(1.0, std::round(1 / c))) : std::string("none"); };
-    std::string out;
+    const auto oneIn = [&](double c) {
+        return c > 0 ? strf("1 in %.0f", std::max(1.0, std::round(1 / c))) : strf("under 1 in %d", std::max(f.replays, 1));
+    };
+    std::string out = strf("Replayed with the resin %.2f times weaker than its values (one step of the tips plate): ", f.weaker);
     if (f.enlarged + f.added > 0) {
         std::string what;
         if (f.added) what = strf("%zu %s added", f.added, f.added == 1 ? "tip" : "tips");
         if (f.enlarged) what += (what.empty() ? "" : ", ") + strf("%zu %s a size bigger", f.enlarged, f.enlarged == 1 ? "tip" : "tips");
-        out = "After replaying the print: " + what + ". The likeliest place to fail went from " + oneIn(f.chance_before) + " to " +
-              oneIn(f.chance_after);
-        out += f.chance_after <= kPeakChance + 1e-12 ? ", under 1 in 100."
-                                                     : "; under 1 in 100 is the aim, and more tips here didn't get it lower.";
-    } else if (f.chance_before <= kPeakChance + 1e-12) {
-        out = "After replaying the print: no place is likelier than 1 in 100 to fail.";
+        out += what + ". The chance of losing part of the model went from " + oneIn(f.lost_before) + " to " + oneIn(f.lost_after);
+        out += f.lost_after <= kPeakChance + 1e-12 ? ", under 1 in 100."
+                                                   : "; under 1 in 100 is the aim, and more tips here didn't get it lower.";
+    } else if (f.lost_before <= kPeakChance + 1e-12) {
+        out += "the chance of losing part of the model is " + oneIn(f.lost_before) + ", so no tips were needed.";
     } else {
-        out = "After replaying the print: the likeliest place to fail is " + oneIn(f.chance_before) +
-              ", and more or bigger tips here didn't make it less likely.";
+        out += "the chance of losing part of the model is " + oneIn(f.lost_before) +
+               ", and more or bigger tips here didn't make it smaller.";
     }
     if (f.left > 0)
         out += strf(" %zu thin %s in the model %s more tips don't fix: see the places that may not print.", f.left,
