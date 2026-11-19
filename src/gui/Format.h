@@ -11,13 +11,24 @@
 
 namespace gui {
 
+// printf into a string of any length (a fixed buffer once cut long sentences off mid-word).
 inline std::string strf(const char* f, ...) {
     char b[256];
-    va_list a;
+    va_list a, again;
     va_start(a, f);
-    std::vsnprintf(b, sizeof b, f, a);
+    va_copy(again, a);
+    const int n = std::vsnprintf(b, sizeof b, f, a);
     va_end(a);
-    return b;
+    std::string out;
+    if (n >= static_cast<int>(sizeof b)) {
+        out.resize(static_cast<std::size_t>(n) + 1);
+        std::vsnprintf(out.data(), out.size(), f, again);
+        out.resize(static_cast<std::size_t>(n));
+    } else if (n > 0) {
+        out.assign(b, static_cast<std::size_t>(n));
+    }
+    va_end(again);
+    return out;
 }
 
 inline std::string dims(const fruit::Vec3& s) { return strf("%.1f × %.1f × %.1f mm", s.x, s.y, s.z); }

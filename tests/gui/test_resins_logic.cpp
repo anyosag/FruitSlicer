@@ -477,12 +477,12 @@ TEST_CASE("Resins: support values you set are the resin's, and a job starts with
     const nlohmann::json measured = r.profile;
     r.profile = withResinValue(r.profile, "capacity", 14);
     r.profile = withResinValue(r.profile, "critical_angle", 50);
-    r.profile = withResinValue(r.profile, kUsualTipKey, 1);  // 0.3 mm
+    r.profile = withResinValue(r.profile, kUsualTipKey, 3);  // 0.6 mm, not the plate's
     r.profile = withResinValue(r.profile, "snap_zone", 3);
     CHECK_THROWS(withResinValue(r.profile, "tip_reach", 1));
     auto v = resinSupportValues(r);
     REQUIRE(v.size() == 7);
-    CHECK(v[0].value == "0.3 mm");
+    CHECK(v[0].value == "0.6 mm");
     CHECK(v[0].source == Source::Yours);
     CHECK(v[1].value == "14.0 mm²");
     CHECK(v[1].source == Source::Yours);
@@ -497,7 +497,7 @@ TEST_CASE("Resins: support values you set are the resin's, and a job starts with
     const fruit::SupportConfig cfg = supportConfig(fruit::Placement{}, c);
     CHECK(cfg.capacity.capacity(0.4) == Approx(14));
     CHECK(cfg.critical_angle_deg == Approx(50));
-    CHECK(cfg.tip_classes[static_cast<std::size_t>(cfg.default_tip)].diameter == Approx(0.3));
+    CHECK(cfg.tip_classes[static_cast<std::size_t>(cfg.default_tip)].diameter == Approx(0.6));
     CHECK(treeConfig(c).flex_zone == Approx(3));
     CHECK(resinChanged(row("How much a tip holds"), c.profile));
     CHECK_FALSE(advancedChanged(row("How much a tip holds"), c));  // the job's Reset all comes back here

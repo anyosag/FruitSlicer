@@ -126,6 +126,13 @@ const fruit::PlateResults* plateOf(const std::vector<fruit::PlateResults>& plate
 
 void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
     const fruit::CapacityModel borrowed;
+    const json model = s.profile.contains("fits") ? s.profile["fits"].value("tips_model", json::object()) : json::object();
+    const int n_all = model.value("coupons", 0);
+    const std::string model_basis = model.value("basis", std::string());
+    if (model_basis == "lower bound")
+        s.unsure.push_back("No disc on the tips plate let go, so each hold is only a floor: 70 % of the heaviest load.");
+    else if (model_basis == "upper bound")
+        s.unsure.push_back("Every disc on the tips plate let go, so each hold is a guess: half the lightest load.");
     for (const json& t : tips) {
         TipHold h;
         h.tip = num(t, "tip_diameter");
@@ -134,36 +141,41 @@ void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
         const std::string basis = t.value("basis", std::string());
         const int n = t.value("coupons", 0), held = t.value("held", 0);
         const double heaviest_held = num(t, "max_held_mm2", -1), lightest_failed = num(t, "min_failed_mm2", -1);
-        if (basis == "lower bound") {
+        const double pen = num(t, "preferred_penetration", 0), contact = num(t, "contact_mm2", 0);
+        // Its own coupons at the depth kept, as at the hinge's edge.
+        const json at = t.value("at_depth", json::object());
+        const int dn = at.value("coupons", n), dheld = at.value("held", held);
+        const double dmax = num(at, "max_held_mm2", heaviest_held), dmin = num(at, "min_failed_mm2", lightest_failed);
+        if (basis == "contact model") {
+            h.how = strf("From %d coupons: a tip holds about %.0f mm² of layer for each mm² of the part it touches "
+                         "before half let go. This one, %g mm deep, touches %.2f mm², so half would let go at about "
+                         "%s, and FruitSlicer keeps 70 %% of that. Its own coupons there held %d of %d.",
+                         n_all, num(model, "strength_50pct"), pen, contact, area(num(t, "load_50pct")).c_str(), dheld, dn);
+        } else if (basis == "own floor") {
             h.basis = Basis::Bound;
-            h.floor = num(t, "floor_mm2", h.yours);
-            if (h.yours > h.floor + 1e-9) {
-                h.how = strf("All %d held, even at %s, the heaviest load tested: they hold at least %s. ", n,
-                             area(heaviest_held).c_str(), area(h.floor).c_str()) +
-                        "That doesn't go against FruitSlicer's starting value, " + area(h.yours) + ", so it stays.";
-                s.unsure.push_back(strf("%g mm tips never let go: they hold at least %s, so the starting %s stays.",
-                                        h.tip, area(h.floor).c_str(), area(h.yours).c_str()));
-            } else {
-                h.how = strf("All %d held, even at %s, the heaviest load tested. ", n, area(heaviest_held).c_str()) +
-                        "Half would let go somewhere above it, so this is only a floor: 70 % of that load.";
-                s.unsure.push_back(strf("%g mm tips never let go, so their hold is at least %s.", h.tip,
-                                        area(h.yours).c_str()));
-            }
+            h.how = strf("Its %d coupons %g mm deep all held, even at %s, well past what the other sizes hold for what "
+                         "they touch, so its own are used: only a floor, 70 %% of that load.",
+                         dn, pen, area(dmax).c_str());
+            s.unsure.push_back(strf("%g mm tips never let go, so their hold is at least %s.", h.tip, area(h.yours).c_str()));
+        } else if (basis == "own guess") {
+            h.basis = Basis::Guess;
+            h.how = strf("None of its %d coupons %g mm deep held, even at %s, well short of what the other sizes hold "
+                         "for what they touch, so its own are used: a guess, half that load.",
+                         dn, pen, area(dmin).c_str());
+            s.unsure.push_back(strf("%g mm tips let go even at the lightest load, %s, so their %s is only a guess.", h.tip,
+                                    area(dmin).c_str(), area(h.yours).c_str()));
+        } else if (basis == "own") {
+            h.how = strf("Its own coupons %g mm deep held at up to %s and let go from %s, which doesn't fit what the "
+                         "other sizes hold for what they touch, so FruitSlicer keeps 70 %% of halfway between its own.",
+                         pen, area(dmax).c_str(), area(dmin).c_str());
+        } else if (basis == "lower bound") {
+            h.basis = Basis::Bound;
+            h.how = strf("Every disc held, so this is only a floor: 70 %% of the heaviest load, for what this tip "
+                         "touches (%.2f mm²). Its own coupons held %d of %d.", contact, held, n);
         } else if (basis == "upper bound") {
             h.basis = Basis::Guess;
-            h.how = strf("None of %d held, even at %s, the lightest load tested, ", n, area(lightest_failed).c_str()) +
-                    "so the hold is below 70 % of it, " + area(0.7 * lightest_failed) +
-                    ". How far below is unknown: this is a guess, half that load.";
-            s.unsure.push_back(strf("%g mm tips let go even at the lightest load, %s, so their %s is only a guess.",
-                                    h.tip, area(lightest_failed).c_str(), area(h.yours).c_str()));
-        } else if (basis == "gap midpoint") {
-            h.how = strf("They held at up to %s and let go from %s. ", area(heaviest_held).c_str(),
-                         area(lightest_failed).c_str()) +
-                    "FruitSlicer keeps 70 % of halfway between.";
-        } else if (basis == "logistic") {
-            h.how = strf("%d of %d held. Half would let go at about %s, ", held, n,
-                         area(num(t, "load_50pct")).c_str()) +
-                    "and FruitSlicer keeps 70 % of that.";
+            h.how = strf("Every disc let go, so this is a guess: half the lightest load, for what this tip touches "
+                         "(%.2f mm²).", contact);
         } else {
             h.how = "Light loads let go as often as heavy ones, so this is set low: 70 % of the lightest load tested.";
         }
@@ -203,24 +215,24 @@ void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
         if (!chosen || others.empty()) {
             how = "The only depth tested.";
         } else {
-            const int ch = chosen->value("held", 0), cn = chosen->value("coupons", 0);
-            bool same = true;
-            for (const json* p : others) same &= p->value("held", 0) * cn == ch * p->value("coupons", 0);
-            const json& other = *others.front();
-            if (!same) {
-                how = strf("It held %d of %d", ch, cn);
-                for (const json* p : others)
-                    how += strf("; %g mm held %d of %d", num(*p, "penetration"), p->value("held", 0),
-                                p->value("coupons", 0));
-                how += ".";
-            } else if (isNum(*chosen, "mean_scar") && isNum(other, "mean_scar") &&
-                       num(*chosen, "mean_scar") < num(other, "mean_scar") - 1e-9) {
-                how = strf("Each depth held %d of %d; this one left the smaller mark (%.1f against %.1f).", ch, cn,
-                           num(*chosen, "mean_scar"), num(other, "mean_scar"));
-            } else if (isNum(*chosen, "mean_scar") && isNum(other, "mean_scar")) {
-                how = strf("Each depth held %d of %d and left the same mark, so the shallower one is kept.", ch, cn);
+            // The other depth it was weighed against: the deepest of the others when this is shallower.
+            const json* other = others.front();
+            for (const json* p : others)
+                if (num(*p, "penetration") > num(*other, "penetration")) other = p;
+            const bool shallower = num(*other, "penetration") > pen;
+            const std::string mine = strf("%.2f", num(*chosen, "contact_mm2")), theirs = strf("%.2f", num(*other, "contact_mm2"));
+            if (shallower) {
+                how = strf("It left the smaller mark, %.1f against %.1f at %g mm, so it's kept, though it touches less "
+                           "of the part (%s mm² against %s) and so holds less.",
+                           num(*chosen, "mean_scar"), num(*other, "mean_scar"), num(*other, "penetration"), mine.c_str(),
+                           theirs.c_str());
+            } else if (isNum(*chosen, "mean_scar") && isNum(*other, "mean_scar")) {
+                how = strf("The marks were within half a point (%.1f and %.1f), so the deeper one is kept: it touches "
+                           "more of the part (%s mm² against %s), so it holds more.",
+                           num(*chosen, "mean_scar"), num(*other, "mean_scar"), mine.c_str(), theirs.c_str());
             } else {
-                how = strf("Each depth held %d of %d, so the shallower one is kept.", ch, cn);
+                how = strf("The marks weren't scored at both depths, so the deeper one is kept: it touches more of the "
+                           "part (%s mm² against %s), so it holds more.", mine.c_str(), theirs.c_str());
             }
         }
         s.values.push_back({strf("Contact depth for %g mm tips", d), mm(pen), how});
@@ -343,8 +355,7 @@ std::string oneDecimal(double v) {
 }
 
 std::string holdText(const TipHold& h) {
-    return h.basis == Basis::Bound   ? (h.floor >= 0 && h.yours > h.floor + 1e-9 ? area(h.yours) + ", the starting value"
-                                                                                : "at least " + area(h.yours))
+    return h.basis == Basis::Bound   ? "at least " + area(h.yours)
            : h.basis == Basis::Guess ? area(h.yours) + ", a guess"
                                      : area(h.yours);
 }

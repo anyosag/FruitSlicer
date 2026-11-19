@@ -37,6 +37,7 @@ struct CouponResult {
     bool ok = false;        // "ok"; "partial" and "failed" count as failures
     bool partial = false;   // "partial": some tips let go (still a failure)
     int scar = 0;           // 1..5, 0 = not scored
+    int tips_let_go = -1;   // "partial" on a tips coupon: how many of its tips let go (1 or 2); -1 = not given
     std::string notes;
 };
 
@@ -55,7 +56,7 @@ PlateResults loadPlateResults(const std::string& manifest_path, const std::strin
 // ("x.stl.results.csv" -> "x.stl.json").
 std::string manifestForResults(const std::string& csv_path);
 
-// The score sheet as the app writes it: id,row,col,result,scar,notes for
+// The score sheet as the app writes it: id,row,col,result,scar,tips_let_go,notes for
 // every coupon in `manifest`, with the scores given so far. No parameter
 // columns, so whoever scores can't be swayed by them; loadPlateResults reads
 // it back (the parameters come from the manifest).
@@ -68,9 +69,20 @@ struct LogisticFit {
 };
 LogisticFit fitLogistic(const std::vector<double>& x, const std::vector<int>& ok);
 
+// A peel bias is kept only when the biases that fit the scores as well lie
+// within this of each other (CalibrationFit: the tips plate in two sets).
+inline constexpr double kPeelBiasPinned = 0.3;
+// One step between a tips plate's loads (about 1.41 times): a size's own
+// coupons that held past, or let go short of, the strength the other sizes
+// give by more than this keep their own.
+inline constexpr double kOneLoadStep = 1.41;
+
 struct FitOptions {
     double capacity_fraction = 0.7;   // operate below the 50 % failure load
-    double min_default_capacity = 4.0;  // mm²: weaker tips are not chosen as default
+    // mm²: weaker tips are not chosen as the usual tip. A tip on a flat face carries about the layer of
+    // one cell of the planner's interior grid (SupportConfig::grid_step, 1 mm: 1 mm²); one that holds
+    // less needs tips closer than that grid everywhere.
+    double min_default_capacity = 1.0;
     std::string resin;
     double layer_height = 0;
     double exposure_s = 0;

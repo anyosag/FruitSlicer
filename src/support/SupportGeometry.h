@@ -39,6 +39,11 @@ Vec3 appendPinhead(TriangleMesh& m, const Vec3& contact, const Vec3& dir, const 
                    const GeometryQuality& q = {}, bool joint_ball = true);
 // Where appendPinhead puts the junction (the centre of its joint ball).
 Vec3 pinheadJunction(const Vec3& contact, const Vec3& dir, const PinheadSpec& s);
+// How wide the head appendPinhead draws is where it meets the part's surface
+// (mm): the circle where the front sphere crosses the surface, or, sunk
+// deeper than its radius, the cone behind it; with a neck, its contact column.
+// What the part is held by, so what a tip's hold grows with.
+double contactDiameter(const PinheadSpec& s);
 
 // Vertical (or slanted) shaft between two points. `top_joint` adds a sphere
 // at `top` (skip it when a pinhead junction sphere is already there).

@@ -2963,7 +2963,7 @@ void App::openScores(const std::string& kind) {
     }
 }
 
-void App::setScore(int id, Outcome o, int scar, const std::string& notes) {
+void App::setScore(int id, Outcome o, int scar, const std::string& notes, int tips_let_go) {
     const Resin* resin = scores_ ? resinById(scores_resin_) : nullptr;
     if (!resin) return;
     PlateScores next = *scores_;
@@ -2975,6 +2975,7 @@ void App::setScore(int id, Outcome o, int scar, const std::string& notes) {
         c.ok = o == Outcome::Held;
         c.partial = o == Outcome::Partly;
         c.scar = o == Outcome::Held || o == Outcome::Partly ? std::clamp(scar, 0, 5) : 0;  // nothing left to mark
+        c.tips_let_go = o == Outcome::Partly && tips_let_go > 0 ? tips_let_go : -1;
         c.notes = notes;
     }
     if (!found) return;

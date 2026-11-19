@@ -155,24 +155,53 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
         for (const auto& c : p.coupons) necked += c.params.value("neck_back", 0.0) > 0 ? 1 : 0;
         const std::size_t plain = n - necked;
         const bool sides = p.settings.value("sides", false);
-        // Loads: one list when every tip size has the same, else each size's lightest to heaviest.
-        std::map<double, std::set<double>> by_tip;
+        // Loads: one list when every tip size and depth has the same; else each size's lightest to heaviest,
+        // by depth where they differ.
+        std::map<double, std::map<double, std::map<double, int>>> by;  // tip -> depth -> load -> coupons
         for (const auto& c : p.coupons)
             if (c.params.value("neck_back", 0.0) <= 0)
-                by_tip[c.params["tip_diameter"].get<double>()].insert(c.params["load_per_tip_mm2"].get<double>());
+                ++by[c.params["tip_diameter"].get<double>()][c.params["penetration"].get<double>()]
+                    [c.params["load_per_tip_mm2"].get<double>()];
+        auto loadsOf = [](const std::map<double, int>& m) {
+            std::set<double> v;
+            for (const auto& [l, k] : m) v.insert(l);
+            return v;
+        };
         bool same = true;
-        for (const auto& [d, ls] : by_tip) same = same && ls == by_tip.begin()->second;
+        for (const auto& [d, ds] : by)
+            for (const auto& [pen, ls] : ds) same = same && loadsOf(ls) == loadsOf(by.begin()->second.begin()->second);
         std::string loads;
-        if (same || by_tip.empty()) {
+        std::vector<std::string> extra;  // loads with more coupons than the rest of their ladder
+        if (same || by.empty()) {
             loads = "Loads of " + listOf(valuesOf(p, "load_per_tip_mm2")) + " mm² per tip";
         } else {
-            loads = "Loads per tip by size, lightest to heaviest:";
-            for (const auto& [d, ls] : by_tip)
-                loads += strf(" %g-%g mm² on %g mm,", *ls.begin(), *ls.rbegin(), d);
-            loads.pop_back();  // the last comma
+            loads = "Loads per tip, lightest to heaviest:";
+            for (const auto& [d, ds] : by) {
+                std::vector<std::pair<double, std::set<double>>> rungs;
+                for (const auto& [pen, ls] : ds) rungs.push_back({pen, loadsOf(ls)});
+                bool alike = true;
+                for (const auto& r : rungs) alike = alike && *r.second.begin() == *rungs.front().second.begin() &&
+                                                    *r.second.rbegin() == *rungs.front().second.rbegin();
+                loads += strf(" %g mm tips", d);
+                for (size_t i = 0; i < (alike ? 1 : rungs.size()); ++i)
+                    loads += strf("%s %g-%g mm²%s", i ? "," : "", *rungs[i].second.begin(), *rungs[i].second.rbegin(),
+                                  alike ? "" : strf(" at %g mm deep", rungs[i].first).c_str());
+                loads += ";";
+                std::set<double> more;
+                for (const auto& [pen, ls] : ds) {
+                    int least = 1 << 30;
+                    for (const auto& [l, k] : ls) least = std::min(least, k);
+                    for (const auto& [l, k] : ls)
+                        if (k > least) more.insert(l);
+                }
+                if (!more.empty()) extra.push_back(strf("%g mm tips at ", d) + listOf(more) + " mm²");
+            }
+            loads.pop_back();  // the last semicolon
         }
         std::vector<std::string> out{"Tip sizes " + listOf(valuesOf(p, "tip_diameter")) + " mm",
                                      "Contact depths " + listOf(valuesOf(p, "penetration")) + " mm", loads};
+        for (const std::string& e : extra)
+            out.push_back("More coupons on " + e + ", between the steps, near where they're expected to let go");
         if (p.settings.value("shafts_as_jobs", false))
             out.push_back(strf("Tips %g mm above the plate, on shafts as wide as a job's (0.8, 1.0 and 1.2 mm by tip "
                                "size), as supports stand in your jobs",
@@ -183,18 +212,20 @@ std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
             std::set<double> backs;
             for (const auto& c : p.coupons)
                 if (c.params.value("neck_back", 0.0) > 0) backs.insert(c.params["neck_back"].get<double>());
+            std::set<double> sizes;
+            for (const auto& c : p.coupons)
+                if (c.params.value("neck_back", 0.0) > 0) sizes.insert(c.params["tip_diameter"].get<double>());
             out.push_back("Breakaway necks " + listOf(backs) + " mm out from the surface, " +
                           strf("%.0f %%", 100 * p.coupons.back().params.value("neck_ratio", 0.6)) +
-                          " of the tip's width, beside plain tips at the same loads");
+                          " of the tip's width, on " + listOf(sizes) + " mm tips, beside plain tips at the same loads");
         }
         if (sides)
-            out.push_back(strf("Each plain combination once by the hinge and once far from it, each necked one once "
-                               "in the middle: %zu × 2 + %zu = %zu",
-                               plain / 2, necked, n));
+            out.push_back(strf("%zu plain coupons, half by the hinge and half far from it, and %zu necked in the "
+                               "middle: %zu",
+                               plain, necked, n));
         else
-            out.push_back(necked > 0 ? strf("Each combination %s: %zu plain and %zu necked × %d = %zu", times(reps).c_str(),
-                                            plain / per, necked / per, reps, n)
-                                     : strf("Each combination %s: %zu × %d = %zu", times(reps).c_str(), n / per, reps, n));
+            out.push_back(necked > 0 ? strf("%zu plain coupons and %zu necked, shuffled: %zu", plain, necked, n)
+                                     : strf("%zu coupons, shuffled", n));
         return out;
     }
     if (p.kind == "spacing") {

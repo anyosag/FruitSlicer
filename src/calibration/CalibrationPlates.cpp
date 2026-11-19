@@ -298,54 +298,73 @@ CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>&
 
 CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     const bool sides = norm(o.peel_axis) > 0;
-    // A size with no loads of its own: the nearest listed size's, scaled by tip area (as the starting
-    // values scale, CapacityModel), to 0.05 mm².
-    auto loadsFor = [&](double d) {
-        if (o.loads_by_tip.empty()) throw std::runtime_error("tips plate: no loads");
-        const TipsPlateOptions::TipLoads* near = &o.loads_by_tip.front();
-        for (const auto& t : o.loads_by_tip)
-            if (std::abs(t.tip - d) < std::abs(near->tip - d)) near = &t;
-        TipsPlateOptions::TipLoads out = *near;
-        if (std::abs(near->tip - d) > 1e-9) {
-            const double k = (d / near->tip) * (d / near->tip);
-            for (double& l : out.loads) l = std::max(0.05, std::round(l * k * 20) / 20);
-            for (double& l : out.neck_loads) l = std::max(0.05, std::round(l * k * 20) / 20);
-            out.tip = d;
-        }
+    if (o.ladders.empty()) throw std::runtime_error("tips plate: no loads");
+    // A size's ladders; a size with none, the nearest size's, scaled by tip area (as the starting values
+    // scale, CapacityModel), to 0.05 mm².
+    auto laddersFor = [&](double d) {
+        double near = o.ladders.front().tip;
+        for (const auto& l : o.ladders)
+            if (std::abs(l.tip - d) < std::abs(near - d)) near = l.tip;
+        const double k = (d / near) * (d / near);
+        auto scale = [&](std::vector<double> v) {
+            if (std::abs(near - d) > 1e-9)
+                for (double& x : v) x = std::max(0.05, std::round(x * k * 20) / 20);
+            return v;
+        };
+        std::vector<TipsPlateOptions::Ladder> out;
+        for (const auto& l : o.ladders)
+            if (std::abs(l.tip - near) < 1e-9) out.push_back({d, l.depth, scale(l.loads), scale(l.extra)});
         return out;
     };
-    std::vector<json> combos;
     double max_r = 0;
+    auto coupon = [&](double d, double pen, double load) {
+        const double disc_area = load * o.tips_per_coupon;
+        max_r = std::max(max_r, std::sqrt(disc_area / kPi));
+        return json{{"tip_diameter", d}, {"penetration", pen}, {"load_per_tip_mm2", load},
+                    {"tips", o.tips_per_coupon}, {"disc_area_mm2", disc_area}};
+    };
+    // Per side (two sets) or per half (one set): every load once, the in-between ones twice.
+    std::vector<json> combos;
     for (double d : o.tip_diameters)
-        for (double pen : o.penetrations)
-            for (double load : loadsFor(d).loads) {
-                const double disc_area = load * o.tips_per_coupon;
-                max_r = std::max(max_r, std::sqrt(disc_area / kPi));
-                combos.push_back({{"tip_diameter", d}, {"penetration", pen}, {"load_per_tip_mm2", load},
-                                  {"tips", o.tips_per_coupon}, {"disc_area_mm2", disc_area}});
-            }
+        for (const auto& l : laddersFor(d)) {
+            for (double load : l.loads) combos.push_back(coupon(d, l.depth, load));
+            for (int k = 0; k < 2; ++k)
+                for (double load : l.extra) combos.push_back(coupon(d, l.depth, load));
+        }
     std::vector<json> necks;
-    if (!o.penetrations.empty())
-        for (double d : o.tip_diameters)
-            for (double back : o.neck_backs)
-                for (double load : loadsFor(d).neck_loads) {
-                    const double disc_area = load * o.tips_per_coupon;
-                    max_r = std::max(max_r, std::sqrt(disc_area / kPi));
-                    necks.push_back({{"tip_diameter", d}, {"penetration", *std::min_element(o.penetrations.begin(), o.penetrations.end())},
-                                     {"load_per_tip_mm2", load}, {"tips", o.tips_per_coupon}, {"disc_area_mm2", disc_area},
-                                     {"neck_back", back}, {"neck_ratio", o.neck_ratio}});
-                }
+    for (double d : o.tip_diameters)
+        for (const auto& ns : o.neck_sets) {
+            if (std::abs(ns.tip - d) > 1e-9) continue;
+            double pen = 1e9;
+            for (const auto& l : laddersFor(d)) pen = std::min(pen, l.depth);
+            for (int k = 0; k < o.neck_copies; ++k)
+                for (double back : o.neck_backs)
+                    for (double load : ns.loads) {
+                        json c = coupon(d, pen, load);
+                        c["neck_back"] = back;
+                        c["neck_ratio"] = o.neck_ratio;
+                        necks.push_back(c);
+                    }
+        }
     const double cell = std::ceil(2 * max_r + 3.0);
     const double z0 = std::max(o.common.elevation, o.tip_height);
+    PlateCommon heads = o.common;
+    heads.shafts_as_jobs = true;  // each shaft as wide as a job's with that tip
+    const double gap = TreeConfig{}.clearance;  // between shafts, as between a support and the model
     auto build = [&](TriangleMesh& m, const Vec2& c, const json& prm, double raft_top) {
         const double area_mm2 = prm["disc_area_mm2"].get<double>();
         const double r = std::sqrt(area_mm2 / kPi);
         const double tip = prm["tip_diameter"].get<double>();
         const int k = prm["tips"].get<int>();
+        // Tips half way out (the spread that leaves the least of the disc far from a tip), and no closer
+        // to each other than a shaft and the gap supports keep: at the lightest loads, half way out put
+        // shafts 0-0.15 mm apart, and they would print as one trunk, unlike a job's supports.
         std::vector<Vec2> at;
+        const double apart = shaftDiameterFor(tip) + gap;
+        const double rr = k == 1 ? 0.0 : std::max(r / 2, apart / (2 * std::sin(kPi / k)));
+        if (rr + tip / 2 > r + 1e-9) throw std::runtime_error("tips plate: a disc too small for its tips' shafts");
         for (int i = 0; i < k; ++i) {
             const double a = deg2rad(90.0 + 360.0 * i / k);
-            const double rr = k == 1 ? 0.0 : r / 2;
             at.push_back({c.x + rr * std::cos(a), c.y + rr * std::sin(a)});
         }
         // The disc's underside widens at 45° from a pad on each tip, so every layer stands on the one
@@ -353,9 +372,9 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
         // is measured. (A flat disc's first layer reached 1.9-3.8 mm past its tips, beyond the 1.6 mm
         // a part is trusted with: it could fail as an overhang before the tips let go.)
         const double pad = tip / 2 + 0.1;
-        double reach = 0;  // farthest point of the disc from its nearest tip
-        for (int j = 0; j < 360; ++j) {
-            const Vec2 q{c.x + r * std::cos(deg2rad(j)), c.y + r * std::sin(deg2rad(j))};
+        double reach = 0;  // farthest point of the disc from its nearest tip: on its rim, or its centre
+        for (int j = 0; j <= 360; ++j) {
+            const Vec2 q = j == 360 ? c : Vec2{c.x + r * std::cos(deg2rad(j)), c.y + r * std::sin(deg2rad(j))};
             double nearest = 1e9;
             for (const Vec2& t : at) nearest = std::min(nearest, norm(q - t));
             reach = std::max(reach, nearest);
@@ -377,16 +396,19 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
         }
         appendFrustum(m, {c.x, c.y, z0 + rise}, r, {c.x, c.y, z0 + rise + o.disc_thickness}, r, segmentsFor(r, 0.007));
         for (const Vec2& t : at)
-            addSupport(m, {t.x, t.y, z0}, {0, 0, -1}, tip, prm["penetration"].get<double>(), o.common, raft_top,
+            addSupport(m, {t.x, t.y, z0}, {0, 0, -1}, tip, prm["penetration"].get<double>(), heads, raft_top,
                        prm.value("neck_back", 0.0), prm.value("neck_ratio", 0.6));
     };
     PlateCommon common = o.common;
-    if (sides) common.replicates = 1;
+    common.replicates = 1;  // the copies are in the lists already
     common.one_raft = o.one_raft;
     common.elevation = z0;
     common.shafts_as_jobs = true;
-    std::vector<json> all = combos;
-    if (!sides) all.insert(all.end(), necks.begin(), necks.end());
+    std::vector<json> all;
+    if (!sides) {
+        for (int k = 0; k < 2; ++k) all.insert(all.end(), combos.begin(), combos.end());
+        all.insert(all.end(), necks.begin(), necks.end());
+    }
     CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, build, necks)
                                    : assemble("tips", all, cell, common, p, build);
     plate.settings["disc_thickness"] = o.disc_thickness;

@@ -27,6 +27,22 @@ Vec3 pinheadJunction(const Vec3& contact, const Vec3& dir, const PinheadSpec& s)
     return pinheadAt(contact, dir, s).junction;
 }
 
+double contactDiameter(const PinheadSpec& s) {
+    const double r_tip = s.tip_diameter / 2, r_back = s.shaft_diameter / 2;
+    if (s.neck_back > 0) {
+        const double pen = std::clamp(s.penetration, 0.0, r_tip);
+        return 2 * std::max(0.02, std::sqrt(std::max(0.0, r_tip * r_tip - (r_tip - pen) * (r_tip - pen))));
+    }
+    // The surface lies `along` past the front sphere's centre, towards the junction (pinheadAt).
+    const double along = s.penetration - r_tip;
+    double r = std::abs(along) < r_tip ? std::sqrt(r_tip * r_tip - along * along) : 0.0;
+    if (along > 0) {
+        const double len = r_tip + s.head_length + r_back;  // centre to junction: the cone
+        r = std::max(r, r_tip + (r_back - r_tip) * std::min(1.0, along / len));
+    }
+    return 2 * r;
+}
+
 Vec3 appendPinhead(TriangleMesh& m, const Vec3& contact, const Vec3& dir_in, const PinheadSpec& s,
                    const GeometryQuality& q, bool joint_ball) {
     const double r_tip = s.tip_diameter / 2;

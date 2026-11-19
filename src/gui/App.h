@@ -656,7 +656,8 @@ public:
     int& scoreSelected() { return score_selected_; }
     bool& scoreMirrored() { return score_mirrored_; }  // the plate printed mirrored
     enum class Outcome { None, Held, Partly, FellOff };
-    void setScore(int id, Outcome o, int scar, const std::string& notes);
+    // `tips_let_go`: on a tips coupon that partly held, how many of its tips let go (1 or 2); -1 not given.
+    void setScore(int id, Outcome o, int scar, const std::string& notes, int tips_let_go = -1);
     void importScores();                          // a filled sheet, through a dialog
     void importScoresFile(const std::string& csv);
     // The fit (canvas board "Fit"): the new-job resin's scored plates turned

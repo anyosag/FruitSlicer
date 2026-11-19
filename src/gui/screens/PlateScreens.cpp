@@ -482,7 +482,7 @@ void score(App& app) {
     static std::string draft_kind;
     static int draft_for = -1, draft_rev = -1;
     static App::Outcome outcome = App::Outcome::None;
-    static int scar = 0;
+    static int scar = 0, let_go = -1;
     static char notes[160];
     const fruit::CouponResult* r = s->find(sel);
     if (draft_for != sel || draft_rev != app.scoresRevision() || draft_kind != kind) {
@@ -494,6 +494,7 @@ void score(App& app) {
                   : r->partial       ? App::Outcome::Partly
                                      : App::Outcome::FellOff;
         scar = r ? r->scar : 0;
+        let_go = r ? r->tips_let_go : -1;
         std::snprintf(notes, sizeof notes, "%s", r ? r->notes.c_str() : "");
     }
     beginCard("coupon", ImVec2(kSideW, 0), 18, col::Panel, col::Border);
@@ -530,6 +531,22 @@ void score(App& app) {
                                                           : "Held: every tip still on. Partly: some let go. Fell off: "
                                                             "gone, so look on the film for cured bits.";
     text(hint, fonts().regular, size::Help, col::TextMuted, true);
+    // A tips coupon that partly held: how many of its tips let go. One of three is a single tip's hold.
+    const int tips_on = r ? r->params.value("tips", 0) : 0;
+    const bool ask_tips = kind == "tips" && outcome == App::Outcome::Partly && tips_on > 1;
+    if (ask_tips) {
+        ImGui::Dummy(ImVec2(0, 6));
+        text("How many tips let go?", fonts().semibold, size::Body, col::Text);
+        for (int k = 1; k < tips_on; ++k) {
+            ImGui::PushID(200 + k);
+            if (segmentButton(std::to_string(k).c_str(), let_go == k)) let_go = let_go == k ? -1 : k;
+            ImGui::PopID();
+            if (k < tips_on - 1) ImGui::SameLine(0, 4);
+        }
+        text(let_go > 0 ? strf("%d of %d let go; the disc stayed on the rest.", let_go, tips_on).c_str()
+                        : "Count the tips no longer joined to the disc.",
+             fonts().regular, size::Help, col::TextMuted, true);
+    }
     const bool can_mark = !gaps && outcome != App::Outcome::FellOff;
     if (!gaps) {
     ImGui::Dummy(ImVec2(0, 6));
@@ -557,7 +574,7 @@ void score(App& app) {
     if (primaryButton("Save and go to the next coupon", ImVec2(ImGui::GetContentRegionAvail().x, 38),
                       outcome != App::Outcome::None)) {
         const int id = sel;
-        app.setScore(id, outcome, can_mark ? scar : 0, notes);
+        app.setScore(id, outcome, can_mark ? scar : 0, notes, ask_tips ? let_go : -1);
         if (const PlateScores* now = app.scores()) sel = nextToScore(*now, id);
     }
     if (outcome == App::Outcome::None) tooltip(gaps ? "Choose whether it came off cleanly first." : "Choose whether it held first.");

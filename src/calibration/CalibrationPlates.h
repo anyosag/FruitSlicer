@@ -80,35 +80,49 @@ struct TipsPlateOptions {
     // fit can measure how much harder the peel pulls far from the hinge
     // (SupportConfig::peel_bias) as well as each tip's hold. Zero: one set.
     Vec2 peel_axis{0, 0};
-    // Breakaway necks (PinheadSpec::neck_back): each tip size with each neck,
-    // at three of its loads (TipLoads::neck_loads), on the shallower contact
-    // depth; plain tips at the same loads and depth are on the plate already,
-    // to compare marks and holds with. With two sets, once each, in the
-    // middle of the plate; with one, `replicates` times, shuffled in.
+    // Breakaway necks (PinheadSpec::neck_back): for the sizes in `neck_sets`,
+    // each neck at that size's three lightest loads on its shallower depth,
+    // `neck_copies` times; plain tips at the same loads and depth are on the
+    // plate already, to compare marks and holds with. Marks only show on
+    // discs that held, so the lightest loads, where most hold. With two
+    // sets, in the middle of the plate; with one, shuffled in with the rest.
     std::vector<double> neck_backs{0.1, 0.25};
     double neck_ratio = 0.6;
+    struct NeckSet {
+        double tip;
+        std::vector<double> loads;
+    };
+    // The usual tip (0.3 mm in the jobs saved on 2026-11-18) and the one for
+    // spots in mid-air (0.6 mm), where a smaller mark matters most.
+    std::vector<NeckSet> neck_sets{{0.3, {1.8, 2.5, 3.5}}, {0.6, {2.5, 3.5, 5}}};
+    int neck_copies = 2;
     // The coupons stand on one raft, as a job does (PlateCommon::one_raft).
     bool one_raft = true;
+    // The sizes on the plate; each takes its ladders from `ladders` (a size
+    // with none, the nearest size's, scaled by tip area).
     std::vector<double> tip_diameters{0.2, 0.3, 0.4, 0.6};
-    std::vector<double> penetrations{0.1, 0.2};
-    // Loads per tip, mm² of disc per tip, for each tip size: six steps of
-    // about 1.4 times from one ladder (0.9 ... 14), placed per size so that
-    // FruitSlicer's starting value (CapacityModel: 2.8 / 6.2 / 11.1 / 25 mm²)
-    // is at or past the top and a third of it is inside. Nothing is loaded
-    // far past where it is expected to let go: a disc that lets go stays in
-    // the vat, so a small tip never carries a big disc. On the first plate
-    // printed (2026-11-18, one ladder of 5-20 for every size, flat discs)
-    // 106 of 120 discs ended up in the vat.
-    struct TipLoads {
-        double tip;
-        std::vector<double> loads;       // plain coupons
-        std::vector<double> neck_loads;  // necked ones: three of `loads`, the middle ones
+    // Loads per tip, mm² of disc per tip, for each tip size and contact depth:
+    // five steps of about 1.41 times, placed around where half are expected to
+    // let go: a tip's hold grows with what it touches (contactDiameter), about
+    // 45 mm² of layer per mm² of contact on the first plate printed, likely
+    // more (its flat discs failed early). Nothing is loaded far past that: a
+    // disc that lets go stays in the vat, and a near-certain failure tells the
+    // fit nothing. `extra`: in-between loads near the expected hold, two more
+    // per side, on the usual tip, so its hold is finer than a step.
+    struct Ladder {
+        double tip, depth;
+        std::vector<double> loads;
+        std::vector<double> extra = {};
     };
-    std::vector<TipLoads> loads_by_tip{
-        {0.2, {0.9, 1.25, 1.8, 2.5, 3.5, 5}, {1.25, 1.8, 2.5}},
-        {0.3, {1.25, 1.8, 2.5, 3.5, 5, 7}, {1.8, 2.5, 3.5}},
-        {0.4, {1.8, 2.5, 3.5, 5, 7, 10}, {2.5, 3.5, 5}},
-        {0.6, {2.5, 3.5, 5, 7, 10, 14}, {3.5, 5, 7}},
+    std::vector<Ladder> ladders{
+        {0.2, 0.1, {0.9, 1.25, 1.8, 2.5, 3.5}},
+        {0.2, 0.2, {1.25, 1.8, 2.5, 3.5, 5}},
+        {0.3, 0.1, {1.8, 2.5, 3.5, 5, 7}, {2.1, 3.0, 4.2}},
+        {0.3, 0.2, {1.8, 2.5, 3.5, 5, 7}, {2.1, 3.0, 4.2}},
+        {0.4, 0.1, {1.8, 2.5, 3.5, 5, 7}},
+        {0.4, 0.2, {2.5, 3.5, 5, 7, 10}},
+        {0.6, 0.1, {2.5, 3.5, 5, 7, 10}},
+        {0.6, 0.2, {5, 7, 10, 14, 20}},
     };
     int tips_per_coupon = 3;
     // The full disc on top of the 45° underside: these layers pull with the

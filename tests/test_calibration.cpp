@@ -15,6 +15,7 @@
 #include "geometry/Polygon.h"
 #include "layers/IslandGraph.h"
 #include "support/SupportGeometry.h"
+#include "support/SupportTree.h"
 
 using namespace fruit;
 using Catch::Approx;
@@ -60,7 +61,9 @@ TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[cali
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     TipsPlateOptions o;
     const CalibrationPlate a = tipsPlate(o, p);
-    CHECK(a.coupons.size() == 4 * 2 * 6 * 2 + 4 * 2 * 3 * 2);  // plain (6 loads a size); and necked (2 necks × 3 loads), twice
+    // Twice: 8 ladders (4 sizes × 2 depths) of 5 loads, and 0.3 mm's 3 in-between loads twice at each depth;
+    // then necked: 0.3 and 0.6 mm, 2 necks × 3 loads, twice.
+    CHECK(a.coupons.size() == 2 * (8 * 5 + 2 * 2 * 3) + 2 * 2 * 3 * 2);
     requireFitsAndUnique(a, p);
     requireOnlyRaftIslands(a);
     const CalibrationPlate b = tipsPlate(o, p);
@@ -92,10 +95,34 @@ TEST_CASE("tips plate: every disc widens from its tips, with nothing hanging pas
         worst = std::max(worst, std::abs(area(out)));
     }
     CHECK(worst < 0.05);  // mm²: no skin reaches out past the layer below
-    // The heaviest disc (0.6 mm tips at 14 mm² each) still has the area its load names.
+    // The heaviest disc (0.6 mm tips 0.2 mm deep at 20 mm² each) still has the area its load names.
     double biggest = 0;
     for (const auto& c : plate.coupons) biggest = std::max(biggest, c.params["disc_area_mm2"].get<double>());
-    CHECK(biggest == Approx(42));
+    CHECK(biggest == Approx(60));
+}
+
+TEST_CASE("tips plate: three shafts a coupon, apart, each as wide as a job's", "[calibration]") {
+    TipsPlateOptions o;
+    o.peel_axis = {0, -1};
+    const CalibrationPlate plate = tipsPlate(o, PrinterProfile::saturn4Ultra16k());
+    // Half way up the shafts, above their feet and the marker: every shaft its own island.
+    const LayerStack ls = sliceModel(plate.mesh, 0.1);
+    const double z = (plate.settings["raft_thickness"].get<double>() + plate.settings["tip_height"].get<double>()) / 2 + 1;
+    const ExPolygons shafts = toExPolygons(ls.slices[ls.layerAt(z)]);
+    CHECK(shafts.size() == 3 * plate.coupons.size());
+    // In each coupon's cell, three islands as wide as shaftDiameterFor its tip (0.8 / 1.0 / 1.2 mm).
+    for (const auto& c : plate.coupons) {
+        const double want = shaftDiameterFor(c.params["tip_diameter"].get<double>());
+        int n = 0;
+        for (const ExPolygon& e : shafts) {
+            const BBox2 b = bbox(e.contour);
+            const Vec2 mid = (b.min + b.max) * 0.5;
+            if (std::abs(mid.x - c.center.x) > plate.cell / 2 || std::abs(mid.y - c.center.y) > plate.cell / 2) continue;
+            ++n;
+            CHECK(2 * std::sqrt(std::abs(area(e.contour)) / 3.14159265) == Approx(want).margin(0.03));
+        }
+        CHECK(n == 3);
+    }
 }
 
 TEST_CASE("tips plate raft: one piece, with no closed pocket and no solid slab", "[calibration]") {
@@ -137,7 +164,7 @@ TEST_CASE("islands plate: columns start in mid-air on 1-3 tips", "[calibration]"
 TEST_CASE("plates that do not fit are rejected; thin rafts are rejected", "[calibration]") {
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     TipsPlateOptions o;
-    o.common.replicates = 10;
+    o.neck_copies = 10;
     CHECK_THROWS(tipsPlate(o, p));
     TipsPlateOptions thin;
     thin.common.raft_thickness = 0.2;

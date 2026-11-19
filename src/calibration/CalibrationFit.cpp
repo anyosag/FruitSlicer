@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #include "calibration/CalibrationFit.h"
+#include "support/SupportGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,7 +63,7 @@ std::string blindResultsCsv(const json& manifest, const std::vector<CouponResult
     std::map<int, const CouponResult*> by_id;
     for (const auto& s : scores) by_id[s.id] = &s;
     std::ostringstream out;
-    out << "id,row,col,result,scar,notes\n";
+    out << "id,row,col,result,scar,tips_let_go,notes\n";
     for (const auto& c : manifest.at("coupons")) {
         const int id = c.at("id").get<int>();
         out << id << "," << c.value("row", 0) << "," << c.value("col", 0) << ",";
@@ -71,6 +72,8 @@ std::string blindResultsCsv(const json& manifest, const std::vector<CouponResult
         if (s && s->recorded) out << (s->ok ? "ok" : s->partial ? "partial" : "failed");
         out << ",";
         if (s && s->scar > 0) out << s->scar;
+        out << ",";
+        if (s && s->recorded && s->partial && s->tips_let_go > 0) out << s->tips_let_go;
         out << ",";
         if (s && !s->notes.empty()) {
             // Quoted, so commas and spaces stay; line breaks and double quotes don't.
@@ -107,6 +110,13 @@ PlateResults loadPlateResults(const std::string& manifest_path, const std::strin
         throw std::runtime_error(csv_path + ": missing column '" + name + "'");
     };
     const int c_id = col("id"), c_res = col("result"), c_scar = col("scar");
+    // Optional: how many tips let go (sheets before 2026-11-18 have none), and the notes, the rest of the line.
+    auto optional = [&](const std::string& name) {
+        for (size_t i = 0; i < header.size(); ++i)
+            if (lower(header[i]) == name) return static_cast<int>(i);
+        return -1;
+    };
+    const int c_tips = optional("tips_let_go"), c_notes = optional("notes");
     size_t line_no = 1;
     while (std::getline(in, line)) {
         ++line_no;
@@ -133,7 +143,14 @@ PlateResults loadPlateResults(const std::string& manifest_path, const std::strin
             if (c.scar < 0 || c.scar > 5)
                 throw std::runtime_error(csv_path + ":" + std::to_string(line_no) + ": scar must be 1..5 (or empty)");
         }
-        for (size_t k = c_scar + 1; k < f.size(); ++k) c.notes += (k > static_cast<size_t>(c_scar) + 1 ? "," : "") + f[k];
+        if (c_tips >= 0 && static_cast<int>(f.size()) > c_tips && !trim(f[c_tips]).empty()) {
+            c.tips_let_go = std::stoi(f[c_tips]);
+            if (c.tips_let_go < 0 || c.tips_let_go > 3)
+                throw std::runtime_error(csv_path + ":" + std::to_string(line_no) + ": tips_let_go must be 0..3 (or empty)");
+        }
+        const size_t from = c_notes >= 0 ? static_cast<size_t>(c_notes) : static_cast<size_t>(c_scar) + 1;
+        for (size_t k = from; k < f.size(); ++k)
+            if (static_cast<int>(k) != c_tips) c.notes += (c.notes.empty() && k == from ? "" : ",") + f[k];
         r.coupons.push_back(c);
     }
     return r;
@@ -229,13 +246,38 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
             }
             std::map<double, std::vector<const CouponResult*>> by_d;
             for (const auto* c : rec) by_d[num(c->params, "tip_diameter")].push_back(c);
+            // What each tip holds the part by: its contact, as wide as the plate drew the head where it meets
+            // the disc (contactDiameter). A tip's hold grows with it: on the first plate printed, 0.6 mm tips
+            // 0.1 mm deep held like 0.4 mm tips 0.2 mm deep, whose contacts are alike. So the holds are fitted
+            // as one strength, mm² of layer per mm² of contact, over every coupon, and each size's and
+            // depth's hold is that strength times its contact; sizes and depths whose own coupons say
+            // otherwise keep their own.
+            const double head_len = plate.settings.value("head_length", 1.0);
+            const bool job_shafts = plate.settings.value("shafts_as_jobs", false);
+            const double plate_shaft = plate.settings.value("shaft_diameter", 1.0);
+            auto contactArea = [&](double d, double pen) {
+                PinheadSpec sp;
+                sp.tip_diameter = d;
+                sp.penetration = pen;
+                sp.head_length = head_len;
+                sp.shaft_diameter = job_shafts ? shaftDiameterFor(d) : std::max(plate_shaft, 1.5 * d);
+                const double cd = contactDiameter(sp);
+                return kPi * cd * cd / 4;
+            };
+            auto areaOf = [&](const CouponResult* c) {
+                return contactArea(num(c->params, "tip_diameter"), num(c->params, "penetration"));
+            };
+            auto peelAt = [](const CouponResult* c, double b) {
+                return c->params.contains("peel_t") ? 1 + b * 0.5 * (num(c->params, "peel_t") + 1) : 1.0;
+            };
             // A plate in two sets, by the hinge and far from it: how much harder the peel pulls far from the
-            // hinge. For each tip size, the load at which half let go on each side (where both sides measure
-            // it); the peel at a point is 1 + bias × (t + 1) / 2, t from -1 at the hinge's edge to +1 at the far
-            // one, as the planner has it; so the far side's 50 % load over the hinge side's is
-            // peel(t_hinge) / peel(t_far), which gives the bias. The loads are then taken as at the hinge's edge
-            // (load × peel(t)) for each tip's hold, the hold the planner's demand is measured against.
-            // Until the plate measures the bias, the planner's assumed one: the holds then match its demand.
+            // hinge. The peel at a point is 1 + bias × (t + 1) / 2, t from -1 at the hinge's edge to +1 at the
+            // far one, as the planner has it. Every coupon's load is taken as at the hinge's edge (load ×
+            // peel) over its contact; for each bias tried, the one strength that leaves the fewest discs on
+            // the wrong side of it (held above, let go below). The bias the fewest disagree with is kept only
+            // when those that tie lie within kPeelBiasPinned of each other: with steps of 1.4 times between
+            // loads and one coupon per step and side, they spread over 0 to about 0.6 whatever the truth
+            // (simulated, 2026-11-18), which says no more than the assumed 25 % does.
             double bias = kAssumedPeelBias;
             {
                 bool sided = false;
@@ -246,60 +288,44 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                         sided = true;
                         const double t = num(c->params, "peel_t");
                         if (c->params["side"] == "hinge") th += t, ++nh;
-                        else tf += t, ++nf;
+                        else if (c->params["side"] == "far") tf += t, ++nf;
                     }
                 if (sided && nh > 0 && nf > 0) {
                     th /= nh, tf /= nf;
                     json per = json::array();
-                    std::vector<double> ratios;
                     for (const auto& [d, cs] : by_d) {
                         std::vector<double> xh, xf;
                         std::vector<int> yh, yf;
                         for (const auto* c : cs) {
-                            const bool hinge = c->params.value("side", std::string()) == "hinge";
-                            (hinge ? xh : xf).push_back(num(c->params, "load_per_tip_mm2"));
-                            (hinge ? yh : yf).push_back(c->ok ? 1 : 0);
+                            const std::string side = c->params.value("side", std::string());
+                            if (side != "hinge" && side != "far") continue;
+                            (side == "hinge" ? xh : xf).push_back(num(c->params, "load_per_tip_mm2") / areaOf(c));
+                            (side == "hinge" ? yh : yf).push_back(c->ok ? 1 : 0);
                         }
                         if (xh.empty() || xf.empty()) continue;
                         const LogisticFit h = fitLogistic(xh, yh), f = fitLogistic(xf, yf);
-                        const bool both = std::isfinite(h.l50) && std::isfinite(f.l50) && h.l50 > 0 && f.l50 > 0 && !(h.b > 0) && !(f.b > 0);
                         per.push_back({{"tip_diameter", d},
-                                       {"load_50pct_hinge", std::isfinite(h.l50) ? json(h.l50) : json(nullptr)},
-                                       {"load_50pct_far", std::isfinite(f.l50) ? json(f.l50) : json(nullptr)}});
-                        if (both) ratios.push_back(h.l50 / f.l50);
+                                       {"strength_50pct_hinge", std::isfinite(h.l50) ? json(h.l50) : json(nullptr)},
+                                       {"strength_50pct_far", std::isfinite(f.l50) ? json(f.l50) : json(nullptr)}});
                     }
                     json peel = {{"t_hinge", th}, {"t_far", tf}, {"tips", per}};
-                    // All coupons at once: for each bias tried, every load as at the hinge's edge
-                    // (load × peel); for each tip size, the threshold that leaves the fewest discs on the
-                    // wrong side of it (held above, or let go below). The bias the fewest disagree with,
-                    // the middle of those that tie: a mixed plate, each tip size let go somewhere.
                     auto misfits = [&](double b) {
-                        int bad = 0;
-                        for (const auto& [d, cs] : by_d) {
-                            std::vector<std::pair<double, int>> v;
-                            for (const auto* c : cs) {
-                                const double t = c->params.contains("peel_t") ? num(c->params, "peel_t") : 0.0;
-                                v.push_back({num(c->params, "load_per_tip_mm2") * (1 + b * 0.5 * (t + 1)), c->ok ? 1 : 0});
-                            }
-                            std::sort(v.begin(), v.end());
-                            int fails_below = 0, held_above = 0;
-                            for (const auto& e : v) held_above += e.second;
-                            int best = held_above;  // threshold below every load: every held disc is wrong
-                            for (const auto& e : v) {
-                                (e.second ? held_above : fails_below) += e.second ? -1 : 1;
-                                best = std::min(best, fails_below + held_above);
-                            }
-                            bad += best;
+                        std::vector<std::pair<double, int>> v;
+                        for (const auto* c : rec)
+                            v.push_back({num(c->params, "load_per_tip_mm2") * peelAt(c, b) / areaOf(c), c->ok ? 1 : 0});
+                        std::sort(v.begin(), v.end());
+                        int fails_below = 0, held_above = 0;
+                        for (const auto& e : v) held_above += e.second;
+                        int best = held_above;  // a strength below every load: every held disc is wrong
+                        for (const auto& e : v) {
+                            (e.second ? held_above : fails_below) += e.second ? -1 : 1;
+                            best = std::min(best, fails_below + held_above);
                         }
-                        return bad;
+                        return best;
                     };
-                    bool any_mixed = false;
-                    for (const auto& [d, cs] : by_d) {
-                        int ok = 0;
-                        for (const auto* c : cs) ok += c->ok;
-                        any_mixed = any_mixed || (ok > 0 && ok < static_cast<int>(cs.size()));
-                    }
-                    if (any_mixed) {
+                    int ok_all = 0;
+                    for (const auto* c : rec) ok_all += c->ok;
+                    if (ok_all > 0 && ok_all < static_cast<int>(rec.size())) {
                         int least = 1 << 30;
                         std::vector<double> at;
                         for (int k = 0; k <= 150; ++k) {
@@ -308,129 +334,183 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                             if (m < least) least = m, at = {b};
                             else if (m == least) at.push_back(b);
                         }
-                        // Every bias tried, from the first step to the last, fits as well: the plate
-                        // can't tell the two sides apart, so the profile keeps no bias of its own.
-                        const bool open = at.front() <= 0.01 + 1e-9 && at.back() >= 1.5 - 1e-9;
                         peel["bias_range"] = {at.front(), at.back()};
                         peel["misfits"] = least;
-                        if (open) {
+                        if (at.back() - at.front() >= kPeelBiasPinned - 1e-9) {
                             peel["unpinned"] = true;
-                            notes.push_back("tips plate in two sets: every peel bias tried fits the scores as well, so "
-                                            "the extra pull far from the hinge stays as it was");
+                            notes.push_back("tips plate in two sets: peel biases from " + fmt(at.front()) + " to " +
+                                            fmt(at.back()) + " fit the scores as well, so the extra pull far from "
+                                            "the hinge stays as it was");
                         } else {
                             bias = at[at.size() / 2];
                             prof["peel_bias"] = bias;
                             peel["bias"] = bias;
                         }
-                        if (!ratios.empty()) {
-                            std::sort(ratios.begin(), ratios.end());
-                            peel["ratio"] = ratios[ratios.size() / 2];
-                        }
-                        peel["sizes"] = ratios.size();
                     } else {
-                        notes.push_back("tips plate in two sets: every tip size held at every load, or let go at "
-                                        "every one, so the extra pull far from the hinge stays as it was");
+                        notes.push_back("tips plate in two sets: every disc held, or every one let go, so the extra "
+                                        "pull far from the hinge stays as it was");
                     }
                     fits["peel"] = peel;
                 }
             }
-            auto atHinge = [&](const CouponResult* c) {
-                const double load = num(c->params, "load_per_tip_mm2");
-                return c->params.contains("peel_t") ? load * (1 + bias * 0.5 * (num(c->params, "peel_t") + 1)) : load;
+            auto strengthOf = [&](const CouponResult* c) {
+                return num(c->params, "load_per_tip_mm2") * peelAt(c, bias) / areaOf(c);
             };
+
+            // Each size and depth's own coupons: the strongest that held, the weakest that let go.
+            struct Own {
+                double lo = 0, hi = std::numeric_limits<double>::infinity();
+            };
+            std::map<std::pair<double, double>, Own> own;
+            for (const auto* c : rec) {
+                Own& w = own[{num(c->params, "tip_diameter"), num(c->params, "penetration")}];
+                if (c->ok) w.lo = std::max(w.lo, strengthOf(c));
+                else w.hi = std::min(w.hi, strengthOf(c));
+            }
+            // Those that held well past the one strength, or let go well short of it (more than a step of
+            // loads, kOneLoadStep), don't follow it: they keep their own, and the strength is found again
+            // without them, so one odd size doesn't move every other's.
+            std::set<std::pair<double, double>> odd;
+            auto oddAt = [&](double s50) {
+                std::set<std::pair<double, double>> o2;
+                for (const auto& [key, w] : own)
+                    if (w.lo < w.hi && (w.lo > s50 * kOneLoadStep || w.hi < s50 / kOneLoadStep)) o2.insert(key);
+                return o2;
+            };
+            auto fitWithout = [&](const std::set<std::pair<double, double>>& out, std::vector<double>& x, std::vector<int>& y) {
+                x.clear(), y.clear();
+                for (const auto* c : rec)
+                    if (!out.count({num(c->params, "tip_diameter"), num(c->params, "penetration")}))
+                        x.push_back(strengthOf(c)), y.push_back(c->ok ? 1 : 0);
+                return fitLogistic(x, y);
+            };
+            auto bracketed = [](const LogisticFit& m) { return std::isfinite(m.l50) && m.l50 > 0 && !(m.b > 0); };
+            std::vector<double> sx;
+            std::vector<int> sy;
+            LogisticFit model = fitWithout(odd, sx, sy);
+            for (int pass = 0; pass < 3 && bracketed(model); ++pass) {
+                const auto next = oddAt(model.l50);
+                if (next == odd || next.size() == own.size()) break;
+                std::vector<double> tx;
+                std::vector<int> ty;
+                const LogisticFit trial = fitWithout(next, tx, ty);
+                if (!bracketed(trial)) break;  // without them it brackets nothing: keep the fit with them
+                odd = next, model = trial, sx = std::move(tx), sy = std::move(ty);
+            }
+            const double s_min = *std::min_element(sx.begin(), sx.end()), s_max = *std::max_element(sx.begin(), sx.end());
+            double s50 = -1;  // the strength at which half let go, where the plate brackets it
+            double s_keep;    // mm² of layer per mm² of contact that FruitSlicer keeps
+            std::string model_basis;
+            if (std::isinf(model.l50) && model.l50 > 0) {
+                s_keep = o.capacity_fraction * s_max;
+                model_basis = "lower bound";
+                notes.push_back("tips: every disc held; holds are a floor (test higher loads)");
+            } else if (std::isinf(model.l50)) {
+                s_keep = 0.5 * s_min;
+                model_basis = "upper bound";
+                notes.push_back("tips: every disc let go; holds set to half the lightest (test lower loads)");
+            } else if (!(model.l50 > 0) || model.b > 0) {
+                s_keep = o.capacity_fraction * s_min;
+                model_basis = "no load dependence";
+                notes.push_back("tips: success did not fall with load; holds set conservatively");
+            } else {
+                s50 = std::min(model.l50, s_max * 2);
+                s_keep = o.capacity_fraction * s50;
+                model_basis = model.separable ? "gap midpoint" : "logistic";
+            }
+            if (s50 <= 0) odd.clear();
+            int held_all = 0;
+            for (int y : sy) held_all += y;
+            fits["tips_model"] = {{"basis", model_basis},
+                                  {"coupons", sx.size()},
+                                  {"held", held_all},
+                                  {"strength_50pct", s50 > 0 ? json(s50) : json(nullptr)},
+                                  {"strength_kept", s_keep},
+                                  {"lightest", s_min},
+                                  {"heaviest", s_max}};
+            // The planner trusts a measured table nearer to where tips let go (kMeasuredTipLoadLimit); a
+            // floor or a guess is not one.
+            prof["capacity_measured"] = s50 > 0;
+
             json cap_table = json::array(), pen_table = json::array(), detail = json::array();
             struct Cand { double d, cap, scar; };
             std::vector<Cand> cands;
             for (const auto& [d, cs] : by_d) {
-                std::vector<double> x;
-                std::vector<int> y;
-                double scar_sum = 0;
-                int scar_n = 0, held = 0;
+                int part_one = 0, part_two = 0, part_unknown = 0;  // partly held: one tip let go, two, not said
+                for (const auto* c : cs)
+                    if (c->partial) (c->tips_let_go == 1 ? part_one : c->tips_let_go == 2 ? part_two : part_unknown)++;
+                struct Depth {
+                    int n = 0, held = 0, scar_n = 0;
+                    double scar = 0, lo = 0, hi = std::numeric_limits<double>::infinity();  // held up to / let go from
+                };
+                std::map<double, Depth> depths;
+                int held = 0;
                 double max_held = -1, min_failed = -1;
                 for (const auto* c : cs) {
-                    const double load = atHinge(c);
-                    x.push_back(load);
-                    y.push_back(c->ok ? 1 : 0);
+                    Depth& k = depths[num(c->params, "penetration")];
+                    const double load = num(c->params, "load_per_tip_mm2") * peelAt(c, bias), st = strengthOf(c);
+                    ++k.n;
                     if (c->ok) {
-                        ++held;
+                        ++k.held, ++held;
+                        k.lo = std::max(k.lo, st);
                         max_held = std::max(max_held, load);
-                    } else if (min_failed < 0 || load < min_failed) {
-                        min_failed = load;
-                    }
-                    if (c->scar > 0) { scar_sum += c->scar; ++scar_n; }
-                }
-                const LogisticFit lf = fitLogistic(x, y);
-                const double min_x = *std::min_element(x.begin(), x.end());
-                const double max_x = *std::max_element(x.begin(), x.end());
-                double cap, floor_cap = -1;
-                std::string basis;
-                if (std::isinf(lf.l50) && lf.l50 > 0) {
-                    // Half would let go somewhere above the heaviest load, so
-                    // the usual fraction of that load is a true lower bound.
-                    // Below FruitSlicer's starting value, the floor doesn't contradict it: that stays
-                    // (it is what jobs have printed with), and the floor is kept beside it.
-                    floor_cap = o.capacity_fraction * max_x;
-                    cap = std::max(floor_cap, CapacityModel{}.capacity(d));
-                    basis = "lower bound";
-                    notes.push_back("tips " + fmt(d) + " mm: no failures up to " + fmt(max_x) + " mm² per tip; at least " +
-                                    fmt(floor_cap) + (cap > floor_cap ? ", so the starting value " + fmt(cap) + " stays" : "") +
-                                    " (test higher loads)");
-                } else if (std::isinf(lf.l50)) {
-                    cap = 0.5 * min_x;
-                    basis = "upper bound";
-                    notes.push_back("tips " + fmt(d) + " mm: failed even at " + fmt(min_x) +
-                                    " mm² per tip; capacity set to half of that (test lower loads)");
-                } else if (!(lf.l50 > 0) || lf.b > 0) {
-                    cap = o.capacity_fraction * min_x;
-                    basis = "no load dependence";
-                    notes.push_back("tips " + fmt(d) + " mm: success did not fall with load; capacity set conservatively");
-                } else {
-                    cap = o.capacity_fraction * std::min(lf.l50, max_x * 2);
-                    basis = lf.separable ? "gap midpoint" : "logistic";
-                }
-                // Preferred penetration: highest success rate, then lowest scar.
-                std::map<double, std::pair<int, int>> pen_ok;  // pen -> (ok, n)
-                std::map<double, std::pair<double, int>> pen_scar;
-                for (const auto* c : cs) {
-                    if (!c->params.contains("penetration")) continue;
-                    const double p = num(c->params, "penetration");
-                    pen_ok[p].first += c->ok;
-                    pen_ok[p].second += 1;
-                    if (c->scar > 0) { pen_scar[p].first += c->scar; pen_scar[p].second += 1; }
-                }
-                double best_pen = -1, best_rate = -1, best_scar = 1e9;
-                json depths = json::array();
-                for (const auto& [p, on] : pen_ok)
-                    depths.push_back({{"penetration", p},
-                                      {"held", on.first},
-                                      {"coupons", on.second},
-                                      {"mean_scar", pen_scar[p].second ? json(pen_scar[p].first / pen_scar[p].second)
-                                                                       : json(nullptr)}});
-                for (const auto& [p, on] : pen_ok) {
-                    const double rate = static_cast<double>(on.first) / on.second;
-                    const double sc = pen_scar[p].second ? pen_scar[p].first / pen_scar[p].second : 3.0;
-                    if (rate > best_rate + 1e-9 || (std::abs(rate - best_rate) <= 1e-9 && sc < best_scar)) {
-                        best_rate = rate;
-                        best_scar = sc;
-                        best_pen = p;
+                        if (c->scar > 0) k.scar += c->scar, ++k.scar_n;
+                    } else {
+                        k.hi = std::min(k.hi, st);
+                        if (min_failed < 0 || load < min_failed) min_failed = load;
                     }
                 }
+                // Depth: the one that leaves the least mark, marks within half a point counting as alike (as
+                // for necks); alike or not scored, the deeper, which touches more of the part and so holds more.
+                auto mark = [&](const Depth& k) { return k.scar_n ? k.scar / k.scar_n : -1.0; };
+                double pen = depths.rbegin()->first;
+                for (auto it = std::next(depths.rbegin()); it != depths.rend(); ++it) {
+                    const double m = mark(it->second), mb = mark(depths.at(pen));
+                    if (m > 0 && mb > 0 && m <= mb - 0.5 + 1e-9) pen = it->first;
+                }
+                const Depth& k = depths.at(pen);
+                const double area = contactArea(d, pen);
+                // At that depth, its own coupons where they don't follow the one strength: halfway between
+                // what held and what let go; all held, only a floor; all let go, half the lightest.
+                double cap = s_keep * area;
+                std::string basis = model_basis == "gap midpoint" || model_basis == "logistic" ? "contact model" : model_basis;
+                if (odd.count({d, pen})) {
+                    const bool held_all = !std::isfinite(k.hi), failed_all = k.lo <= 0;
+                    const double mine = held_all ? k.lo : failed_all ? k.hi : std::sqrt(k.lo * k.hi);
+                    cap = (failed_all ? 0.5 : o.capacity_fraction) * mine * area;
+                    basis = held_all ? "own floor" : failed_all ? "own guess" : "own";
+                    notes.push_back("tips " + fmt(d) + " mm at " + fmt(pen) + " mm deep: their own coupons don't follow "
+                                    "the other sizes' strength; their own are used");
+                }
+                json dj = json::array();
+                for (const auto& [p, kk] : depths)
+                    dj.push_back({{"penetration", p},
+                                  {"held", kk.held},
+                                  {"coupons", kk.n},
+                                  {"contact_mm2", contactArea(d, p)},
+                                  {"mean_scar", kk.scar_n ? json(kk.scar / kk.scar_n) : json(nullptr)}});
                 cap_table.push_back({d, cap});
-                if (best_pen > 0) pen_table.push_back({d, best_pen});
-                const double mean_scar = scar_n ? scar_sum / scar_n : 0;
-                cands.push_back({d, cap, mean_scar});
+                pen_table.push_back({d, pen});
+                const double m = mark(k);
+                cands.push_back({d, cap, m > 0 ? m : 0});
                 detail.push_back({{"tip_diameter", d},
                                   {"coupons", cs.size()},
                                   {"held", held},
                                   {"max_held_mm2", max_held >= 0 ? json(max_held) : json(nullptr)},
                                   {"min_failed_mm2", min_failed >= 0 ? json(min_failed) : json(nullptr)},
-                                  {"penetrations", depths},
-                                  {"load_50pct", std::isfinite(lf.l50) ? json(lf.l50) : json(nullptr)},
+                                  {"penetrations", dj},
+                                  {"contact_mm2", area},
+                                  {"load_50pct", s50 > 0 && basis == "contact model" ? json(s50 * area) : json(nullptr)},
                                   {"capacity_mm2", cap},
-                                  {"floor_mm2", floor_cap >= 0 ? json(floor_cap) : json(nullptr)},
                                   {"basis", basis},
-                                  {"preferred_penetration", best_pen > 0 ? json(best_pen) : json(nullptr)},
-                                  {"mean_scar", scar_n ? json(mean_scar) : json(nullptr)}});
+                                  {"preferred_penetration", pen},
+                                  // Kept for a fit by single tips: a disc where one of three let go is one tip's hold.
+                                  {"partly", {{"one_let_go", part_one}, {"two_let_go", part_two}, {"not_said", part_unknown}}},
+                                  {"at_depth", {{"coupons", k.n},
+                                                {"held", k.held},
+                                                {"max_held_mm2", k.lo > 0 ? json(k.lo * area) : json(nullptr)},
+                                                {"min_failed_mm2", std::isfinite(k.hi) ? json(k.hi * area) : json(nullptr)}}},
+                                  {"mean_scar", m > 0 ? json(m) : json(nullptr)}});
             }
             prof["capacity_table"] = cap_table;
             if (!pen_table.empty()) prof["penetration_table"] = pen_table;
@@ -637,8 +717,9 @@ void applyProfile(const json& p, SupportConfig& cfg, TreeConfig* tree, std::vect
         // Tip classes become the measured diameters.
         if (!cfg.capacity.table.empty()) {
             // A measured table is trusted nearer to where its tips let go: each tip's own load is held
-            // further under it (SupportConfig::tip_load_limit).
-            cfg.tip_load_limit = kMeasuredTipLoadLimit;
+            // further under it (SupportConfig::tip_load_limit). Not a floor or a guess (a plate where every
+            // disc held, or every one let go): that limit would make tips stricter for nothing learned.
+            if (p.value("capacity_measured", true)) cfg.tip_load_limit = kMeasuredTipLoadLimit;
             cfg.tip_classes.clear();
             for (const auto& [d, c] : cfg.capacity.table) {
                 std::ostringstream name;
@@ -655,7 +736,12 @@ void applyProfile(const json& p, SupportConfig& cfg, TreeConfig* tree, std::vect
             };
             cfg.default_tip = nearest(p.value("default_tip_diameter", cfg.tip_classes[n / 2].diameter));
             cfg.minima_tip = nearest(p.value("minima_tip_diameter", cfg.tip_classes[n - 1].diameter));
-            cfg.edge_tip = 0;
+            // Near edges and visible faces, the size nearest FruitSlicer's own (0.3 mm), not the smallest
+            // measured: a plate that tests 0.2 mm tips doesn't make them the edge tip.
+            {
+                const SupportConfig base;
+                cfg.edge_tip = nearest(base.tip_classes[static_cast<size_t>(base.edge_tip)].diameter);
+            }
         }
     }
     if (p.contains("coverage_curve")) cfg.coverage.curve = pairs(p.at("coverage_curve"));
