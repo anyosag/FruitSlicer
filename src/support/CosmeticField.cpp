@@ -45,11 +45,22 @@ SharpEdgeIndex::SharpEdgeIndex(const TriangleMesh& mesh, double angle_deg, doubl
         bool sharp = fs.size() != 2;  // boundary / non-manifold edges count as sharp
         if (!sharp) sharp = dot(mesh.faceNormal(fs[0]), mesh.faceNormal(fs[1])) < cos_t;
         if (!sharp) continue;
+        // Inside: the second face's far corner lies on the first face's outer side (it rises from it).
+        bool inside = false;
+        const Vec3 n0 = mesh.faceNormal(static_cast<size_t>(fs[0]));
+        const Vec3 n1 = fs.size() > 1 ? mesh.faceNormal(static_cast<size_t>(fs[1])) : n0;
+        if (fs.size() == 2) {
+            const auto& f1 = mesh.faces[static_cast<size_t>(fs[1])];
+            int32_t c = f1[0];
+            for (int k = 0; k < 3; ++k)
+                if (f1[k] != e.first && f1[k] != e.second) c = f1[k];
+            inside = dot(mesh.faceNormal(fs[0]), mesh.vertices[static_cast<size_t>(c)] - mesh.vertices[e.first]) > 1e-9;
+        }
         // Split long edges so each piece touches only a few grid cells.
         const Vec3 a = mesh.vertices[e.first], b = mesh.vertices[e.second];
         const int pieces = std::max(1, static_cast<int>(std::ceil(fruit::distance(a, b) / cell_)));
         for (int k = 0; k < pieces; ++k)
-            segs_.push_back({a + (b - a) * (double(k) / pieces), a + (b - a) * (double(k + 1) / pieces)});
+            segs_.push_back({a + (b - a) * (double(k) / pieces), a + (b - a) * (double(k + 1) / pieces), inside, n0, n1});
     }
     for (size_t i = 0; i < segs_.size(); ++i) {
         const Vec3 lo = min(segs_[i].a, segs_[i].b), hi = max(segs_[i].a, segs_[i].b);
@@ -68,9 +79,11 @@ static Vec3 segClosest(const Vec3& p, const Vec3& a, const Vec3& b) {
     return a + ab * t;
 }
 
-double SharpEdgeIndex::distance(const Vec3& p, double limit) const { return nearest(p, limit, nullptr); }
+double SharpEdgeIndex::distance(const Vec3& p, double limit, EdgeSide side, const Vec3* face) const {
+    return nearest(p, limit, nullptr, side, face);
+}
 
-double SharpEdgeIndex::nearest(const Vec3& p, double limit, Vec3* at) const {
+double SharpEdgeIndex::nearest(const Vec3& p, double limit, Vec3* at, EdgeSide side, const Vec3* face) const {
     if (segs_.empty()) return limit;
     double best = limit;
     const int64_t r = static_cast<int64_t>(std::ceil(limit / cell_));
@@ -83,7 +96,10 @@ double SharpEdgeIndex::nearest(const Vec3& p, double limit, Vec3* at) const {
                 const uint64_t k = key(x, y, z);
                 auto it = std::lower_bound(cells_.begin(), cells_.end(), std::make_pair(k, int32_t{-1}));
                 for (; it != cells_.end() && it->first == k; ++it) {
-                    const Vec3 c = segClosest(p, segs_[it->second].a, segs_[it->second].b);
+                    const Seg& sg = segs_[static_cast<size_t>(it->second)];
+                    if (side != EdgeSide::Both && sg.inside != (side == EdgeSide::Inside)) continue;
+                    if (face && dot(sg.n0, *face) < 0.8 && dot(sg.n1, *face) < 0.8) continue;
+                    const Vec3 c = segClosest(p, sg.a, sg.b);
                     const double d = norm(p - c);
                     if (d < best) {
                         best = d;
@@ -107,7 +123,13 @@ bool CostField::isCosmetic(const Vec3& p, const Vec3& n) const {
 bool CostField::nearEdge(const Vec3& p, double tip_radius) const {
     if (!edges) return false;
     const double lim = tip_radius + edge_margin;
-    return edges->distance(p, lim + 1e-9) <= lim;
+    return edges->distance(p, lim + 1e-9, EdgeSide::Outside) <= lim;
+}
+
+bool CostField::inCorner(const Vec3& p, const Vec3& n, double tip_radius) const {
+    if (!edges) return false;
+    const double lim = tip_radius + edge_margin;
+    return edges->distance(p, lim + 1e-9, EdgeSide::Inside, &n) <= lim;
 }
 
 bool CostField::excluded(const Vec3& p) const {
@@ -118,9 +140,12 @@ bool CostField::excluded(const Vec3& p) const {
 }
 
 double CostField::cost(const Vec3& p, const Vec3& n, double tip_radius) const {
-    double c = 1.0;
-    if (isCosmetic(p, n)) c += cosmetic_weight;
-    if (nearEdge(p, tip_radius)) c += edge_weight;
+    // A corner beside an outside edge too is a narrow place (a ledge between a wall and its rim): no preference
+    // there, or tips crowd onto ledges they barely fit.
+    const bool edge = nearEdge(p, tip_radius), corner = !edge && inCorner(p, n, tip_radius);
+    double c = corner ? corner_factor : 1.0;
+    if (isCosmetic(p, n) && !corner) c += cosmetic_weight;
+    if (edge) c += edge_weight;
     return c;
 }
 

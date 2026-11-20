@@ -388,8 +388,8 @@ TEST_CASE("Advanced settings: unique keys, ranges that hold the values in use, a
     // The 31 on the canvas board "Supports · advanced", "Where a part starts", "Each tip's own load", and the two
     // that came from the Supports panel: "Tip spacing" and "Trunks and braces"; less the raft's thickness, edge,
     // gaps and links, which moved to the Raft page, with one row in their place that says so; and the three
-    // limits that grade suction cups.
-    CHECK(rows == 35);
+    // limits that grade suction cups; and "Inside corners", where marks hide.
+    CHECK(rows == 36);
     // Each tip's own load: 1 with FruitSlicer's own strengths, less with a resin's measured ones, yours over both.
     CHECK(supportConfig(p, none).tip_load_limit == Approx(1.0));
     SupportChoices measured;

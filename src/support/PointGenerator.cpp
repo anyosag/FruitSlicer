@@ -197,6 +197,11 @@ private:
     Paths anchorFor(int part, bool outer = false) const;
     bool mergesSoon(int part, int layers) const;
     void coverLayer(const std::vector<int>& layer_samples);
+    // A tip about to go on `sample` moves into the nearest inside corner
+    // within its reach when, there, it still holds every sample in `holds`
+    // (and keeps off outside edges): its mark hides in the corner. Only with
+    // a corner_factor under 1; never a tip where a part starts in mid-air.
+    void moveToCorner(int sample, const std::vector<int>& holds);
     void enforceIslandMinimum(int part, const std::vector<int>& island_samples);
     void enforceCapacity(int layer);
     void stabilize(int layer);
@@ -395,7 +400,10 @@ int Generator::makeSample(const Vec2& xy, int layer, int part, bool island, bool
     s.fresh_edge = fresh_edge && needs_cover && cfg_.skin_reach > 0;
 
     const double r_default = cfg_.tip_classes[cfg_.default_tip].diameter / 2;
-    const bool delicate = costf_.isCosmetic(s.pos, s.normal) || costf_.nearEdge(s.pos, r_default);
+    // A small tip where its mark would show: beside an outside edge, or on a face people see but not in an inside
+    // corner.
+    const bool edge = costf_.nearEdge(s.pos, r_default);
+    const bool delicate = edge || (costf_.isCosmetic(s.pos, s.normal) && !costf_.inCorner(s.pos, s.normal, r_default));
     s.tip_class = island ? cfg_.minima_tip : (delicate ? cfg_.edge_tip : cfg_.default_tip);
     Spot sp = tipSpot(s.pos, s.normal, s.tip_class);
     // A tip for this sample must still hold it from where it moved to: no
@@ -868,6 +876,39 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     sampleRegion(N, P.layer, part, false, layer_samples, &fresh);
 }
 
+void Generator::moveToCorner(int sample, const std::vector<int>& holds) {
+    Sample& s = samples_[static_cast<size_t>(sample)];
+    if (cfg_.corner_factor >= 1 || s.island || s.excluded || edges_.edgeCount() == 0) return;
+    const double reach = cfg_.coverage.maxRadius();
+    Vec3 e;
+    if (edges_.nearest(s.spot, reach, &e, EdgeSide::Inside, &s.spot_normal) >= reach) return;
+    const double r = cfg_.tip_classes[static_cast<size_t>(s.tip_class)].diameter / 2;
+    if (costf_.inCorner(s.spot, s.spot_normal, r) && !costf_.nearEdge(s.spot, r)) return;  // in one already
+    // Onto the face beside the corner, then as far off the wall as the tip needs (tipSpot).
+    Vec3 in = s.spot - e;
+    in = in - s.spot_normal * dot(in, s.spot_normal);
+    if (norm(in) < 1e-6) return;
+    const ClosestPoint cp = tree_.closest(e + normalized(in) * (edgeNeed(s.tip_class) + 0.01));
+    if (cp.face < 0) return;
+    const Vec3 n = mesh_.faceNormal(cp.face);
+    if (dot(n, s.spot_normal) < 0.8) return;
+    const Spot sp = tipSpot(cp.point, n, s.tip_class);
+    const double rr = cfg_.tip_classes[static_cast<size_t>(sp.cls)].diameter / 2;
+    if (sp.cls != s.tip_class || costf_.excluded(sp.pos) || !costf_.inCorner(sp.pos, sp.normal, rr) ||
+        costf_.nearEdge(sp.pos, rr))
+        return;
+    Tip t;
+    t.pos = sp.pos;
+    t.normal = sp.normal;
+    t.diameter = 2 * rr;
+    t.thickness = localThickness(tree_, sp.pos, sp.normal, 100.0);
+    for (const int j : holds)
+        if (!covers(t, samples_[static_cast<size_t>(j)])) return;
+    s.spot = sp.pos;
+    s.spot_normal = sp.normal;
+    s.cost = costf_.cost(s.spot, s.spot_normal, rr);
+}
+
 void Generator::coverLayer(const std::vector<int>& layer_samples) {
     if (check_) return;  // checking: no tips of its own
     std::vector<int> U;
@@ -897,6 +938,10 @@ void Generator::coverLayer(const std::vector<int>& layer_samples) {
     if (opts_.strategy == CoverStrategy::FirstFit) {
         for (size_t i = 0; i < U.size(); ++i) {
             if (covered[i] || cover[i].empty()) continue;
+            std::vector<int> holds;
+            for (int j : cover[i])
+                if (!covered[j]) holds.push_back(U[static_cast<size_t>(j)]);
+            moveToCorner(U[i], holds);
             const Sample& s = samples_[U[i]];
             addTip(U[i], s.island ? PointCategory::Island : PointCategory::Overhang, false);
             for (int j : cover[i]) covered[j] = 1;
@@ -923,6 +968,10 @@ void Generator::coverLayer(const std::vector<int>& layer_samples) {
             pq.push({now, neg});
             continue;
         }
+        std::vector<int> holds;
+        for (int j : cover[i])
+            if (!covered[j]) holds.push_back(U[static_cast<size_t>(j)]);
+        moveToCorner(U[i], holds);
         const Sample& s = samples_[U[i]];
         addTip(U[i], s.island ? PointCategory::Island : PointCategory::Overhang, false);
         for (int j : cover[i])
@@ -1080,6 +1129,7 @@ void Generator::setup() {
     costf_.cosmetic_weight = cfg_.cosmetic_weight;
     costf_.edge_weight = cfg_.edge_weight;
     costf_.edge_margin = cfg_.edge_margin;
+    costf_.corner_factor = cfg_.corner_factor;
     minima_ = findMinima(mesh_);
     minima_normal_ = minimumNormals(mesh_, minima_);
     hollows_ = analyzeHollows(layers(), 0.5, 1.0, opts_.slice_threads);

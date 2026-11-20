@@ -275,8 +275,24 @@ std::vector<AdvancedSetting> makeAdvanced() {
                              [](C& c, T&, double x) { c.sharp_edge_angle_deg = x; }}},
                  .help = [](const X& x) {
                      const double k = 1 + x.cfg.edge_weight;
-                     return k == 2 ? std::string("Tips near them cost twice as much, because a mark on an edge shows.")
-                                   : strf("Tips near them cost %g times as much, because a mark on an edge shows.", k);
+                     return k == 2 ? std::string("Tips near an outside edge cost twice as much, because a mark on an "
+                                                 "edge shows. Inside corners are the next row.")
+                                   : strf("Tips near an outside edge cost %g times as much, because a mark on an edge "
+                                          "shows. Inside corners are the next row.",
+                                          k);
+                 }});
+    v.push_back({.group = "Keeping marks off", .label = "Inside corners", .kind = K::Number, .source = S::Default,
+                 .fields = {{"corner_cost", "", "× the cost", 0.1, 1, 2,
+                             [](const C& c, const T&) { return c.corner_factor; },
+                             [](C& c, T&, double x) { c.corner_factor = x; }}},
+                 .help = [](const X& x) {
+                     if (x.cfg.corner_factor >= 1)
+                         return std::string("No preference: a tip goes where it does the most, in a corner or not.");
+                     return strf("Where a face meets a wall, a tip costs %g times as much as elsewhere, because its "
+                                 "mark hides in the corner, even on a face people see. Against the wall it reaches one "
+                                 "side only, about half as far round as a tip in the open, so at 0.5 a corner is "
+                                 "taken whenever it does as much of the job. Lower prefers corners more; 1 not at all.",
+                                 x.cfg.corner_factor);
                  }});
     // ---- Heads ----
     v.push_back({.group = "Heads", .label = "Head tilt", .kind = K::Number, .source = S::Default,

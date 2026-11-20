@@ -194,6 +194,14 @@ struct SupportConfig {
     double cosmetic_weight = 4.0;
     double edge_weight = 1.0;
     double edge_margin = 0.2;  // mm beyond the tip radius counted as "near an edge"
+    // A spot in an inside corner (within a tip's radius plus edge_margin of
+    // one, CostField::inCorner) costs this much of what it would elsewhere:
+    // its mark sits in the corner. A tip against the wall there reaches the
+    // face on one side only, about half of what one in the open covers, so at
+    // half the cost a corner spot is taken whenever it does as much of the
+    // job: the placer prefers corners, it isn't made to use them. 1: no
+    // preference.
+    double corner_factor = 0.5;
     double sharp_edge_angle_deg = 40.0;
 
     // Peak-area and flat-face warnings.
