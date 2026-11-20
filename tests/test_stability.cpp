@@ -1012,6 +1012,40 @@ TEST_CASE("a fresh skin at a free edge tears at a shorter reach than one held al
     CHECK(top.skins[20].empty());
 }
 
+TEST_CASE("two tips whose faces overlap hold as one: no lever between them", "[stability]") {
+    // A thin shelf, 1 mm thick, reaches 3.5 mm past a pair of 0.3 mm tips 0.23 mm apart (their faces
+    // overlap), and is held at its far end by two more tips. The pair's outer tip only grazes the
+    // shelf: its support narrows to 0.012 mm² in the last layer. Taken as two springs 0.23 mm apart,
+    // the pair is a lever under the overhang: the grazing tip is pulled several times the pair's load
+    // and its neighbour pushed. Overlapping, they are one contact: they share what the pair carries by
+    // how much each touches.
+    Build b(40);
+    b.support(0, 20, rect(-0.30, -0.14, -0.02, 0.14));  // 0.078 mm²: all of a 0.3 mm tip's face
+    b.support(0, 19, rect(0.02, -0.14, 0.30, 0.14));
+    b.support(19, 20, rect(0.02, -0.06, 0.12, 0.06));  // 0.012 mm²
+    for (double y : {-2.0, 2.0}) b.support(0, 20, rect(-4.2, y - 0.2, -3.8, y + 0.2));
+    b.part(20, 40, rect(-5, -2.5, 3.5, 2.5));
+    StabilityConfig cfg;
+    cfg.replays = 10;
+    const StabilityResult r =
+        b.run(cfg, {{{-0.16, 0, 1.0}, 0.3}, {{0.07, 0, 1.0}, 0.3}, {{-4, -2, 1.0}, 0.4}, {{-4, 2, 1.0}, 0.4}});
+    const TipRisk* full = nullptr;
+    const TipRisk* grazing = nullptr;
+    for (const TipRisk& t : r.tips) {
+        if (t.contact == 0) full = &t;
+        if (t.contact == 1) grazing = &t;
+    }
+    REQUIRE(full);
+    REQUIRE(grazing);
+    INFO("full: " << full->load << " mm² on " << full->area << " mm²; grazing: " << grazing->load << " mm² on "
+                  << grazing->area << " mm²");
+    REQUIRE(grazing->area == Approx(0.012).epsilon(0.05));
+    CHECK(full->load > 0);
+    CHECK(grazing->load < full->load);
+    CHECK(grazing->load / (grazing->load + full->load) ==
+          Approx(grazing->area / (grazing->area + full->area)).epsilon(0.02));
+}
+
 TEST_CASE("a support leaning 60 degrees gives as a 60 degree one, not as one at 45", "[stability]") {
     // A support 0.6 mm square stepping sideways by tan 60° of a layer each layer, a block on top.
     const double step = kH * std::sqrt(3.0), w = 0.6;

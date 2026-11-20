@@ -117,6 +117,11 @@ Units:
      depth under the patch. With slab 2 mm that is half at 2 mm and 1/17 at
      4 mm.
    - "Near" reaches `len = max(0.3, share_reach × solid^0.75)`.
+   - **Tips whose faces overlap** (centres closer than their two radii) are
+     one hold in that share (`group_one_`, set where tips get their place).
+     The set's pull is split by how much each tip touches the model. Before
+     2026-11-20 a pair 0.2 mm apart was a lever: a tip that barely touched
+     came out far past where half let go (the CHamber job's spikes at 28 mm).
    - **Stiff model:** the rest goes to the whole piece by stiffness, as springs
      (`settle`: force and both moments balanced).
    - The worst load of every joint is recorded. Joints are walked in runs

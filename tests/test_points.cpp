@@ -268,7 +268,9 @@ TEST_CASE("each tip's own load: asked, no tip carries more than it is trusted wi
     const PointGenResult before = generateSupportPoints(m, cfg);
     requireInvariants(before);
     CHECK(before.stats.relief_rounds == 0);  // not asked: the planner as it was
-    CHECK(mostCarried(before, cfg) > 2.0);
+    // 1.83: the tip at the point and the one beside it touch faces, so they hold as one contact. (Taken
+    // as a lever 0.24 mm long, the small one carried over twice what it is trusted with.)
+    CHECK(mostCarried(before, cfg) > 1.5);
     PointGenOptions ask;
     ask.relieve = true;
     const PointGenResult after = generateSupportPoints(m, cfg, ask);

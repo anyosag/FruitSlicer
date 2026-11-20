@@ -10,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <numeric>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -539,6 +540,11 @@ private:
     // in, layer on layer, pull at one point and cannot turn the model.
     std::vector<Vec2> group_at_;
     const Vec2& tipAt(int link) const { return group_at_[tip_group_[link]]; }
+    std::vector<double> group_r_;  // by tip: its radius (its own size, or its largest joint's)
+    // By tip: the set of tips whose faces overlap it, named by one of them;
+    // -1 where it overlaps none. Such tips are one contact when a pull is
+    // shared out (step).
+    std::vector<int> group_one_;
     // How much model lies under each point that a part's pull is shared out
     // from (the points samplePart gives, in that order): layers in a row.
     std::vector<std::vector<std::uint16_t>> depth_;
@@ -1106,6 +1112,7 @@ void Analysis::sizeJoints() {
             }
     group_holds_.assign(given + top.size(), 0);
     group_area_.assign(given + top.size(), 0);
+    group_r_.assign(given + top.size(), 0);
     std::vector<char> led(group_holds_.size(), 0);
     tips_found_ = 0;
     for (int t = 0; t < given; ++t) {
@@ -1118,6 +1125,7 @@ void Analysis::sizeJoints() {
         const double d = in_.tips[t].diameter, nominal = kPi * d * d / 4;
         group_holds_[t] = tipHolds(d) * (nominal > 0 ? std::min(1.0, touching[t] / nominal) : 0.0);
         group_area_[t] = touching[t];
+        group_r_[t] = d > 0 ? d / 2 : std::sqrt(touching[t] / kPi);
         ++tips_found_;
     }
     // A tip sunk into the model shows its whole width within a few layers:
@@ -1128,6 +1136,7 @@ void Analysis::sizeJoints() {
         if ((high[g] - low[g]) * h_ > 0.6 + 1e-9) continue;
         group_holds_[given + g] = tipHolds(2 * std::sqrt(top[g] / kPi));
         group_area_[given + g] = top[g];
+        group_r_[given + g] = std::sqrt(top[g] / kPi);
         ++tips_found_;
     }
     for (size_t i = 0; i < links_.size(); ++i) {
@@ -1136,6 +1145,7 @@ void Analysis::sizeJoints() {
         tip_group_[i] = static_cast<int>(group_holds_.size());
         group_holds_.push_back(tipHolds(2 * std::sqrt(links_[i].area / kPi)));
         group_area_.push_back(links_[i].area);
+        group_r_.push_back(std::sqrt(links_[i].area / kPi));
     }
     led.assign(group_holds_.size(), 0);
     group_low_.assign(group_holds_.size(), layers_);
@@ -1154,6 +1164,41 @@ void Analysis::sizeJoints() {
         }
         for (size_t g = 0; g < group_at_.size(); ++g)
             if (weight[g] > 0) group_at_[g] = group_at_[g] / weight[g];
+    }
+    // Tips under the model whose faces overlap are one contact, whatever
+    // their supports below: two tips 0.2 mm apart are no lever. (Taken as
+    // two springs that close, a pull a few millimetres off to one side
+    // pulled the one nearer it several times the pair's load and pushed the
+    // other: a tip that barely touched came out far past where half let go,
+    // beside one that held the same spot at ease.)
+    group_one_.assign(group_at_.size(), -1);
+    {
+        std::vector<char> under(group_at_.size(), 0);
+        for (size_t i = 0; i < links_.size(); ++i)
+            if (tip_group_[i] >= 0 && links_[i].kind == Kind::Tip) under[tip_group_[i]] = 1;
+        std::vector<int> order, up(group_at_.size());
+        std::iota(up.begin(), up.end(), 0);
+        auto root = [&](int a) {
+            while (up[a] != a) a = up[a] = up[up[a]];
+            return a;
+        };
+        double widest = 0;
+        for (size_t g = 0; g < group_at_.size(); ++g)
+            if (under[g] && group_area_[g] > 0) {
+                order.push_back(static_cast<int>(g));
+                widest = std::max(widest, group_r_[g]);
+            }
+        std::sort(order.begin(), order.end(), [&](int a, int b) { return group_at_[a].x < group_at_[b].x; });
+        for (size_t a = 0; a < order.size(); ++a)
+            for (size_t b = a + 1; b < order.size() && group_at_[order[b]].x - group_at_[order[a]].x < 2 * widest; ++b) {
+                const int ga = order[a], gb = order[b];
+                const double r = group_r_[ga] + group_r_[gb];
+                if (norm2(group_at_[ga] - group_at_[gb]) < r * r) up[root(ga)] = root(gb);
+            }
+        std::vector<int> members(group_at_.size(), 0);
+        for (int g : order) ++members[root(g)];
+        for (int g : order)
+            if (members[root(g)] > 1) group_one_[g] = root(g);
     }
     for (size_t i = 0; i < links_.size(); ++i) {
         Link& l = links_[i];
@@ -1717,6 +1762,13 @@ struct Analysis::Scratch {
         std::vector<int> first, list;  // by cell: where its holds start in `list`
     } grid;
     std::vector<int> near;  // the holds near the point being shared out
+    // Tips whose faces overlap, as one hold for the point being shared out:
+    // by set (group_one_), its stiffness, where it acts and all its tips
+    // touch with; by tip, its own stiffness there.
+    int one_tick = 0;
+    std::vector<int> one_stamp, tip_stamp_one, ones;
+    std::vector<double> one_w, one_area, tip_w;
+    std::vector<Vec2> one_at;
     // What each tip's own give draws (it is a spring), as last worked out.
     std::vector<double> tip_more, group_more;
     std::vector<int> more_stamp;
@@ -1731,7 +1783,14 @@ struct Analysis::Scratch {
           group_pull(groups, 0.0), group_stamp(groups, -1), body_slot(bodies, -1), body_stamp(bodies, -1),
           tip_more(links, 0.0), group_more(groups, 0.0), more_stamp(groups, -1), tip_foot(links, 0.0),
           tip_back(links, 0.0), load(3 * static_cast<size_t>(nodes)),
-          y(load.size()), z(load.size()), u(load.size()), t(load.size()) {}
+          y(load.size()), z(load.size()), u(load.size()), t(load.size()) {
+        one_stamp.assign(groups, -1);
+        tip_stamp_one.assign(groups, -1);
+        one_w.assign(groups, 0.0);
+        one_area.assign(groups, 0.0);
+        tip_w.assign(groups, 0.0);
+        one_at.assign(groups, Vec2{});
+    }
 };
 
 // Points spread evenly over a part, for sharing its pull out: the middles of
@@ -1974,6 +2033,8 @@ void Analysis::step(int k, Scratch& st) const {
             }
             if (!(top > -kInf)) return;
             M3 hold{};
+            ++st.one_tick;
+            st.ones.clear();
             for (int jj : *holds) {
                 const size_t j = static_cast<size_t>(jj);
                 const double w = st.weight[j] - top > -25 ? std::exp(st.weight[j] - top) : 0.0;
@@ -1981,13 +2042,37 @@ void Analysis::step(int k, Scratch& st) const {
                 if (w == 0) continue;
                 const Vec2 d = st.reach[j].at - x;
                 if (j < nt) {
-                    addTo(hold, springAt(w, d.x, d.y));
+                    const int t = tip_group_[g.tips[j]], one = group_one_[t];
+                    if (one < 0) {
+                        addTo(hold, springAt(w, d.x, d.y));
+                        continue;
+                    }
+                    // One of a set whose faces overlap: the set is one spring, where its stiffness is.
+                    if (st.one_stamp[one] != st.one_tick) {
+                        st.one_stamp[one] = st.one_tick;
+                        st.one_w[one] = st.one_area[one] = 0;
+                        st.one_at[one] = {};
+                        st.ones.push_back(one);
+                    }
+                    if (st.tip_stamp_one[t] != st.one_tick) {
+                        st.tip_stamp_one[t] = st.one_tick;
+                        st.tip_w[t] = 0;
+                        st.one_area[one] += group_area_[t];
+                    }
+                    st.tip_w[t] += w;
+                    st.one_w[one] += w;
+                    st.one_at[one] += st.reach[j].at * w;
                 } else {  // the plate holds over an area: it does not let the piece turn on it
                     const Link& l = links_[g.plate[j - nt]];
                     const Bending& b = bend_[l.geom];
                     const double per = w / l.area;
                     addTo(hold, patchAt(w, d.x, d.y, b.sxx * per, b.syy * per, b.sxy * per));
                 }
+            }
+            for (int one : st.ones) {
+                st.one_at[one] = st.one_at[one] / st.one_w[one];
+                const Vec2 d = st.one_at[one] - x;
+                addTo(hold, springAt(st.one_w[one], d.x, d.y));
             }
             Move mv;
             if (!settle(hold, {1, 0, 0}, mv)) return;
@@ -1997,8 +2082,19 @@ void Analysis::step(int k, Scratch& st) const {
             for (int jj : *holds) {
                 const size_t j = static_cast<size_t>(jj);
                 if (j >= nt || st.weight[j] == 0) continue;
-                const Vec2 d = st.reach[j].at - x;
-                const double f = pull * st.weight[j] * (mv.w + mv.gx * d.x + mv.gy * d.y);
+                const int t = tip_group_[g.tips[j]], one = group_one_[t];
+                double f = 0;
+                if (one < 0) {
+                    const Vec2 d = st.reach[j].at - x;
+                    f = pull * st.weight[j] * (mv.w + mv.gx * d.x + mv.gy * d.y);
+                } else {
+                    // The set's pull, shared by how much each of its tips touches (as one contact
+                    // would be), then among a tip's own joints by their stiffness, as before.
+                    const Vec2 d = st.one_at[one] - x;
+                    const double whole = pull * st.one_w[one] * (mv.w + mv.gx * d.x + mv.gy * d.y);
+                    const double mine = st.one_area[one] > 0 ? group_area_[t] / st.one_area[one] : st.tip_w[t] / st.one_w[one];
+                    f = whole * mine * st.weight[j] / st.tip_w[t];
+                }
                 giveTip(g.tips[j], f);
                 g.given.n -= f;
                 g.given.mx -= f * (st.reach[j].at.x - origin_.x);

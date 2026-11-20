@@ -490,6 +490,38 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   Not done: tests that pin the slab's exponent and a seam's later layers.
   Also not done: a check of an added tip's support length against the
   model under it, which the lead left as plausible only. Not printed.
+- **Tips whose faces overlap hold as one (2026-11-20).** On the user's
+  CHamber job the Layers chart's "how close" line jumped to 180–200 % at
+  three layers near 28 mm. All three were one tip under Chamber_Base that
+  touched the model with 0.012 mm², 0.15 mm from a tip that touched with
+  0.30 mm² over four layers. Together the two carried about 2.4 mm² of pull
+  on every layer there. But where thin model's pull is shared out among the
+  tips near a patch, each tip was a spring of its own, and a pull 3.5 mm off
+  to one side made the pair a lever 0.15 mm long: +6.8 mm² on the grazing
+  tip, −4.4 mm² (a push) on its neighbour. (The existing floor on levers,
+  0.05 mm, is tested on all the holds together, so it never caught a pair.)
+  Now tips under the model whose faces overlap (centres closer than their
+  two radii) are one hold in that share. The set's pull is split by how much
+  each tip touches the model, as one contact would split it. Tips that
+  overlap no other take the old path unchanged. Only the per-layer share
+  changed. The whole-piece solve holds every tip of the piece at its own
+  stiffness, so it cannot pivot on a pair like this. The hand-over when a
+  joint lets go already drops pushes. Neither was changed.
+  Measured, with the fix off and on, same commit:
+  - CHamber (supports remade, 493 tips): the line at layers 545 to 570 went
+    from up to 197 % to 26–47 %. Its highest point is now 72 %, the
+    Chamber_Top neck bending at 6.1 mm. Places: 2 to 1 (the thin support
+    under that tip is gone). Nothing of the model was lost in either.
+  - A wide cone hanging from its point (`test_points`): the 0.2 mm tip at
+    the point and the 0.4 mm tip 0.24 mm beside it carried 6.6 and 3.0
+    times their trust; now 1.8 and 1.4. That test's check that the planner
+    alone leaves a tip over twice its trust is now "over 1.5".
+  - Lid: the planner adds 113 tips beside overloaded ones instead of 111
+    (598 tips, were 596). The replay's places are the same, and its
+    chances move by less than 0.001. Eye cup: identical.
+  A new test pins it: a 1 mm shelf 3.5 mm past such a pair took 110 mm² on
+  the grazing tip and 29 on its neighbour; now 4.8 and 30.9, split by
+  contact. Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:
