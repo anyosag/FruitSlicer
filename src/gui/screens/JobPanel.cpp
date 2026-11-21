@@ -424,7 +424,7 @@ void mainArea(App& app, Document* doc) {
     }
     // The background checks give way to it.
     const bool busy = app.jobs().busy() && !app.checkingCollisions() && !app.checkingRisk() && !app.countingTips() &&
-                      !app.makingSupportsAhead();
+                      !app.makingSupportsAhead() && !app.warmingTipEdits();
     if (!mb.enabled || (busy && doc)) {
         // Greyed: what it would do, and (in the note above) why not yet.
         const ImVec2 p = ImGui::GetCursorScreenPos();

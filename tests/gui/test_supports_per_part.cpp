@@ -4,6 +4,7 @@
 // standing on the plate beside parts on rafts, and saved in the job.
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -363,4 +364,118 @@ TEST_CASE("Jobs: several parts saved before each had its own raft open on one ra
     REQUIRE(d.supports.shared.size() == 1);
     CHECK(d.supports.shared[0].size() == 2);
     CHECK(chosenRafts(d, d.supports.setup()).size() == 1);
+}
+
+namespace {
+
+bool same(const fruit::Vec3& a, const fruit::Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+// Everything a result says, for two that should be one and the same.
+void sameResult(const SupportResult& a, const SupportResult& b) {
+    REQUIRE(a.points.size() == b.points.size());
+    for (std::size_t i = 0; i < a.points.size(); ++i) {
+        CHECK(a.points[i].id == b.points[i].id);
+        CHECK(same(a.points[i].pos, b.points[i].pos));
+        CHECK(a.points[i].tip_diameter == b.points[i].tip_diameter);
+        CHECK(a.points[i].built_smaller == b.points[i].built_smaller);
+        CHECK(a.points[i].built_moved == b.points[i].built_moved);
+    }
+    REQUIRE(a.mesh.vertices.size() == b.mesh.vertices.size());
+    REQUIRE(a.mesh.faces.size() == b.mesh.faces.size());
+    std::size_t moved = 0, other = 0;
+    for (std::size_t i = 0; i < a.mesh.vertices.size(); ++i) moved += !same(a.mesh.vertices[i], b.mesh.vertices[i]);
+    for (std::size_t i = 0; i < a.mesh.faces.size(); ++i) other += a.mesh.faces[i] != b.mesh.faces[i];
+    CHECK(moved == 0);
+    CHECK(other == 0);
+    CHECK(a.tree.pillars.size() == b.tree.pillars.size());
+    CHECK(a.tree.raft_links.size() == b.tree.raft_links.size());
+    CHECK(a.support_ml == b.support_ml);
+    CHECK(a.on_model == b.on_model);
+    REQUIRE(a.parts.size() == b.parts.size());
+    for (std::size_t i = 0; i < a.parts.size(); ++i) {
+        CHECK(a.parts[i].tips == b.parts[i].tips);
+        CHECK(a.parts[i].trunks == b.parts[i].trunks);
+        CHECK(a.parts[i].ml == b.parts[i].ml);
+        CHECK(a.parts[i].raft == b.parts[i].raft);
+    }
+    REQUIRE(a.rafts.size() == b.rafts.size());
+    for (std::size_t g = 0; g < a.rafts.size(); ++g) {
+        CHECK(a.rafts[g].parts == b.rafts[g].parts);
+        CHECK(a.rafts[g].touching == b.rafts[g].touching);
+        CHECK(a.rafts[g].pieces == b.rafts[g].pieces);
+        CHECK(a.rafts[g].top == b.rafts[g].top);
+        CHECK(a.rafts[g].pillars == b.rafts[g].pillars);
+    }
+    CHECK(a.validation.floating.size() == b.validation.floating.size());
+    CHECK(a.validation.first_layer_islands == b.validation.first_layer_islands);
+    CHECK(a.validation.small_floating == b.validation.small_floating);
+    CHECK(a.validation.subpixel == b.validation.subpixel);
+    REQUIRE(a.checks.size() == b.checks.size());
+    for (std::size_t i = 0; i < a.checks.size(); ++i) {
+        CHECK(a.checks[i].ok == b.checks[i].ok);
+        CHECK(a.checks[i].title == b.checks[i].title);
+        CHECK(a.checks[i].detail == b.checks[i].detail);
+    }
+    REQUIRE(a.problems.size() == b.problems.size());
+    for (std::size_t i = 0; i < a.problems.size(); ++i) {
+        CHECK(a.problems[i].code == b.problems[i].code);
+        CHECK(a.problems[i].level == b.problems[i].level);
+        CHECK(a.problems[i].count == b.problems[i].count);
+        CHECK(a.problems[i].title == b.problems[i].title);
+        CHECK(a.problems[i].body == b.problems[i].body);
+        CHECK(a.problems[i].engine == b.problems[i].engine);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("Supports per part: tips taken off one after another keep what didn't change, and it is all as made afresh",
+          "[gui][supports][parts][slow]") {
+    // a and b so close their rafts meet (one raft, a's settings), b with a raft of its own: thicker (its tree
+    // is made again for a's), or the same thickness and wider (its tree stays, its settings change). c apart.
+    fruit::RaftSpec own;
+    const bool thicker = GENERATE(true, false);
+    if (thicker) own.thickness = 1.5;
+    else own.reach = 0.8;
+    const auto doc = jobOf({partOf(cube(10), "a", {-5.5, 0}), partOf(cube(10), "b", {5.5, 0}),
+                            partOf(cube(8), "c", {30, 0})});
+    const int a = doc->parts()[0].id(), b = doc->parts()[1].id(), c = doc->parts()[2].id();
+    doc->supports.own[b].raft = own;
+    const SupportSetup setup = doc->supports.setup();
+    const SupportResult first = made(*doc);
+    REQUIRE(first.rafts.size() == 2);
+    CHECK(first.rafts[0].touching);
+    const JobPlan plans = planOf(first);
+    const PartFrames frames = doc->frames();
+    const auto none = fruit::JobControl::none();
+
+    RebuildCache cache;
+    std::vector<TipEdit> edits;
+    SupportResult now = first;
+    // Off one by one: a's, c's, b's, a's again; then the first one back on.
+    const std::pair<int, std::size_t> off[] = {{a, 0}, {c, 1}, {b, 2}, {a, 3}};
+    for (std::size_t step = 0; step <= std::size(off); ++step) {
+        CAPTURE(thicker, step);
+        if (step < std::size(off)) {
+            const auto [id, k] = off[step];
+            const SupportResult::PartMade* pm = now.partMade(id);
+            REQUIRE(pm);
+            REQUIRE(pm->tips > k);
+            REQUIRE(recordDelete(edits, now.points[pm->first + k], frames, id));
+        } else {
+            edits.erase(edits.begin());
+        }
+        const SupportResult kept = finishWithEdits(*doc, setup, plans, edits, none, &cache);
+        const SupportResult fresh = finishWithEdits(*doc, setup, plans, edits, none);
+        sameResult(kept, fresh);
+        if (step < std::size(off)) CHECK(kept.tips + 1 == now.tips);
+        else CHECK(kept.tips == now.tips + 1);
+        now = kept;
+    }
+    // What was kept is used: every part's tree, the job's slots and the model's index.
+    CHECK(cache.trees.size() == 3);
+    CHECK(cache.details);
+    CHECK(cache.model_index);
+    CHECK(cache.trees.at(c).checked);
+    CHECK(cache.trees.at(c).mesh);
 }

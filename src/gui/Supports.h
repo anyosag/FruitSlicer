@@ -23,6 +23,8 @@
 #include "mesh/Placement.h"
 #include "mesh/TriangleMesh.h"
 #include "support/DetailMap.h"
+#include "support/PointGenerator.h"
+#include "support/SupportCheck.h"
 #include "support/SupportConfig.h"
 #include "support/SupportSettings.h"
 #include "support/SupportTree.h"
@@ -459,19 +461,47 @@ JobPlan planOf(const SupportResult& r);
 // part each tip is on.
 JobPlan splitPlan(const Document& doc, SupportPlan plan);
 // What stays the same from one rebuild of a job's supports to the next while
-// only its tips change, as in lowerPeak's rounds: the same job, setup and
-// hand edits. Kept by finishWithEdits when it is given one; only for that.
+// only its tips change, as in lowerPeak's rounds and hand edits: the same job
+// and setup. Kept by finishWithEdits when it is given one; only for that.
 struct RebuildCache {
     std::shared_ptr<const fruit::DetailMap> details;  // the job's slots and holes
+    // The job's model, indexed (the index points into this copy), and its
+    // sharp edges: for the check after making.
+    std::shared_ptr<const fruit::TriangleMesh> model;
+    std::shared_ptr<const fruit::AabbTree> model_index;
+    std::shared_ptr<const fruit::SharpEdgeIndex> model_edges;
     // By part id: the tips its tree was last built from (hand edits applied),
-    // the raft it stood on, and what was built (the tips as built too).
+    // the raft it stood on, and what was built (the tips as built too). Then
+    // what was worked out from that tree, once it was: kept while the tree is.
     struct Tree {
         bool made = false;
+        int version = 0;  // which tree it is (RebuildCache::made when it was made)
         std::vector<fruit::SupportPoint> from, built;
         double raft_thickness = 0;
         fruit::SupportTree tree;
+        SupportChoices with;                          // the part's settings for what follows
+        std::optional<fruit::GapCheck> gaps;          // the check after making
+        std::shared_ptr<const fruit::TriangleMesh> mesh;  // its supports' mesh
+        bool mesh_raft = false;                       // made with its raft (not a shared one)
+        bool checked = false;                         // the two below
+        fruit::DropCheck drops;                       // what the tips no support reached leave unheld
+        std::size_t short_from_raft = 0;              // layers short of hold from the raft
     };
     std::map<int, Tree> trees;
+    int made = 0;  // trees made so far
+    // By the parts on a raft, for their trees as kept (`trees`, their versions): its outline (for
+    // rafts that meet, with the first part's settings), the shared raft under
+    // them, and its pieces through its height (with the raft's settings).
+    struct Raft {
+        std::vector<int> trees;
+        std::optional<fruit::Paths> meet;
+        std::vector<SupportChoices> with;  // its parts' settings for what follows
+        std::optional<fruit::SupportTree> under;
+        std::shared_ptr<const fruit::TriangleMesh> under_mesh;
+        std::optional<fruit::Paths> foot;
+        int pieces = 0;
+    };
+    std::map<std::vector<int>, Raft> rafts;
 };
 // The planners' tips with hand edits applied, then the trees, the rafts, the
 // checks and the problems (keeps both). Used when a saved job comes back with

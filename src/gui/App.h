@@ -303,6 +303,10 @@ public:
     // then, it shows them at once, or takes over their making. Gives way to
     // any other work, like the counts.
     bool makingSupportsAhead() const;
+    // While tips are edited, the supports are made once more in the background,
+    // as they are, so that the first edit keeps what it doesn't change (the
+    // rebuild's cache). Gives way to any other work, like the counts.
+    bool warmingTipEdits() const;
     void finishTipCounts();           // scripts and tests: starts the count if it is due and waits for it
     // A script's shot: the background checks (collisions, the tip counts, then
     // this) run to their end first, so a picture never depends on how fast they were.
@@ -919,6 +923,22 @@ private:
     // (printer coordinates) is the tip to select once they are rebuilt.
     void setTipEdits(std::vector<TipEdit> edits, std::optional<fruit::Vec3> select = std::nullopt);
     void rebuildTips(std::optional<fruit::Vec3> select);
+    // What a rebuild of the tips keeps for the next one (RebuildCache), and
+    // the job as it was then: used again only while that is the same.
+    struct TipCacheKey {
+        const Document* doc = nullptr;
+        int revision = -1;
+        std::int64_t settings = -1;
+        SupportSetup setup;
+        int bottom_layers = 0, transition_layers = 0;
+        double bottom_light = 0, held = 0;
+        bool operator==(const TipCacheKey&) const = default;
+    };
+    TipCacheKey tipCacheKey() const;
+    std::shared_ptr<const RebuildCache> tip_cache_;
+    std::optional<TipCacheKey> tip_cache_for_;
+    std::optional<TipCacheKey> tip_warm_tried_;  // warmed for (it may have been cancelled)
+    void startTipEditWarm();
     int partAt(const fruit::Vec3& at);  // the part (an id) whose surface is nearest a point
     std::map<std::string, double> advanced_;  // carried over to the next model opened
     std::shared_ptr<const SupportResult> scene_for_;  // the result the tip markers were built from

@@ -755,7 +755,8 @@ void App::maintain() {
     // The background checks (the Collisions check with several parts, the replay of the print) give way: the
     // work below cancels them, and they start again after.
     const auto busy = [this] {
-        return jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips() && !makingSupportsAhead();
+        return jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips() && !makingSupportsAhead() &&
+               !warmingTipEdits();
     };
     if (doc_ && screen_ == Screen::Job && step_ == Step::Layers && !busy()) {
         // Cut the layers for the current supports, once per supports result
@@ -1893,6 +1894,63 @@ bool App::redoTipChange() {
     return true;
 }
 
+App::TipCacheKey App::tipCacheKey() const {
+    TipCacheKey k;
+    if (!doc_) return k;
+    k.doc = doc_.get();
+    k.revision = doc_->revision();
+    k.settings = doc_->supportSettings();
+    k.setup = doc_->supports.result ? doc_->supports.result->setup : doc_->supports.setup();  // what a rebuild uses
+    k.bottom_layers = doc_->printer.bottom_layers;
+    k.transition_layers = doc_->printer.transition_layers;
+    k.bottom_light = bottomLightRatio(doc_->print.settings);
+    k.held = modelInBottomLayers(*doc_);
+    return k;
+}
+
+namespace {
+const char* const kTipWarmJob = "Getting tips ready to edit";
+}
+
+bool App::warmingTipEdits() const { return jobs_.busy() && jobs_.progress().name == kTipWarmJob; }
+
+void App::startTipEditWarm() {
+    // Due: tips being edited, and nothing kept for the job as it is now. With edits
+    // the plan no longer fits, the first edit plans the tips again: nothing to keep.
+    const bool editing = doc_ && screen_ == Screen::Job && tip_editing_ && doc_->supports.result &&
+                         planStillFits(doc_->supports.result->plan_edits, doc_->supports.edits);
+    const std::optional<TipCacheKey> key = editing ? std::optional<TipCacheKey>(tipCacheKey()) : std::nullopt;
+    const bool due = key && !(tip_cache_for_ && *tip_cache_for_ == *key);
+    if (warmingTipEdits()) {
+        // One for a job that has changed since, or with tip editing left: it stops.
+        if (!due || tip_warm_tried_ != key) jobs_.cancel();
+        return;
+    }
+    if (!due || tip_warm_tried_ == key) return;
+    if (jobs_.busy() || jobs_.stopping()) return;  // the work running now comes first
+    tip_warm_tried_ = key;
+    const auto prev = doc_->supports.result;
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto cache = std::make_shared<RebuildCache>();
+    const std::vector<TipEdit> edits = doc_->supports.edits;
+    std::weak_ptr<Document> target = doc_;
+    jobs_.startGivingWay(
+        kTipWarmJob,
+        [snap, prev, edits, cache](const fruit::JobControl& ctl) {
+            finishWithEdits(*snap, prev->setup, planOf(*prev), edits, ctl, cache.get());
+        },
+        [this, target, cache, key](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (err && tip_warm_tried_ == key) tip_warm_tried_.reset();  // made again when wanted
+            if (err || !d || d != doc_) return;
+            // An edit made meanwhile may have kept its own already: either is for this job.
+            if (!(tip_cache_for_ && *tip_cache_for_ == *key)) {
+                tip_cache_ = cache;
+                tip_cache_for_ = key;
+            }
+        });
+}
+
 void App::rebuildTips(std::optional<fruit::Vec3> select) {
     if (!doc_ || !doc_->supports.result) return;
     const auto prev = doc_->supports.result;
@@ -1907,15 +1965,29 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
     const int rev = doc_->supports.result_revision;
     const std::int64_t settings = doc_->supports.result_settings;
     std::weak_ptr<Document> target = doc_;
+    // What the last update kept, for the same job and settings: the parts
+    // whose tips didn't change keep their supports, checks and meshes, and
+    // the job its slots. Planned again, nothing is kept.
+    const TipCacheKey key = tipCacheKey();
+    std::shared_ptr<const RebuildCache> kept = !replan && tip_cache_for_ == key ? tip_cache_ : nullptr;
+    auto cache = replan ? nullptr : std::make_shared<RebuildCache>();
     jobs_.start(
         replan ? "Planning the tips again" : "Updating the tips",
-        [snap, prev, out, setup, edits, replan](const fruit::JobControl& ctl) {
+        [snap, prev, out, setup, edits, replan, kept, cache](const fruit::JobControl& ctl) {
             if (replan) *out = generate(*snap, setup, snap->visibleInPrinter(), ctl, edits, true);
-            else *out = finishWithEdits(*snap, setup, planOf(*prev), edits, ctl);
+            else {
+                if (kept) *cache = *kept;  // a copy: if this stops part way, what was kept stays as it was
+                *out = finishWithEdits(*snap, setup, planOf(*prev), edits, ctl, cache.get());
+            }
         },
-        [this, target, out, rev, settings, select](std::exception_ptr err) {
+        [this, target, out, rev, settings, select, key, cache](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
+            // Kept for the next update (each kept one holds only what its tips and settings make).
+            if (!err && d == doc_) {
+                tip_cache_ = cache;
+                tip_cache_for_ = cache ? std::optional<TipCacheKey>(key) : std::nullopt;
+            }
             if (err) {
                 try {
                     std::rethrow_exception(err);
@@ -3740,7 +3812,8 @@ void App::keys() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Slash, global)) shortcuts_open_ = !shortcuts_open_;
     // ⌘↩: the Job panel's main button (Make supports, Slice…).
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Enter, global) && doc_ && screen_ == Screen::Job &&
-        (!jobs_.busy() || checkingCollisions() || checkingRisk() || countingTips() || makingSupportsAhead())) {
+        (!jobs_.busy() || checkingCollisions() || checkingRisk() || countingTips() || makingSupportsAhead() ||
+         warmingTipEdits())) {
         const MainButton mb = mainButton(doc_.get());
         if (mb.enabled && (mb.action == MainAction::MakeSupports || mb.action == MainAction::RemakeSupports))
             supportsNow();
@@ -3860,6 +3933,7 @@ void App::frame() {
     if (!placing()) startSupportsAhead();   // on the Supports step: the supports, made before they are asked for
     if (!placing()) startTipCounts();       // on the Supports step: how many tips at each stop? (after those)
     if (!placing()) startRiskCheck();       // with supports: what may not print? (after all of it)
+    if (!placing()) startTipEditWarm();     // while tips are edited: what the first edit can keep
     // Scripted captures keep the drive list they set up: the machine's own
     // drives would change the pictures.
     // In the Layers place, where the print file is saved (Layers and Print are one place now).

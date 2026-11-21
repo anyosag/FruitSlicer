@@ -288,7 +288,9 @@ void App::settleCollisions() {
 
 void App::settleChecks() {
     // Other work: a script waits for that itself.
-    if (jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips() && !makingSupportsAhead()) return;
+    if (jobs_.busy() && !checkingCollisions() && !checkingRisk() && !countingTips() && !makingSupportsAhead() &&
+        !warmingTipEdits())
+        return;
     jobs_.wait();  // the check running now, and any set aside for other work that is still stopping
     startCollisionCheck();
     if (checkingCollisions()) jobs_.wait();
@@ -298,6 +300,8 @@ void App::settleChecks() {
     if (countingTips()) jobs_.wait();
     startRiskCheck();
     if (checkingRisk()) jobs_.wait();
+    startTipEditWarm();
+    if (warmingTipEdits()) jobs_.wait();
 }
 
 void App::selectCollision(int part) {

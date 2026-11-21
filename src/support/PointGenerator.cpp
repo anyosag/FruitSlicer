@@ -868,7 +868,10 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     // is held along that side and needs nothing closer.
     Paths fresh;
     if (cfg_.skin_reach > 0) {
-        fresh = intersection(difference(N, offset(below_union, cfg_.skin_advance)), freeRim(P.shape.toPaths()));
+        // The rim only where something reaches past the layer before: it is
+        // the slow part, and most layers have no such skin.
+        const Paths past = difference(N, offset(below_union, cfg_.skin_advance));
+        if (!past.empty()) fresh = intersection(past, freeRim(P.shape.toPaths()));
     }
     // Sampled on its own first, so that even a short fresh end (shorter than
     // the spacing of the edge samples) has a sample on it.

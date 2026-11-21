@@ -522,6 +522,48 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   A new test pins it: a 1 mm shelf 3.5 mm past such a pair took 110 mm² on
   the grazing tip and 29 on its neighbour; now 4.8 and 30.9, split by
   contact. Not printed.
+- **Taking a tip off is quicker (2026-11-21).** Each tip edit rebuilt the whole
+  job's supports and checks from nothing: 5 to 6 s a tip on a 1,223-tip job of
+  the user's. Where the time went, on copies of two of the user's jobs:
+  - The job's slots (the whole model sliced and mapped): 1.25 s of 3.3 s on
+    TheDipper_full (1,130 tips, 6 parts), though the model doesn't change.
+  - The checks of what dropped and tied tips leave unheld: two planner passes
+    over the edited part, 2.1 s of 2.7 s on CHamber. Over half of each pass
+    worked out a layer's free rim (`freeRim`) on every layer that needed tips,
+    though only layers reaching past the one below use it.
+  - Every other part's tree, mesh, gap check and checks, and each raft's
+    outline, made again unchanged.
+  Now:
+  - The planner works out the rim only where a layer reaches past the one
+    below. Its tips are the same (an intersection with nothing is nothing),
+    and every planning pass is quicker for it: CHamber's two checks 2.1 s to
+    0.85 s.
+  - The app keeps a `RebuildCache` from one tip edit to the next while the job,
+    its settings and the bottom layers are the same. It holds the slots, the
+    model's index and edges, and each part's tree with what was worked out
+    from it: the gap check, the mesh, the two hold checks, for the settings it
+    was made with (a part on a raft it shares takes that raft's). It also holds
+    each raft's outline and pieces for the versions of its parts' trees. Only
+    the edited part is made again. An edit that stops part way keeps nothing
+    of its own.
+  - When tips start being edited, the supports are made once more in the
+    background, as they are, so the first edit is quick too. It gives way to
+    any other work and shows nothing.
+  - Still made each time: the edited part's tree and checks, and the check
+    that nothing starts in mid-air, over the whole job. One tip taken off
+    changed 60 to 85 % of the job's support layers (its support goes down to
+    the raft), so cutting only the changed layers would save little. Letting
+    a part below be grown only when a part above doesn't rest on it as it is
+    saved about 5 % and was left out.
+  Six tips taken off one after another, against main built beside it (the
+  faster of two runs each, on a busy Mac): CHamber 2.68 s to 0.69 s a tip,
+  TheDipper_full 3.27 s to 1.31 s. The 29 screenshots of the tip, supports,
+  per-part and risk scripts are the same as main's, byte for byte.
+  A test makes a job of three parts, two whose rafts meet (one with a thicker
+  raft of its own, then a wider one), takes tips off one part after another
+  and puts one back, and compares each result with the cache to one made
+  without it: tips, mesh, trees, rafts, checks and problems all the same. It
+  fails when a part's old mesh is kept after its tips change.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:
