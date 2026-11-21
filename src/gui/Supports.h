@@ -557,6 +557,16 @@ std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pla
 // planner's tips have a hole or a zone that is no longer wanted, so the tips
 // are planned again; otherwise the edits apply on top.
 bool planStillFits(const std::vector<TipEdit>& plan_edits, const std::vector<TipEdit>& edits);
+// The tips a rebuild of `made` with `edits` starts from, as finishWithEdits
+// has them: part by part in the job's order, the planner's (`made`'s plans)
+// with the edits applied, each tip as it was built in `made` where it is
+// there. With the part (an id) each is on. What the view shows of an edit at
+// once, while the supports are made for it (when the plan still fits).
+struct EditedTips {
+    std::vector<fruit::SupportPoint> points;
+    std::vector<int> parts;  // by tip: its part's id
+};
+EditedTips editedTips(const Document& doc, const SupportResult& made, const std::vector<TipEdit>& edits);
 // Recording a change to `tip` (printer coordinates, as shown). A tip of the
 // planner's gets an edit of its own; for a tip of yours the edit that made it
 // changes (moving an added tip moves the addition, deleting it undoes it), so

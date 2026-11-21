@@ -1634,6 +1634,35 @@ std::vector<fruit::SupportPoint> applyEdits(std::vector<fruit::SupportPoint> pts
     return pts;
 }
 
+EditedTips editedTips(const Document& doc, const SupportResult& made, const std::vector<TipEdit>& edits) {
+    EditedTips out;
+    const PartFrames frames = doc.frames();
+    // What was built of each tip made: by id (each part's plan has its own), then where it is.
+    std::multimap<std::uint64_t, const fruit::SupportPoint*> built;
+    for (const fruit::SupportPoint& p : made.points) built.emplace(p.id, &p);
+    for (std::size_t i = 0; i < doc.partCount(); ++i) {
+        const Part& part = doc.parts()[i];
+        const auto it = made.plans.find(part.id());
+        const SupportPlan plan = it != made.plans.end() ? it->second : SupportPlan{};
+        const PlanOn on = planOn(doc, i, plan.hollow);
+        for (fruit::SupportPoint q : applyEdits(plan.points, editsOn(edits, on.part), frames)) {
+            const auto [lo, hi] = built.equal_range(q.id);
+            for (auto b = lo; b != hi; ++b) {
+                const fruit::SupportPoint& was = *b->second;
+                if (was.category != q.category || was.pos.x != q.pos.x || was.pos.y != q.pos.y || was.pos.z != q.pos.z)
+                    continue;
+                q.tip_diameter = was.tip_diameter;
+                q.built_smaller = was.built_smaller;
+                q.built_moved = was.built_moved;
+                break;
+            }
+            out.points.push_back(q);
+            out.parts.push_back(part.id());
+        }
+    }
+    return out;
+}
+
 bool planStillFits(const std::vector<TipEdit>& plan_edits, const std::vector<TipEdit>& edits) {
     std::vector<bool> used(edits.size(), false);
     for (const TipEdit& p : plan_edits) {

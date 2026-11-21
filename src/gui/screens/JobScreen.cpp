@@ -444,7 +444,9 @@ void statusBar(App& app) {
         problems = static_cast<int>(countOf(now, SupportProblem::Level::Review) + countOf(now, SupportProblem::Level::Blocks));
         totals = strf("%zu tips · %.1f ml of supports at most", r.tips, r.support_ml);
         if (!doc->supports.edits.empty()) {
-            totals = strf("%zu tips · %s by you", r.tips, describeCounts(countEdits(doc->supports.edits)).c_str());
+            // The tips as shown: an edit's at once, while its supports are made.
+            totals = strf("%zu tips · %s by you", app.shownTips().size(),
+                          describeCounts(countEdits(doc->supports.edits)).c_str());
         }
     } else if (doc) {
         const bool fits = doc->fits();

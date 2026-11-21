@@ -564,6 +564,31 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   and puts one back, and compares each result with the cache to one made
   without it: tips, mesh, trees, rafts, checks and problems all the same. It
   fails when a part's old mesh is kept after its tips change.
+- **A tip taken off goes at once (2026-11-21).** Still about a second a tip
+  on a big job: mostly the check that nothing starts in mid-air, over the
+  whole job. But while tips are edited the view shows only the tips, and the
+  tips an edit gives are known before anything is made: the planner's, with
+  the edits applied, part by part (`editedTips`, what finishWithEdits starts
+  from, each as it was built last time). So the app shows those at once and
+  picks, selects and edits among them (`App::shownTips`) while the supports
+  and checks are made behind. When they are done, the supports' own tips
+  take over. The tip selected meanwhile stays selected, found by where it
+  is; before, it was dropped when the update finished. Planned again (an
+  edit the planner worked around taken back), the tips are not known until
+  then, and the view waits as before.
+  Before this, every tip edit also made the supports out of date until it was
+  done (`SupportState::fresh` wants the result's edits to be the job's): the
+  view hid every tip, the panel said "Supports out of date" and offered
+  Remake supports, and the resin line lost the supports. Now, while the
+  supports for exactly the job's edits are being made from the result's
+  plans (`SupportState::making`), the result still counts: the panels keep
+  its checks, with "Updating the tips" in the corner, till the new ones come.
+  A saved job is right meanwhile too: it keeps the plans and the edits, and
+  the edits are applied again when it opens. Planned again, nothing changes:
+  the supports are out of date till then, as before. The test above now
+  also checks, at every step, that the tips
+  shown at once are the rebuild's own: the same tips in the same order, with
+  their sizes and parts.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

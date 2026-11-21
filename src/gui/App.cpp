@@ -1971,6 +1971,20 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
     const TipCacheKey key = tipCacheKey();
     std::shared_ptr<const RebuildCache> kept = !replan && tip_cache_for_ == key ? tip_cache_ : nullptr;
     auto cache = replan ? nullptr : std::make_shared<RebuildCache>();
+    // While the supports for these edits are made from the plans: the
+    // supports before the edit still count, and the tips the edit gives are
+    // shown at once. Planned again, neither: those tips are not known yet.
+    doc_->supports.making = replan ? std::nullopt : std::optional<std::vector<TipEdit>>(edits);
+    if (replan) {
+        pending_tips_.reset();
+    } else {
+        auto shown = std::make_shared<PendingTips>();
+        shown->doc = doc_;
+        shown->edits = edits;
+        shown->tips = editedTips(*doc_, *prev, edits);
+        pending_tips_ = std::move(shown);
+    }
+    reshowTips(select);
     jobs_.start(
         replan ? "Planning the tips again" : "Updating the tips",
         [snap, prev, out, setup, edits, replan, kept, cache](const fruit::JobControl& ctl) {
@@ -1980,7 +1994,7 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
                 *out = finishWithEdits(*snap, setup, planOf(*prev), edits, ctl, cache.get());
             }
         },
-        [this, target, out, rev, settings, select, key, cache](std::exception_ptr err) {
+        [this, target, out, rev, settings, select, key, cache, edits](std::exception_ptr err) {
             const auto d = target.lock();
             if (!d) return;
             // Kept for the next update (each kept one holds only what its tips and settings make).
@@ -1988,7 +2002,21 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
                 tip_cache_ = cache;
                 tip_cache_for_ = cache ? std::optional<TipCacheKey>(key) : std::nullopt;
             }
+            // The tip picked meanwhile (or the one this edit asked for), kept by where it is.
+            std::optional<fruit::Vec3> picked = select;
+            if (!picked && d == doc_) {
+                const std::vector<fruit::SupportPoint>& was = shownTips();
+                const int sel = d->supports.selected_tip;
+                if (sel >= 0 && sel < static_cast<int>(was.size())) picked = was[static_cast<std::size_t>(sel)].pos;
+            }
+            // The tips shown for this edit go: the supports' own are shown again (a later edit's stay).
+            const bool mine = pending_tips_ && pending_tips_->doc.lock() == d && pending_tips_->edits == edits;
+            if (d->supports.making && *d->supports.making == edits) d->supports.making.reset();
             if (err) {
+                if (mine && d == doc_) {
+                    pending_tips_.reset();
+                    reshowTips(picked);
+                }
                 try {
                     std::rethrow_exception(err);
                 } catch (const fruit::Cancelled&) {
@@ -2001,17 +2029,47 @@ void App::rebuildTips(std::optional<fruit::Vec3> select) {
             s.result = std::make_shared<const SupportResult>(std::move(*out));
             s.result_revision = rev;
             s.result_settings = settings;
-            // The tips are a new list: find the one to select by where it is.
-            s.selected_tip = -1;
-            if (select)
-                for (std::size_t i = 0; i < s.result->points.size(); ++i) {
-                    const fruit::Vec3 q = s.result->points[i].pos;
-                    if (std::abs(q.x - select->x) + std::abs(q.y - select->y) + std::abs(q.z - select->z) < 1e-3) {
-                        s.selected_tip = static_cast<int>(i);
-                        break;
-                    }
-                }
+            if (mine) pending_tips_.reset();
+            if (d == doc_) reshowTips(picked);
+            else s.selected_tip = -1;
         });
+}
+
+const App::PendingTips* App::pendingTips() const {
+    if (!pending_tips_ || !doc_ || pending_tips_->doc.lock() != doc_ || pending_tips_->edits != doc_->supports.edits)
+        return nullptr;
+    return pending_tips_.get();
+}
+
+const std::vector<fruit::SupportPoint>& App::shownTips() const {
+    static const std::vector<fruit::SupportPoint> none;
+    if (const PendingTips* p = pendingTips()) return p->tips.points;
+    return doc_ && doc_->supports.result ? doc_->supports.result->points : none;
+}
+
+const SupportResult::PartMade* App::shownTipPart(int index) const {
+    if (!doc_ || !doc_->supports.result || index < 0) return nullptr;
+    const SupportResult& r = *doc_->supports.result;
+    const auto i = static_cast<std::size_t>(index);
+    if (const PendingTips* p = pendingTips()) return i < p->tips.parts.size() ? r.partMade(p->tips.parts[i]) : nullptr;
+    return i < r.points.size() ? r.partOfTip(i) : nullptr;
+}
+
+void App::reshowTips(std::optional<fruit::Vec3> at) {
+    ++shown_gen_;
+    if (!doc_) return;
+    // The tips are a new list: find the one to select by where it is.
+    int& sel = doc_->supports.selected_tip;
+    sel = -1;
+    if (!at) return;
+    const std::vector<fruit::SupportPoint>& tips = shownTips();
+    for (std::size_t i = 0; i < tips.size(); ++i) {
+        const fruit::Vec3 q = tips[i].pos;
+        if (std::abs(q.x - at->x) + std::abs(q.y - at->y) + std::abs(q.z - at->z) < 1e-3) {
+            sel = static_cast<int>(i);
+            break;
+        }
+    }
 }
 
 void App::addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal) {
@@ -2047,37 +2105,29 @@ void App::addZoneAt(const fruit::Vec3& pos) {
     setTipEdits(std::move(edits));
 }
 
-namespace {
-const fruit::SupportPoint* tipAt(const std::shared_ptr<Document>& d, int index) {
-    if (!d || !d->supports.result || index < 0 || index >= static_cast<int>(d->supports.result->points.size()))
-        return nullptr;
-    return &d->supports.result->points[static_cast<std::size_t>(index)];
-}
-}  // namespace
-
 void App::moveTip(int index, const fruit::Vec3& to, const fruit::Vec3& normal) {
-    const fruit::SupportPoint* p = tipAt(doc_, index);
+    const fruit::SupportPoint* p = shownTip(index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
     if (recordMove(edits, *p, to, normal, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits), to);
 }
 
 void App::deleteTip(int index) {
-    const fruit::SupportPoint* p = tipAt(doc_, index);
+    const fruit::SupportPoint* p = shownTip(index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
     if (recordDelete(edits, *p, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits));
 }
 
 void App::resizeTip(int index, double diameter) {
-    const fruit::SupportPoint* p = tipAt(doc_, index);
+    const fruit::SupportPoint* p = shownTip(index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
     if (recordResize(edits, *p, diameter, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits), p->pos);
 }
 
 void App::pinTip(int index) {
-    const fruit::SupportPoint* p = tipAt(doc_, index);
+    const fruit::SupportPoint* p = shownTip(index);
     if (!p) return;
     std::vector<TipEdit> edits = doc_->supports.edits;
     if (recordPin(edits, *p, doc_->frames(), partAt(p->pos))) setTipEdits(std::move(edits), p->pos);
@@ -2092,9 +2142,15 @@ bool App::pickModel(const fruit::Vec3& origin, const fruit::Vec3& dir, fruit::Ve
     return true;
 }
 
+const fruit::SupportPoint* App::shownTip(int index) const {
+    if (!doc_ || !doc_->supports.result) return nullptr;
+    const std::vector<fruit::SupportPoint>& tips = shownTips();
+    return index >= 0 && index < static_cast<int>(tips.size()) ? &tips[static_cast<std::size_t>(index)] : nullptr;
+}
+
 void App::selectTip(int index) {
     if (!doc_ || !doc_->supports.result) return;
-    const int n = static_cast<int>(doc_->supports.result->points.size());
+    const int n = static_cast<int>(shownTips().size());
     doc_->supports.selected_tip = index >= 0 && index < n ? index : -1;
 }
 
@@ -2240,10 +2296,10 @@ void App::syncScene() {
     }
     // What may not print, for these supports (null: not replayed yet, or they are out of date).
     const RiskReport* replay = risk();
-    if (scene_for_ != s.result || scene_risk_.get() != replay) {
-        if (scene_for_ != s.result) {
+    if (scene_for_ != s.result || scene_shown_ != shown_gen_ || scene_risk_.get() != replay) {
+        if (scene_for_ != s.result || scene_shown_ != shown_gen_) {
             tip_meshes_.assign(5, fruit::TriangleMesh{});
-            for (const auto& p : s.result->points)
+            for (const auto& p : shownTips())
                 addMarker(tip_meshes_[static_cast<std::size_t>(p.category)], p.pos, 0.3 + 0.5 * p.tip_diameter);
             detail_mesh_ = s.result->details ? s.result->details->mesh() : fruit::TriangleMesh{};
         }
@@ -2253,6 +2309,7 @@ void App::syncScene() {
             for (const RiskTip& t : replay->tips)
                 addMarker(risk_tip_meshes_[static_cast<std::size_t>(t.band) - 1], t.at, 0.45 + 0.5 * t.diameter);
         scene_for_ = s.result;
+        scene_shown_ = shown_gen_;
         scene_risk_ = replay ? risk_report_ : nullptr;
         ++scene_key_;
     }
@@ -3834,7 +3891,8 @@ void App::keys() {
         if (sel >= 0 && doc_->supports.result &&
             (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false) || ImGui::IsKeyPressed(ImGuiKey_RightBracket, false))) {
             static const double sizes[] = {0.2, 0.3, 0.4, 0.6};
-            const double d = doc_->supports.result->points[static_cast<std::size_t>(sel)].tip_diameter;
+            const fruit::SupportPoint* p = shownTip(sel);
+            const double d = p ? p->tip_diameter : 0.4;
             int c = 0;
             for (int i = 1; i < 4; ++i)
                 if (std::abs(sizes[i] - d) < std::abs(sizes[c] - d)) c = i;

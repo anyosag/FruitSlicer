@@ -99,13 +99,14 @@ void tipEditPanel(App& app, Document& doc) {
 void tipEditSelected(App& app, Document& doc) {
     const SupportState& s = doc.supports;
     groupLabel("Selected tip");
-    if (!s.result || s.selected_tip < 0 || s.selected_tip >= static_cast<int>(s.result->points.size())) {
+    const std::vector<fruit::SupportPoint>& tips = app.shownTips();  // an edit's at once, while it is made
+    if (!s.result || s.selected_tip < 0 || s.selected_tip >= static_cast<int>(tips.size())) {
         text("Click a tip to change its size, pin it or delete it. Drag it to move it.", fonts().regular, size::Body,
              col::TextSecondary, true);
         return;
     }
     const SupportResult& r = *s.result;
-    const fruit::SupportPoint& p = r.points[static_cast<std::size_t>(s.selected_tip)];
+    const fruit::SupportPoint& p = tips[static_cast<std::size_t>(s.selected_tip)];
     const bool yours = p.category == fruit::PointCategory::Manual;
     beginCard("tip", ImVec2(0, 0), 13, col::Panel, col::Border);
     text(yours ? "Your tip" : tipKind(p).c_str(), fonts().semibold, size::Body, col::Text);
@@ -120,7 +121,7 @@ void tipEditSelected(App& app, Document& doc) {
     }
     ImGui::Dummy(ImVec2(0, 2));
     // The settings of the part the tip is on (each part may have its own).
-    const SupportResult::PartMade* pm = r.partOfTip(static_cast<std::size_t>(s.selected_tip));
+    const SupportResult::PartMade* pm = app.shownTipPart(s.selected_tip);
     keyValue("Holds", strf("%.1f mm² of layer", (pm ? pm->cfg : r.cfg).capacity.capacity(p.tip_diameter)));
     keyValue("Contact depth", strf("%.2f mm", fruit::tipPenetration(p.tip_diameter, pm ? pm->tree_cfg : r.tree_cfg)));
     keyValue("Position", strf("%.2f, %.2f, %.2f mm", p.pos.x, p.pos.y, p.pos.z));
@@ -138,7 +139,7 @@ void tipEditSelected(App& app, Document& doc) {
 void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
     const SupportState& s = doc.supports;
     if (!s.result) return;
-    const SupportResult& r = *s.result;
+    const std::vector<fruit::SupportPoint>& tips = app.shownTips();  // an edit's at once, while it is made
     auto project = [&](const fruit::Vec3& p, ImVec2* out) {
         const fruit::Vec3 w = p;
         const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];
@@ -167,14 +168,14 @@ void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
         }
     }
     // Your tips, ringed in the accent colour; the selected one stronger.
-    for (std::size_t i = 0; i < r.points.size(); ++i) {
-        if (r.points[i].category != fruit::PointCategory::Manual) continue;
+    for (std::size_t i = 0; i < tips.size(); ++i) {
+        if (tips[i].category != fruit::PointCategory::Manual) continue;
         ImVec2 q;
-        if (project(r.points[i].pos, &q)) dl->AddCircle(q, 6, col::Accent, 16, 1.5f);
+        if (project(tips[i].pos, &q)) dl->AddCircle(q, 6, col::Accent, 16, 1.5f);
     }
-    if (s.selected_tip >= 0 && s.selected_tip < static_cast<int>(r.points.size())) {
+    if (s.selected_tip >= 0 && s.selected_tip < static_cast<int>(tips.size())) {
         ImVec2 q;
-        if (project(r.points[static_cast<std::size_t>(s.selected_tip)].pos, &q)) {
+        if (project(tips[static_cast<std::size_t>(s.selected_tip)].pos, &q)) {
             dl->AddCircle(q, 9, col::Accent, 24, 2.5f);
             dl->AddCircle(q, 12, IM_COL32(0xFF, 0x8F, 0x3F, 90), 24, 2.0f);
         }
@@ -205,9 +206,9 @@ void tipEditOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const f
     auto nearestTip = [&]() {
         int best = -1;
         float best_d = 12 * 12;
-        for (std::size_t i = 0; i < r.points.size(); ++i) {
+        for (std::size_t i = 0; i < tips.size(); ++i) {
             ImVec2 q;
-            if (!project(r.points[i].pos, &q)) continue;
+            if (!project(tips[i].pos, &q)) continue;
             const float d = (q.x - m.x) * (q.x - m.x) + (q.y - m.y) * (q.y - m.y);
             if (d < best_d) {
                 best_d = d;

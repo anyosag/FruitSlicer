@@ -530,6 +530,36 @@ TEST_CASE("Tip edits: add, move, delete, resize and pin apply on top of the plan
     CHECK(describeCounts(countEdits({resize})) == "1 resized");
 }
 
+TEST_CASE("Tip edits: while supports are made for the job's edits from the last ones' plans, the last ones count",
+          "[gui][supports]") {
+    using K = TipEdit::Kind;
+    const auto doc = bracket();
+    auto r = std::make_shared<SupportResult>();
+    r->setup = doc->supports.setup();
+    doc->supports.result = r;
+    doc->supports.result_revision = doc->revision();
+    doc->supports.result_settings = doc->supportSettings();
+    auto fresh = [&] { return doc->supports.fresh(doc->revision(), doc->supportSettings()); };
+    REQUIRE(fresh());
+    const TipEdit del{K::Delete, {0, 0, 0}, {}, {0, 0, -1}, 0.4, kDeletedZone};
+    const TipEdit add{K::Add, {2, 1, 0}, {}, {0, 0, -1}, 0.3, 0};
+    // A tip edit: out of date, unless the supports for exactly these edits are being made.
+    doc->supports.edits = {del};
+    CHECK_FALSE(fresh());
+    doc->supports.making = std::vector<TipEdit>{del};
+    CHECK(fresh());
+    // Another edit meanwhile: for that one.
+    doc->supports.edits = {del, add};
+    CHECK_FALSE(fresh());
+    doc->supports.making = std::vector<TipEdit>{del, add};
+    CHECK(fresh());
+    // Not for a change to the model.
+    fruit::Placement p = doc->placement();
+    p.offset.x += 5;
+    doc->edit(p);
+    CHECK_FALSE(fresh());
+}
+
 TEST_CASE("Tip edits: changing a tip of yours changes the edit that made it", "[gui][supports]") {
     using K = TipEdit::Kind;
     const fruit::Transform t = fruit::Transform::translation({10, 0, 5});

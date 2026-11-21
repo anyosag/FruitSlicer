@@ -61,7 +61,12 @@ struct SupportState {
     std::shared_ptr<const SupportResult> result;
     int result_revision = -1;           // what it was made for: the parts as they were,
     std::int64_t result_settings = -1;  // and Document::supportSettings()
-    int selected_tip = -1;                      // index into result->points
+    int selected_tip = -1;                      // index into the tips shown (App::shownTips)
+    // Hand edits whose supports are being made from `result`'s plans (edits
+    // applied on top, nothing planned again). Till they are, `result` still
+    // counts for them: the supports and checks before the edit, shown while
+    // the new ones are made.
+    std::optional<std::vector<TipEdit>> making;
     // What the supports made before `result` came to, for the panel's "Before" line (ml < 0: none).
     std::size_t before_tips = 0;
     double before_ml = -1;
@@ -72,7 +77,8 @@ struct SupportState {
     // Everything the next run is made from besides the parts.
     SupportSetup setup() const { return SupportSetup{choices, own, shared}; }
     bool fresh(int revision, std::int64_t settings) const {
-        if (!result || result_revision != revision || !(result->setup == setup()) || !(result->edits == edits))
+        if (!result || result_revision != revision || !(result->setup == setup()) ||
+            !(result->edits == edits || (making && *making == edits)))
             return false;
         if (result_settings == settings) return true;
         const std::int64_t held = settings % kHeldSpan;

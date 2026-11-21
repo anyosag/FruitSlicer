@@ -546,6 +546,13 @@ public:
     int& draggingTip() { return dragging_tip_; }
     void addTipAt(const fruit::Vec3& pos, const fruit::Vec3& normal);  // printer coordinates
     void addZoneAt(const fruit::Vec3& pos);
+    // The tips as the view shows and picks them, which tip indices count in:
+    // the supports' own, or, while the supports for a tip edit are being made,
+    // the tips that edit gives, shown at once (editedTips). With the part
+    // settings one of them is on.
+    const std::vector<fruit::SupportPoint>& shownTips() const;
+    const SupportResult::PartMade* shownTipPart(int index) const;
+    const fruit::SupportPoint* shownTip(int index) const;  // null: no such tip
     void moveTip(int index, const fruit::Vec3& to, const fruit::Vec3& normal);
     void deleteTip(int index);
     void resizeTip(int index, double diameter);
@@ -923,6 +930,19 @@ private:
     // (printer coordinates) is the tip to select once they are rebuilt.
     void setTipEdits(std::vector<TipEdit> edits, std::optional<fruit::Vec3> select = std::nullopt);
     void rebuildTips(std::optional<fruit::Vec3> select);
+    // The tips an edit gives, for the job and its edits as they were when it
+    // was made: shown until its supports are made (or stop).
+    struct PendingTips {
+        std::weak_ptr<const Document> doc;
+        std::vector<TipEdit> edits;
+        EditedTips tips;
+    };
+    std::shared_ptr<const PendingTips> pending_tips_;
+    const PendingTips* pendingTips() const;  // when it is the job's as it is now
+    // A new list of shown tips: the selected one by where it was (`at`), or none.
+    void reshowTips(std::optional<fruit::Vec3> at);
+    int shown_gen_ = 0;  // which list of shown tips the view has (with scene_for_)
+    int scene_shown_ = -1;
     // What a rebuild of the tips keeps for the next one (RebuildCache), and
     // the job as it was then: used again only while that is the same.
     struct TipCacheKey {

@@ -996,13 +996,12 @@ void supportsPanel(App& app, Document& doc) {
     const SupportState& s = doc.supports;
     // (Not in the Risk view: its marks are the places that may not print, and no tip is ringed there.)
     if (s.result && !running(app) && s.selected_tip >= 0 && app.supportsView() != SupportsView::Risk &&
-        s.selected_tip < static_cast<int>(s.result->points.size())) {
+        s.selected_tip < static_cast<int>(app.shownTips().size())) {
         ImGui::Dummy(ImVec2(0, 6));
         groupLabel("Selected tip");
         const SupportResult& r = *s.result;
-        const auto i = static_cast<std::size_t>(s.selected_tip);
-        const fruit::SupportPoint& p = r.points[i];
-        const SupportResult::PartMade* pm = r.partOfTip(i);
+        const fruit::SupportPoint& p = app.shownTips()[static_cast<std::size_t>(s.selected_tip)];
+        const SupportResult::PartMade* pm = app.shownTipPart(s.selected_tip);
         beginCard("tip", ImVec2(0, 0), 13, col::Card, col::Accent);
         text(tipKind(p).c_str(), fonts().semibold, size::Body, col::Text);
         text(tipWhy(p).c_str(), fonts().regular, size::Body, col::TextSecondary, true);
@@ -1350,7 +1349,7 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     if (app.supportsView() != SupportsView::Risk || !s.result) raftTags(doc, project);
     if (!doc.fits()) fitBanner(app, doc, origin, size);
     if (!s.result) return;
-    const SupportResult& r = *s.result;
+    const std::vector<fruit::SupportPoint>& tips = app.shownTips();
     const bool fresh = s.fresh(doc.revision(), doc.supportSettings());
     if (!fresh && doc.fits()) staleBanner(app, doc, origin, size);
     // The Risk view has its own marks: the places that may not print, by number.
@@ -1360,9 +1359,9 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
     }
     // Tips: the selected one is ringed; a click (not a drag) selects the nearest.
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (fresh && s.selected_tip >= 0) {
+    if (fresh && s.selected_tip >= 0 && s.selected_tip < static_cast<int>(tips.size())) {
         ImVec2 q;
-        if (project(r.points[static_cast<std::size_t>(s.selected_tip)].pos, &q)) {
+        if (project(tips[static_cast<std::size_t>(s.selected_tip)].pos, &q)) {
             dl->AddCircle(q, 9, col::Accent, 24, 2.5f);
             dl->AddCircle(q, 12, IM_COL32(0xFF, 0x8F, 0x3F, 90), 24, 2.0f);
         }
@@ -1375,9 +1374,9 @@ void supportsOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const 
         !ImGui::IsAnyItemHovered()) {
         int best = -1;
         float best_d = 14 * 14;
-        for (std::size_t i = 0; i < r.points.size(); ++i) {
+        for (std::size_t i = 0; i < tips.size(); ++i) {
             ImVec2 q;
-            if (!project(r.points[i].pos, &q)) continue;
+            if (!project(tips[i].pos, &q)) continue;
             const float d = (q.x - m.x) * (q.x - m.x) + (q.y - m.y) * (q.y - m.y);
             if (d < best_d) {
                 best_d = d;

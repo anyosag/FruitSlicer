@@ -429,7 +429,8 @@ void sameResult(const SupportResult& a, const SupportResult& b) {
 
 }  // namespace
 
-TEST_CASE("Supports per part: tips taken off one after another keep what didn't change, and it is all as made afresh",
+TEST_CASE("Supports per part: tips taken off one after another show at once, keep what didn't change, and it is "
+          "all as made afresh",
           "[gui][supports][parts][slow]") {
     // a and b so close their rafts meet (one raft, a's settings), b with a raft of its own: thicker (its tree
     // is made again for a's), or the same thickness and wider (its tree stays, its settings change). c apart.
@@ -465,9 +466,21 @@ TEST_CASE("Supports per part: tips taken off one after another keep what didn't 
         } else {
             edits.erase(edits.begin());
         }
+        // What the view shows at once: the tips the rebuild then makes, in its order, on their parts.
+        const EditedTips shown = editedTips(*doc, now, edits);
         const SupportResult kept = finishWithEdits(*doc, setup, plans, edits, none, &cache);
         const SupportResult fresh = finishWithEdits(*doc, setup, plans, edits, none);
         sameResult(kept, fresh);
+        REQUIRE(shown.points.size() == kept.points.size());
+        REQUIRE(shown.parts.size() == kept.points.size());
+        for (std::size_t i = 0; i < kept.points.size(); ++i) {
+            CHECK(shown.points[i].id == kept.points[i].id);
+            CHECK(same(shown.points[i].pos, kept.points[i].pos));
+            CHECK(shown.points[i].category == kept.points[i].category);
+            CHECK(shown.points[i].tip_diameter == kept.points[i].tip_diameter);
+            REQUIRE(kept.partOfTip(i));
+            CHECK(shown.parts[i] == kept.partOfTip(i)->part);
+        }
         if (step < std::size(off)) CHECK(kept.tips + 1 == now.tips);
         else CHECK(kept.tips == now.tips + 1);
         now = kept;
