@@ -834,8 +834,6 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.showRiskLayer(step["risk_layer"].get<int>() - 1);  // the place's "Go to layer"
         } else if (step.contains("layers_risk")) {
             app.setLayersRisk(step["layers_risk"].get<bool>());
-        } else if (step.contains("risk_heatmap")) {
-            app.setRiskHeatmap(step["risk_heatmap"].get<bool>());  // false: the places, in their three bands
         } else if (step.contains("risk_colour")) {
             const std::string by = step["risk_colour"].get<std::string>();
             if (by != "lost" && by != "breaks") throw std::runtime_error("risk_colour: lost or breaks, not " + by);
@@ -1299,6 +1297,15 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.setView(viewFrom(v));
             }
+        } else if (step.contains("look_at")) {
+            // [x, y, z, radius]: the view turned on that point (printer mm), near enough to see that much round
+            // it; [radius]: on the point it is turned on now.
+            const auto& v = step["look_at"];
+            if (v.size() == 1) app.camera().frame(app.camera().target(), v[0].get<float>());
+            else app.camera().frame({v[0].get<float>(), v[1].get<float>(), v[2].get<float>()}, v[3].get<float>());
+        } else if (step.contains("view_turn")) {
+            const auto& v = step["view_turn"];  // [yaw, pitch] in degrees, from where the view is
+            app.camera().turn(v[0].get<float>(), v[1].get<float>());
         } else if (step.contains("show_patch")) {
             // As the Model step's "Show the patch" link.
             const auto& doc = app.document();

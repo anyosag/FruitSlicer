@@ -12,11 +12,10 @@
     {"risk": "wait"}, {"supports_view": "supports"}, {"shot": "i1_risk_checks"},
     {"risk": "show"}, {"shot": "i1_risk_view"},
     {"risk_colour": "breaks"}, {"shot": "i1_risk_heat_breaks"},
-    {"risk_heatmap": false}, {"shot": "i1_risk_places"},
-    {"risk_heatmap": true}, {"risk_colour": "lost"},
+    {"risk_colour": "lost"},
     {"risk_place": 1}, {"shot": "i1_risk_place"},
     {"risk_layer": 1}, {"frames": 2}, {"wait": "jobs"}, {"shot": "i1_risk_layer"},
-    {"risk_heatmap": false}, {"shot": "i1_risk_layer_places"}, {"risk_heatmap": true},
+    {"risk_colour": "breaks"}, {"shot": "i1_risk_layer_breaks"}, {"risk_colour": "lost"},
     {"layers_risk": false}, {"shot": "i1_risk_layer_plain"}
   ]
 }

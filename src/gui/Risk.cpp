@@ -336,6 +336,11 @@ std::string riskStrengthsNote(const RiskReport& r) {
     return s;
 }
 
+std::string riskStrengthsBrief(const RiskReport& r) {
+    return r.borrowed ? "A guide, not a measurement: the strengths are borrowed, not this resin's."
+                      : "A guide, not a measurement: how far a layer's pull spreads is a guess.";
+}
+
 // ---------------------------------------------------------------- the paint
 
 namespace {
@@ -375,126 +380,17 @@ Poly clipZ(const Poly& in, double z0, bool keep_above) { return clipAxis(in, 2, 
 
 }  // namespace
 
-void paintRisk(const fruit::TriangleMesh& mesh, const fruit::StabilityResult& res, fruit::TriangleMesh paint[3],
-               const fruit::JobControl& ctl) {
-    const double h = res.layer_height;
-    const int layers = static_cast<int>(res.in_layer.size());
-    if (layers == 0 || !(h > 0)) return;
-    // The model's parts that may not print, layer by layer.
-    struct Hit {
-        int id;
-        int band;
-    };
-    std::vector<std::vector<Hit>> risky(static_cast<std::size_t>(layers));
-    std::vector<int> upto(static_cast<std::size_t>(layers) + 1, 0);  // how many risky layers there are below each
-    for (int L = 0; L < layers; ++L) {
-        for (int id : res.in_layer[static_cast<std::size_t>(L)]) {
-            if (!res.parts[static_cast<std::size_t>(id)].model) continue;
-            const int b = bandIndex(riskBand(res.partChance(id)));
-            if (b >= 0) risky[static_cast<std::size_t>(L)].push_back({id, b});
-        }
-        upto[static_cast<std::size_t>(L) + 1] = upto[static_cast<std::size_t>(L)] + !risky[static_cast<std::size_t>(L)].empty();
-    }
-    if (upto.back() == 0) return;
-    auto layerOf = [&](double z) { return std::clamp(static_cast<int>(std::floor(z / h)), 0, layers - 1); };
-    // The band of the model at a point just under the surface, or -1.
-    auto bandAt = [&](const fruit::Vec3& p) {
-        const fruit::Vec2 xy{p.x, p.y};
-        for (const Hit& hit : risky[static_cast<std::size_t>(layerOf(p.z))]) {
-            const fruit::PrintPart& w = res.where[static_cast<std::size_t>(hit.id)];
-            if (xy.x < w.box.min.x || xy.x > w.box.max.x || xy.y < w.box.min.y || xy.y > w.box.max.y) continue;
-            if (w.shape->contains(xy)) return hit.band;
-        }
-        return -1;
-    };
-    std::size_t made = 0;
-    for (std::size_t f = 0; f < mesh.faces.size() && made < kMaxPaintFaces; ++f) {
-        if ((f & 8191) == 0) ctl.check();
-        const fruit::Face& face = mesh.faces[f];
-        Poly tri;
-        tri.n = 3;
-        for (int i = 0; i < 3; ++i) tri.v[i] = mesh.vertices[static_cast<std::size_t>(face[static_cast<std::size_t>(i)])];
-        const double z0 = std::min({tri.v[0].z, tri.v[1].z, tri.v[2].z}), z1 = std::max({tri.v[0].z, tri.v[1].z, tri.v[2].z});
-        const int l0 = layerOf(z0), l1 = layerOf(z1);
-        // Nothing at risk in its layers, or the ones next to them (a flat face lies between two).
-        if (upto[static_cast<std::size_t>(std::min(layers, l1 + 2))] == upto[static_cast<std::size_t>(std::max(0, l0 - 1))]) continue;
-        const fruit::Vec3 n = mesh.faceNormal(f);
-        if (n.x == 0 && n.y == 0 && n.z == 0) continue;
-        for (int L = l0; L <= l1; ++L) {
-            // The face within this layer.
-            Poly part = tri;
-            if (l1 > l0) {
-                part = clipZ(clipZ(tri, L * h, true), (L + 1) * h, false);
-                if (part.n < 3) continue;
-            }
-            fruit::Vec3 c{};
-            for (int i = 0; i < part.n; ++i) c = c + part.v[i];
-            c = c / static_cast<double>(part.n);
-            // The model is on the inside of its surface (on either side, for a
-            // mesh turned inside out): a step in of less than half a layer,
-            // so a flat face asks the layer it bounds and not the next one.
-            int band = -1;
-            for (double e : {-0.02, 0.02}) {
-                band = bandAt(c + n * e);
-                if (band >= 0) break;
-            }
-            if (band < 0) continue;
-            fruit::TriangleMesh& m = paint[band];
-            const auto base = static_cast<std::int32_t>(m.vertices.size());
-            for (int i = 0; i < part.n; ++i) m.vertices.push_back(part.v[i]);
-            for (int i = 1; i + 1 < part.n; ++i) m.faces.push_back({base, base + i, base + i + 1});
-            made += static_cast<std::size_t>(part.n - 2);
-        }
-    }
-}
-
-RiskLayerPaint paintRiskLayer(const fruit::StabilityResult& res, int layer, const LayerImage& grid) {
-    RiskLayerPaint out;
-    if (layer < 0 || static_cast<std::size_t>(layer) >= res.in_layer.size() || grid.w <= 0 || grid.h <= 0) return out;
-    fruit::Paths by_band[3];
-    for (int id : res.in_layer[static_cast<std::size_t>(layer)]) {
-        const double pc = res.partChance(id);
-        const int b = bandIndex(riskBand(pc));
-        if (b >= 0) {
-            const fruit::Paths ps = res.where[static_cast<std::size_t>(id)].shape->toPaths();
-            by_band[b].insert(by_band[b].end(), ps.begin(), ps.end());
-        }
-        // Its fresh skin, where that is likelier not to form than the part is to be lost.
-        if (static_cast<std::size_t>(layer) < res.skins.size())
-            for (const fruit::SkinBand& s : res.skins[static_cast<std::size_t>(layer)]) {
-                if (s.part != id) continue;
-                const int sb = bandIndex(riskBand(1 - (1 - pc) * (1 - s.chance)));
-                if (sb > b) by_band[sb].insert(by_band[sb].end(), s.region.begin(), s.region.end());
-            }
-    }
-    fruit::RasterGrid g;
-    g.width = grid.w;
-    g.height = grid.h;
-    g.px = grid.px;
-    g.py = grid.py;
-    g.x_left = grid.x_left;
-    g.y_top = grid.y_top;
-    for (int b = 0; b < 3; ++b) {
-        if (by_band[b].empty()) continue;
-        out.cover[b] = fruit::rasterizeDense(fruit::unionNonZero(by_band[b]), g, 16);
-        out.any = true;
-    }
-    return out;
-}
-
 // ---------------------------------------------------------------- the heatmap
 
 namespace {
 
-// The scale: chances, and where each lies along it (between them it goes by the chance's logarithm).
-constexpr double kHeatAnchors[][2] = {{0.001, 0.0}, {0.01, 0.22}, {0.05, 0.45}, {0.2, 0.68}, {0.5, 0.88}, {1.0, 1.0}};
-// Its colours, at those places along it: blue for fine, then teal, yellow, orange, red and dark red.
-struct HeatStop {
-    double at;
-    unsigned rgb;
-};
-constexpr HeatStop kHeatStops[] = {{0.0, 0x3E5C8A}, {0.22, 0x3F9C9A}, {0.45, 0xE2C255},
-                                   {0.68, 0xEE8A3C}, {0.88, 0xD5344F}, {1.0, 0x9E1838}};
+// Where each step starts. The steps from 1 in 20 are the places' bands (kRiskShownFrom, kRiskLikelyFrom,
+// kRiskVeryLikelyFrom); under 1 in 100 is fine. The strengths behind the chances are borrowed until a resin's
+// tips plate is fitted, so a finer scale would say more than is known.
+constexpr double kHeatFrom[kHeatSteps] = {0.0, 0.01, kRiskShownFrom, kRiskLikelyFrom, kRiskVeryLikelyFrom};
+// Their colours: fine is the model's own grey; a small chance a blue that stays apart from it and from the
+// bands with any colour sight; then the bands' own yellow, red and dark red.
+constexpr unsigned kHeatColours[kHeatSteps] = {0xAEB6C4, 0x5AA9E6, 0xF2D34B, 0xFF6B6B, 0xB3214A};
 
 // Whether `p` is inside paths as Clipper returns them (outer rings one way round, holes the other).
 bool insidePaths(const fruit::Paths& ps, const fruit::Vec2& p) {
@@ -530,19 +426,28 @@ double islandHeat(const fruit::StabilityResult& res, int id, std::size_t layer, 
 // 0), or -1 when it differs from island to island or along a skin; and how
 // many layers below each have a spot warmer than fine, to skip what is all
 // fine quickly. The skins' outlines' boxes, by layer, for where a skin may
-// colour part of a face.
+// colour part of a face. Where a break starts (`reach` > 0) a spot takes the
+// warmest step of the joints under it within `reach` layers above and below,
+// so its steps and its warmth are of all those layers together; `hottest` is
+// each layer's own warmest island.
 struct HeatLayers {
+    int reach = 0;
     std::vector<int> uniform;
     std::vector<int> warm_upto;
+    std::vector<int> hottest;
     std::vector<std::vector<fruit::BBox2>> skin_boxes;
 };
 
 HeatLayers heatLayers(const fruit::StabilityResult& res, HeatOf of) {
     const std::size_t layers = res.in_layer.size();
     HeatLayers h;
+    if (of == HeatOf::Breaks && res.layer_height > 0)
+        h.reach = static_cast<int>(std::lround(kBreakBand / res.layer_height));
     h.uniform.assign(layers, 0);
     h.warm_upto.assign(layers + 1, 0);
+    h.hottest.assign(layers, 0);
     h.skin_boxes.resize(layers);
+    std::vector<int> lowest(layers, kHeatSteps);  // each layer's coolest island (none: kHeatSteps)
     for (std::size_t L = 0; L < layers; ++L) {
         int lo = kHeatSteps, hi = -1;
         bool varies = false;
@@ -566,7 +471,30 @@ HeatLayers heatLayers(const fruit::StabilityResult& res, HeatOf of) {
             }
         }
         h.uniform[L] = hi < 0 ? 0 : lo == hi && !varies ? lo : -1;
-        h.warm_upto[L + 1] = h.warm_upto[L] + (hi > 0 ? 1 : 0);
+        h.hottest[L] = std::max(hi, 0);
+        lowest[L] = lo;
+    }
+    // With a reach, a layer is all one step only when every island within it is.
+    if (h.reach > 0) {
+        std::vector<int> uniform(layers, 0), hottest(layers, 0);
+        for (std::size_t L = 0; L < layers; ++L) {
+            const std::size_t a = L > static_cast<std::size_t>(h.reach) ? L - static_cast<std::size_t>(h.reach) : 0;
+            const std::size_t b = std::min(layers - 1, L + static_cast<std::size_t>(h.reach));
+            int lo = kHeatSteps, hi = -1;
+            bool varies = false;
+            for (std::size_t k = a; k <= b; ++k) {
+                if (lowest[k] == kHeatSteps) continue;  // no model there
+                varies = varies || h.uniform[k] < 0;
+                lo = std::min(lo, lowest[k]);
+                hi = std::max(hi, h.hottest[k]);
+            }
+            uniform[L] = hi < 0 ? 0 : lo == hi && !varies ? lo : -1;
+            hottest[L] = std::max(hi, 0);
+        }
+        h.uniform = std::move(uniform);
+        for (std::size_t L = 0; L < layers; ++L) h.warm_upto[L + 1] = h.warm_upto[L] + (hottest[L] > 0 ? 1 : 0);
+    } else {
+        for (std::size_t L = 0; L < layers; ++L) h.warm_upto[L + 1] = h.warm_upto[L] + (h.hottest[L] > 0 ? 1 : 0);
     }
     return h;
 }
@@ -577,41 +505,18 @@ bool overlaps(const fruit::BBox2& a, const fruit::BBox2& b) {
 
 }  // namespace
 
-double heatPosition(double chance) {
-    if (!(chance > kHeatAnchors[0][0])) return 0;
-    if (chance >= 1) return 1;
-    for (std::size_t i = 1; i < std::size(kHeatAnchors); ++i) {
-        if (chance > kHeatAnchors[i][0]) continue;
-        const double a = std::log10(kHeatAnchors[i - 1][0]), b = std::log10(kHeatAnchors[i][0]);
-        const double t = (std::log10(chance) - a) / (b - a);
-        return kHeatAnchors[i - 1][1] + t * (kHeatAnchors[i][1] - kHeatAnchors[i - 1][1]);
-    }
-    return 1;
-}
-
 int heatStep(double chance) {
-    return std::clamp(static_cast<int>(heatPosition(chance) * kHeatSteps), 0, kHeatSteps - 1);
+    int step = 0;
+    for (int i = 1; i < kHeatSteps; ++i)
+        if (chance >= kHeatFrom[i]) step = i;
+    return step;
 }
 
-unsigned heatColour(double position) {
-    const double p = std::clamp(position, 0.0, 1.0);
-    for (std::size_t i = 1; i < std::size(kHeatStops); ++i) {
-        if (p > kHeatStops[i].at) continue;
-        const HeatStop& a = kHeatStops[i - 1];
-        const HeatStop& b = kHeatStops[i];
-        const double t = (p - a.at) / (b.at - a.at);
-        unsigned rgb = 0;
-        for (int shift : {16, 8, 0}) {
-            const double ca = (a.rgb >> shift) & 0xFF, cb = (b.rgb >> shift) & 0xFF;
-            rgb |= static_cast<unsigned>(std::lround(ca + (cb - ca) * t)) << shift;
-        }
-        return rgb;
-    }
-    return kHeatStops[std::size(kHeatStops) - 1].rgb;
-}
+unsigned heatStepColour(int step) { return kHeatColours[std::clamp(step, 0, kHeatSteps - 1)]; }
 
-unsigned heatStepColour(int step) {
-    return heatColour((std::clamp(step, 0, kHeatSteps - 1) + 0.5) / kHeatSteps);
+const char* heatStepName(int step) {
+    static const char* const kNames[kHeatSteps] = {"fine", "small chance", "may", "likely", "very likely"};
+    return kNames[std::clamp(step, 0, kHeatSteps - 1)];
 }
 
 const std::vector<HeatMark>& heatMarks() {
@@ -646,6 +551,14 @@ void paintHeat(const fruit::TriangleMesh& mesh, const fruit::StabilityResult& re
             }
         }
         return 0;
+    };
+    // The same within the reach of where a break starts: the warmest of the joints under it there.
+    auto heatAt = [&](int L, const fruit::Vec3& c, const fruit::Vec3& n) {
+        if (hl.reach == 0) return stepAt(L, c, n);
+        int best = 0;
+        for (int k = std::max(0, L - hl.reach), top = std::min(layers - 1, L + hl.reach); k <= top; ++k)
+            if (hl.hottest[static_cast<std::size_t>(k)] > best) best = std::max(best, stepAt(k, c, n));
+        return best;
     };
     // Faces in blocks, each block on its own core into its own paint; joined in order after, so it comes out
     // the same however many cores there are.
@@ -727,7 +640,7 @@ void paintHeat(const fruit::TriangleMesh& mesh, const fruit::StabilityResult& re
                         run_step = -1;
                         continue;
                     }
-                    step = stepAt(at, centre(piece), n);
+                    step = heatAt(at, centre(piece), n);
                 }
                 if (step != run_step) {
                     if (run_step > 0) emit(run_step, within(run_from, L - 1));
@@ -857,7 +770,6 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
     r.cups = res->stats.cup_layers > 0;
     if (paint) {
         ctl.step("paint", 0.9);
-        paintRisk(doc.placed(), *res, r.paint, ctl);
         paintHeat(doc.placed(), *res, HeatOf::Lost, r.heat[0], ctl);
         paintHeat(doc.placed(), *res, HeatOf::Breaks, r.heat[1], ctl);
     }

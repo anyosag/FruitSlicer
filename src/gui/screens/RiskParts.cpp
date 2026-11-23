@@ -189,56 +189,50 @@ void riskChecks(App& app, Document& doc) {
     endCard();
 }
 
-float riskLegend(App& app, ImVec2 at) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    float x = at.x;
-    const float y = at.y + 14;
+ImVec2 riskLegend(App& app, ImVec2 at) {
+    if (app.risk()) return ImVec2(kHeatScaleW, heatScale(ImGui::GetWindowDrawList(), at, kHeatScaleW, heatStepColour(0)));
+    const std::string* why = app.riskProblem();
+    const char* s = why ? "Not checked: the replay of the print stopped."
+                        : app.checkingRisk() ? "Replaying the print layer by layer…" : "Not checked yet.";
     ImGui::PushFont(fonts().regular, size::Help);
-    auto words = [&](const char* s, ImU32 c) {
-        dl->AddText(ImVec2(x, y - 7), c, s);
-        x += ImGui::CalcTextSize(s).x + 14;
-    };
-    if (!app.risk()) {
-        const std::string* why = app.riskProblem();
-        words(why ? "Not checked: the replay of the print stopped."
-                  : app.checkingRisk() ? "Replaying the print layer by layer…" : "Not checked yet.",
-              col::TextSecondary);
-    } else if (app.riskHeatmap()) {
-        heatScale(dl, ImVec2(x, at.y + 3), 260);
-        x += 260 + 14;
-    } else {
-        auto item = [&](const char* label, RiskBand b) {
-            bandDot(dl, ImVec2(x + 5, y), 4, b);
-            x += 14;
-            words(label, col::TextSecondary);
-        };
-        item("may let go", RiskBand::May);
-        item("likely", RiskBand::Likely);
-        item("very likely", RiskBand::VeryLikely);
-        words("painted on the model: what would be lost", col::TextMuted);
-    }
+    const ImVec2 ts = ImGui::CalcTextSize(s);
+    ImGui::GetWindowDrawList()->AddText(ImVec2(at.x, at.y + 7), col::TextSecondary, s);
     ImGui::PopFont();
-    return x - at.x;
+    return ImVec2(ts.x, 28);
 }
 
-void heatScale(ImDrawList* dl, ImVec2 at, float w) {
-    constexpr int kSlices = 64;
-    for (int i = 0; i < kSlices; ++i) {
-        const unsigned c = heatColour((i + 0.5) / kSlices);
-        const float x0 = at.x + w * static_cast<float>(i) / kSlices, x1 = at.x + w * static_cast<float>(i + 1) / kSlices;
-        dl->AddRectFilled(ImVec2(x0, at.y), ImVec2(x1 + 0.5f, at.y + 8),
-                          IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, 255));
+float heatScale(ImDrawList* dl, ImVec2 at, float w, unsigned fine) {
+    constexpr float kNumbers = 15, kBar = 12, kGap = 4;
+    const float step = w / kHeatSteps, bar_y = at.y + kNumbers;
+    // The steps, side by side in their colours, a dark hairline between them.
+    for (int i = 0; i < kHeatSteps; ++i) {
+        const unsigned c = i == 0 ? fine : heatStepColour(i);
+        const float x0 = at.x + step * static_cast<float>(i), x1 = x0 + step;
+        const ImDrawFlags round = i == 0 ? ImDrawFlags_RoundLeft
+                                : i == kHeatSteps - 1 ? ImDrawFlags_RoundRight : ImDrawFlags_RoundNone;
+        dl->AddRectFilled(ImVec2(x0, bar_y), ImVec2(x1, bar_y + kBar), IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, 255),
+                          3, round);
+        if (i > 0) dl->AddLine(ImVec2(x0, bar_y), ImVec2(x0, bar_y + kBar), col::Panel, 1.5f);
     }
+    // Over each line between two steps, the chance the warmer one starts at.
     ImGui::PushFont(fonts().regular, size::Label);
-    auto mark = [&](double pos, const char* label) {
-        const float tx = at.x + w * static_cast<float>(pos);
-        dl->AddLine(ImVec2(tx, at.y + 8), ImVec2(tx, at.y + 11), col::TextMuted);
-        const float lw = ImGui::CalcTextSize(label).x;
-        dl->AddText(ImVec2(std::clamp(tx - lw / 2, at.x, at.x + w - lw), at.y + 12), col::TextSecondary, label);
-    };
-    mark(0, "fine");
-    for (const HeatMark& m : heatMarks()) mark(heatPosition(m.chance), m.label);
+    const std::vector<HeatMark>& marks = heatMarks();
+    for (std::size_t i = 0; i < marks.size(); ++i) {
+        const float tx = at.x + step * static_cast<float>(i + 1);
+        const float lw = ImGui::CalcTextSize(marks[i].label).x;
+        dl->AddText(ImVec2(std::clamp(tx - lw / 2, at.x, at.x + w - lw), at.y), col::TextMuted, marks[i].label);
+        dl->AddLine(ImVec2(tx, bar_y - 3), ImVec2(tx, bar_y), col::TextMuted);
+    }
     ImGui::PopFont();
+    // Under each step, its name.
+    ImGui::PushFont(fonts().regular, size::Help);
+    for (int i = 0; i < kHeatSteps; ++i) {
+        const char* name = heatStepName(i);
+        const float lw = ImGui::CalcTextSize(name).x;
+        dl->AddText(ImVec2(at.x + step * (static_cast<float>(i) + 0.5f) - lw / 2, bar_y + kBar + kGap), col::TextSecondary, name);
+    }
+    ImGui::PopFont();
+    return kNumbers + kBar + kGap + 16;
 }
 
 void riskOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {

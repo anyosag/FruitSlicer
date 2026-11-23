@@ -330,11 +330,8 @@ public:
     void showRiskLayer(int place);
     bool layersRisk() const { return layers_risk_; }  // Layers: "Show risk"
     void setLayersRisk(bool on) { layers_risk_ = on; }
-    // The Risk view's and Layers' "Show risk": the heatmap (or the places, in
-    // their three bands), coloured by what would be lost or by where a break
-    // would start.
-    bool riskHeatmap() const { return risk_heatmap_; }
-    void setRiskHeatmap(bool on) { risk_heatmap_ = on; }
+    // What the Risk view and Layers' "Show risk" paint: what may not print, or
+    // where a break may start.
     HeatOf riskHeatOf() const { return risk_heat_of_; }
     void setRiskHeatOf(HeatOf of) { risk_heat_of_ = of; }
     // The layer of the Layers place (with its height correction's layers) that a layer of the replay is.
@@ -876,7 +873,6 @@ private:
     int risk_place_ = -1;
     int risk_scroll_ = 0;  // frames for which the Checks list still scrolls to the risk row
     bool layers_risk_ = false;
-    bool risk_heatmap_ = true;
     HeatOf risk_heat_of_ = HeatOf::Lost;
     int risk_goto_layer_ = -1;  // a layer of the replay to show once the layers are cut
     void startRiskCheck();
@@ -982,7 +978,7 @@ private:
     int layer_tex_index_ = -1, layer_tex_w_ = 0, layer_tex_h_ = 0;
     bool layer_tex_below_ = false;
     std::shared_ptr<const RiskReport> layer_tex_risk_;  // the replay whose colours are on it (null: none)
-    int layer_tex_heat_ = -1;                           // as the heatmap (HeatOf), or -1: the places' bands
+    int layer_tex_heat_ = -1;                           // painted by (HeatOf), or -1: not painted
     std::vector<platform::Volume> drives_;
     int drive_choice_ = -1;
     double drives_checked_ = -1;  // when the drive list was last read (seconds)

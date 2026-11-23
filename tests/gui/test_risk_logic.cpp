@@ -80,9 +80,9 @@ TEST_CASE("Risk: a plain column has nothing to show, and says how it was checked
     CHECK(h.ok);
     CHECK(h.title == "Nothing likely to be lost in printing");
     CHECK(h.detail == "The print was replayed layer by layer, 400 times.");
-    fruit::TriangleMesh paint[3];
-    paintRisk(fruit::makeBox({0, 0, 0}, {5, 5, 4}), res, paint, fruit::JobControl::none());
-    for (const auto& m : paint) CHECK(m.empty());
+    HeatPaint paint;
+    paintHeat(fruit::makeBox({0, 0, 0}, {5, 5, 4}), res, HeatOf::Lost, paint, fruit::JobControl::none());
+    CHECK_FALSE(paint.any());
 }
 
 TEST_CASE("Risk: a wide cap on a thin stem is a place, in plain words, with what goes with it", "[gui][risk]") {
@@ -259,18 +259,18 @@ TEST_CASE("Risk: with a measured table, a tip at just what it is trusted with is
 TEST_CASE("Risk: the paint covers the surface of what would be lost, and nothing else", "[gui][risk]") {
     const fruit::TriangleMesh mesh = capOnStem(12);
     const fruit::StabilityResult res = replay(mesh);
-    fruit::TriangleMesh paint[3];
-    paintRisk(mesh, res, paint, fruit::JobControl::none());
+    HeatPaint heat;
+    paintHeat(mesh, res, HeatOf::Lost, heat, fruit::JobControl::none());
+    const fruit::TriangleMesh& very = heat.steps[heatStep(kRiskVeryLikelyFrom)];
     // The cap is very likely lost: its top, its underside and its four sides.
     const double cap = 2 * 144.0 + 4 * 12.0 * 1.0;
     const double stem = 4 * 1.0 * 2.0 + 1.0;  // all of the stem's own faces, at most
-    CHECK(surface(paint[2]) >= cap - 1e-6);
-    CHECK(surface(paint[2]) <= cap + stem + 1e-6);
-    CHECK(paint[0].empty());
-    CHECK(paint[1].empty());
+    CHECK(surface(very) >= cap - 1e-6);
+    CHECK(surface(very) <= cap + stem + 1e-6);
+    for (int st = 1; st < heatStep(kRiskVeryLikelyFrom); ++st) CHECK(heat.steps[st].empty());
     // All of it lies on the model.
     const fruit::BBox3 box = mesh.bbox();
-    for (const fruit::Vec3& v : paint[2].vertices) {
+    for (const fruit::Vec3& v : very.vertices) {
         CHECK(v.x >= box.min.x - 1e-9);
         CHECK(v.x <= box.max.x + 1e-9);
         CHECK(v.z >= box.min.z - 1e-9);
@@ -278,7 +278,7 @@ TEST_CASE("Risk: the paint covers the surface of what would be lost, and nothing
     }
     // The foot of the stem stays on the plate: nothing is painted there.
     double lowest = 1e9;
-    for (const fruit::Vec3& v : paint[2].vertices) lowest = std::min(lowest, v.z);
+    for (const fruit::Vec3& v : very.vertices) lowest = std::min(lowest, v.z);
     CHECK(lowest > 0.0);
 }
 
@@ -291,45 +291,56 @@ TEST_CASE("Risk: a layer's picture is painted where its print would be lost", "[
     grid.x_left = -8;
     grid.y_top = 8;
     // A layer of the cap: all of it dark red.
-    const RiskLayerPaint cap = paintRiskLayer(res, 50, grid);
+    const int very = heatStep(kRiskVeryLikelyFrom);
+    const RiskLayerHeat cap = heatRiskLayer(res, 50, grid, HeatOf::Lost);
     REQUIRE(cap.any);
-    REQUIRE(cap.cover[2].size() == 160u * 160u);
+    REQUIRE(cap.cover[very].size() == 160u * 160u);
     double lit = 0;
-    for (std::uint8_t c : cap.cover[2]) lit += c / 255.0;
+    for (std::uint8_t c : cap.cover[very]) lit += c / 255.0;
     CHECK(lit * 0.01 == Approx(144.0).epsilon(0.02));  // mm²
-    CHECK(cap.cover[2][80 * 160 + 80] == 255);          // its middle
-    CHECK(cap.cover[2][2 * 160 + 2] == 0);              // off the print
-    // The stem's first layer stands on the plate.
-    const RiskLayerPaint foot = paintRiskLayer(res, 0, grid);
-    CHECK_FALSE(foot.any);
+    CHECK(cap.cover[very][80 * 160 + 80] == 255);       // its middle
+    CHECK(cap.cover[very][2 * 160 + 2] == 0);           // off the print
+    // The stem's first layer stands on the plate: all of it fine.
+    const RiskLayerHeat foot = heatRiskLayer(res, 0, grid, HeatOf::Lost);
+    for (int st = 1; st < kHeatSteps; ++st) CHECK(foot.cover[st].empty());
     // Off the print's layers: nothing.
-    CHECK_FALSE(paintRiskLayer(res, -1, grid).any);
-    CHECK_FALSE(paintRiskLayer(res, 100000, grid).any);
+    CHECK_FALSE(heatRiskLayer(res, -1, grid, HeatOf::Lost).any);
+    CHECK_FALSE(heatRiskLayer(res, 100000, grid, HeatOf::Lost).any);
 }
 
-TEST_CASE("Heatmap: the scale runs fine, 1 in 100, 1 in 20, 1 in 5, 1 in 2, in its colours", "[gui][risk][heat]") {
-    CHECK(heatPosition(0) == 0);
-    CHECK(heatPosition(0.0005) == 0);
-    CHECK(heatPosition(0.01) == Approx(0.22));
-    CHECK(heatPosition(0.05) == Approx(0.45));
-    CHECK(heatPosition(0.2) == Approx(0.68));
-    CHECK(heatPosition(0.5) == Approx(0.88));
-    CHECK(heatPosition(1) == 1);
+TEST_CASE("Heatmap: the steps are fine, a small chance from 1 in 100, then the places' bands in their colours",
+          "[gui][risk][heat]") {
+    CHECK(heatStep(0) == 0);
+    CHECK(heatStep(0.0099) == 0);  // fine
+    CHECK(heatStep(0.01) == 1);
+    CHECK(heatStep(0.049) == 1);
     double last = -1;
     for (double c = 1e-4; c <= 1.0; c *= 1.07) {
-        const double p = heatPosition(c);
-        CHECK(p >= last);
-        last = p;
+        const int st = heatStep(c);
+        CHECK(st >= last);
+        last = st;
     }
-    CHECK(heatStep(0) == 0);
-    CHECK(heatStep(0.001) == 0);  // fine
-    CHECK(heatStep(0.01) > 0);
     CHECK(heatStep(1) == kHeatSteps - 1);
-    CHECK(heatColour(0) == 0x3E5C8Au);
-    CHECK(heatColour(0.45) == 0xE2C255u);
-    CHECK(heatColour(1) == 0x9E1838u);
-    // Every mark on the legend lies where the scale puts its chance.
-    for (const HeatMark& m : heatMarks()) CHECK(heatPosition(m.chance) > 0);
+    CHECK(heatStepColour(0) == 0xAEB6C4u);  // the model's own grey
+    CHECK(heatStepColour(1) == 0x5AA9E6u);
+    CHECK(std::string(heatStepName(0)) == "fine");
+    CHECK(std::string(heatStepName(1)) == "small chance");
+    // From 1 in 20, a step is a place's band: where it starts, its colour and its name.
+    const std::pair<RiskBand, const char*> bands[] = {
+        {RiskBand::May, "may"}, {RiskBand::Likely, "likely"}, {RiskBand::VeryLikely, "very likely"}};
+    for (double c = 1e-4; c <= 1.0; c *= 1.07)
+        if (riskBand(c) != RiskBand::None) CHECK(heatStepColour(heatStep(c)) == riskColour(riskBand(c)));
+    for (const auto& [band, name] : bands) {
+        const double from = band == RiskBand::May ? kRiskShownFrom : band == RiskBand::Likely ? kRiskLikelyFrom : kRiskVeryLikelyFrom;
+        CHECK(std::string(heatStepName(heatStep(from))) == name);
+        CHECK(heatStep(from * 0.999) == heatStep(from) - 1);
+    }
+    // Each mark on the legend is where a step starts.
+    REQUIRE(heatMarks().size() == static_cast<std::size_t>(kHeatSteps - 1));
+    for (std::size_t i = 0; i < heatMarks().size(); ++i) {
+        CHECK(heatStep(heatMarks()[i].chance) == static_cast<int>(i) + 1);
+        CHECK(heatStep(heatMarks()[i].chance * 0.999) == static_cast<int>(i));
+    }
 }
 
 TEST_CASE("Heatmap: a plain column is fine all over, and nothing is painted on it", "[gui][risk][heat]") {
@@ -375,10 +386,22 @@ TEST_CASE("Heatmap: the wide cap on a thin stem is hot all over, its stem's foot
     REQUIRE(by.size() == res.in_layer.size());
     CHECK(heatStep(by[50]) >= heatStep(0.5));
     CHECK(heatStep(by[0]) == 0);
-    // Where a break would start is somewhere under the cap, in the stem.
+    // Where a break would start is somewhere under the cap, in the stem: painted as a band about
+    // 2 × kBreakBand tall round the joint, not one layer's hairline.
     HeatPaint breaks;
     paintHeat(mesh, res, HeatOf::Breaks, breaks, fruit::JobControl::none());
     REQUIRE(breaks.any());
+    const int hottest = [&] {
+        for (int s = kHeatSteps - 1; s > 0; --s)
+            if (!breaks.steps[s].empty()) return s;
+        return 0;
+    }();
+    double lo = 1e9, hi = -1e9;
+    for (const fruit::Vec3& v : breaks.steps[hottest].vertices) {
+        lo = std::min(lo, v.z);
+        hi = std::max(hi, v.z);
+    }
+    CHECK(hi - lo >= 2 * kBreakBand - 2 * kH - 1e-6);
 }
 
 TEST_CASE("Heatmap: a ledge's underside warms along its skin, not all one colour", "[gui][risk][heat]") {
@@ -403,7 +426,22 @@ TEST_CASE("Heatmap: a ledge's underside warms along its skin, not all one colour
         }
     }
     REQUIRE_FALSE(res.skins[static_cast<std::size_t>(first)].empty());
-    CHECK(under.size() >= 3);
+    // The ledge itself is held: only its skin warms it. Out at its edge the skin is very likely to tear; in
+    // by the column it is fine. (The skin's steps between are rings a fifth of a millimetre wide.)
+    double painted = 0;
+    for (int st = 1; st < kHeatSteps; ++st) {
+        const fruit::TriangleMesh& m = heat.steps[st];
+        for (std::size_t f = 0; f < m.faces.size(); ++f) {
+            const fruit::Face& fc = m.faces[f];
+            const fruit::Vec3 c = (m.vertices[static_cast<std::size_t>(fc[0])] + m.vertices[static_cast<std::size_t>(fc[1])] +
+                                   m.vertices[static_cast<std::size_t>(fc[2])]) / 3.0;
+            if (std::abs(c.z - 3.0) < 1e-6 && c.x > 10.0) painted += m.faceArea(f);
+        }
+    }
+    INFO("painted " << painted << " mm² of the underside's 50");
+    CHECK(under.count(heatStep(kRiskVeryLikelyFrom)) == 1);
+    CHECK(painted > 5.0);
+    CHECK(painted < 45.0);
 }
 
 TEST_CASE("Heatmap: a layer's picture shows the print in its step, fine included", "[gui][risk][heat]") {

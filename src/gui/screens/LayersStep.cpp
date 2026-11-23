@@ -103,8 +103,8 @@ void layerColumn(App& app, Document& doc, float h) {
         const bool big = m == r.biggest;
         dl->AddLine(ImVec2(x + 28, y), ImVec2(x + 40, y), big ? col::Accent : IM_COL32(0xF0, 0x6B, 0x9A, 255), 2);
     }
-    // With the heatmap shown: beside the slider, each layer's likeliest spot in its colour.
-    if (const RiskReport* heat = app.risk(); heat && app.layersRisk() && app.riskHeatmap()) {
+    // With the risk shown: beside the slider, each layer's likeliest spot in its colour (fine: dim).
+    if (const RiskReport* heat = app.risk(); heat && app.layersRisk()) {
         const std::vector<float>& by = heat->layer_heat[static_cast<std::size_t>(app.riskHeatOf())];
         const float top = p.y + 7, bottom = p.y + sh - 7;
         const int rows = std::max(1, static_cast<int>(bottom - top));
@@ -118,7 +118,8 @@ void layerColumn(App& app, Document& doc, float h) {
                 if (at_replay >= 0 && static_cast<std::size_t>(at_replay) < by.size())
                     worst = std::max(worst, by[static_cast<std::size_t>(at_replay)]);
             }
-            const unsigned c = heatStepColour(heatStep(worst));
+            const int st = heatStep(worst);
+            const unsigned c = st == 0 ? 0x3A404Bu : heatStepColour(st);
             const float yy = bottom - static_cast<float>(row + 1);
             dl->AddRectFilled(ImVec2(x - 12, yy), ImVec2(x - 6, yy + 1.0f), IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, 255));
         }
@@ -318,14 +319,15 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         bool risk = app.layersRisk();
         if (ImGui::Checkbox("Show risk", &risk)) app.setLayersRisk(risk);
         tooltip("Colours what may not print, as the replay of the print found it.");
-        // Shown: the places in their bands, or the heatmap, where there is room for the choice.
+        // What it paints, as in the Supports step's Risk view, where there is room for the choice.
         if (app.layersRisk()) {
-            const float pw = ImGui::CalcTextSize("Places").x + ImGui::CalcTextSize("Heatmap").x + 52;
+            const float pw = ImGui::CalcTextSize("What may not print").x + ImGui::CalcTextSize("Where it may break").x + 52;
             if (rx - 16 - pw > left_end + 16) {
                 ImGui::SetCursorPos(ImVec2(rx - 16 - pw, y - 5));
-                if (segmentButton("Places", !app.riskHeatmap())) app.setRiskHeatmap(false);
+                if (segmentButton("What may not print", app.riskHeatOf() == HeatOf::Lost)) app.setRiskHeatOf(HeatOf::Lost);
                 ImGui::SameLine(0, 4);
-                if (segmentButton("Heatmap", app.riskHeatmap())) app.setRiskHeatmap(true);
+                if (segmentButton("Where it may break", app.riskHeatOf() == HeatOf::Breaks))
+                    app.setRiskHeatOf(HeatOf::Breaks);
             }
         }
     }
@@ -369,28 +371,13 @@ void layerPicture(App& app, Document& doc, ImVec2 size) {
         }
     }
     if (replay && app.layersRisk()) {
-        // What the colours mean, along the picture's foot.
+        // What the colours mean, along the picture's foot (what prints fine stays white).
+        const float x = o.x + 12;
+        const float h = heatScale(dl, ImVec2(x, o.y + avail.y - 60), kHeatScaleW, 0xFFFFFF);
         ImGui::PushFont(fonts().regular, size::Help);
-        float x = o.x + 12;
-        const float yl = o.y + avail.y - 18;
-        auto item = [&](const char* label, ImU32 c) {
-            dl->AddRectFilled(ImVec2(x, yl - 5), ImVec2(x + 10, yl + 5), c, 2);
-            x += 16;
-            dl->AddText(ImVec2(x, yl - 7), col::TextSecondary, label);
-            x += ImGui::CalcTextSize(label).x + 16;
-        };
-        if (app.riskHeatmap()) {
-            heatScale(dl, ImVec2(x, yl - 18), 220);
-            x += 220 + 16;
-            dl->AddText(ImVec2(x, yl - 7), col::TextSecondary,
-                        app.riskHeatOf() == HeatOf::Lost ? "how likely each spot is not to print"
-                                                         : "where a break would start");
-        } else {
-            item("prints", IM_COL32(255, 255, 255, 255));
-            item("may not", bandColor(RiskBand::May));
-            item("likely not", bandColor(RiskBand::Likely));
-            item("very likely not", bandColor(RiskBand::VeryLikely));
-        }
+        dl->AddText(ImVec2(x + kHeatScaleW + 16, o.y + avail.y - 60 + h - 32), col::TextSecondary,
+                    app.riskHeatOf() == HeatOf::Lost ? "How likely each part is to be missing from the print"
+                                                     : "How likely a break is to start at this layer");
         ImGui::PopFont();
     }
     endPanel();

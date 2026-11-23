@@ -60,8 +60,8 @@
 //   {"supports_view": "supports" | "tips" | "why" | "risk"} {"select_tip": index} {"problems": bool}
 //   {"risk": "wait" | "show"} lets the replay of the print finish, or shows the Risk view ("Show them on the model")
 //   {"risk_place": n} picks the n-th place that may not print (1-based; 0: none) {"risk_layer": n} its "Go to layer"
-//   {"layers_risk": bool} Layers' "Show risk" {"risk_heatmap": bool} the heatmap, or (false) the places in their
-//     bands {"risk_colour": "lost" | "breaks"} what the heatmap is coloured by
+//   {"layers_risk": bool} Layers' "Show risk" {"risk_colour": "lost" | "breaks"} what the Risk view and Layers'
+//     "Show risk" paint: what may not print, or where it may break
 //   {"advanced": "open" | "close" | "reset" | "apply"} {"setting": [key, value]} (keys: advancedSettings())
 //   {"exposures": [normal_s, bottom_s]} {"sample": path | "@demo-sample"} (a 0.03 mm print file)
 //   {"drive": name} adds a stand-in USB drive (a folder) and picks it
@@ -79,6 +79,8 @@
 //   {"orientation_fix": "use"} {"hinge": "back" | "left" | "right" | "front" | "none"}
 //   {"frames": n} renders n frames (lets per-frame work, like background scoring, start)
 //   {"screen": "home" | "job" | "calibrate" | "orientation_check" | "printer" | "about"} {"view": "front" | "side" | "angled" | "below" | "top"}
+//   {"look_at": [x, y, z, radius] | [radius]} the view turned on that point (printer mm; or the one it is on), as near as frames that much round it
+//   {"view_turn": [yaw, pitch]} the view turned by those degrees
 // Shots are written as <dir>/<name>.png once two consecutive frames are
 // identical.
 

@@ -1150,15 +1150,23 @@ void legend(App& app, const SupportResult& r) {
     float x = at.x;
     const float y = at.y + 14;
     if (app.supportsView() == SupportsView::Risk) {
-        // What the paint and the tips' colours mean, or that the replay is not done yet.
-        ImGui::Dummy(ImVec2(riskLegend(app, at), 28));
-        if (const RiskReport* replay = app.risk(); replay && app.riskHeatmap()) {
-            text(app.riskHeatOf() == HeatOf::Lost
-                     ? "How likely each spot is not to print: lost with what breaks under it, or its own layer "
-                       "not forming."
-                     : "Where a break would start: how likely each layer's joint is to let go first.",
+        // What the paint is of; what its colours and the tips' mean, or that the replay is not done yet; and
+        // what the numbers are worth. (All of that is in the Checks too, with the places.)
+        const RiskReport* replay = app.risk();
+        const bool lost = app.riskHeatOf() == HeatOf::Lost;
+        if (replay) {
+            text(lost ? "How likely each part of the model is to be missing from the finished print."
+                      : strf("Where a break may start: a band %.0f mm tall round each layer it may start at.",
+                             2 * kBreakBand).c_str(),
                  fonts().regular, size::Help, col::TextSecondary, true);
-            text(riskStrengthsNote(*replay).c_str(), fonts().regular, size::Help, col::TextMuted, true);
+            ImGui::Dummy(ImVec2(0, 2));
+        }
+        ImGui::Dummy(riskLegend(app, ImGui::GetCursorScreenPos()));
+        if (replay) {
+            if (!replay->heat[lost ? 0 : 1].any())
+                text(lost ? "None of the model reaches 1 in 100." : "No layer reaches 1 in 100.", fonts().regular,
+                     size::Help, col::TextSecondary, true);
+            text(riskStrengthsBrief(*replay).c_str(), fonts().regular, size::Help, col::TextMuted, true);
         }
         return;
     }
@@ -1400,18 +1408,11 @@ void supportsViewPill(App& app, Document& doc) {
         first = false;
         if (segmentButton(label, app.supportsView() == v)) app.setSupportsView(v);
     }
-    // The Risk view: the places in their three bands, or the heatmap; and what the heatmap is coloured by.
+    // The Risk view: what the model is painted by.
     if (app.supportsView() == SupportsView::Risk && app.risk()) {
-        if (segmentButton("Places", !app.riskHeatmap())) app.setRiskHeatmap(false);
+        if (segmentButton("What may not print", app.riskHeatOf() == HeatOf::Lost)) app.setRiskHeatOf(HeatOf::Lost);
         ImGui::SameLine(0, 4);
-        if (segmentButton("Heatmap", app.riskHeatmap())) app.setRiskHeatmap(true);
-        if (app.riskHeatmap()) {
-            ImGui::SameLine(0, 12);
-            if (segmentButton("What would be lost", app.riskHeatOf() == HeatOf::Lost)) app.setRiskHeatOf(HeatOf::Lost);
-            ImGui::SameLine(0, 4);
-            if (segmentButton("Where a break starts", app.riskHeatOf() == HeatOf::Breaks))
-                app.setRiskHeatOf(HeatOf::Breaks);
-        }
+        if (segmentButton("Where it may break", app.riskHeatOf() == HeatOf::Breaks)) app.setRiskHeatOf(HeatOf::Breaks);
     }
     legend(app, *doc.supports.result);
 }

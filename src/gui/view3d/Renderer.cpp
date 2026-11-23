@@ -34,6 +34,7 @@ uniform vec3 uColor;
 uniform vec3 uEye;
 uniform float uOverhangSin;   // > 0: tint faces leaning more than this
 uniform vec3 uOverhangColor;
+uniform float uShade;         // how much the light shades it: 1 for the model, less for paint
 out vec4 fragColor;
 void main() {
     vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
@@ -45,11 +46,15 @@ void main() {
     vec3 key = normalize(vec3(-0.35, -0.55, 0.75));
     vec3 fill = normalize(vec3(0.6, 0.45, -0.25));
     float d = 0.38 + 0.55 * max(dot(n, key), 0.0) + 0.22 * max(dot(n, fill), 0.0);
-    vec3 c = base * d;
+    vec3 c = base * mix(1.0, d, uShade);
     if (!gl_FrontFacing) c *= 0.45;
     fragColor = vec4(c, 1.0);
 }
 )";
+
+// How much the light shades paint, against the model's 1: enough to keep the shape, not so much that a
+// colour on the dark side is mistaken for another.
+constexpr float kPaintShade = 0.4f;
 
 const char* kLineVs = R"(#version 330 core
 layout(location = 0) in vec3 aPos;
@@ -420,6 +425,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
     glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
     glUniform3f(glGetUniformLocation(mesh_prog_, "uEye"), eye.x, eye.y, eye.z);
     glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
+    glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), 1.0f);
     glUniform4f(glGetUniformLocation(mesh_prog_, "uClip"), 0, 0, 0, 1);
     float c[3];
     rgb(0x1C2028, c);
@@ -490,8 +496,10 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         }
         // Paint lies on the model's own surface, which is already drawn: a
         // little nearer the eye, so it wins there and nowhere else.
+        // Shaded only lightly, so a colour reads the same on the model's dark side as on its lit one.
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(-1.0f, -4.0f);
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), kPaintShade);
         for (const Extra& e : extras_) {
             if (!e.visible || !e.mesh.vao || !e.paint) continue;
             rgb(e.rgb, c);
@@ -499,6 +507,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
             glBindVertexArray(e.mesh.vao);
             glDrawElements(GL_TRIANGLES, e.mesh.count, GL_UNSIGNED_INT, nullptr);
         }
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), 1.0f);
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
     if (cut_) {

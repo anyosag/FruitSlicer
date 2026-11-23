@@ -589,6 +589,40 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   also checks, at every step, that the tips
   shown at once are the rebuild's own: the same tips in the same order, with
   their sizes and parts.
+- **The Risk view, easier to read (2026-11-23).** The user found "Where a
+  break starts" too thin to see and the heatmap's set-up confusing. Four
+  reviews (a cold read of the screenshots, then the paint, the scale and
+  legend, and the controls, each from the code) agreed on why:
+  - A break starts at one joint, the line between two layers, so the
+    paint was one layer tall: 0.03 mm, under a pixel at a normal zoom.
+  - The paint was shaded like the model, so on the dark side teal and the
+    "fine" blue were the same navy.
+  - "Fine" was a blue close to the model's own look, so a model with
+    nothing to show looked like a model not painted.
+  - The scale ran 1 in 500 to 1 in 1 in 16 rainbow steps whose 1 in 5 was
+    orange while the places' was red, with no word for what the chance
+    is of, under a bar 8 points tall.
+  - Places | Heatmap and What would be lost | Where a break starts read as
+    four peer modes. Once on the same bands, Places' paint and the heatmap
+    of what would be lost are the same picture (both by `partChance`).
+  Now the Risk view is one picture: the numbered places and the tips that may
+  let go over the model, painted by one of "What may not print" or "Where it
+  may break" (`risk_colour` in scripts). The steps are fine (under 1 in 100:
+  the model's own grey, never painted), a small chance (from 1 in 100, a blue
+  that stays apart from the grey and the bands with any colour sight), then
+  the places' own may, likely and very likely in their colours. Where a
+  break may start is painted 0.5 mm above and below each joint
+  (`kBreakBand`; the warmest joint within reach wins). Paint is shaded at 0.4
+  of the model's light (`kPaintShade`), and in the Risk view the supports are
+  darker than the model. The legend is the five steps side by side, the
+  chance each starts at over them and its name under them. Over the view, a
+  line says what the paint is of, and one line that it is a guide; the full
+  note on the strengths stays in the Checks. Layers' "Show risk" uses the
+  same steps (fine stays white) and the same two choices. The places' own
+  paint (`paintRisk`, `paintRiskLayer`) is gone, and so are the i1_risk
+  shots of it; their tests now check the heatmap's same steps. On CHamber,
+  the replay with its paint takes as long as before (1.6 to 2.0 s). Not
+  printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

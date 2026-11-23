@@ -72,20 +72,23 @@ struct RiskPlace {
 // The replay gives one chance for each island of a layer, and the skins (a
 // fresh layer reaching past what holds it) their own within one: so the
 // colours change from layer to layer, and across a layer only along a skin.
-// The scale runs from "fine" (under about 1 in 500) through 1 in 100, 1 in 20,
-// 1 in 5 and 1 in 2, in kHeatSteps colours.
-inline constexpr int kHeatSteps = 16;
+// In kHeatSteps steps: fine (under 1 in 100, the model's own colour, never
+// painted), a small chance (from 1 in 100), then the places' own bands: may,
+// likely and very likely, from 1 in 20, 1 in 5 and 1 in 2, in their colours.
+inline constexpr int kHeatSteps = 5;
 enum class HeatOf { Lost, Breaks };
-double heatPosition(double chance);   // along the scale: 0 fine .. 1 sure not to print
 int heatStep(double chance);          // 0 (fine) .. kHeatSteps - 1
-unsigned heatColour(double position); // 0xRRGGBB along the scale
-unsigned heatStepColour(int step);    // a step's own colour (step 0: fine)
-// The scale's marks, as its legend names them.
+unsigned heatStepColour(int step);    // 0xRRGGBB (step 0, fine: the model's own grey)
+const char* heatStepName(int step);   // "fine", "small chance", "may", "likely", "very likely"
+// The chance each step starts from, as the legend names it (step 1 on).
 struct HeatMark {
     double chance;
     const char* label;
 };
 const std::vector<HeatMark>& heatMarks();
+// A joint is one layer thin, too thin to see on the model: where a break may
+// start is painted this far above and below it (mm), the likeliest on top.
+inline constexpr double kBreakBand = 0.5;
 // The model's surface by step, printer coordinates. Step 0 is left out: the
 // model is drawn in that colour itself, so only what is warmer is painted.
 struct HeatPaint {
@@ -113,8 +116,6 @@ struct RiskReport {
     std::vector<float> closeness;
     int riskiest_layer = -1;
     double lost_mm3[3] = {0, 0, 0};  // the model's volume that may, is likely and is very likely not to print
-    // The model's surface over that volume, in printer coordinates: for the 3D view to paint.
-    fruit::TriangleMesh paint[3];
     // The heatmap, by HeatOf (Lost, Breaks): the surface by step, and each layer's likeliest spot.
     HeatPaint heat[2];
     std::vector<float> layer_heat[2];
@@ -130,6 +131,8 @@ struct RiskHeadline {
 RiskHeadline riskHeadline(const RiskReport& r);
 // What the strengths behind it are worth, in a sentence (the line under the row).
 std::string riskStrengthsNote(const RiskReport& r);
+// The same in a few words, for over the view: that it is a guide, and the guess it moves most with.
+std::string riskStrengthsBrief(const RiskReport& r);
 
 // Replays the print for `sup`, the supports of `doc` as it is now. Progress:
 // cutting the layers up to 0.2, the replay up to 0.9, then the paint
@@ -144,20 +147,6 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
 // Its places from the engine's result (checkRisk does this; apart, for tests).
 // `usable` is the share of a tip's half-fail load it is trusted with.
 void findRiskPlaces(const fruit::StabilityResult& res, double usable, RiskReport& out);
-// The model's surface (`mesh`, printer coordinates) over the parts that may
-// not print, by band (checkRisk does this; apart, for tests).
-void paintRisk(const fruit::TriangleMesh& mesh, const fruit::StabilityResult& res, fruit::TriangleMesh paint[3],
-               const fruit::JobControl& ctl);
-
-// For the layer picture: how much of each image pixel is print that may not
-// print, by band (May, Likely, VeryLikely), on the picture's own grid.
-// `layer` counts from the model's first layer. Empty vectors: nothing there.
-struct RiskLayerPaint {
-    std::vector<std::uint8_t> cover[3];
-    bool any = false;
-};
-RiskLayerPaint paintRiskLayer(const fruit::StabilityResult& res, int layer, const LayerImage& grid);
-
 // The heatmap of `mesh` (the model's surface, printer coordinates) for the
 // replay `res` (checkRisk does this; apart, for tests).
 void paintHeat(const fruit::TriangleMesh& mesh, const fruit::StabilityResult& res, HeatOf of, HeatPaint& out,

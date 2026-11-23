@@ -2258,9 +2258,9 @@ void App::syncScene() {
     // placed, a part is red while it doesn't fit there.
     const bool placing_place = screen_ == Screen::Job &&
                                (step_ == Step::Model || (step_ == Step::Orient && orient_view_ == OrientView::Settings));
-    // The Risk view's heatmap: the model in the colour of fine, what is warmer painted over it.
+    // The Risk view's heatmap: what is warmer than fine painted over the model in its own colours.
     const bool heat = doc_ && screen_ == Screen::Job && step_ == Step::Supports && supports_view_ == SupportsView::Risk &&
-                      !tip_editing_ && risk_heatmap_ && doc_->supports.result &&
+                      !tip_editing_ && doc_->supports.result &&
                       doc_->supports.fresh(doc_->revision(), doc_->supportSettings()) && risk();
     std::vector<Renderer::ModelDraw> models;
     if (doc_)
@@ -2269,7 +2269,7 @@ void App::syncScene() {
             m.mesh = &p.mesh();
             m.geometry = p.geometryId();
             m.transform = p.transform();
-            m.rgb = heat ? heatStepColour(0) : doc_->partCount() > 1 && p.id() != doc_->selectedId() ? 0x6F7682u : 0xAEB6C4u;
+            m.rgb = doc_->partCount() > 1 && p.id() != doc_->selectedId() ? 0x6F7682u : 0xAEB6C4u;
             const std::size_t faces = p.check().triangles;
             const std::size_t patches = screen_ == Screen::Job && step_ == Step::Model ? p.check().repair.patch_faces : 0;
             m.tint_first = faces - std::min(patches, faces);
@@ -2313,11 +2313,9 @@ void App::syncScene() {
         scene_risk_ = replay ? risk_report_ : nullptr;
         ++scene_key_;
     }
-    // The tree; the tips by kind; then the Risk view's: the model's surface
-    // over what may not print, and the tips that may let go, each by band.
+    // The tree; the tips by kind; then the Risk view's: the tips that may let go, by band.
     std::vector<const fruit::TriangleMesh*> meshes{&s.result->mesh};
     for (const auto& t : tip_meshes_) meshes.push_back(&t);
-    for (int b = 0; b < 3; ++b) meshes.push_back(replay ? &replay->paint[b] : nullptr);
     for (const auto& t : risk_tip_meshes_) meshes.push_back(&t);
     // The heatmap's steps, by what it is coloured by (step 0 is the model's own colour).
     for (int of = 0; of < 2; ++of)
@@ -2329,8 +2327,9 @@ void App::syncScene() {
     const bool fresh = s.fresh(doc_->revision(), doc_->supportSettings());
     const bool why = supports_view_ == SupportsView::Why;
     const bool risky = supports_view_ == SupportsView::Risk && !tip_editing_;
-    // While editing, only the tips: the tree and raft would hide them.
-    renderer_.setExtraStyle(0, fresh ? (why || risky ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
+    // While editing, only the tips: the tree and raft would hide them. In the Why view dimmed, so the tips'
+    // colours show; in the Risk view darker still, under the model's own grey, so the model and its paint do.
+    renderer_.setExtraStyle(0, fresh ? (risky ? 0x474D58u : why ? 0x6B7380u : 0xE2E6EDu) : 0x3A404Bu,
                             supports_view_ != SupportsView::TipsOnly && !tip_editing_);
     // Island, overhang, extra hold, steadying, by hand (yours: the accent while editing). In the Risk view
     // they are all dimmed: the colour is for the ones that may let go.
@@ -2338,15 +2337,12 @@ void App::syncScene() {
     for (std::size_t i = 0; i < 5; ++i) renderer_.setExtraStyle(i + 1, why ? kWhy[i] : risky ? 0x8A92A0u : 0xF2F4F7u, fresh);
     if (tip_editing_) renderer_.setExtraStyle(5, 0xFF8F3F, true);
     static const RiskBand kBands[3] = {RiskBand::May, RiskBand::Likely, RiskBand::VeryLikely};
-    for (std::size_t b = 0; b < 3; ++b) {
-        renderer_.setExtraStyle(6 + b, riskColour(kBands[b]), risky && fresh && replay && !risk_heatmap_, true);
-        renderer_.setExtraStyle(9 + b, riskColour(kBands[b]), risky && fresh && replay);
-    }
+    for (std::size_t b = 0; b < 3; ++b) renderer_.setExtraStyle(6 + b, riskColour(kBands[b]), risky && fresh && replay);
     for (int of = 0; of < 2; ++of)
         for (int st = 0; st < kHeatSteps; ++st)
-            renderer_.setExtraStyle(12 + static_cast<std::size_t>(of * kHeatSteps + st), heatStepColour(st),
+            renderer_.setExtraStyle(9 + static_cast<std::size_t>(of * kHeatSteps + st), heatStepColour(st),
                                     heat && st > 0 && static_cast<int>(risk_heat_of_) == of, true);
-    renderer_.setExtraStyle(12 + 2 * static_cast<std::size_t>(kHeatSteps), kKeptClearColour, why && fresh && !tip_editing_);
+    renderer_.setExtraStyle(9 + 2 * static_cast<std::size_t>(kHeatSteps), kKeptClearColour, why && fresh && !tip_editing_);
 }
 
 void App::chooseSample() {
@@ -3682,8 +3678,8 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     const bool below = doc_->layers.show_below;
     // With "Show risk": what may not print in its colours (once the print has been replayed).
     const RiskReport* replay = layers_risk_ ? risk() : nullptr;
-    // As the heatmap (by what it is coloured by), or (-1) the places in their bands.
-    const int heat_of = replay && risk_heatmap_ ? static_cast<int>(risk_heat_of_) : -1;
+    // Painted by what the Risk view paints (-1: not painted).
+    const int heat_of = replay ? static_cast<int>(risk_heat_of_) : -1;
     if (layer_tex_ && layer_tex_result_ == res && layer_tex_index_ == index && layer_tex_below_ == below &&
         layer_tex_w_ == max_w && layer_tex_h_ == max_h && layer_tex_risk_.get() == replay && layer_tex_heat_ == heat_of) {
         if (image) *image = &layer_image_;
@@ -3695,14 +3691,11 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
     crop.max = crop.max + fruit::Vec3{3, 3, 0};
     layer_image_ = drawLayer(*res->layers, static_cast<std::size_t>(index), crop, max_w, max_h, printer_, below);
     // The replay's layers start at the model's first; the height correction's copies of it come before.
-    RiskLayerPaint paint;
     RiskLayerHeat heat;
     if (replay && replay->result) {
         const int at = std::max(0, index - static_cast<int>(res->base_layers));
-        if (heat_of >= 0) heat = heatRiskLayer(*replay->result, at, layer_image_, static_cast<HeatOf>(heat_of));
-        else paint = paintRiskLayer(*replay->result, at, layer_image_);
+        heat = heatRiskLayer(*replay->result, at, layer_image_, static_cast<HeatOf>(heat_of));
     }
-    static const RiskBand kBands[3] = {RiskBand::May, RiskBand::Likely, RiskBand::VeryLikely};
     std::vector<unsigned char> rgba(layer_image_.lit.size() * 4, 0);
     for (std::size_t i = 0; i < layer_image_.lit.size(); ++i) {
         const unsigned lit = layer_image_.lit[i];
@@ -3710,25 +3703,15 @@ unsigned App::layerPicture(int max_w, int max_h, const LayerImage** image) {
         // Lit pixels white; the layer below, where this one is dark, in dim blue-grey.
         unsigned c[3] = {lit + (255 - lit) * under * 0x48 / (255 * 255), lit + (255 - lit) * under * 0x52 / (255 * 255),
                          lit + (255 - lit) * under * 0x66 / (255 * 255)};
-        // The heatmap: the lit part in its step's colour, the warmest on top.
+        // The heatmap: the lit part in its step's colour, the warmest on top; what is fine stays white.
         if (heat.any && lit > 0)
-            for (int st = kHeatSteps - 1; st >= 0; --st) {
+            for (int st = kHeatSteps - 1; st >= 1; --st) {
                 const auto& cover = heat.cover[static_cast<std::size_t>(st)];
                 if (cover.empty() || cover[i] == 0) continue;
                 const unsigned part = std::min<unsigned>(cover[i], lit);
                 const unsigned rgb = heatStepColour(st);
                 const unsigned tone[3] = {(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255};
                 for (int k = 0; k < 3; ++k) c[k] -= std::min(c[k], part * (255 - tone[k]) / 255);
-                break;
-            }
-        // What of the lit part may not print: in its band's colour, the likeliest on top.
-        if (paint.any && lit > 0)
-            for (int b = 2; b >= 0; --b) {
-                if (paint.cover[b].empty() || paint.cover[b][i] == 0) continue;
-                const unsigned part = std::min<unsigned>(paint.cover[b][i], lit);
-                const unsigned rgb = riskColour(kBands[b]);
-                const unsigned band[3] = {(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255};
-                for (int k = 0; k < 3; ++k) c[k] -= std::min(c[k], part * (255 - band[k]) / 255);
                 break;
             }
         for (int k = 0; k < 3; ++k) rgba[i * 4 + static_cast<std::size_t>(k)] = static_cast<unsigned char>(std::min(255u, c[k]));

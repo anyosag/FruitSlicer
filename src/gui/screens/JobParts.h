@@ -85,10 +85,14 @@ void checkLine(const char* id, Tick t, const char* title, const std::string& det
 // place's card over the 3D view; the status bar's chip; and the row under
 // Layers' "Before you save".
 void riskChecks(App& app, Document& doc);
-float riskLegend(App& app, ImVec2 at);  // drawn from `at`, on one line; how wide it came out
-// The heatmap's colours, fine to 1 in 2, `w` wide from `at`, with their marks
-// under them: 26 points tall.
-void heatScale(ImDrawList* dl, ImVec2 at, float w);
+// The Risk view's legend from `at` (what the colours mean, or that the
+// replay is not done yet); its size.
+ImVec2 riskLegend(App& app, ImVec2 at);
+// The heatmap's steps, `w` wide from `at`, side by side in their colours (the
+// first, fine, in `fine`, 0xRRGGBB: as the picture shows it), the chance each
+// starts at over the lines between them and their names under them; how tall.
+inline constexpr float kHeatScaleW = 400;
+float heatScale(ImDrawList* dl, ImVec2 at, float w, unsigned fine);
 void riskOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
 void riskChip(App& app);
 void riskBeforeSave(App& app);
