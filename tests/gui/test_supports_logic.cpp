@@ -313,14 +313,51 @@ TEST_CASE("Supports: bigger usual tips and denser spacing change the plan", "[gu
     CHECK(has_06);
 }
 
-TEST_CASE("Supports: stages follow the progress ranges", "[gui][supports]") {
-    CHECK(supportStage("slice", 0.1) == 0);
-    CHECK(supportStage("islands", 0.2) == 1);
-    CHECK(supportStage("points", 0.4) == 2);
-    CHECK(supportStage("tree", 0.6) == 3);
-    CHECK(supportStage("mesh", 0.8) == 4);
-    CHECK(supportStage("slice", 0.9) == 5);  // the check slices again: the range tells it apart
-    CHECK(supportStages().size() == 6);
+TEST_CASE("Supports: the running card's stage and line come from what the progress says it is", "[gui][supports]") {
+    CHECK(supportStages().size() == 7);
+    CHECK(supportStage("plan|slice") == 0);
+    CHECK(supportStage("plan|part 2/5|islands") == 1);
+    CHECK(supportStage("plan|part 2/5|points") == 2);
+    CHECK(supportStage("make|slice") == 3);  // the slots: not the plan's slicing
+    CHECK(supportStage("make|tree") == 3);
+    CHECK(supportStage("make|mesh") == 4);
+    CHECK(supportStage("make|check") == 5);
+    CHECK(supportStage("make|check|islands") == 5);  // the check slices and looks for islands again
+    CHECK(supportStage("strengthen|replay|stress") == 6);
+    CHECK(supportStage("strengthen|round 2|build 3 1|make|tree") == 6);
+    CHECK(supportStage("islands") == 1);  // a bare engine stage, by its name
+    CHECK(supportStage("tree") == 3);
+
+    CHECK(supportsDoing("plan|part 2/5|islands") == "Planning part 2 of 5");
+    CHECK(supportsDoing("plan|islands").empty());
+    CHECK(supportsDoing("make|tree").empty());
+    CHECK(supportsDoing("strengthen|replay|replays") == "Replaying the print to find tips likely to let go");
+    CHECK(supportsDoing("strengthen|round 1|pick") == "Round 1 of up to 6: choosing tips to add or make bigger");
+    CHECK(supportsDoing("strengthen|round 1|build 181 197|tree") == "Round 1 of up to 6: adding 181 tips and making 197 bigger");
+    CHECK(supportsDoing("strengthen|round 2|build 1 0|tree") == "Round 2 of up to 6: adding 1 tip");
+    CHECK(supportsDoing("strengthen|round 2|build 0 3|mesh") == "Round 2 of up to 6: making 3 tips bigger");
+    CHECK(supportsDoing("strengthen|round 2|replay|stress") == "Round 2 of up to 6: replaying the print with them");
+    CHECK(supportsDoing("strengthen|round 2|again|replays") == "Round 2 of up to 6: again, without the tips that made it worse");
+}
+
+TEST_CASE("Supports: the running card goes forward through every stage, the strengthening last", "[gui][supports]") {
+    const auto doc = bracket();
+    REQUIRE(doc);
+    std::vector<int> seen;
+    std::vector<double> at;
+    const fruit::JobControl ctl([&](std::string_view stage, double f) {
+        seen.push_back(supportStage(std::string(stage)));
+        at.push_back(f);
+    });
+    generate(*doc, oneRaft(*doc, SupportChoices{}), {}, ctl, {}, true);
+    REQUIRE(!seen.empty());
+    std::set<int> stages(seen.begin(), seen.end());
+    CHECK(stages == std::set<int>{0, 1, 2, 3, 4, 5, 6});
+    for (std::size_t i = 1; i < seen.size(); ++i) {
+        CAPTURE(i, seen[i - 1], seen[i]);
+        CHECK(seen[i] >= seen[i - 1]);  // one part: never back to an earlier stage
+    }
+    CHECK(at.back() == 1.0);
 }
 
 TEST_CASE("Supports: every kind of tip explains itself", "[gui][supports]") {

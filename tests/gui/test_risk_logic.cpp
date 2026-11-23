@@ -2,6 +2,7 @@
 // Copyright (C) 2026 FruitSlicer contributors
 // What may not print: the replay's findings as the screens word, colour and paint them.
 #include <catch2/catch_approx.hpp>
+#include <algorithm>
 #include <set>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -592,8 +593,26 @@ TEST_CASE("Risk: replaying the print and strengthening it makes losing part of t
     const RiskReport as_is = checkRisk(*doc, weak, fruit::JobControl::none(), false);
     REQUIRE(peakWeaker(supportConfig(doc->placement(), weak.choices)) == kPeakWeaker);  // starting values: borrowed
     const RiskReport before = checkRisk(*doc, weak, fruit::JobControl::none(), false, kPeakWeaker);
-    const SupportResult strong = lowerPeak(*doc, full.setup, thin, {}, weak, fruit::JobControl::none());
+    // What the running card is told meanwhile: the bar moves within each round, and the line says which.
+    // (Kept as the sink is told, from whichever thread; checked after.)
+    std::vector<std::string> doing;
+    std::set<double> fractions;
+    std::size_t elsewhere = 0;  // reports the card would put in another stage
+    const fruit::JobControl ctl([&](std::string_view stage, double f) {
+        const std::string said = supportsDoing(std::string(stage));
+        if (!said.empty() && (doing.empty() || doing.back() != said)) doing.push_back(said);
+        fractions.insert(f);
+        elsewhere += supportStage(std::string(stage)) != 6;
+    });
+    const SupportResult strong = lowerPeak(*doc, full.setup, thin, {}, weak, ctl.sub(0.0, 1.0, "strengthen"));
     const PeakFix& f = strong.peak;
+    CHECK(elsewhere == 0);
+    REQUIRE(!doing.empty());
+    CHECK(doing.front() == "Replaying the print to find tips likely to let go");
+    CHECK(std::find(doing.begin(), doing.end(), "Round 1 of up to 6: choosing tips to add or make bigger") != doing.end());
+    CHECK(std::find(doing.begin(), doing.end(), "Round 1 of up to 6: replaying the print with them") != doing.end());
+    CHECK(fractions.size() > 20 * static_cast<std::size_t>(f.rounds + 1));  // not a step a round
+    CHECK(*fractions.rbegin() == 1.0);
     CAPTURE(f.lost_before, f.lost_after, f.mm3_before, f.mm3_after, f.rounds, f.enlarged, f.added, f.seconds);
     REQUIRE(f.ran);
     CHECK(f.weaker == kPeakWeaker);

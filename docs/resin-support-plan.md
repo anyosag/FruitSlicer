@@ -667,6 +667,32 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   same print files (all but the save time in the header) and the same
   screenshots of the supports, the Risk view and Layers for TubeRack_v2,
   CHamber, TheDipper_full, the lid and the eyecup. Not printed.
+- **The supports card says where it is (2026-11-23).** The user asked for the
+  app to keep them up to date while supports are made. The card listed six
+  stages read off the bar's fraction as it was shared out before the
+  strengthening loop (`lowerPeak`) took the last 40 % of it: on the TubeRack
+  it showed "Slice the model" through the trees and "Check for parts in
+  mid-air" through the whole loop, and the bar moved once a round. Now:
+  - What reports progress can say which part of the work it is: a child
+    control labels it (`JobControl::sub(begin, end, label)`, "plan|part
+    2/5|islands"). Generating supports labels its plan, its making (its
+    checks "make|check|…") and its strengthening; making supports ahead
+    labels the same. The card reads its stage from the labels
+    (`supportStage`) and goes forward through all of them; how the bar is
+    shared out is `kPlanShare` and `kMadeShare`.
+  - A seventh stage, "Replay the print, strengthen tips", and a line under
+    the stages (`supportsDoing`): the part being planned ("Planning part 2
+    of 5"), the first replay, then each round ("Round 2 of up to 6: adding
+    77 tips and making 3 bigger", "…: replaying the print with them", "…:
+    again, without the tips that made it worse").
+  - The loop's first replay is a fifth of its share of the bar, and each
+    round as much of the rest as the most rounds share it: its pick, its
+    supports and its replay move the bar as they go.
+  - The card stands above the model tools, as the banners do: its Cancel
+    sat under the tools' buttons.
+  Tests: the stages and lines from labelled reports; a real Generate goes
+  forward through all seven stages; the loop on the thinned plate says each
+  thing it does and moves the bar more than 20 times a round.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace fruit {
@@ -51,17 +52,22 @@ public:
 
     // Child covering [begin, end] of this control's range.
     JobControl sub(double begin, double end) const;
+    // The same, saying which part of the work it is: what it reports is
+    // reported as "label|stage" (after this control's own labels, so
+    // "outer|inner|stage"). An empty label adds nothing.
+    JobControl sub(double begin, double end, std::string_view label) const;
     // Child sharing the cancel flag but reporting nothing (for work running in
     // parallel, where interleaved fractions would be meaningless).
     JobControl silent() const;
 
 private:
     struct Shared;
-    JobControl(std::shared_ptr<Shared> s, double begin, double end, bool silent)
-        : s_(std::move(s)), begin_(begin), end_(end), silent_(silent) {}
+    JobControl(std::shared_ptr<Shared> s, double begin, double end, bool silent, std::string labels = {})
+        : s_(std::move(s)), begin_(begin), end_(end), silent_(silent), labels_(std::move(labels)) {}
     std::shared_ptr<Shared> s_;
     double begin_ = 0, end_ = 1;
     bool silent_ = false;
+    std::string labels_;  // "a|b|": put before every stage it reports
 };
 
 }  // namespace fruit

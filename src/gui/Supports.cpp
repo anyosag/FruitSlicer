@@ -1105,17 +1105,66 @@ void convertOldQuick(SupportChoices& c, int hold, int amount, int sturdy) {
 const std::vector<std::string>& supportStages() {
     static const std::vector<std::string> s = {"Slice the model",           "Find spots that start in mid-air",
                                                "Plan tips: reach and hold", "Route supports to the raft",
-                                               "Build the support shapes",  "Check for parts in mid-air"};
+                                               "Build the support shapes",  "Check for parts in mid-air",
+                                               "Replay the print, strengthen tips"};
     return s;
 }
 
-int supportStage(const std::string& stage, double f) {
-    if (f >= 0.85) return 5;
-    if (f >= 0.80) return 4;
-    if (f >= 0.55) return 3;
-    if (stage == "islands") return 1;
-    if (stage == "points") return 2;
+namespace {
+
+// A progress report's labels, outermost first, and its engine stage last ("plan|part 2/5|islands").
+std::vector<std::string> labelsOf(const std::string& stage) {
+    std::vector<std::string> out;
+    std::size_t from = 0;
+    for (std::size_t bar; (bar = stage.find('|', from)) != std::string::npos; from = bar + 1)
+        out.push_back(stage.substr(from, bar - from));
+    out.push_back(stage.substr(from));
+    return out;
+}
+
+bool hasLabel(const std::vector<std::string>& l, const char* name) {
+    return std::find(l.begin(), l.end() - 1, name) != l.end() - 1;
+}
+
+}  // namespace
+
+int supportStage(const std::string& stage) {
+    const std::vector<std::string> l = labelsOf(stage);
+    const std::string& key = l.back();
+    if (hasLabel(l, "strengthen") || key == "strengthen") return 6;
+    const bool make = hasLabel(l, "make");
+    if (hasLabel(l, "check") || key == "check") return 5;
+    if (key == "mesh") return 4;
+    if (make || key == "tree" || key == "details") return 3;
+    if (key == "islands") return 1;
+    if (key == "points") return 2;
     return 0;
+}
+
+std::string supportsDoing(const std::string& stage) {
+    const std::vector<std::string> l = labelsOf(stage);
+    int i = 0, n = 0, round = 0;
+    std::size_t added = 0, bigger = 0;
+    for (std::size_t k = 0; k + 1 < l.size(); ++k) {
+        if (std::sscanf(l[k].c_str(), "part %d/%d", &i, &n) == 2 && hasLabel(l, "plan"))
+            return strf("Planning part %d of %d", i, n);
+        if (l[k] == "replay" && round == 0) return "Replaying the print to find tips likely to let go";
+        if (std::sscanf(l[k].c_str(), "round %d", &round) == 1) continue;
+        if (round <= 0) continue;
+        const std::string head = strf("Round %d of up to %d: ", round, kPeakRounds);
+        if (l[k] == "replay") return head + "replaying the print with them";
+        if (l[k] == "again") return head + "again, without the tips that made it worse";
+        if (std::sscanf(l[k].c_str(), "build %zu %zu", &added, &bigger) == 2) {
+            std::string what;
+            if (added) what = strf("adding %zu %s", added, added == 1 ? "tip" : "tips");
+            if (bigger && added) what += strf(" and making %zu bigger", bigger);
+            else if (bigger) what = strf("making %zu %s bigger", bigger, bigger == 1 ? "tip" : "tips");
+            return head + what;
+        }
+    }
+    if (round > 0 && l.back() == "pick")
+        return strf("Round %d of up to %d: choosing tips to add or make bigger", round, kPeakRounds);
+    return "";
 }
 
 namespace {
@@ -1477,7 +1526,9 @@ JobPlan planJob(const Document& doc, const SupportSetup& s, const std::vector<fr
                 continue;
             }
         out[id] = planStops(doc, planOn(doc, i, hollow), choicesOn(s, rafts, id), visible,
-                            rest.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n), edits, hollow);
+                            rest.sub(static_cast<double>(i) / n, static_cast<double>(i + 1) / n,
+                                     n > 1 ? strf("part %zu/%zu", i + 1, n) : std::string()),
+                            edits, hollow);
     }
     return out;
 }
@@ -1582,10 +1633,10 @@ JobPlan splitPlan(const Document& doc, SupportPlan plan) {
 SupportResult generate(const Document& doc, const SupportSetup& s, const std::vector<fruit::Vec3>& visible,
                        const fruit::JobControl& ctl, const std::vector<TipEdit>& edits, bool lower_peak) {
     const auto t0 = std::chrono::steady_clock::now();
-    const double made = lower_peak ? 0.6 : 1.0;
-    JobPlan plans = planJob(doc, s, visible, ctl.sub(0.0, 0.55 * made), edits);
-    SupportResult r = finishWithEdits(doc, s, plans, edits, ctl.sub(0.55 * made, made));
-    if (lower_peak) r = lowerPeak(doc, s, std::move(plans), edits, std::move(r), ctl.sub(made, 1.0));
+    const double made = lower_peak ? kMadeShare : 1.0;
+    JobPlan plans = planJob(doc, s, visible, ctl.sub(0.0, kPlanShare * made, "plan"), edits);
+    SupportResult r = finishWithEdits(doc, s, plans, edits, ctl.sub(kPlanShare * made, made, "make"));
+    if (lower_peak) r = lowerPeak(doc, s, std::move(plans), edits, std::move(r), ctl.sub(made, 1.0, "strengthen"));
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
 }
@@ -2339,12 +2390,13 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         } else if (r.hollow) {
             // The hollowed model's own layers with the supports': nothing floats.
             const fruit::LayerStack print = fruit::unionLayers(
-                *r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9)));
+                *r.hollow->layers, fruit::sliceModel(r.mesh, kLayerHeight, nullptr, 0, ctl.sub(0.67, 0.9, "check")));
             r.validation = fruit::validateLayers(print, r.cfg.link_grow, r.cfg.absorb_island_area, pixel,
-                                                 ctl.sub(0.9, 1.0), plate_holds);
+                                                 ctl.sub(0.9, 1.0, "check"), plate_holds);
         } else {
             r.validation = fruit::validateSupported(doc.placed(), r.mesh, kLayerHeight, r.cfg.link_grow,
-                                                    r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0), plate_holds);
+                                                    r.cfg.absorb_island_area, pixel, ctl.sub(0.67, 1.0, "check"),
+                                                    plate_holds);
         }
     });
     for (std::size_t i = 0; i < n; ++i)

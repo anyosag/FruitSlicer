@@ -1149,9 +1149,10 @@ void App::startSupportsAhead() {
         kAheadJob,
         [snap, out, setup, edits, plans](const fruit::JobControl& ctl) {
             const auto t0 = std::chrono::steady_clock::now();
-            *out = finishWithEdits(*snap, setup,
-                                   planJob(*snap, setup, snap->visibleInPrinter(), ctl.sub(0.0, 0.55), edits, plans.get()),
-                                   edits, ctl.sub(0.55, 1.0));
+            *out = finishWithEdits(
+                *snap, setup,
+                planJob(*snap, setup, snap->visibleInPrinter(), ctl.sub(0.0, kPlanShare, "plan"), edits, plans.get()),
+                edits, ctl.sub(kPlanShare, 1.0, "make"));
             out->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         },
         [this, target, out, key, generation](std::exception_ptr err) {

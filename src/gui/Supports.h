@@ -526,7 +526,10 @@ SupportResult finishWithEdits(const Document& doc, const SupportChoices& c, Supp
 // kPeakChance, a round brings nothing, or after kPeakRounds. The tips it adds
 // are the planner's (in `plans`, saved with the job; a hand-deleted tip stays
 // deleted). Places more tips don't fix (a thin place, bending, a rod) are
-// counted, not changed. Progress: "strengthen".
+// counted, not changed. Progress: "replay|…" for the first replay, then for
+// round n "round n|pick", "round n|build <tips added> <made bigger>|…",
+// "round n|replay|…" and, built again without the tips that made it worse,
+// "round n|again|…"; each round as much of the bar as the most rounds share it.
 SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plans, const std::vector<TipEdit>& edits,
                         SupportResult r, const fruit::JobControl& ctl);
 inline constexpr int kPeakRounds = 6;
@@ -590,9 +593,21 @@ struct EditCounts {
 EditCounts countEdits(const std::vector<TipEdit>& edits);
 std::string describeCounts(const EditCounts& n);
 
-// The stages the running card lists, and which one a progress report is in.
+// How Generating supports shares its bar out: the plan to kPlanShare of the
+// making, then the trees, their shapes and the checks; with the loop that
+// strengthens tips (lowerPeak), the making to kMadeShare and the loop the
+// rest. Each part's progress says which it is: "plan|…", "make|…" (its
+// checks "make|check|…"), "strengthen|…"; with more than one part, the plan
+// for each "plan|part i/n|…".
+inline constexpr double kPlanShare = 0.55;
+inline constexpr double kMadeShare = 0.6;
+// The stages the running card lists, and which one a progress report is in
+// (by its labels; a bare engine stage by its name).
 const std::vector<std::string>& supportStages();
-int supportStage(const std::string& engine_stage, double fraction);
+int supportStage(const std::string& stage);
+// What the running card says under them, from the same report: the part being
+// planned, the strengthening loop's round and what it is doing ("" for none).
+std::string supportsDoing(const std::string& stage);
 
 // Why a tip is where it is, in a sentence or two, and its numbers.
 std::string tipKind(const fruit::SupportPoint& p);

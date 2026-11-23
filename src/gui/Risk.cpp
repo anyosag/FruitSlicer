@@ -836,7 +836,9 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
     // didn't change.
     ModelKept kept;
     RebuildCache cache;
-    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, weaker, &kept);
+    // The bar: the first replay a fifth of it, then each round as much of the rest as the most rounds share it.
+    const auto roundAt = [](int round, double f) { return 0.2 + 0.8 * (round + f) / kPeakRounds; };
+    RiskReport risk = checkRisk(doc, r, ctl.sub(0.0, 0.2, "replay"), false, weaker, &kept);
     const int replays = risk.result->stats.replays;
     fix.weaker = weaker;
     fix.replays = replays;
@@ -864,7 +866,9 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
 
     for (int round = 0; round < kPeakRounds && best > kPeakChance; ++round) {
         ctl.check();
-        ctl.report("strengthen", static_cast<double>(round) / kPeakRounds);
+        const std::string this_round = strf("round %d", round + 1);
+        const fruit::JobControl here = ctl.sub(roundAt(round, 0), roundAt(round, 1), this_round);
+        here.report("pick", 0);
         const fruit::StabilityResult& res = *risk.result;
         JobPlan next = plans;
         std::size_t bigger = 0, added = 0;
@@ -1072,8 +1076,12 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         double lost = 0, mm3 = 0;
         bool better = false;
         for (int attempt = 0; attempt < 2; ++attempt) {
-            tried = finishWithEdits(doc, s, next, edits, ctl.silent(), &cache);
-            again = checkRisk(doc, tried, ctl.silent(), false, weaker, &kept);
+            // Built (a third of the round) and replayed; again in the same stretch of the bar, the second time.
+            const fruit::JobControl doing = attempt == 0 ? here.sub(0.05, 1.0, strf("build %zu %zu", added, bigger))
+                                                         : here.sub(0.05, 1.0, "again");
+            tried = finishWithEdits(doc, s, next, edits, doing.sub(0.0, 0.35), &cache);
+            again = checkRisk(doc, tried, attempt == 0 ? here.sub(0.38, 1.0, "replay") : doing.sub(0.35, 1.0), false,
+                              weaker, &kept);
             lost = lostChance(*again.result);
             mm3 = again.result->stats.expected_loss;
             // Kept when losing part of the model gets a fifth less likely and no more of it is to be expected

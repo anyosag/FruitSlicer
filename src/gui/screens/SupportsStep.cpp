@@ -1197,8 +1197,10 @@ void legend(App& app, const SupportResult& r) {
 
 void runningCard(App& app, ImVec2 origin, ImVec2 size) {
     const JobProgress p = app.jobs().progress();
-    const ImVec2 cs(340, 286);
-    ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - cs.x - 16, origin.y + size.y - cs.y - 16));
+    const ImVec2 cs(340, 330);
+    // Above the model tools, as the banners are (over them, its Cancel sat under the tools' buttons).
+    ImGui::SetCursorScreenPos(
+        ImVec2(origin.x + size.x - cs.x - 16, std::max(origin.y + 16, origin.y + size.y - kToolsBarH - 8 - cs.y)));
     beginCard("running", cs, 16, col::Panel, col::BorderStrong);
     text("Generating supports", fonts().semibold, size::Body + 1, col::Text);
     const ImVec2 bp = ImGui::GetCursorScreenPos();
@@ -1207,7 +1209,7 @@ void runningCard(App& app, ImVec2 origin, ImVec2 size) {
     dl->AddRectFilled(bp, ImVec2(bp.x + bw, bp.y + 5), col::Input, 3);
     dl->AddRectFilled(bp, ImVec2(bp.x + bw * static_cast<float>(p.fraction), bp.y + 5), col::Accent, 3);
     ImGui::Dummy(ImVec2(bw, 10));
-    const int at = supportStage(p.stage, p.fraction);
+    const int at = supportStage(p.stage);
     const auto& stages = supportStages();
     for (int i = 0; i < static_cast<int>(stages.size()); ++i) {
         const ImVec2 q = ImGui::GetCursorScreenPos();
@@ -1224,6 +1226,14 @@ void runningCard(App& app, ImVec2 origin, ImVec2 size) {
         text(stages[static_cast<std::size_t>(i)].c_str(), fonts().regular, size::Body,
              i <= at ? col::Text : col::TextMuted);
         ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + 24));
+    }
+    // What it is doing within the stage: the part being planned, the round of strengthening.
+    const std::string doing = supportsDoing(p.stage);
+    if (!doing.empty()) {
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + bw);
+        text(doing.c_str(), fonts().regular, size::Help, col::TextSecondary, true);
+        ImGui::PopTextWrapPos();
     }
     ImGui::SetCursorPosY(cs.y - 16 - 34);
     if (secondaryButton("Cancel", ImVec2(0, 34))) app.jobs().cancel();
