@@ -623,6 +623,50 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   shots of it; their tests now check the heatmap's same steps. On CHamber,
   the replay with its paint takes as long as before (1.6 to 2.0 s). Not
   printed.
+- **Supports for a tall model in minutes, not a quarter of an hour
+  (2026-11-23).** The user's TubeRack_v2 (175 × 53 × 94 mm, 65,396
+  triangles, about 2,800 tips) was still making its supports after 9
+  minutes. Replayed headlessly on main: planning took 121 s, the supports
+  167 s, and each round of the loop that strengthens tips (`lowerPeak`, up
+  to 6) about 3½ minutes more. Where the time went:
+  - Joining pillars into trunks (`mergePillars`): after each merge, every
+    pair of pillars was looked at again, and each pair in reach checked with
+    walks down the whole 94 mm beside the model. About 110 s of the
+    planner's 121 (its trial tree, `supportLengthsOnModel`) and most of the
+    167, on one core. Whether two pillars can merge is theirs and the
+    model's alone, so the pairs in reach now wait in order of distance, each
+    is checked once (the next few dozen side by side), and the first that
+    can merge does: the same pairs merge in the same order. The planner's
+    trial tree went from about 110 s to 2.7 s, its merging to 0.3 s. A head
+    joining a pillar
+    (`attachToPillar`) checked its bridge to every pillar in reach before
+    taking the nearest that fits; now only as far as the one taken.
+  - The replay in each check (`analyzeStability`), 45 s:
+    - It worked out the whole print's hollows with all their measures (the
+      thinnest wall, the widest circle), one cup after another, though it
+      wants only where the cups are (`hollowRegions`): 15 s to 2 s.
+    - Its 500 replays ran one after another: 13 s. They now run side by
+      side, each on its own. What they sum is kept by replay and added up
+      after in replay order, so every number is the same however many
+      threads; the thread test now checks the sums too.
+    - The model's parts are kept from round to round (`ModelKept`), as its
+      layers were.
+  - Choosing where the loop adds a tip over a fresh skin looked at every
+    point of the skin again for each tip it added: 10 s in the first round
+    of the TubeRack's. Each point now keeps its distance to the nearest tip.
+  - Cutting layers (`sliceMesh`) gave each thread an equal share of layers,
+    but the lower layers, with the supports and the raft, take longer to
+    cut, so most threads waited. Runs of layers now go to whichever thread
+    is free, each cut as before.
+  TubeRack_v2, main built beside this, on a busy Mac: Generating supports
+  97 s (main 833 s), the loop's two rounds included; counting the tips for
+  the five stops after it 42 s (513 s); the whole script, with the Risk
+  replay, the layers and the save, 2.8 minutes (23). CHamber 4.6 s to 4.5 s
+  and TheDipper_full 13.1 s to 12.3 s (the faster of two runs each, taking
+  turns): no slower where it was quick. Main and this wrote the
+  same print files (all but the save time in the header) and the same
+  screenshots of the supports, the Risk view and Layers for TubeRack_v2,
+  CHamber, TheDipper_full, the lid and the eyecup. Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

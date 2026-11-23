@@ -116,15 +116,22 @@ std::vector<Paths> sliceMesh(const TriangleMesh& mesh, const std::vector<double>
         return zmin[a] < zmin[b] || (zmin[a] == zmin[b] && a < b);
     });
 
-    // Heights in ascending order; each thread sweeps one contiguous chunk with
-    // an active face set, so total work is O(faces + crossings) per thread.
+    // Heights in ascending order, in runs of neighbouring layers; each run is
+    // swept with an active face set, so its work is O(faces + crossings). The
+    // runs go to whichever thread is free: a print's lower layers (its
+    // supports, its raft) take longer to cut than its upper ones, so a thread
+    // each with an equal share would leave most of them waiting. A run starts
+    // its set afresh, in the faces' order, so a layer is cut the same however
+    // the layers are split.
     std::vector<size_t> layer_order(zs.size());
     for (size_t i = 0; i < zs.size(); ++i) layer_order[i] = i;
     std::sort(layer_order.begin(), layer_order.end(),
               [&](size_t a, size_t b) { return zs[a] < zs[b] || (zs[a] == zs[b] && a < b); });
 
     threads = std::min<unsigned>(resolveThreads(threads), static_cast<unsigned>(zs.size()));
-    const size_t chunk = (zs.size() + threads - 1) / threads;
+    const size_t runs = threads > 1 ? std::min(zs.size(), static_cast<size_t>(threads) * 8) : 1;
+    const size_t chunk = (zs.size() + runs - 1) / runs;
+    std::atomic<size_t> next_run{0};
     std::atomic<size_t> open_total{0}, done{0};
     const double total = static_cast<double>(zs.size());
     auto worker = [&](size_t begin, size_t end, const std::atomic<bool>& stop) {
@@ -149,9 +156,11 @@ std::vector<Paths> sliceMesh(const TriangleMesh& mesh, const std::vector<double>
         }
         open_total += open;
     };
-    runThreads(threads, [&](unsigned t, const std::atomic<bool>& stop) {
-        const size_t b = t * chunk, e = std::min(zs.size(), b + chunk);
-        if (b < e) worker(b, e, stop);
+    runThreads(threads, [&](unsigned, const std::atomic<bool>& stop) {
+        for (size_t run = next_run++; run < runs && !stop; run = next_run++) {
+            const size_t b = run * chunk, e = std::min(zs.size(), b + chunk);
+            if (b < e) worker(b, e, stop);
+        }
     });
     ctl.check();
     if (stats) stats->open_chains = open_total;

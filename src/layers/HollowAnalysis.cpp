@@ -113,7 +113,10 @@ const char* gradeName(CupGrade g) {
     return g == CupGrade::Problem ? "problem" : g == CupGrade::Warning ? "warning" : "note";
 }
 
-HollowReport analyzeHollows(const LayerStack& layers, double min_area, double min_volume, unsigned threads) {
+namespace {
+
+HollowReport findHollows(const LayerStack& layers, double min_area, double min_volume, unsigned threads,
+                         bool measured) {
     const size_t n = layers.size();
     HollowReport report;
     report.trap_regions.assign(n, {});
@@ -193,6 +196,14 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
         const Acc& a = acc[r];
         if (a.members.empty() || a.below) continue;  // drains towards the plate
         if (a.max_area < min_area || a.volume < min_volume) continue;
+        if (!measured) {
+            auto& regions = a.above ? report.cup_regions : report.trap_regions;
+            for (int m : a.members) {
+                Paths& dst = regions[hollows[m].layer];
+                dst.insert(dst.end(), hollows[m].shape.begin(), hollows[m].shape.end());
+            }
+            continue;
+        }
         HollowComponent c;
         c.kind = a.above ? HollowKind::SuctionCup : HollowKind::ResinTrap;
         c.first_layer = a.first;
@@ -262,6 +273,16 @@ HollowReport analyzeHollows(const LayerStack& layers, double min_area, double mi
         }
     }
     return report;
+}
+
+}  // namespace
+
+HollowReport analyzeHollows(const LayerStack& layers, double min_area, double min_volume, unsigned threads) {
+    return findHollows(layers, min_area, min_volume, threads, true);
+}
+
+HollowReport hollowRegions(const LayerStack& layers, double min_area, double min_volume, unsigned threads) {
+    return findHollows(layers, min_area, min_volume, threads, false);
 }
 
 }  // namespace fruit

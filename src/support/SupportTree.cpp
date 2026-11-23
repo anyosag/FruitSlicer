@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <numeric>
+#include <queue>
 #include <set>
 #include <sstream>
 
@@ -625,15 +626,17 @@ bool Builder::attachToPillar(int hi) {
         // 45° descent from the junction to the pillar axis.
         const Vec3 attach{P.xy.x, P.xy.y, h.junction.z - d};
         if (attach.z < out_.raft_top + cfg_.base_height + 1.0) continue;
-        if (!segmentClear(h.junction, attach, h.spec.shaft_diameter / 2)) continue;
         found.push_back({d, static_cast<int>(pi), attach});
     }
-    // Nearest first (ties by pillar). The pillar grows by 0.1 mm for each tip
-    // it takes on, so all of it, raised to the new top, must keep its gap to
-    // the model at the new width, and its foot must still fit: a pillar that
-    // was placed right at its gap beside a wall would otherwise grow into it.
+    // Nearest first (ties by pillar), where the bridge to it is clear of the
+    // model (asked in that order, so only as far as the one taken). The pillar
+    // grows by 0.1 mm for each tip it takes on, so all of it, raised to the
+    // new top, must keep its gap to the model at the new width, and its foot
+    // must still fit: a pillar that was placed right at its gap beside a wall
+    // would otherwise grow into it.
     std::stable_sort(found.begin(), found.end(), [](const Candidate& a, const Candidate& b) { return a.d < b.d; });
     for (const Candidate& c : found) {
+        if (!segmentClear(h.junction, c.attach, h.spec.shaft_diameter / 2)) continue;
         Pillar& P = out_.pillars[c.pillar];
         const double grown = std::max(P.diameter, h.spec.shaft_diameter) + 0.1;
         const double top = std::max(P.top, c.attach.z);
@@ -802,60 +805,108 @@ void Builder::mergePillars() {
     if (!cfg_.merge_pillars) return;
     const double z_floor = out_.raft_top + cfg_.base_height + 1.0;
     auto active = [&](const Pillar& P) { return !P.on_model && !P.merged; };
-    while (true) {
-        // Closest mergeable pair first (deterministic: ties by index).
-        int ba = -1, bb = -1;
-        double bd = 1e300;
-        Vec3 bm;
-        double bzs = 0;
-        for (size_t i = 0; i < out_.pillars.size(); ++i) {
-            const Pillar& A = out_.pillars[i];
-            if (!active(A)) continue;
-            for (size_t j = i + 1; j < out_.pillars.size(); ++j) {
-                const Pillar& B = out_.pillars[j];
-                if (!active(B)) continue;
-                const double d = distance(A.xy, B.xy);
-                if (d > cfg_.max_merge_distance || d >= bd || d < 1e-6) continue;
-                if (A.tips + B.tips > cfg_.max_tips_per_trunk) continue;
-                // Branches start below the flex zone of the lower pillar and
-                // meet at 45°.
-                // ... and below every bridge already attached to either shaft.
-                const double zs = std::min({std::min(A.top, B.top) - cfg_.flex_zone, A.lowest_attach - 0.5,
-                                            B.lowest_attach - 0.5});
-                const Vec2 mid = (A.xy + B.xy) * 0.5;
-                const Vec3 m{mid.x, mid.y, zs - d / 2};
-                if (m.z < z_floor) continue;
-                const double r_new = std::min(cfg_.max_trunk_diameter, std::hypot(A.diameter, B.diameter)) / 2;
-                if (!segmentClear({A.xy.x, A.xy.y, zs}, m, A.diameter / 2)) continue;
-                if (!segmentClear({B.xy.x, B.xy.y, zs}, m, B.diameter / 2)) continue;
-                if (!dropClear(m, r_new)) continue;
-                // ...and keeps the room its two pillars had (up to wanted_gap).
-                const double had = std::min({cfg_.wanted_gap, shaftRoom({A.xy.x, A.xy.y, zs}, A.diameter / 2),
-                                             shaftRoom({B.xy.x, B.xy.y, zs}, B.diameter / 2)});
-                if (shaftRoom(m, r_new) < had - 0.05) continue;
-                ba = static_cast<int>(i);
-                bb = static_cast<int>(j);
-                bd = d;
-                bm = m;
-                bzs = zs;
-            }
+    // Closest mergeable pair first (deterministic: ties by index), one pair at a time. Whether two pillars can
+    // merge is theirs and the model's alone (their places, tops, widths and tips; the room beside the model): a
+    // merge elsewhere changes neither. So the pairs in reach wait in order of distance, each is checked once, and
+    // the first that can merge does; one that can't is not asked again. The next few not yet asked are asked side
+    // by side (the checks are most of the work), and what each answered is kept until its turn.
+    struct Pair {
+        double d;
+        int i, j;     // i < j
+        int ok = -1;  // whether they can merge; -1: not asked yet
+    };
+    const auto after = [](const Pair& a, const Pair& b) {
+        if (a.d != b.d) return a.d > b.d;
+        return a.i != b.i ? a.i > b.i : a.j > b.j;
+    };
+    std::priority_queue<Pair, std::vector<Pair>, decltype(after)> waiting(after);
+    const auto inReach = [&](int i, int j) {
+        const Pillar& A = out_.pillars[static_cast<size_t>(i)];
+        const Pillar& B = out_.pillars[static_cast<size_t>(j)];
+        if (!active(A) || !active(B)) return;
+        const double d = distance(A.xy, B.xy);
+        if (d > cfg_.max_merge_distance || d < 1e-6) return;
+        if (A.tips + B.tips > cfg_.max_tips_per_trunk) return;
+        waiting.push({d, i, j});
+    };
+    // Where a pair's branches start (below the flex zone of the lower pillar, and below every bridge already
+    // attached to either shaft) and meet at 45°.
+    struct Meet {
+        double zs;
+        Vec3 m;
+    };
+    const auto meetOf = [&](const Pair& p) {
+        const Pillar& A = out_.pillars[static_cast<size_t>(p.i)];
+        const Pillar& B = out_.pillars[static_cast<size_t>(p.j)];
+        const double zs = std::min({std::min(A.top, B.top) - cfg_.flex_zone, A.lowest_attach - 0.5,
+                                    B.lowest_attach - 0.5});
+        const Vec2 mid = (A.xy + B.xy) * 0.5;
+        return Meet{zs, {mid.x, mid.y, zs - p.d / 2}};
+    };
+    const auto canMerge = [&](const Pair& p) {
+        const Pillar& A = out_.pillars[static_cast<size_t>(p.i)];
+        const Pillar& B = out_.pillars[static_cast<size_t>(p.j)];
+        const auto [zs, m] = meetOf(p);
+        if (m.z < z_floor) return false;
+        const double r_new = std::min(cfg_.max_trunk_diameter, std::hypot(A.diameter, B.diameter)) / 2;
+        if (!segmentClear({A.xy.x, A.xy.y, zs}, m, A.diameter / 2)) return false;
+        if (!segmentClear({B.xy.x, B.xy.y, zs}, m, B.diameter / 2)) return false;
+        if (!dropClear(m, r_new)) return false;
+        // ...and keeps the room its two pillars had (up to wanted_gap).
+        const double had = std::min({cfg_.wanted_gap, shaftRoom({A.xy.x, A.xy.y, zs}, A.diameter / 2),
+                                     shaftRoom({B.xy.x, B.xy.y, zs}, B.diameter / 2)});
+        return shaftRoom(m, r_new) >= had - 0.05;
+    };
+    for (size_t i = 0; i < out_.pillars.size(); ++i)
+        for (size_t j = i + 1; j < out_.pillars.size(); ++j) inReach(static_cast<int>(i), static_cast<int>(j));
+    const size_t ask_at_once = 4 * static_cast<size_t>(resolveThreads(0));
+    std::vector<Pair> next;
+    std::vector<size_t> ask;
+    while (!waiting.empty()) {
+        // The pairs next in turn, both still standing: up to the first known to merge, or as many not yet asked as
+        // are asked at once.
+        next.clear();
+        ask.clear();
+        while (!waiting.empty() && ask.size() < ask_at_once) {
+            const Pair p = waiting.top();
+            waiting.pop();
+            if (!active(out_.pillars[static_cast<size_t>(p.i)]) || !active(out_.pillars[static_cast<size_t>(p.j)]))
+                continue;  // merged since
+            if (p.ok < 0) ask.push_back(next.size());
+            next.push_back(p);
+            if (p.ok > 0) break;
         }
-        if (ba < 0) break;
-        Pillar& A = out_.pillars[ba];
-        Pillar& B = out_.pillars[bb];
-        out_.branches.push_back({{A.xy.x, A.xy.y, bzs}, bm, A.diameter});
-        out_.branches.push_back({{B.xy.x, B.xy.y, bzs}, bm, B.diameter});
-        A.merged = B.merged = true;
-        A.bottom = bzs;
-        B.bottom = bzs;
+        parallelFor(ask.size(), 0, [&](size_t k) {
+            Pair& p = next[ask[k]];
+            p.ok = canMerge(p) ? 1 : 0;
+        });
+        // The first that can merges; those after it wait their turn again, with their answers.
+        size_t k = 0;
+        while (k < next.size() && next[k].ok == 0) ++k;
+        if (k == next.size()) continue;
+        for (size_t q = k + 1; q < next.size(); ++q)
+            if (next[q].ok > 0) waiting.push(next[q]);
+        const Pair& p = next[k];
+        const auto [zs, m] = meetOf(p);
+        const Pillar& A = out_.pillars[static_cast<size_t>(p.i)];
+        const Pillar& B = out_.pillars[static_cast<size_t>(p.j)];
         Pillar C;
-        C.xy = bm.xy();
-        C.top = bm.z;
+        C.xy = m.xy();
+        C.top = m.z;
         C.bottom = out_.raft_top + cfg_.base_height;
         C.diameter = std::min(cfg_.max_trunk_diameter, std::hypot(A.diameter, B.diameter));
         C.base_diameter = std::max(C.diameter, std::min(cfg_.base_diameter, footRoom(C.xy, C.diameter / 2)));
         C.tips = A.tips + B.tips;
-        out_.pillars.push_back(C);
+        out_.branches.push_back({{A.xy.x, A.xy.y, zs}, m, A.diameter});
+        out_.branches.push_back({{B.xy.x, B.xy.y, zs}, m, B.diameter});
+        Pillar& a = out_.pillars[static_cast<size_t>(p.i)];
+        Pillar& b = out_.pillars[static_cast<size_t>(p.j)];
+        a.merged = b.merged = true;
+        a.bottom = zs;
+        b.bottom = zs;
+        out_.pillars.push_back(C);  // A and B are not used past here: the vector may have moved
+        const int c = static_cast<int>(out_.pillars.size()) - 1;
+        for (int q = 0; q < c; ++q) inReach(q, c);
     }
 }
 

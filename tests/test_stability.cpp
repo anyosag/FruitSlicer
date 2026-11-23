@@ -1608,6 +1608,22 @@ TEST_CASE("the same answer whatever the number of threads, and from run to run",
     }
     CHECK(a.closeness_by_layer == c.closeness_by_layer);
     CHECK(a.spots.size() == c.spots.size());
+    // The replays run side by side too: what they add up is the same to the last bit.
+    CHECK(a.stats.expected_loss > 0);
+    CHECK(a.stats.tips_cost_volume > 0);
+    CHECK(a.stats.whole_chance == c.stats.whole_chance);
+    CHECK(a.stats.expected_loss == c.stats.expected_loss);
+    CHECK(a.stats.tips_cost_chance == c.stats.tips_cost_chance);
+    CHECK(a.stats.tips_cost_volume == c.stats.tips_cost_volume);
+    REQUIRE(a.tips.size() == c.tips.size());
+    for (size_t i = 0; i < a.tips.size(); ++i) {
+        CHECK(a.tips[i].lost_chance == c.tips[i].lost_chance);
+        CHECK(a.tips[i].lost_volume == c.tips[i].lost_volume);
+        CHECK(a.tips[i].lost_per_print == c.tips[i].lost_per_print);
+        CHECK(a.tips[i].loss_share == c.tips[i].loss_share);
+    }
+    for (size_t i = 0; i < a.spots.size() && i < c.spots.size(); ++i)
+        CHECK(a.spots[i].lost_volume == c.spots[i].lost_volume);
 }
 
 TEST_CASE("the planner's height held by the plate carries over, with no raft only", "[stability][plate]") {

@@ -1684,7 +1684,7 @@ void Analysis::buildPulls() {
     HollowReport own;
     const HollowReport* hollows = in_.hollows;
     if (!hollows) {
-        own = analyzeHollows(*in_.print);
+        own = hollowRegions(*in_.print);  // where its cups are: none of their measures
         hollows = &own;
     }
     for (int L = 1; L < layers_ && static_cast<size_t>(L) < hollows->cup_regions.size(); ++L) {
@@ -2649,14 +2649,19 @@ void Analysis::runReplays() {
     // holds, one on another from its own up, as step() reads the model's
     // thickness under a patch. Worked out when first needed, and only as far
     // as could still matter (past four slabs a piece is stiff; past 30 mm the
-    // share reaches over most of a plate). Under a support: no limit.
-    std::vector<int> column(nc, -1);
+    // share reaches over most of a plate). Under a support: no limit. (The
+    // replays share these as they work them out: each is the same whoever does.)
+    std::vector<std::atomic<int>> column(nc);
+    for (std::atomic<int>& c : column) c.store(-1, std::memory_order_relaxed);
     const int column_cap =
         static_cast<int>(std::ceil(std::max(4 * std::max(cfg_.slab, 0.0), 30.0) / h_));
     auto columnOver = [&](int c) {
-        if (column[c] >= 0) return column[c];
+        if (const int known = column[c].load(std::memory_order_relaxed); known >= 0) return known;
         int id = cand[c].child;
-        if (!model_[id]) return column[c] = layers_;
+        if (!model_[id]) {
+            column[c].store(layers_, std::memory_order_relaxed);
+            return layers_;
+        }
         const Vec2 at = links_[cand[c].link].c;  // the middle of its area: on the model, where a tip's pin may be just off it
         int n = 0;
         while (id >= 0 && n < column_cap) {
@@ -2673,7 +2678,8 @@ void Analysis::runReplays() {
             }
             id = up;
         }
-        return column[c] = n;
+        column[c].store(n, std::memory_order_relaxed);
+        return n;
     };
     // The joints of each tip, to let go together.
     std::vector<std::vector<int>> of_tip(group_holds_.size());
@@ -2827,314 +2833,337 @@ void Analysis::runReplays() {
         std::vector<std::pair<int, double>> from;  // a joint that let go, the share of its own load
         double fixed = 0;
     };
-    std::vector<double> xi(nc);  // each joint's strength in this replay, as a multiple of its median
-    std::vector<Given> given(nc);
-    std::vector<int> given_list;
-    auto own = [&](int c, int k) { return loadBy(c, k) * cand[c].holds; };
-    auto carriesAt = [&](int c, int k) {
-        const Given& g = given[c];
-        double f = own(c, k) + g.fixed;
-        for (const auto& [s, share] : g.from) f += share * own(s, k);
-        return f;
-    };
-    // Joint x let go at layer k, and c takes `share` of all it carried
-    // (`follow`: of all it would have carried later too).
-    auto pass = [&](int x, int c, double share, int k, bool follow) {
-        Given& g = given[c];
-        if (g.from.empty() && g.fixed == 0) given_list.push_back(c);
-        if (!follow) {
-            g.fixed += share * carriesAt(x, k);
-            return;
-        }
-        g.fixed += share * given[x].fixed;
-        auto add = [&](int s, double w) {
-            for (auto& [t, v] : g.from)
-                if (t == s) {
-                    v += w;
-                    return;
-                }
-            g.from.push_back({s, w});
+    // The replays side by side, each on its own: its strengths drawn from its own number, and all it works with
+    // its own. What they count is added up as they go; what they sum (mm³) is kept by replay and summed after, in
+    // replay order, so the totals are the same however many threads there were.
+    std::vector<std::atomic<int>> counts(n_);  // by part: the replays in which it was lost
+    // By joint: the replays in which it let go; and in which it let go under its own load alone (nothing passed on
+    // to it yet), and of those, the ones that lost part of the model.
+    std::vector<std::atomic<int>> let_go(nc), started(nc), started_loss(nc);
+    std::atomic<int> whole{0};
+    // By replay: each part of the model lost, with the joint it went with; and the model that went with tips,
+    // where that counts as lost.
+    std::vector<std::vector<std::pair<int, int>>> went_by(static_cast<size_t>(replays));
+    std::vector<double> tips_with(static_cast<size_t>(replays), -1);
+    const unsigned threads =
+        std::max(1u, std::min<unsigned>(resolveThreads(cfg_.threads), static_cast<unsigned>(replays)));
+    runThreads(threads, [&](unsigned t, const std::atomic<bool>& stop) {
+        std::vector<double> xi(nc);  // each joint's strength in this replay, as a multiple of its median
+        std::vector<Given> given(nc);
+        std::vector<int> given_list;
+        auto own = [&](int c, int k) { return loadBy(c, k) * cand[c].holds; };
+        auto carriesAt = [&](int c, int k) {
+            const Given& g = given[c];
+            double f = own(c, k) + g.fixed;
+            for (const auto& [s, share] : g.from) f += share * own(s, k);
+            return f;
         };
-        add(x, share);
-        for (const auto& [s, w] : given[x].from) add(s, share * w);
-        if (g.from.size() > kMostTracked) {
-            std::sort(g.from.begin(), g.from.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-            for (size_t i = kMostTracked; i < g.from.size(); ++i) g.fixed += g.from[i].second * own(g.from[i].first, k);
-            g.from.resize(kMostTracked);
-        }
-    };
-    // The first layer, from `from` on, at which joint c with all it was given is loaded past its strength.
-    std::vector<std::pair<int, double>> rises;
-    auto firstOverAll = [&](int c, int from) {
-        const Given& g = given[c];
-        if (g.from.empty()) return firstOver(c, xi[c] - g.fixed / cand[c].holds, from);
-        double load = g.fixed;
-        rises.clear();
-        auto track = [&](int s, double w) {
-            double before = 0;
-            for (int e = high_begin[s]; e < high_begin[s + 1]; ++e) {
-                const double v = w * highs[e].u * cand[s].holds;
-                if (highs[e].step <= from) load += v - before;
-                else rises.push_back({highs[e].step, v - before});
-                before = v;
+        // Joint x let go at layer k, and c takes `share` of all it carried
+        // (`follow`: of all it would have carried later too).
+        auto pass = [&](int x, int c, double share, int k, bool follow) {
+            Given& g = given[c];
+            if (g.from.empty() && g.fixed == 0) given_list.push_back(c);
+            if (!follow) {
+                g.fixed += share * carriesAt(x, k);
+                return;
             }
-        };
-        track(c, 1.0);
-        for (const auto& [s, w] : g.from) track(s, w);
-        const double limit = xi[c] * cand[c].holds;
-        if (load > limit) return from;
-        std::sort(rises.begin(), rises.end());
-        for (const auto& [k, more] : rises) {
-            load += more;
-            if (load > limit) return k;
-        }
-        return kNever;
-    };
-
-    std::vector<int> counts(n_, 0), lost_stamp(n_, -1), lost_list;
-    std::vector<int> when(nc);
-    std::vector<char> broken(nc), gone(nc), listed(nc);
-    std::vector<int> node_of(pieces.size(), -1), node_stamp(pieces.size(), -1);
-    int event = 0, whole = 0;
-
-    struct Edge {
-        int to, cand;
-        bool up;  // `to` is the piece resting on this one
-    };
-    std::vector<std::vector<Edge>> adj;
-    std::vector<int> node_piece, queue, due;
-    std::vector<char> reached, upstream;
-    struct Fall {
-        int piece, k, by;  // the layer printing when it fell, and the joint whose letting go dropped it
-    };
-    std::vector<Fall> fallen;
-    std::vector<std::pair<int, double>> takers, shares;
-    std::vector<double> sizes;
-    // By joint: the replays in which it let go, and the model that went with it then (mm³, summed).
-    std::vector<int> let_go(nc, 0), lost_by;
-    // By joint: the replays in which it let go under its own load alone (nothing passed on to it yet), and of
-    // those, the ones that lost part of the model.
-    std::vector<int> started(nc, 0), started_loss(nc, 0), started_now;
-    std::vector<double> went_with(nc, 0);
-    int tips_cost = 0;          // replays in which part of the model went with tips
-    double tips_cost_sum = 0;   // and how much, summed over those
-    for (int r = 0; r < replays; ++r) {
-        if ((r & 15) == 0) ctl_.step("replays", static_cast<double>(r) / replays);
-        Rng rng(cfg_.seed * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(r) * 0xD1B54A32D192ED03ULL + 1);
-        due.clear();
-        started_now.clear();
-        for (int c : given_list) given[c] = {};
-        given_list.clear();
-        for (int c = 0; c < nc; ++c) {
-            // A strength with the curve's own spread, 1 at the middle.
-            xi[c] = std::pow(-std::log2(1 - rng.unit()), 1 / steep_);
-            broken[c] = gone[c] = 0;
-            when[c] = cand[c].holds > 0 ? firstOver(c, xi[c], 0) : kNever;
-            listed[c] = when[c] != kNever;
-            if (listed[c]) due.push_back(c);
-        }
-        fallen.clear();
-
-        for (;;) {
-            // The next joint to go, the earliest layer first.
-            int x = -1;
-            for (int c : due)
-                if (!broken[c] && !gone[c] && when[c] != kNever &&
-                    (x < 0 || when[c] < when[x] || (when[c] == when[x] && c < x)))
-                    x = c;
-            if (x < 0) break;
-            const int k = when[x];
-            if (given[x].from.empty() && given[x].fixed == 0) started_now.push_back(x);
-            broken[x] = 1;
-            ++let_go[x];
-            if (tip_group_[cand[x].link] >= 0)
-                for (int c : of_tip[tip_group_[cand[x].link]]) broken[c] = 1;
-            // The pieces as they stand while layer k prints, and what still joins them.
-            ++event;
-            adj.clear();
-            node_piece.clear();
-            auto node = [&](int piece) {
-                if (node_stamp[piece] != event) {
-                    node_stamp[piece] = event;
-                    node_of[piece] = static_cast<int>(node_piece.size());
-                    node_piece.push_back(piece);
-                    adj.emplace_back();
-                }
-                return node_of[piece];
+            g.fixed += share * given[x].fixed;
+            auto add = [&](int s, double w) {
+                for (auto& [t, v] : g.from)
+                    if (t == s) {
+                        v += w;
+                        return;
+                    }
+                g.from.push_back({s, w});
             };
-            const int plate = node(climb(0, k));
-            for (int c = 0; c < nc; ++c) {
-                if (broken[c] || gone[c] || layerOf(cand[c].child) > k) continue;
-                const int a = node(climb(home[cand[c].child], k)), b = node(climb(home[cand[c].parent], k));
-                if (a == b) continue;
-                adj[a].push_back({b, c, false});
-                adj[b].push_back({a, c, true});
+            add(x, share);
+            for (const auto& [s, w] : given[x].from) add(s, share * w);
+            if (g.from.size() > kMostTracked) {
+                std::sort(g.from.begin(), g.from.end(),
+                          [](const auto& a, const auto& b) { return a.second > b.second; });
+                for (size_t i = kMostTracked; i < g.from.size(); ++i)
+                    g.fixed += g.from[i].second * own(g.from[i].first, k);
+                g.from.resize(kMostTracked);
             }
-            const int above = node(climb(home[cand[x].child], k)), under = node(climb(home[cand[x].parent], k));
-            if (above == under) continue;  // the piece holds together around it
-            reached.assign(node_piece.size(), 0);
-            queue.assign(1, plate);
-            reached[plate] = 1;
-            for (size_t q = 0; q < queue.size(); ++q)
-                for (const Edge& e : adj[queue[q]])
-                    if (!reached[e.to]) {
-                        reached[e.to] = 1;
-                        queue.push_back(e.to);
-                    }
-            bool fell = false;
-            for (size_t v = 0; v < node_piece.size(); ++v) {
-                if (reached[v]) continue;
-                fell = true;
-                fallen.push_back({node_piece[v], k, x});
-                for (const Edge& e : adj[v]) gone[e.cand] = 1;
-            }
-            if (fell || !reached[above]) continue;
-            // Still held another way. The pull came down through this joint
-            // from the piece above it and from whatever rests on that piece;
-            // the other joints leading down out of those pieces take it over,
-            // in proportion to what each was carrying.
-            upstream.assign(node_piece.size(), 0);
-            queue.assign(1, above);
-            upstream[above] = 1;
-            for (size_t q = 0; q < queue.size(); ++q)
-                for (const Edge& e : adj[queue[q]])
-                    if (e.up && !upstream[e.to] && e.to != plate) {
-                        upstream[e.to] = 1;
-                        queue.push_back(e.to);
-                    }
-            auto carries = [&](int c) { return carriesAt(c, k); };
-            const double moved = carries(x);
-            if (!(moved > 0)) continue;
-            // As a layer's pull is shared: the joints that take it over hold
-            // like springs, each as stiff as what it was carrying says and
-            // more so the nearer it is to the joint that went, under a piece
-            // that is stiff within that reach. So they share the load where it
-            // was by the lever rule: a joint on the far side of the others
-            // from it takes less, and one between it and the rest takes more
-            // (a block on three tips in a line that loses an end one hangs
-            // from the middle one). The far side is not let off: what lets go
-            // makes nothing else safer.
-            const Vec2 here = placeOf(x);
-            // How thick the model over it is by now: what has printed since,
-            // where that stands on it. (A thin shelf joined to a tall wall is
-            // still thin over its own tips.)
-            const double over = std::min(k - layerOf(cand[x].child) + 1, columnOver(x)) * h_;
-            const double len = std::max(0.3, cfg_.share_reach * std::pow(over, 0.75));
-            const double inv = cfg_.share_reach < 1e5 ? 1 / (3.2 * len * len) : 0.0;
-            takers.clear();
-            double top = -kInf;
-            for (int v : queue)
-                for (const Edge& e : adj[v]) {
-                    if (e.up || upstream[e.to] || !(cand[e.cand].holds > 0)) continue;
-                    const double w = std::log(std::max(carries(e.cand), 1e-9 * cand[e.cand].holds)) -
-                                     norm2(placeOf(e.cand) - here) * inv;
-                    takers.emplace_back(e.cand, w);
-                    top = std::max(top, w);
+        };
+        // The first layer, from `from` on, at which joint c with all it was given is loaded past its strength.
+        std::vector<std::pair<int, double>> rises;
+        auto firstOverAll = [&](int c, int from) {
+            const Given& g = given[c];
+            if (g.from.empty()) return firstOver(c, xi[c] - g.fixed / cand[c].holds, from);
+            double load = g.fixed;
+            rises.clear();
+            auto track = [&](int s, double w) {
+                double before = 0;
+                for (int e = high_begin[s]; e < high_begin[s + 1]; ++e) {
+                    const double v = w * highs[e].u * cand[s].holds;
+                    if (highs[e].step <= from) load += v - before;
+                    else rises.push_back({highs[e].step, v - before});
+                    before = v;
                 }
-            double sum = 0;
-            M3 hold{};
-            for (auto& [c, w] : takers) {
-                w = w - top > -25 ? std::exp(w - top) : 0.0;
-                sum += w;
-                const Vec2 d = placeOf(c) - here;
-                if (w > 0) addTo(hold, springAt(w, d.x, d.y));
+            };
+            track(c, 1.0);
+            for (const auto& [s, w] : g.from) track(s, w);
+            const double limit = xi[c] * cand[c].holds;
+            if (load > limit) return from;
+            std::sort(rises.begin(), rises.end());
+            for (const auto& [k, more] : rises) {
+                load += more;
+                if (load > limit) return k;
             }
-            if (!(sum > 0)) continue;
-            Move mv;
-            const bool lever = settle(hold, {1, 0, 0}, mv);
-            // Only as far as the piece is stiff. A thin one bends: the joints
-            // near the one that went take its load by what each was carrying,
-            // with no lever to make one of them carry more than all of it (a
-            // shelf that loses a tip at its edge does not hang twice as hard
-            // from the next one). The same split as a layer's own pull: half
-            // and half where the model over the joint is `slab` mm thick.
-            const bool stiff_all = !(cfg_.share_reach < 1e5);
-            const double thin = stiff_all || !(cfg_.slab > 0) ? 0.0 : 1.0 / (1.0 + std::pow(over / cfg_.slab, 4));
-            shares.clear();
-            double total = 0;
-            for (const auto& [c, w] : takers) {
-                if (w == 0) continue;
-                const Vec2 d = placeOf(c) - here;
-                const double share =
-                    lever ? (1 - thin) * w * (mv.w + mv.gx * d.x + mv.gy * d.y) + thin * w / sum : w / sum;
-                if (!(share > 0)) continue;
-                shares.push_back({c, share});
-                total += share;
-            }
-            // Every share follows the load as it grows, but for the smallest,
-            // which together come to under a twentieth of it: those are kept
-            // at what they were given. (Spread over 50 joints or more, each
-            // share is small, but together they are all of it.)
-            sizes.clear();
-            for (const auto& s : shares) sizes.push_back(s.second);
-            std::sort(sizes.begin(), sizes.end(), std::greater<>());
-            double so_far = 0, followed = 0;
-            for (double s : sizes) {
-                followed = s;
-                so_far += s;
-                if (so_far >= 0.95 * total) break;
-            }
-            for (const auto& [c, share] : shares) {
-                pass(x, c, share, k, share >= std::min(kTracked, followed));
-                when[c] = firstOverAll(c, k);
-                if (when[c] != kNever && !listed[c]) {
-                    listed[c] = 1;
-                    due.push_back(c);
-                }
-            }
-        }
+            return kNever;
+        };
 
-        // Everything in a fallen piece, then whatever would have printed on it alone.
-        lost_list.clear();
-        lost_by.clear();
-        for (const Fall& f : fallen) {
-            const int k = f.k;
-            queue.assign(1, f.piece);
-            for (size_t q = 0; q < queue.size(); ++q) {
-                const Piece& pc = pieces[queue[q]];
-                for (int id : pc.parts) {
-                    if (layerOf(id) > k) break;
-                    if (lost_stamp[id] != r) {
-                        lost_stamp[id] = r;
-                        lost_list.push_back(id);
-                        lost_by.push_back(f.by);
+        std::vector<int> lost_stamp(n_, -1), lost_list;
+        std::vector<int> when(nc);
+        std::vector<char> broken(nc), gone(nc), listed(nc);
+        std::vector<int> node_of(pieces.size(), -1), node_stamp(pieces.size(), -1);
+        int event = 0;
+
+        struct Edge {
+            int to, cand;
+            bool up;  // `to` is the piece resting on this one
+        };
+        std::vector<std::vector<Edge>> adj;
+        std::vector<int> node_piece, queue, due;
+        std::vector<char> reached, upstream;
+        struct Fall {
+            int piece, k, by;  // the layer printing when it fell, and the joint whose letting go dropped it
+        };
+        std::vector<Fall> fallen;
+        std::vector<std::pair<int, double>> takers, shares;
+        std::vector<double> sizes;
+        std::vector<int> lost_by, started_now;
+        for (int r = static_cast<int>(t); r < replays; r += static_cast<int>(threads)) {
+            if (stop.load()) return;
+            if (t == 0) ctl_.step("replays", static_cast<double>(r) / replays);
+            else if ((r & 15) == 0) ctl_.check();
+            Rng rng(cfg_.seed * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(r) * 0xD1B54A32D192ED03ULL + 1);
+            due.clear();
+            started_now.clear();
+            for (int c : given_list) given[c] = {};
+            given_list.clear();
+            for (int c = 0; c < nc; ++c) {
+                // A strength with the curve's own spread, 1 at the middle.
+                xi[c] = std::pow(-std::log2(1 - rng.unit()), 1 / steep_);
+                broken[c] = gone[c] = 0;
+                when[c] = cand[c].holds > 0 ? firstOver(c, xi[c], 0) : kNever;
+                listed[c] = when[c] != kNever;
+                if (listed[c]) due.push_back(c);
+            }
+            fallen.clear();
+
+            for (;;) {
+                // The next joint to go, the earliest layer first.
+                int x = -1;
+                for (int c : due)
+                    if (!broken[c] && !gone[c] && when[c] != kNever &&
+                        (x < 0 || when[c] < when[x] || (when[c] == when[x] && c < x)))
+                        x = c;
+                if (x < 0) break;
+                const int k = when[x];
+                if (given[x].from.empty() && given[x].fixed == 0) started_now.push_back(x);
+                broken[x] = 1;
+                let_go[x].fetch_add(1, std::memory_order_relaxed);
+                if (tip_group_[cand[x].link] >= 0)
+                    for (int c : of_tip[tip_group_[cand[x].link]]) broken[c] = 1;
+                // The pieces as they stand while layer k prints, and what still joins them.
+                ++event;
+                adj.clear();
+                node_piece.clear();
+                auto node = [&](int piece) {
+                    if (node_stamp[piece] != event) {
+                        node_stamp[piece] = event;
+                        node_of[piece] = static_cast<int>(node_piece.size());
+                        node_piece.push_back(piece);
+                        adj.emplace_back();
+                    }
+                    return node_of[piece];
+                };
+                const int plate = node(climb(0, k));
+                for (int c = 0; c < nc; ++c) {
+                    if (broken[c] || gone[c] || layerOf(cand[c].child) > k) continue;
+                    const int a = node(climb(home[cand[c].child], k)), b = node(climb(home[cand[c].parent], k));
+                    if (a == b) continue;
+                    adj[a].push_back({b, c, false});
+                    adj[b].push_back({a, c, true});
+                }
+                const int above = node(climb(home[cand[x].child], k)), under = node(climb(home[cand[x].parent], k));
+                if (above == under) continue;  // the piece holds together around it
+                reached.assign(node_piece.size(), 0);
+                queue.assign(1, plate);
+                reached[plate] = 1;
+                for (size_t q = 0; q < queue.size(); ++q)
+                    for (const Edge& e : adj[queue[q]])
+                        if (!reached[e.to]) {
+                            reached[e.to] = 1;
+                            queue.push_back(e.to);
+                        }
+                bool fell = false;
+                for (size_t v = 0; v < node_piece.size(); ++v) {
+                    if (reached[v]) continue;
+                    fell = true;
+                    fallen.push_back({node_piece[v], k, x});
+                    for (const Edge& e : adj[v]) gone[e.cand] = 1;
+                }
+                if (fell || !reached[above]) continue;
+                // Still held another way. The pull came down through this joint
+                // from the piece above it and from whatever rests on that piece;
+                // the other joints leading down out of those pieces take it over,
+                // in proportion to what each was carrying.
+                upstream.assign(node_piece.size(), 0);
+                queue.assign(1, above);
+                upstream[above] = 1;
+                for (size_t q = 0; q < queue.size(); ++q)
+                    for (const Edge& e : adj[queue[q]])
+                        if (e.up && !upstream[e.to] && e.to != plate) {
+                            upstream[e.to] = 1;
+                            queue.push_back(e.to);
+                        }
+                auto carries = [&](int c) { return carriesAt(c, k); };
+                const double moved = carries(x);
+                if (!(moved > 0)) continue;
+                // As a layer's pull is shared: the joints that take it over hold
+                // like springs, each as stiff as what it was carrying says and
+                // more so the nearer it is to the joint that went, under a piece
+                // that is stiff within that reach. So they share the load where it
+                // was by the lever rule: a joint on the far side of the others
+                // from it takes less, and one between it and the rest takes more
+                // (a block on three tips in a line that loses an end one hangs
+                // from the middle one). The far side is not let off: what lets go
+                // makes nothing else safer.
+                const Vec2 here = placeOf(x);
+                // How thick the model over it is by now: what has printed since,
+                // where that stands on it. (A thin shelf joined to a tall wall is
+                // still thin over its own tips.)
+                const double over = std::min(k - layerOf(cand[x].child) + 1, columnOver(x)) * h_;
+                const double len = std::max(0.3, cfg_.share_reach * std::pow(over, 0.75));
+                const double inv = cfg_.share_reach < 1e5 ? 1 / (3.2 * len * len) : 0.0;
+                takers.clear();
+                double top = -kInf;
+                for (int v : queue)
+                    for (const Edge& e : adj[v]) {
+                        if (e.up || upstream[e.to] || !(cand[e.cand].holds > 0)) continue;
+                        const double w = std::log(std::max(carries(e.cand), 1e-9 * cand[e.cand].holds)) -
+                                         norm2(placeOf(e.cand) - here) * inv;
+                        takers.emplace_back(e.cand, w);
+                        top = std::max(top, w);
+                    }
+                double sum = 0;
+                M3 hold{};
+                for (auto& [c, w] : takers) {
+                    w = w - top > -25 ? std::exp(w - top) : 0.0;
+                    sum += w;
+                    const Vec2 d = placeOf(c) - here;
+                    if (w > 0) addTo(hold, springAt(w, d.x, d.y));
+                }
+                if (!(sum > 0)) continue;
+                Move mv;
+                const bool lever = settle(hold, {1, 0, 0}, mv);
+                // Only as far as the piece is stiff. A thin one bends: the joints
+                // near the one that went take its load by what each was carrying,
+                // with no lever to make one of them carry more than all of it (a
+                // shelf that loses a tip at its edge does not hang twice as hard
+                // from the next one). The same split as a layer's own pull: half
+                // and half where the model over the joint is `slab` mm thick.
+                const bool stiff_all = !(cfg_.share_reach < 1e5);
+                const double thin = stiff_all || !(cfg_.slab > 0) ? 0.0 : 1.0 / (1.0 + std::pow(over / cfg_.slab, 4));
+                shares.clear();
+                double total = 0;
+                for (const auto& [c, w] : takers) {
+                    if (w == 0) continue;
+                    const Vec2 d = placeOf(c) - here;
+                    const double share =
+                        lever ? (1 - thin) * w * (mv.w + mv.gx * d.x + mv.gy * d.y) + thin * w / sum : w / sum;
+                    if (!(share > 0)) continue;
+                    shares.push_back({c, share});
+                    total += share;
+                }
+                // Every share follows the load as it grows, but for the smallest,
+                // which together come to under a twentieth of it: those are kept
+                // at what they were given. (Spread over 50 joints or more, each
+                // share is small, but together they are all of it.)
+                sizes.clear();
+                for (const auto& s : shares) sizes.push_back(s.second);
+                std::sort(sizes.begin(), sizes.end(), std::greater<>());
+                double so_far = 0, followed = 0;
+                for (double s : sizes) {
+                    followed = s;
+                    so_far += s;
+                    if (so_far >= 0.95 * total) break;
+                }
+                for (const auto& [c, share] : shares) {
+                    pass(x, c, share, k, share >= std::min(kTracked, followed));
+                    when[c] = firstOverAll(c, k);
+                    if (when[c] != kNever && !listed[c]) {
+                        listed[c] = 1;
+                        due.push_back(c);
                     }
                 }
-                queue.insert(queue.end(), pc.kids.begin(), pc.kids.end());
             }
-        }
-        double model_lost = 0, with_tips = 0;  // mm³
-        for (size_t q = 0; q < lost_list.size(); ++q) {
-            const int id = lost_list[q];
-            if (model_[id]) {
-                model_lost += area_[id] * h_;
-                went_with[lost_by[q]] += area_[id] * h_;
-                if (tip_group_[cand[lost_by[q]].link] >= 0) with_tips += area_[id] * h_;
-            }
-            ++counts[id];
-            for (int child : part_[id].children) {
-                if (lost_stamp[child] == r || !held_[child]) continue;
-                // Still on something: a part that is there, through a joint that has not let go.
-                bool any = false;
-                for (int i = link_begin_[child]; i < link_begin_[child + 1] && !any; ++i) {
-                    const int p = links_[i].parent;
-                    any = held_[p] && lost_stamp[p] != r && !(cand_of[i] >= 0 && broken[cand_of[i]]);
-                }
-                if (!any) {
-                    lost_stamp[child] = r;
-                    lost_list.push_back(child);
-                    lost_by.push_back(lost_by[q]);  // what printed on it goes with the same joint
+
+            // Everything in a fallen piece, then whatever would have printed on it alone.
+            lost_list.clear();
+            lost_by.clear();
+            for (const Fall& f : fallen) {
+                const int k = f.k;
+                queue.assign(1, f.piece);
+                for (size_t q = 0; q < queue.size(); ++q) {
+                    const Piece& pc = pieces[queue[q]];
+                    for (int id : pc.parts) {
+                        if (layerOf(id) > k) break;
+                        if (lost_stamp[id] != r) {
+                            lost_stamp[id] = r;
+                            lost_list.push_back(id);
+                            lost_by.push_back(f.by);
+                        }
+                    }
+                    queue.insert(queue.end(), pc.kids.begin(), pc.kids.end());
                 }
             }
+            double model_lost = 0, with_tips = 0;  // mm³
+            for (size_t q = 0; q < lost_list.size(); ++q) {
+                const int id = lost_list[q];
+                if (model_[id]) {
+                    model_lost += area_[id] * h_;
+                    went_by[static_cast<size_t>(r)].push_back({lost_by[q], id});
+                    if (tip_group_[cand[lost_by[q]].link] >= 0) with_tips += area_[id] * h_;
+                }
+                counts[id].fetch_add(1, std::memory_order_relaxed);
+                for (int child : part_[id].children) {
+                    if (lost_stamp[child] == r || !held_[child]) continue;
+                    // Still on something: a part that is there, through a joint that has not let go.
+                    bool any = false;
+                    for (int i = link_begin_[child]; i < link_begin_[child + 1] && !any; ++i) {
+                        const int p = links_[i].parent;
+                        any = held_[p] && lost_stamp[p] != r && !(cand_of[i] >= 0 && broken[cand_of[i]]);
+                    }
+                    if (!any) {
+                        lost_stamp[child] = r;
+                        lost_list.push_back(child);
+                        lost_by.push_back(lost_by[q]);  // what printed on it goes with the same joint
+                    }
+                }
+            }
+            if (model_lost + unheld_volume + skinLost(r, &lost_stamp) < kWorthLosing)
+                whole.fetch_add(1, std::memory_order_relaxed);
+            for (int c : started_now) {
+                started[c].fetch_add(1, std::memory_order_relaxed);
+                if (model_lost >= kWorthLosing) started_loss[c].fetch_add(1, std::memory_order_relaxed);
+            }
+            if (with_tips >= kCountsAsLost) tips_with[static_cast<size_t>(r)] = with_tips;
         }
-        whole += model_lost + unheld_volume + skinLost(r, &lost_stamp) < kWorthLosing;
-        for (int c : started_now) {
-            ++started[c];
-            started_loss[c] += model_lost >= kWorthLosing;
-        }
-        if (with_tips >= kCountsAsLost) {
+    });
+    // By joint: the model that went with it (mm³, summed); and the replays in which part of the model went with
+    // tips, and how much, summed over those.
+    std::vector<double> went_with(nc, 0);
+    int tips_cost = 0;
+    double tips_cost_sum = 0;
+    for (size_t r = 0; r < went_by.size(); ++r) {
+        for (const auto& [c, id] : went_by[r]) went_with[c] += area_[id] * h_;
+        if (tips_with[r] >= 0) {
             ++tips_cost;
-            tips_cost_sum += with_tips;
+            tips_cost_sum += tips_with[r];
         }
     }
     whole_ = static_cast<double>(whole) / replays;

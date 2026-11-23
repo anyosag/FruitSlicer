@@ -717,18 +717,18 @@ std::vector<float> heatByLayer(const fruit::StabilityResult& res, HeatOf of) {
 // ---------------------------------------------------------------- the check
 
 RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint, double weaker,
-                     std::shared_ptr<const fruit::LayerStack>* model_layers) {
+                     ModelKept* kept) {
     const auto t0 = std::chrono::steady_clock::now();
     RiskReport r;
     // The model's layers as they print (hollowed or drilled, where the Hollow
     // tool changed them), and the supports' own.
     std::shared_ptr<const fruit::LayerStack> model;
     if (sup.hollow && sup.hollow->layers && sup.hollow->layer_height == kLayerHeight) model = sup.hollow->layers;
-    else if (model_layers && *model_layers) model = *model_layers;
+    else if (kept && kept->layers) model = kept->layers;
     else {
         model = std::make_shared<const fruit::LayerStack>(
             fruit::sliceModel(doc.placed(), kLayerHeight, nullptr, 0, ctl.sub(0.0, 0.1)));
-        if (model_layers) *model_layers = model;
+        if (kept) kept->layers = model;
     }
     const bool with_supports = !sup.mesh.empty();
     fruit::LayerStack supports;
@@ -763,9 +763,17 @@ RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit:
         cfg.skin_half_reach /= std::sqrt(weaker);
         cfg.skin_edge_reach /= std::sqrt(weaker);
     }
+    // The model's parts, as the last check of this job found them in the same layers.
+    if (kept && kept->parts && kept->parts_of == model && kept->link_grow == cfg.link_grow)
+        in.model_graph = kept->parts;
     r.borrowed = cfg.capacity.table.empty();
     ctl.step("stress", 0.2);
     auto res = std::make_shared<fruit::StabilityResult>(fruit::analyzeStability(in, cfg, ctl.sub(0.2, 0.9)));
+    if (kept && res->model_graph) {
+        kept->parts = res->model_graph;
+        kept->parts_of = model;
+        kept->link_grow = cfg.link_grow;
+    }
     findRiskPlaces(*res, cfg.usable_fraction, r);
     r.cups = res->stats.cup_layers > 0;
     if (paint) {
@@ -824,10 +832,11 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
     ctl.step("strengthen", 0);
     fruit::SupportConfig planner = supportConfig(doc.placement(), r.choices);
     const double weaker = peakWeaker(planner);
-    // Kept from round to round: the model's layers, the job's slots, and the trees of parts whose tips didn't change.
-    std::shared_ptr<const fruit::LayerStack> model_layers;
+    // Kept from round to round: the model's layers and parts, the job's slots, and the trees of parts whose tips
+    // didn't change.
+    ModelKept kept;
     RebuildCache cache;
-    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, weaker, &model_layers);
+    RiskReport risk = checkRisk(doc, r, ctl.silent(), false, weaker, &kept);
     const int replays = risk.result->stats.replays;
     fix.weaker = weaker;
     fix.replays = replays;
@@ -1004,21 +1013,29 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
                         if (std::abs(q.pos.z - z) < 1.0 && q.pos.x > box.min.x - skin_reach && q.pos.x < box.max.x + skin_reach &&
                             q.pos.y > box.min.y - skin_reach && q.pos.y < box.max.y + skin_reach)
                             near_tips.push_back(q.pos.xy());
+                // The band's points 0.4 mm apart, row by row, each with how far it is from the nearest of those
+                // tips: the tips only grow by one at a time, so each point needs only the new one's distance.
+                std::vector<fruit::Vec2> grid;
+                for (double y = box.min.y; y <= box.max.y; y += 0.4)
+                    for (double x = box.min.x; x <= box.max.x; x += 0.4) {
+                        bool inside = false;
+                        for (const fruit::Path& path : band.region)
+                            inside = inside || Clipper2Lib::PointInPolygon(fruit::toPoint({x, y}), path) != Clipper2Lib::PointInPolygonResult::IsOutside;
+                        if (inside) grid.push_back({x, y});
+                    }
+                std::vector<double> from_tips(grid.size(), 1e9);
+                for (std::size_t g = 0; g < grid.size(); ++g)
+                    for (const fruit::Vec2& t : near_tips)
+                        from_tips[g] = std::min(from_tips[g], fruit::norm(t - grid[g]));
                 for (int k = 0; k < 20; ++k) {
                     double far = 0;
                     fruit::Vec2 at;
-                    for (double y = box.min.y; y <= box.max.y; y += 0.4)
-                        for (double x = box.min.x; x <= box.max.x; x += 0.4) {
-                            bool inside = false;
-                            for (const fruit::Path& path : band.region)
-                                inside = inside || Clipper2Lib::PointInPolygon(fruit::toPoint({x, y}), path) != Clipper2Lib::PointInPolygonResult::IsOutside;
-                            if (!inside) continue;
-                            double d = 1e9;
-                            for (const fruit::Vec2& t : near_tips) d = std::min(d, fruit::norm(t - fruit::Vec2{x, y}));
-                            if (d > far) far = d, at = {x, y};
-                        }
+                    for (std::size_t g = 0; g < grid.size(); ++g)
+                        if (from_tips[g] > far) far = from_tips[g], at = grid[g];
                     if (far <= skin_reach) break;
                     near_tips.push_back(at);  // counted as covered, whether a tip goes in or not
+                    for (std::size_t g = 0; g < grid.size(); ++g)
+                        from_tips[g] = std::min(from_tips[g], fruit::norm(at - grid[g]));
                     const auto hit = tree.raycast({at.x, at.y, z - 0.6}, {0, 0, 1}, 0.8);
                     if (!hit || mesh.faceNormal(static_cast<std::size_t>(hit->face)).z > -0.2) continue;
                     const auto ref = nearestPlanned(hit->point, 1e9);
@@ -1056,7 +1073,7 @@ SupportResult lowerPeak(const Document& doc, const SupportSetup& s, JobPlan plan
         bool better = false;
         for (int attempt = 0; attempt < 2; ++attempt) {
             tried = finishWithEdits(doc, s, next, edits, ctl.silent(), &cache);
-            again = checkRisk(doc, tried, ctl.silent(), false, weaker, &model_layers);
+            again = checkRisk(doc, tried, ctl.silent(), false, weaker, &kept);
             lost = lostChance(*again.result);
             mm3 = again.result->stats.expected_loss;
             // Kept when losing part of the model gets a fifth less likely and no more of it is to be expected

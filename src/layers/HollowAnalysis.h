@@ -93,5 +93,9 @@ struct HollowReport {
 
 // On up to `threads` threads (0 = all cores); the report is the same however many.
 HollowReport analyzeHollows(const LayerStack& layers, double min_area = 0.5, double min_volume = 1.0, unsigned threads = 0);
+// The same report's regions alone (trap_regions, cup_regions; no components): where the cups and traps are, with
+// none of their measures worked out, as the replay wants them for a whole print.
+HollowReport hollowRegions(const LayerStack& layers, double min_area = 0.5, double min_volume = 1.0,
+                           unsigned threads = 0);
 
 }  // namespace fruit

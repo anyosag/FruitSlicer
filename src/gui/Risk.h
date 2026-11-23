@@ -139,10 +139,18 @@ std::string riskStrengthsBrief(const RiskReport& r);
 // (`paint` false: no paint, for the numbers alone). `weaker`: the resin taken
 // as that many times weaker than its values, its tips, its layers and its
 // fresh skins alike (lowerPeak's check; 1 for what the app shows).
-// `model_layers`: the model's own layers, cut once and given again for the
-// same job (filled in here when empty; a hollowed model's are its own).
+// `kept`: what one check hands the next of the same job (lowerPeak's rounds),
+// filled in here as it is worked out: the model's own layers, cut once (a
+// hollowed model's are its own), and the model's parts as the replay found
+// them in the layers it used, which only the supports change.
+struct ModelKept {
+    std::shared_ptr<const fruit::LayerStack> layers;
+    std::shared_ptr<const fruit::LayerStack> parts_of;  // the layers `parts` are of
+    double link_grow = 0;                                // ... and how they were linked
+    std::shared_ptr<const fruit::IslandGraph> parts;
+};
 RiskReport checkRisk(const Document& doc, const SupportResult& sup, const fruit::JobControl& ctl, bool paint = true,
-                     double weaker = 1.0, std::shared_ptr<const fruit::LayerStack>* model_layers = nullptr);
+                     double weaker = 1.0, ModelKept* kept = nullptr);
 
 // Its places from the engine's result (checkRisk does this; apart, for tests).
 // `usable` is the share of a tip's half-fail load it is trusted with.
