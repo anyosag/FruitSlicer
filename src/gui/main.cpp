@@ -150,8 +150,21 @@ int main(int argc, char** argv) {
     }
     SDL_GL_MakeCurrent(window, gl);
     SDL_GL_SetSwapInterval(1);
-    if (!gladLoadGL(reinterpret_cast<GLADloadfunc>(SDL_GL_GetProcAddress))) {
+    const int gl_version = gladLoadGL(reinterpret_cast<GLADloadfunc>(SDL_GL_GetProcAddress));
+    if (!gl_version) {
         log::error("cannot load OpenGL functions");
+        return 1;
+    }
+    // A computer without OpenGL 3.3 can still hand out a context (Windows'
+    // own basic driver gives 1.1): say so plainly rather than crash at the
+    // first drawing call.
+    if (GLAD_VERSION_MAJOR(gl_version) * 100 + GLAD_VERSION_MINOR(gl_version) < 303) {
+        const std::string why = "FruitSlicer needs OpenGL 3.3, and this computer's graphics offer only " +
+                                std::to_string(GLAD_VERSION_MAJOR(gl_version)) + "." +
+                                std::to_string(GLAD_VERSION_MINOR(gl_version)) +
+                                ". Updating the graphics driver usually brings it.";
+        log::error(why);
+        if (!hidden) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FruitSlicer", why.c_str(), window);
         return 1;
     }
 

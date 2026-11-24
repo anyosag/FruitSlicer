@@ -126,8 +126,10 @@ jobs:
         continue-on-error: true
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          $version = '26.2.6'
-          $sha256 = 'b2e00615feaba45942343c265cc8c5f576142ca682c1ac6661922d4b72492877'
+          # 26.2.5: the MSVC builds of 26.2.6 and 26.2.7 have no OpenGL (a d3d12
+          # build regression named in their release notes).
+          $version = '26.2.5'
+          $sha256 = '997123ef4ce8896204ab912d5b54f19372c487ff9835bcefafa2fca23b8953c2'
           $archive = Join-Path $env:RUNNER_TEMP 'mesa.7z'
           Invoke-WebRequest "https://github.com/pal1000/mesa-dist-win/releases/download/$version/mesa3d-$version-release-msvc.7z" -OutFile $archive
           if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $sha256) { throw "The Mesa download does not match its pinned SHA-256" }
