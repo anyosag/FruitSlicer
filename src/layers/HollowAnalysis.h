@@ -31,13 +31,26 @@ enum class HollowKind { Drains, SuctionCup, ResinTrap };
 
 // How hard a suction cup pulls, and where it could be let open. While a layer
 // of the cup prints, its open area is sealed against the film by the walls
-// round it, so each peel pulls on it much as on cured resin: `share` is how
-// much more the layer pulls than its own cured area would.
+// round it, so each peel pulls on it much as on cured resin: a layer's
+// `share` is how much more it pulls than its own cured area would. The cups
+// open in the same outline on a layer pull on it together (the layer's
+// outermost polygon round the cup: one part, not the plate): ten small wells
+// side by side are as bad as one well ten times the size. A cup's share on
+// a layer is its open area and that of every cup there no bigger than it,
+// over what is cured inside that outline. So the biggest cup carries the
+// layer's whole pull, and a small one beside it is graded as if the big one
+// were fixed: fixing them biggest first never turns up a problem not shown.
 struct CupMeasures {
-    double open_area = 0;     // mm² facing the film, on the layer where `share` is largest
-    double cured_around = 0;  // mm² cured on that layer inside the outline round the cup
+    double open_area = 0;     // mm² facing the film in that outline, on the layer where `share` is largest: it and those no bigger
+    double own_area = 0;      // of which this cup's own
+    int cups_there = 0;       // the cups that adds up, this one too
+    double all_open = 0;      // every cup open in that outline on that layer
+    int all_cups = 0;
+    double cured_around = 0;  // mm² cured on that layer inside that outline
     double share = 0;         // open_area / cured_around, the largest over the cup's layers
     int share_layer = -1;
+    // The share on each of its layers, from its first up.
+    std::vector<float> by_layer;
     // Its biggest layer: twice its area over its edges' length (a groove's
     // width, a round cup's radius), how long that makes it, and the widest
     // circle in it.
@@ -51,19 +64,22 @@ struct CupMeasures {
     Vec2 wall_at;      // the outside of that wall, where a notch would come out
     // Long and narrow: a groove or a channel rather than a cup.
     bool channel() const { return width > 0 && length >= 5 * width; }
+    // Its layers whose share is `from` or more.
+    int layersFrom(double from) const;
 };
 
 // Where a suction cup's measures put it. The limits are assumptions, not
-// measured on prints: the cup's open area under `note_below` of the layer
-// cured round it is a note; from `problem_from` it is a problem; between, a
-// warning, and a problem when it pulls on `deep_layers` layers or more
-// (more peels, more chances to fail).
+// measured on prints: the cup's largest share under `note_below` is a note;
+// from `problem_from` it is a problem; between, a warning, and a problem
+// when it pulls that hard (`note_below` or more) on `deep_layers` layers or
+// more (more peels, more chances to fail).
 struct CupLimits {
     double note_below = 0.25;
     double problem_from = 1.0;
     int deep_layers = 300;
 };
 enum class CupGrade { Note, Warning, Problem };
+// `layers`: how many it pulls on, when m.by_layer is empty (else counted from it).
 CupGrade gradeCup(const CupMeasures& m, int layers, const CupLimits& limits = {});
 const char* gradeName(CupGrade g);  // "note", "warning", "problem"
 

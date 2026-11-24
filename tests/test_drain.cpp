@@ -271,3 +271,47 @@ TEST_CASE("only hollows that hold resin count as closed", "[drain]") {
     CHECK(cup.cavities[0].opens_up);
     CHECK(cup.volume == Approx(16 * 16 * 8).margin(2));
 }
+
+TEST_CASE("Drain: a cup's vent goes down through its floor, or on the plate out through a wall", "[drain]") {
+    // A box open at the top, 20 × 20 × 10 with 2 mm walls.
+    auto box = [] {
+        TriangleMesh m;
+        appendBox(m, {0, 0, 0}, {20, 20, 2});
+        appendBox(m, {0, 0, 0}, {2, 20, 10});
+        appendBox(m, {18, 0, 0}, {20, 20, 10});
+        appendBox(m, {0, 0, 0}, {20, 2, 10});
+        appendBox(m, {0, 18, 0}, {20, 20, 10});
+        return m;
+    };
+    // On supports: straight down through the 2 mm floor, into the cup.
+    TriangleMesh lifted = box();
+    placeOnPlate(lifted, {0, 0, 0}, 5);
+    const LayerStack ls = sliceModel(lifted, 0.1);
+    const HollowResult cup = closedHollows(ls);
+    REQUIRE(cup.cavities.size() == 1);
+    REQUIRE(cup.cavities[0].opens_up);
+    const auto vents = suggestVents(lifted, Transform::identity(), ls, cup, {1}, 3.0);
+    REQUIRE(vents.size() == 1);
+    REQUIRE(vents[0].has_value());
+    CHECK(vents[0]->vent);
+    CHECK_FALSE(vents[0]->air);
+    CHECK(vents[0]->axis.z == Approx(1).margin(1e-6));  // runs up into the model
+    CHECK(vents[0]->at.z == Approx(5).margin(0.05));    // from its underside
+    const std::vector<PlacedHole> placed = placeHoles({*vents[0]}, Transform::identity(), ls, cup);
+    REQUIRE(placed[0].cavity == 0);
+    CHECK(cavitiesDrain(drilledLayers(ls, cup, placed), cup) == std::vector<char>{1});
+    // None asked for: none.
+    CHECK_FALSE(suggestVents(lifted, Transform::identity(), ls, cup, {0}, 3.0)[0].has_value());
+    // Standing on the plate: not down, which ends on the plate, but level out through a wall at its floor.
+    TriangleMesh standing = box();
+    placeOnPlate(standing, {0, 0, 0}, 0);
+    const LayerStack ps = sliceModel(standing, 0.1);
+    const HollowResult on = closedHollows(ps);
+    REQUIRE(on.cavities.size() == 1);
+    const auto side = suggestVents(standing, Transform::identity(), ps, on, {1}, 3.0);
+    REQUIRE(side[0].has_value());
+    CHECK(std::abs(side[0]->axis.z) < 1e-6);
+    CHECK(side[0]->at.z > 1.9);
+    // A trap's drain and air holes are as before: two of them.
+    CHECK(suggestDrainHoles(standing, Transform::identity(), ps, on, 3.0).size() == 2);
+}

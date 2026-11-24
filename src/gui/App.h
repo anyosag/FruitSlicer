@@ -385,6 +385,25 @@ public:
     // fresh plan's own hollows), or taken back. False when there is no such
     // hollow yet.
     bool acceptHollow(std::size_t i, bool accept);
+    // The hollow the screen is about (of the plan's own hollows, -1: none):
+    // painted brightest, the view cut through it. Choosing one turns the
+    // view to it when `frame`.
+    int hollowSelected() const { return hollow_selected_; }
+    void selectHollow(int i, bool frame = true);
+    // The hollow whose row the pointer is over, lit up for this frame.
+    void hoverHollow(int i) { hollow_hover_ = i; }
+    // The own hollow a ray from the view lands in (its section in the cut,
+    // or a face of the model round it, on the side that is shown), or -1.
+    int pickHollow(const fruit::Vec3& origin, const fruit::Vec3& dir);
+    // A vent into own hollow `i` (a suction cup), where the plan suggests
+    // one; or the vents into it taken out again.
+    bool addVent(std::size_t i);
+    void removeVents(std::size_t i);
+    // "Find a tilt" for the part own hollow `i` is in, and turning that part
+    // as one of its tries has it (it then stands on supports).
+    void findCupTilt(std::size_t i);
+    bool findingTilt() const;
+    void useCupTilt(const CupTiltTry& t);
     // Starts the screen's plan unless it is up to date or being made. It
     // only ever replaces a plan being made for earlier choices, never other
     // work: then maintain() starts it once that is done.
@@ -787,7 +806,13 @@ private:
     HollowChoices hollow_tried_choices_;
     std::vector<fruit::DrainHole> hollow_tried_manual_;
     std::vector<AcceptedHollow> hollow_tried_accepted_;
+    std::vector<fruit::DrainHole> hollow_tried_vents_;
     int hollow_generation_ = 0;
+    int hollow_selected_ = -1, hollow_hover_ = -1;
+    void syncHollowScene();  // the Hollow screen's paint, sheets and holes, as extras
+    std::shared_ptr<const HollowPlan> hollow_scene_for_;
+    std::vector<fruit::TriangleMesh> hollow_hole_meshes_;  // drilled, not reaching, the vent shown
+    int hollow_scene_vent_ = -2;
     std::shared_ptr<const OrientSearch> pictures_for_;
     std::vector<unsigned> pictures_;  // options, then how it sits now
     bool supports_for_part_ = false;               // the Supports panel's switch: the selected part, not All parts
@@ -963,6 +988,8 @@ private:
     void syncCut();
     bool cut_away_ = true;
     std::shared_ptr<const HollowPlan> cut_for_;  // the plan the cap was built from
+    int cut_through_ = -2;                       // and the hollow it goes through (-1: the middle)
+    fruit::Vec2 cut_at_;                         // the point it goes through
     fruit::Vec2 cut_toward_;                     // horizontal, from the model towards the camera
     fruit::Vec3 cut_mid_;
     std::vector<Renderer::CapGroup> cut_cap_;

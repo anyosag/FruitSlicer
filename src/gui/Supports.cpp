@@ -591,17 +591,17 @@ std::string cupBody(const SupportProblem& p, const fruit::CupLimits& l) {
     const std::string lo = cupPct(l.note_below), hi = cupPct(l.problem_from);
     std::string s;
     if (p.code == "suction_cup")
-        s = strf("A hollow faces the film, and its opening is %s or more of the layer cured round it, or %s or more "
-                 "on %d layers or more, so each peel pulls hard on it. Turn the model, or let resin in on the Hollow "
-                 "screen.",
+        s = strf("A hollow faces the film, and on some layer what is open is %s or more of what is cured round it, "
+                 "or %s or more on %d layers or more, so each peel pulls hard there. Tilt the model or add a vent: "
+                 "the Hollow screen shows where it is and finds a tilt.",
                  hi.c_str(), lo.c_str(), l.deep_layers);
     else if (p.code == "suction_cup_warning")
         s = strf("A hollow faces the film. Its opening adds %s to %s to the pull on the layers round it. Not "
                  "counted as a problem.",
                  lo.c_str(), hi.c_str());
     else
-        s = strf("A hollow faces the film, but its opening is under %s of the layer cured round it, so each peel "
-                 "pulls only a little harder. Not counted as a problem.",
+        s = strf("A hollow faces the film, but what is open is under %s of what is cured round it on every layer, "
+                 "so each peel pulls only a little harder. Not counted as a problem.",
                  lo.c_str());
     const fruit::Warning* top = nullptr;
     for (const fruit::Warning& w : p.hollows)
@@ -609,11 +609,17 @@ std::string cupBody(const SupportProblem& p, const fruit::CupLimits& l) {
     if (!top) return s;  // an older job: no numbers kept
     const auto& v = top->values;
     auto mm2 = [](double a) { return thousands(static_cast<std::size_t>(std::lround(a))) + " mm²"; };
-    s += strf(" %s %s, %s of the %s cured round it, on %.0f layers (%.1f to %.1f mm).",
-              p.hollows.size() > 1 ? "The opening of the one that pulls hardest is" : "Its opening is",
-              mm2(v.at("open_mm2")).c_str(),
-              cupPct(v.at("share")).c_str(), mm2(v.at("cured_mm2")).c_str(), v.at("layers"), v.at("z0"), v.at("z1"));
-    s += strf(" The %s and %s limits and the %d layers are assumed, not measured on prints: change them under "
+    // Older jobs kept no height or neighbours: the top of it, and on its own.
+    const double at_z = v.count("at_z") ? v.at("at_z") : v.at("z1");
+    const int others = v.count("cups_there") ? static_cast<int>(v.at("cups_there")) - 1 : 0;
+    const std::string beside = others <= 0 ? std::string()
+                               : others == 1 ? std::string(", in it and 1 other cup no bigger beside it")
+                                             : strf(", in it and %d other cups no bigger beside it", others);
+    s += strf(" %s at %.1f mm: %s open%s, %s of the %s cured round it. It spans %.0f layers (%.1f to %.1f mm).",
+              p.hollows.size() > 1 ? "The one that pulls hardest pulls hardest" : "It pulls hardest", at_z,
+              mm2(v.at("open_mm2")).c_str(), beside.c_str(), cupPct(v.at("share")).c_str(),
+              mm2(v.at("cured_mm2")).c_str(), v.at("layers"), v.at("z0"), v.at("z1"));
+    s += strf(" The %s and %s lines and the %d layers are guesses, not measured on prints: change them under "
               "Advanced.",
               lo.c_str(), hi.c_str(), l.deep_layers);
     return s;

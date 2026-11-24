@@ -911,13 +911,14 @@ void App::planHollowPreview() {
     const int rev = doc_->revision();
     if (hs.planFresh(rev)) return;
     if (hollow_tried_revision_ == rev && hollow_tried_choices_ == hs.choices && hollow_tried_manual_ == hs.manual &&
-        hollow_tried_accepted_ == hs.accepted)
+        hollow_tried_accepted_ == hs.accepted && hollow_tried_vents_ == hs.vents)
         return;  // being made, or it failed
     if (jobs_.busy() && !planningHollow() && !checkingCollisions() && !checkingRisk()) return;
     hollow_tried_revision_ = rev;
     hollow_tried_choices_ = hs.choices;
     hollow_tried_manual_ = hs.manual;
     hollow_tried_accepted_ = hs.accepted;
+    hollow_tried_vents_ = hs.vents;
     const int generation = ++hollow_generation_;
     auto snap = std::make_shared<const Document>(*doc_);
     auto out = std::make_shared<HollowPlan>();
@@ -942,6 +943,9 @@ void App::planHollowPreview() {
             }
             d->hollow.plan = std::make_shared<const HollowPlan>(std::move(*out));
             d->hollow.plan_revision = rev;
+            // The hollow chosen may be gone (the model turned, say).
+            if (d == doc_ && hollow_selected_ >= static_cast<int>(d->hollow.plan->closed.cavities.size()))
+                hollow_selected_ = -1;
             log::info("hollow: " + std::to_string(d->hollow.plan->cavities().cavities.size()) + " hollows, " +
                       std::to_string(d->hollow.plan->holes.size()) + " holes in " +
                       std::to_string(d->hollow.plan->seconds) + " s");
@@ -996,6 +1000,169 @@ bool App::acceptHollow(std::size_t i, bool accept) {
     if (hs.applied) ++hs.settings;
     planHollowPreview();
     return true;
+}
+
+void App::selectHollow(int i, bool frame) {
+    if (!doc_) return;
+    const HollowState& hs = doc_->hollow;
+    const HollowPlan* p = hs.plan && hs.plan_revision == doc_->revision() ? hs.plan.get() : nullptr;
+    if (!p || i < 0 || i >= static_cast<int>(p->closed.cavities.size())) {
+        hollow_selected_ = -1;
+        return;
+    }
+    hollow_selected_ = i;
+    if (!frame) return;
+    // Its room, and the plate under it, in view.
+    const fruit::Cavity& c = p->closed.cavities[static_cast<std::size_t>(i)];
+    fruit::BBox2 box;
+    for (std::size_t L = static_cast<std::size_t>(c.first_layer); L <= static_cast<std::size_t>(c.last_layer) && L < p->closed.pieces.size(); ++L)
+        for (const fruit::InteriorPiece& k : p->closed.pieces[L])
+            if (k.cavity == i) box.extend(fruit::bbox(p->closed.piece(L, k)));
+    if (box.empty()) return;
+    const double z0 = c.first_layer * p->layer_height, z1 = (c.last_layer + 1) * p->layer_height;
+    const fruit::Vec3 mid{(box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2, (z0 + z1) / 2};
+    const double r = 0.5 * std::sqrt(box.size().x * box.size().x + box.size().y * box.size().y + (z1 - z0) * (z1 - z0));
+    // Not so close that what is round it is lost.
+    const fruit::BBox3 all = doc_->placedBox();
+    const double whole = 0.5 * fruit::norm(all.max - all.min);
+    const Camera before = camera_;
+    camera_.frame({static_cast<float>(mid.x), static_cast<float>(mid.y), static_cast<float>(mid.z)},
+                  static_cast<float>(std::max({1.3 * r + 2, 0.4 * whole, 10.0})));
+    view_set_ = false;
+    glideFrom(before);
+}
+
+int App::pickHollow(const fruit::Vec3& o, const fruit::Vec3& d) {
+    if (!doc_) return -1;
+    const HollowState& hs = doc_->hollow;
+    if (!hs.plan || hs.plan_revision != doc_->revision()) return -1;
+    const HollowPlan& p = *hs.plan;
+    const fruit::HollowResult& own = p.closed;
+    const double h = p.layer_height;
+    auto inside = [&](const fruit::Vec3& q) {
+        if (q.z < 0 || !(h > 0)) return -1;
+        return own.cavityAt(static_cast<std::size_t>(q.z / h), q.xy());
+    };
+    const bool cut = cut_for_ != nullptr;
+    const fruit::Vec2 toward = cut_toward_;
+    auto cutAway = [&](const fruit::Vec3& q) {
+        return cut && toward.x * (q.x - cut_mid_.x) + toward.y * (q.y - cut_mid_.y) > 1e-6;
+    };
+    // The cut first: it is drawn over the model.
+    if (cut) {
+        const double along = toward.x * d.x + toward.y * d.y;
+        if (std::abs(along) > 1e-9) {
+            const double t = (toward.x * (cut_mid_.x - o.x) + toward.y * (cut_mid_.y - o.y)) / along;
+            if (t > 0) {
+                const fruit::Vec3 q = o + d * t;
+                if (const int k = inside(q); k >= 0) return k;
+                // On the section of the model: nothing behind it shows.
+                if (q.z >= 0 && p.solid && q.z < p.solid->size() * h) {
+                    const std::size_t L = static_cast<std::size_t>(q.z / h);
+                    for (const fruit::ExPolygon& e : fruit::toExPolygons(p.solid->slices[L]))
+                        if (fruit::ExPolygon{e.contour, {}}.contains(q.xy())) return -1;
+                }
+            }
+        }
+    }
+    // The model's faces, those on the side shown.
+    const fruit::AabbTree& tree = pickTree();
+    const fruit::TriangleMesh* mesh = tree.mesh();
+    if (!mesh) return -1;
+    double t0 = 0;
+    for (int k = 0; k < 64; ++k) {
+        const auto hit = tree.raycast(o, d, 1e30, t0);
+        if (!hit) return -1;
+        if (!cutAway(hit->point)) {
+            const fruit::Vec3 n = mesh->faceNormal(static_cast<std::size_t>(hit->face));
+            for (const double e : {0.05, 0.2})
+                if (const int c = inside(hit->point + n * e); c >= 0) return c;
+            return -1;
+        }
+        t0 = hit->t + 1e-6;
+    }
+    return -1;
+}
+
+bool App::addVent(std::size_t i) {
+    if (!doc_) return false;
+    HollowState& hs = doc_->hollow;
+    if (!hs.planFresh(doc_->revision()) || i >= hs.plan->vent_for.size() || !hs.plan->vent_for[i]) return false;
+    hs.vents.push_back(*hs.plan->vent_for[i]);
+    if (hs.applied) ++hs.settings;
+    planHollowPreview();
+    return true;
+}
+
+void App::removeVents(std::size_t i) {
+    if (!doc_) return;
+    HollowState& hs = doc_->hollow;
+    if (!hs.planFresh(doc_->revision())) return;
+    const HollowPlan& p = *hs.plan;
+    std::vector<fruit::DrainHole> next;
+    for (const fruit::DrainHole& v : hs.vents) {
+        bool into = false;
+        for (std::size_t k = 0; k < p.holes.size() && k < p.into_own.size(); ++k)
+            into = into || (p.holes[k].vent && p.holes[k].part == v.part && p.holes[k].at == v.at &&
+                            p.into_own[k] == static_cast<int>(i));
+        if (!into) next.push_back(v);
+    }
+    if (next == hs.vents) return;
+    hs.vents = std::move(next);
+    if (hs.applied) ++hs.settings;
+    planHollowPreview();
+}
+
+namespace {
+const char* const kTiltJob = "Finding a tilt";
+}
+
+bool App::findingTilt() const { return jobs_.busy() && jobs_.progress().name == kTiltJob; }
+
+void App::findCupTilt(std::size_t i) {
+    if (!doc_ || jobs_.busy()) return;
+    const HollowState& hs = doc_->hollow;
+    if (!hs.plan || hs.plan_revision != doc_->revision() || i >= hs.plan->closed.cavities.size()) return;
+    const fruit::Vec3 at = cavityLabelAt(hs.plan->closed, i, hs.plan->layer_height);
+    const int part = doc_->partNear(at);
+    auto snap = std::make_shared<const Document>(*doc_);
+    auto out = std::make_shared<CupTilt>();
+    const int rev = doc_->revision();
+    std::weak_ptr<Document> target = doc_;
+    jobs_.start(
+        kTiltJob, [snap, out, part](const fruit::JobControl& ctl) { *out = gui::findCupTilt(*snap, part, ctl); },
+        [this, target, out, rev](std::exception_ptr err) {
+            const auto d = target.lock();
+            if (!d) return;
+            if (err) {
+                try {
+                    std::rethrow_exception(err);
+                } catch (const fruit::Cancelled&) {
+                } catch (const std::exception& e) {
+                    showError("Couldn't find a tilt", e.what());
+                }
+                return;
+            }
+            d->hollow.tilt = std::make_shared<const CupTilt>(std::move(*out));
+            d->hollow.tilt_revision = rev;
+            log::info("tilt: " + std::to_string(d->hollow.tilt->tries.size()) + " angles in " +
+                      std::to_string(d->hollow.tilt->seconds) + " s");
+        });
+}
+
+void App::useCupTilt(const CupTiltTry& t) {
+    if (!doc_ || !doc_->hollow.tilt) return;
+    const int part = doc_->hollow.tilt->part;
+    if (!doc_->findPart(part)) return;
+    doc_->select(part);
+    fruit::Placement p = doc_->placement();
+    p.rotation_deg = t.rotation_deg;
+    if (p.on_plate) p.elevation = fruit::Placement{}.elevation;
+    p.on_plate = false;  // tilted, it stands on supports
+    doc_->edit(slidOnto(doc_->part().mesh(), p, doc_->printer));  // kept where it is, if it fits there
+    hollow_selected_ = -1;
+    frameModel();
+    planHollowPreview();
 }
 
 void App::removeHole(int index) {
@@ -2203,11 +2370,29 @@ void App::syncCut() {
     if (!plan) {
         renderer_.clearCut();
         cut_for_.reset();
+        cut_through_ = -2;
         return;
     }
-    if (plan != cut_for_) {
-        const fruit::BBox3 b = doc_->placedBox();
-        cut_mid_ = (b.min + b.max) * 0.5;
+    // Through the hollow chosen: along its vent when it has one (shown, or
+    // added), so the cut shows where the vent goes through the model; else
+    // through its middle. With none chosen, through the job's middle.
+    const int through =
+        hollow_selected_ >= 0 && static_cast<std::size_t>(hollow_selected_) < plan->closed.cavities.size() ? hollow_selected_ : -1;
+    const fruit::BBox3 job = doc_->placedBox();
+    fruit::Vec2 at{(job.min.x + job.max.x) / 2, (job.min.y + job.max.y) / 2};
+    if (through >= 0) {
+        const auto t = static_cast<std::size_t>(through);
+        std::optional<fruit::PlacedHole> vent;
+        if (doc_->hollow.planFresh(doc_->revision()) && t < plan->vent_preview.size()) vent = plan->vent_preview[t];
+        for (std::size_t k = 0; !vent && k < plan->placed.size() && k < plan->into_own.size(); ++k)
+            if (plan->into_own[k] == through) vent = plan->placed[k];
+        if (vent) at = ((vent->from + vent->to) * 0.5).xy();
+        else at = cavityLabelAt(plan->closed, t, plan->layer_height).xy();
+    }
+    const bool moved = plan != cut_for_ || through != cut_through_ || at.x != cut_at_.x || at.y != cut_at_.y;
+    if (moved) {
+        cut_at_ = at;
+        cut_mid_ = {at.x, at.y, (job.min.z + job.max.z) / 2};
     }
     const V3 eye = camera_.eye();
     fruit::Vec2 toward{eye.x - cut_mid_.x, eye.y - cut_mid_.y};
@@ -2217,8 +2402,9 @@ void App::syncCut() {
     const bool turning = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
                          ImGui::IsMouseDown(ImGuiMouseButton_Middle);
     const bool turned = fruit::dot(toward, cut_toward_) < std::cos(1.0 * 3.14159265358979 / 180.0);
-    if (plan != cut_for_ || (turned && !turning)) {
+    if (moved || (turned && !turning)) {
         cut_for_ = plan;
+        cut_through_ = through;
         cut_toward_ = toward;
         const fruit::Vec2 along{-toward.y, toward.x};
         const fruit::Vec2 at{cut_mid_.x, cut_mid_.y};
@@ -2250,6 +2436,103 @@ void App::syncCut() {
     const float plane[4] = {static_cast<float>(-cut_toward_.x), static_cast<float>(-cut_toward_.y), 0.0f,
                             static_cast<float>(cut_toward_.x * cut_mid_.x + cut_toward_.y * cut_mid_.y)};
     renderer_.setCut(plane, cut_cap_, cut_key_);
+}
+
+namespace {
+
+// A closed tube of radius r from a to b, in `m`.
+void appendTube(fruit::TriangleMesh& m, const fruit::Vec3& a, const fruit::Vec3& b, double r) {
+    if (fruit::norm(b - a) < 1e-9 || r <= 0) return;
+    constexpr int kSides = 24;
+    const fruit::Vec3 axis = fruit::normalized(b - a);
+    const fruit::Vec3 any = std::abs(axis.z) < 0.9 ? fruit::Vec3{0, 0, 1} : fruit::Vec3{1, 0, 0};
+    const fruit::Vec3 u = fruit::normalized(fruit::cross(axis, any)), v = fruit::cross(axis, u);
+    const auto base = static_cast<std::int32_t>(m.vertices.size());
+    for (int k = 0; k < kSides; ++k) {
+        const double th = 2 * 3.14159265358979 * k / kSides;
+        const fruit::Vec3 off = (u * std::cos(th) + v * std::sin(th)) * r;
+        m.vertices.push_back(a + off);
+        m.vertices.push_back(b + off);
+    }
+    m.vertices.push_back(a);
+    m.vertices.push_back(b);
+    const std::int32_t ca = base + 2 * kSides, cb = ca + 1;
+    for (int k = 0; k < kSides; ++k) {
+        const std::int32_t a0 = base + 2 * k, b0 = a0 + 1, a1 = base + 2 * ((k + 1) % kSides), b1 = a1 + 1;
+        m.faces.push_back({a0, a1, b1});
+        m.faces.push_back({a0, b1, b0});
+        m.faces.push_back({ca, a1, a0});
+        m.faces.push_back({cb, b0, b1});
+    }
+}
+
+unsigned mixRgb(unsigned a, unsigned b, double t) {
+    auto ch = [&](int s) {
+        const double x = ((a >> s) & 0xFF) * (1 - t) + ((b >> s) & 0xFF) * t;
+        return static_cast<unsigned>(std::lround(std::clamp(x, 0.0, 255.0))) << s;
+    };
+    return ch(16) | ch(8) | ch(0);
+}
+
+// The Hollow screen's keys for its extras, apart from the supports' (scene_key_).
+int hollow_key = 1 << 30;
+
+}  // namespace
+
+void App::syncHollowScene() {
+    const HollowState& hs = doc_->hollow;
+    const std::shared_ptr<const HollowPlan> plan =
+        hs.plan && hs.plan_revision == doc_->revision() ? hs.plan : std::shared_ptr<const HollowPlan>{};
+    if (!plan) {
+        renderer_.clearExtras();
+        hollow_scene_for_.reset();
+        return;
+    }
+    const HollowPlan& p = *plan;
+    const std::size_t n = p.closed.cavities.size();
+    const int sel = hollow_selected_ >= 0 && static_cast<std::size_t>(hollow_selected_) < n ? hollow_selected_ : -1;
+    const bool fresh = hs.planFresh(doc_->revision());
+    // The vent suggested for the cup chosen, until it is added.
+    const int vent = fresh && sel >= 0 && static_cast<std::size_t>(sel) < p.vent_preview.size() &&
+                             p.vent_preview[static_cast<std::size_t>(sel)]
+                         ? sel
+                         : -1;
+    if (hollow_scene_for_ != plan || hollow_scene_vent_ != vent) {
+        hollow_scene_for_ = plan;
+        hollow_scene_vent_ = vent;
+        hollow_hole_meshes_.assign(3, {});
+        for (std::size_t k = 0; k < p.placed.size(); ++k) {
+            const fruit::PlacedHole& h = p.placed[k];
+            appendTube(hollow_hole_meshes_[h.cavity >= 0 ? 0 : 1], h.from, h.to, h.radius);
+        }
+        if (vent >= 0) {
+            const fruit::PlacedHole& h = *p.vent_preview[static_cast<std::size_t>(vent)];
+            appendTube(hollow_hole_meshes_[2], h.from, h.to, h.radius);
+        }
+        ++hollow_key;
+    }
+    std::vector<const fruit::TriangleMesh*> meshes;
+    for (std::size_t i = 0; i < n; ++i) meshes.push_back(i < p.paint.size() ? &p.paint[i] : nullptr);
+    for (std::size_t i = 0; i < n; ++i) meshes.push_back(i < p.opening.size() ? &p.opening[i] : nullptr);
+    for (const fruit::TriangleMesh& m : hollow_hole_meshes_) meshes.push_back(&m);
+    renderer_.setExtras(meshes, hollow_key);
+    // Each hollow in its state's colour; with one chosen, the others dimmer,
+    // and the one under the pointer lit up.
+    const bool applied = hs.applied;
+    for (std::size_t i = 0; i < n; ++i) {
+        const bool lit = sel < 0 || static_cast<int>(i) == sel || static_cast<int>(i) == hollow_hover_;
+        const unsigned c = hollowColour(p, i, applied);
+        renderer_.setExtraStyle(i, lit ? c : mixRgb(c, 0x6F7682, 0.55), meshes[i] != nullptr, true);
+        // The film over a cup's opening, where it seals it.
+        const bool open = p.isCup(i) && !(applied && p.ownFixed(i));
+        renderer_.setExtraStyle(n + i, 0x5AA9E6, open && meshes[n + i] != nullptr, false,
+                                static_cast<int>(i) == sel ? 0.18f : 0.08f);
+    }
+    // The holes run inside the model: seen through it.
+    renderer_.setExtraStyle(2 * n, 0x3D8FE0, true, false, 0.95f, true);      // holes that reach a hollow
+    renderer_.setExtraStyle(2 * n + 1, 0xFF6B6B, true, false, 0.95f, true);  // holes that reach none
+    renderer_.setExtraStyle(2 * n + 2, 0x3D8FE0, true, false, 0.6f, true);   // the vent suggested, not added
+    hollow_hover_ = -1;  // set again by the row under the pointer, next frame
 }
 
 void App::syncScene() {
@@ -2285,6 +2568,10 @@ void App::syncScene() {
         }
     renderer_.setModels(models);
     syncCut();
+    if (doc_ && screen_ == Screen::Job && step_ == Step::Orient && orient_view_ == OrientView::Hollow) {
+        syncHollowScene();
+        return;
+    }
     if (!doc_ || screen_ != Screen::Job || step_ != Step::Supports) {
         renderer_.clearExtras();
         return;

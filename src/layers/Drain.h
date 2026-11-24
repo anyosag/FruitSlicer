@@ -23,6 +23,7 @@
 // the plate, which seals it: it isn't used, and a hole drilled there leaves
 // the cavity closed (analyzeHollows counts the plate as closed).
 
+#include <optional>
 #include <vector>
 
 #include "geometry/Polygon.h"
@@ -44,6 +45,10 @@ struct DrainHole {
     // Which model of several it is in (the app's part id; nothing here uses
     // it): `at` and `axis` are in that model's coordinates.
     int part = 0;
+    // A vent lets resin in under a suction cup (open towards the film), so
+    // its layers don't peel against a sealed pocket: one hole at its lowest
+    // point, asked for cup by cup (it goes through the model's surface).
+    bool vent = false;
     bool operator==(const DrainHole&) const = default;
 };
 
@@ -72,6 +77,14 @@ std::vector<char> cavitiesDrain(const LayerStack& drilled, const HollowResult& h
 // coordinates, a cavity's drain hole first.
 std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Transform& to_printer,
                                          const LayerStack& solid, const HollowResult& hollow, double diameter = 3);
+
+// A vent for each cavity `which` marks (one flag per cavity): a hole into
+// its lowest point along the shortest way out that runs level or down, as
+// a drain hole would go. None where there is no way out (on the plate,
+// a way out through its underside ends on the plate, which seals it).
+std::vector<std::optional<DrainHole>> suggestVents(const TriangleMesh& placed, const Transform& to_printer,
+                                                   const LayerStack& solid, const HollowResult& hollow,
+                                                   const std::vector<char>& which, double diameter = 3);
 
 // What a hole of radius `r` along a → b takes out of the layer between z0
 // and z1, seen from above: a convex polygon (empty if it misses the layer).

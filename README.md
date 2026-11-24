@@ -583,8 +583,11 @@ Safety checks and options:
 - **Suction cups and resin traps.** Hollows closed towards the plate but open
   towards the film are cups, and each peel pulls a vacuum through them.
   Fully closed hollows are traps. Both are reported with their height range
-  and volume. Tips are never placed on the ceiling of a closed cavity, since
-  they could not be removed.
+  and volume. A cup is graded layer by layer: what is open on a layer, it and
+  the cups beside it no bigger than it added up, against what is cured round
+  them (so the biggest cup carries a layer's whole pull). The note and problem
+  lines are guesses, not measured. Tips are never placed on the ceiling of a
+  closed cavity, since they could not be removed.
 - **No-trap bracing.** Two trunks are never braced when model material passes
   between them below the braces. The pillars, brace and raft would form a
   loop around it, and the supports could not come off (PrusaSlicer #14594).

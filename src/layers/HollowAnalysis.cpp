@@ -3,6 +3,7 @@
 #include "layers/HollowAnalysis.h"
 
 #include <algorithm>
+#include <map>
 #include <numeric>
 
 #include "core/Parallel.h"
@@ -18,7 +19,7 @@ struct Hollow {
     Paths shape;  // the region (non-zero): the hole counter-clockwise, the islands in it clockwise
     BBox2 box;
     double area;
-    double cured;  // mm² of resin cured inside the outline of the polygon it is a hole of
+    int group;     // the layer's outermost polygon it lies in (its index there)
 };
 
 Path oriented(const Path& p, bool ccw) {
@@ -42,12 +43,13 @@ double material(const C::PolyPath64& polygon) {
 // The hollows under `node` (the layer's root, or a hole), the deepest first:
 // each hole of each polygon as the open region it leaves, which is the hole
 // less the islands standing in it. A groove round a solid block is the
-// groove, not all of its outline.
-void collectHollows(const C::PolyPath64& node, int layer, std::vector<Hollow>& out) {
+// groove, not all of its outline. `group`: the outermost polygon they lie
+// in (-1 at the root: each of its polygons is one).
+void collectHollows(const C::PolyPath64& node, int layer, int group, std::vector<Hollow>& out) {
     for (size_t i = 0; i < node.Count(); ++i) {
         const C::PolyPath64& polygon = *node.Child(i);
-        for (size_t j = 0; j < polygon.Count(); ++j) collectHollows(*polygon.Child(j), layer, out);
-        const double cured = polygon.Count() ? material(polygon) : 0;
+        const int g = group >= 0 ? group : static_cast<int>(i);
+        for (size_t j = 0; j < polygon.Count(); ++j) collectHollows(*polygon.Child(j), layer, g, out);
         for (size_t j = 0; j < polygon.Count(); ++j) {
             const C::PolyPath64& hole = *polygon.Child(j);
             Paths shape{oriented(hole.Polygon(), true)};
@@ -55,7 +57,7 @@ void collectHollows(const C::PolyPath64& node, int layer, std::vector<Hollow>& o
             const double a = area(shape);
             if (a < 1e-6) continue;
             const BBox2 box = bbox(shape.front());
-            out.push_back({layer, std::move(shape), box, a, cured});
+            out.push_back({layer, std::move(shape), box, a, g});
         }
     }
 }
@@ -98,15 +100,27 @@ std::pair<double, Vec2> nearestOutside(const Paths& pocket, const Paths& outside
         const double mid = 0.5 * (lo + hi);
         (std::abs(area(meets(mid))) < 1e-8 ? lo : hi) = mid;
     }
-    return {hi, bbox(meets(hi + 0.02)).center()};
+    // Where it first meets the outside: the biggest spot of that (a wall as
+    // thin all along, or in several places, meets it in more than one; the
+    // middle of all of them may be nowhere near any).
+    const ExPolygons spots = toExPolygons(meets(hi + 0.02));
+    const ExPolygon* best = nullptr;
+    for (const ExPolygon& e : spots)
+        if (!best || e.area() > best->area()) best = &e;
+    return {hi, best ? best->bbox().center() : Vec2{}};
 }
 
 }  // namespace
 
+int CupMeasures::layersFrom(double from) const {
+    return static_cast<int>(std::count_if(by_layer.begin(), by_layer.end(), [&](float s) { return s >= from; }));
+}
+
 CupGrade gradeCup(const CupMeasures& m, int layers, const CupLimits& l) {
     if (m.share >= l.problem_from) return CupGrade::Problem;
     if (m.share < l.note_below) return CupGrade::Note;
-    return layers >= l.deep_layers ? CupGrade::Problem : CupGrade::Warning;
+    const int pulling = m.by_layer.empty() ? layers : m.layersFrom(l.note_below);
+    return pulling >= l.deep_layers ? CupGrade::Problem : CupGrade::Warning;
 }
 
 const char* gradeName(CupGrade g) {
@@ -124,6 +138,7 @@ HollowReport findHollows(const LayerStack& layers, double min_area, double min_v
     std::vector<Hollow> hollows;
     std::vector<std::vector<int>> by_layer(n);
     std::vector<Paths> filled(n);  // material + enclosed holes (outer contours only)
+    std::vector<std::vector<double>> group_cured(n);  // what cures inside each outermost polygon
     // Each layer on its own (in parallel), then numbered in layer order.
     std::vector<std::vector<Hollow>> holes_in(n);
     parallelFor(n, threads, [&](size_t L) {
@@ -132,9 +147,12 @@ HollowReport findHollows(const LayerStack& layers, double min_area, double min_v
         clipper.AddSubject(layers.slices[L]);
         C::PolyTree64 tree;
         clipper.Execute(C::ClipType::Union, C::FillRule::NonZero, tree);
-        collectHollows(tree, static_cast<int>(L), holes_in[L]);
+        collectHollows(tree, static_cast<int>(L), -1, holes_in[L]);
         // Every hole filled: the outlines of the outermost polygons.
-        for (size_t i = 0; i < tree.Count(); ++i) filled[L].push_back(oriented(tree.Child(i)->Polygon(), true));
+        for (size_t i = 0; i < tree.Count(); ++i) {
+            filled[L].push_back(oriented(tree.Child(i)->Polygon(), true));
+            group_cured[L].push_back(material(*tree.Child(i)));
+        }
     });
     for (size_t L = 0; L < n; ++L)
         for (Hollow& h : holes_in[L]) {
@@ -192,10 +210,42 @@ HollowReport findHollows(const LayerStack& layers, double min_area, double min_v
         a.moment += h.box.center() * h.area;
         a.members.push_back(static_cast<int>(i));
     }
+    auto reported = [&](const Acc& a) {
+        return !a.members.empty() && !a.below && a.max_area >= min_area && a.volume >= min_volume;
+    };
+    // The cups open in each layer's outlines: each one's own open area there.
+    using Open = std::map<int, double>;     // cup (its root) -> mm²
+    std::map<std::pair<int, int>, Open> open_in;  // (layer, group)
+    if (measured)
+        for (size_t r = 0; r < acc.size(); ++r) {
+            const Acc& a = acc[r];
+            if (!reported(a) || !a.above) continue;
+            for (int m : a.members) open_in[{hollows[m].layer, hollows[m].group}][static_cast<int>(r)] += hollows[m].area;
+        }
+    // What cup r pulls with in an outline: itself and every cup there no
+    // bigger than it. The biggest carries the layer's whole pull; a smaller
+    // one is graded as if the bigger ones were fixed, so fixing them in turn,
+    // biggest first, never turns up a problem not shown.
+    struct Pull {
+        double open = 0, all = 0;
+        int cups = 0, all_cups = 0;
+    };
+    auto pullOf = [](const Open& o, int r) {
+        Pull p;
+        const double own = o.at(r);
+        for (const auto& [c, area] : o) {
+            p.all += area;
+            ++p.all_cups;
+            if (area <= own * (1 + 1e-9)) {
+                p.open += area;
+                ++p.cups;
+            }
+        }
+        return p;
+    };
     for (size_t r = 0; r < acc.size(); ++r) {
         const Acc& a = acc[r];
-        if (a.members.empty() || a.below) continue;  // drains towards the plate
-        if (a.max_area < min_area || a.volume < min_volume) continue;
+        if (!reported(a)) continue;  // drains towards the plate, or too small
         if (!measured) {
             auto& regions = a.above ? report.cup_regions : report.trap_regions;
             for (int m : a.members) {
@@ -226,14 +276,25 @@ HollowReport findHollows(const LayerStack& layers, double min_area, double min_v
         c.inside_layer = biggest.layer;
         if (c.kind == HollowKind::SuctionCup) {
             CupMeasures& cm = c.cup;
+            cm.by_layer.assign(static_cast<size_t>(a.last - a.first + 1), 0.0f);
+            std::vector<double> own(cm.by_layer.size(), 0.0);
+            for (int m : a.members) own[static_cast<size_t>(hollows[m].layer - a.first)] += hollows[m].area;
             for (int m : a.members) {
                 const Hollow& h = hollows[m];
-                const double share = h.area / std::max(h.cured, 1e-9);
+                const double cured = group_cured[static_cast<size_t>(h.layer)][static_cast<size_t>(h.group)];
+                const Pull pull = pullOf(open_in.at({h.layer, h.group}), static_cast<int>(r));
+                const double share = pull.open / std::max(cured, 1e-9);
+                float& at = cm.by_layer[static_cast<size_t>(h.layer - a.first)];
+                at = std::max(at, static_cast<float>(share));
                 if (share > cm.share * (1 + 1e-9) || (share >= cm.share * (1 - 1e-9) && cm.share_layer >= 0 && h.layer < cm.share_layer)) {
                     cm.share = share;
                     cm.share_layer = h.layer;
-                    cm.open_area = h.area;
-                    cm.cured_around = h.cured;
+                    cm.open_area = pull.open;
+                    cm.own_area = own[static_cast<size_t>(h.layer - a.first)];
+                    cm.cups_there = pull.cups;
+                    cm.all_open = pull.all;
+                    cm.all_cups = pull.all_cups;
+                    cm.cured_around = cured;
                 }
             }
             double edges = 0;

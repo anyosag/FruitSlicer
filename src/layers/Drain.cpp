@@ -6,6 +6,7 @@
 #include <cmath>
 #include <map>
 #include <optional>
+#include <vector>
 
 #include "core/Parallel.h"
 #include "layers/HollowAnalysis.h"
@@ -203,47 +204,30 @@ std::vector<char> cavitiesDrain(const LayerStack& drilled, const HollowResult& h
     return drains;
 }
 
-std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Transform& to_printer,
-                                         const LayerStack& solid, const HollowResult& hollow, double diameter) {
-    const AabbTree tree(placed);
-    const Transform to_model = to_printer.inverse();
-    // Straight down (up) first, then at 60° and 30°, then level, all round.
-    auto waysOut = [](double sign) {
-        std::vector<Vec3> ways{{0, 0, sign}};
-        for (const double elevation : {60.0, 30.0, 0.0})
-            for (int k = 0; k < 12; ++k) {
-                const double az = deg2rad(30.0 * k), el = deg2rad(sign * elevation);
-                ways.push_back({std::cos(el) * std::cos(az), std::cos(el) * std::sin(az), std::sin(el)});
-            }
-        return ways;
-    };
-    const std::vector<Vec3> down = waysOut(-1), up = waysOut(1);
-    // Where a ray from inside leaves the model for good: the first surface
-    // it crosses beyond which it is outside every outline. (A model's own
-    // sealed hollow has walls in the mesh; the ray crosses those first.)
-    Inside outline(solid, true);
-    // A model standing on the plate: a way out through its first layer's
-    // underside ends on the plate, which seals it.
-    const bool on_plate = !solid.slices.empty() && !solid.slices[0].empty();
-    const double plate_z = 0.5 * solid.layer_height;  // `placed` is in printer coordinates
-    auto exit = [&](const Vec3& start, const Vec3& w) -> std::optional<RayHit> {
-        double t0 = 1e-9;
-        for (int k = 0; k < 64; ++k) {
-            const auto hit = tree.raycast(start, w, 1e30, t0);
-            if (!hit) return std::nullopt;
-            if (!outline(hit->point + w * 0.01)) return hit;
-            t0 = hit->t + 1e-6;
-        }
-        return std::nullopt;
-    };
+namespace {
+
+// Holes out of a hollow's cavities, along the shortest way out of the model
+// from a layer's deepest point.
+class HoleFinder {
+public:
+    HoleFinder(const TriangleMesh& placed, const Transform& to_printer, const LayerStack& solid,
+               const HollowResult& hollow, double diameter)
+        : tree_(placed), to_model_(to_printer.inverse()), solid_(solid), hollow_(hollow), diameter_(diameter),
+          outline_(solid, true) {
+        // A model standing on the plate: a way out through its first
+        // layer's underside ends on the plate, which seals it.
+        on_plate_ = !solid.slices.empty() && !solid.slices[0].empty();
+        plate_z_ = 0.5 * solid.layer_height;  // `placed` is in printer coordinates
+    }
+
     // A hole into cavity c from its biggest piece in `layer`, along the
-    // shortest of `ways` out of the model.
-    auto holeFrom = [&](size_t c, size_t layer, const std::vector<Vec3>& ways, bool air) -> std::optional<DrainHole> {
+    // shortest way out that runs level or down (up: level or up).
+    std::optional<DrainHole> from(size_t c, size_t layer, bool up, bool air) {
         Paths biggest;
         double best = 0;
-        for (const InteriorPiece& k : hollow.pieces[layer])
+        for (const InteriorPiece& k : hollow_.pieces[layer])
             if (k.cavity == static_cast<int>(c)) {
-                Paths piece = hollow.piece(layer, k);
+                Paths piece = hollow_.piece(layer, k);
                 const double ar = std::abs(area(piece));
                 if (ar > best) {
                     best = ar;
@@ -252,25 +236,79 @@ std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Trans
             }
         if (biggest.empty()) return std::nullopt;
         const Vec2 deep = deepestPoint(biggest);
-        const Vec3 start{deep.x, deep.y, solid.sample_z[layer]};
+        const Vec3 start{deep.x, deep.y, solid_.sample_z[layer]};
         std::optional<RayHit> shortest;
         Vec3 way;
-        for (const Vec3& w : ways) {
+        for (const Vec3& w : waysOut(up ? 1.0 : -1.0)) {
             const auto hit = exit(start, w);
-            if (hit && on_plate && hit->point.z < plate_z) continue;
+            if (hit && on_plate_ && hit->point.z < plate_z_) continue;
             if (hit && (!shortest || hit->t < 0.99 * shortest->t)) {  // straight down (up) wins a near tie
                 shortest = hit;
                 way = w;
             }
         }
         if (!shortest) return std::nullopt;
-        return DrainHole{to_model.apply(shortest->point), normalized(to_model.applyLinear(-way)), diameter, air};
-    };
+        return DrainHole{to_model_.apply(shortest->point), normalized(to_model_.applyLinear(-way)), diameter_, air};
+    }
+
+private:
+    // Straight down (up) first, then at 60° and 30°, then level, all round.
+    static std::vector<Vec3> waysOut(double sign) {
+        std::vector<Vec3> ways{{0, 0, sign}};
+        for (const double elevation : {60.0, 30.0, 0.0})
+            for (int k = 0; k < 12; ++k) {
+                const double az = deg2rad(30.0 * k), el = deg2rad(sign * elevation);
+                ways.push_back({std::cos(el) * std::cos(az), std::cos(el) * std::sin(az), std::sin(el)});
+            }
+        return ways;
+    }
+    // Where a ray from inside leaves the model for good: the first surface
+    // it crosses beyond which it is outside every outline. (A model's own
+    // sealed hollow has walls in the mesh; the ray crosses those first.)
+    std::optional<RayHit> exit(const Vec3& start, const Vec3& w) {
+        double t0 = 1e-9;
+        for (int k = 0; k < 64; ++k) {
+            const auto hit = tree_.raycast(start, w, 1e30, t0);
+            if (!hit) return std::nullopt;
+            if (!outline_(hit->point + w * 0.01)) return hit;
+            t0 = hit->t + 1e-6;
+        }
+        return std::nullopt;
+    }
+
+    const AabbTree tree_;
+    const Transform to_model_;
+    const LayerStack& solid_;
+    const HollowResult& hollow_;
+    double diameter_;
+    Inside outline_;
+    bool on_plate_ = false;
+    double plate_z_ = 0;
+};
+
+}  // namespace
+
+std::vector<DrainHole> suggestDrainHoles(const TriangleMesh& placed, const Transform& to_printer,
+                                         const LayerStack& solid, const HollowResult& hollow, double diameter) {
+    HoleFinder find(placed, to_printer, solid, hollow, diameter);
     std::vector<DrainHole> out;
     for (size_t c = 0; c < hollow.cavities.size(); ++c) {
-        if (auto h = holeFrom(c, static_cast<size_t>(hollow.cavities[c].first_layer), down, false)) out.push_back(*h);
-        if (auto h = holeFrom(c, static_cast<size_t>(hollow.cavities[c].last_layer), up, true)) out.push_back(*h);
+        if (auto h = find.from(c, static_cast<size_t>(hollow.cavities[c].first_layer), false, false)) out.push_back(*h);
+        if (auto h = find.from(c, static_cast<size_t>(hollow.cavities[c].last_layer), true, true)) out.push_back(*h);
     }
+    return out;
+}
+
+std::vector<std::optional<DrainHole>> suggestVents(const TriangleMesh& placed, const Transform& to_printer,
+                                                   const LayerStack& solid, const HollowResult& hollow,
+                                                   const std::vector<char>& which, double diameter) {
+    HoleFinder find(placed, to_printer, solid, hollow, diameter);
+    std::vector<std::optional<DrainHole>> out(hollow.cavities.size());
+    for (size_t c = 0; c < hollow.cavities.size(); ++c)
+        if (c < which.size() && which[c]) {
+            out[c] = find.from(c, static_cast<size_t>(hollow.cavities[c].first_layer), false, false);
+            if (out[c]) out[c]->vent = true;
+        }
     return out;
 }
 

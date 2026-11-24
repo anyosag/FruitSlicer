@@ -182,6 +182,9 @@ void jobSection(App& app, Document* doc) {
             const double k = part.placement().scale;
             model_ml += part.check().volume_ml * k * k * k;
         }
+        // Hollowed, drilled or filled as applied: what prints then.
+        if (doc->hollow.applied && doc->hollow.planFresh(doc->revision()) && doc->hollow.plan->changes())
+            model_ml = doc->hollow.plan->print_volume / 1000.0;
         if (doc->layersFresh()) resin = strf("%.1f ml with supports", doc->layers.result->resin_ml);
         else if (doc->supports.result && doc->supports.fresh(doc->revision(), doc->supportSettings()))
             resin = strf("%.1f ml + %.1f ml of supports", model_ml, doc->supports.result->support_ml);
@@ -470,8 +473,12 @@ void jobPanel(App& app, float h) {
     rule();
     ImGui::Dummy(ImVec2(0, 4));
     int& tab = app.jobTab();
+    // The hollows found for how it sits now, once looked for; until then the
+    // mesh's sealed inner shells.
     std::size_t hollows = 0;
-    if (doc)
+    if (doc && doc->hollow.plan && doc->hollow.plan_revision == doc->revision())
+        hollows = doc->hollow.plan->closed.cavities.size();
+    else if (doc)
         for (const Part& part : doc->parts()) hollows += static_cast<std::size_t>(std::max(0, part.check().cavities));
     std::string collisions_label = "Collisions";
     if (const CollisionReport* cr = doc ? app.collisions() : nullptr)

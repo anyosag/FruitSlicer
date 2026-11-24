@@ -48,9 +48,13 @@ public:
     // (0xRRGGBB): the support tree and the tips. Uploaded when `key`
     // changes; colours and visibility can change every frame. `paint`: it
     // lies on the model's own surface and is drawn over it, as paint is.
+    // `alpha` under 1: see-through, drawn last over everything else (a
+    // sheet of film over a cup's opening); `xray` as well: seen through the
+    // model too, and not cut away (a hole inside it).
     void setExtras(const std::vector<const fruit::TriangleMesh*>& meshes, int key);
     void clearExtras();
-    void setExtraStyle(std::size_t i, unsigned rgb, bool visible, bool paint = false);
+    void setExtraStyle(std::size_t i, unsigned rgb, bool visible, bool paint = false, float alpha = 1.0f,
+                       bool xray = false);
     // Tints faces leaning further than `critical_deg` from vertical (0 = off).
     void setOverhangTint(double critical_deg) { overhang_deg_ = critical_deg; }
 
@@ -105,6 +109,8 @@ private:
         unsigned rgb = 0xC8CDD6;
         bool visible = true;
         bool paint = false;
+        float alpha = 1.0f;
+        bool xray = false;
     };
     std::vector<Extra> extras_;
     int extras_key_ = -1;

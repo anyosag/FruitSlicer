@@ -220,6 +220,89 @@ TEST_CASE("suction cups are graded by their open area against the layer cured ro
     }
 }
 
+TEST_CASE("suction cups side by side in one outline pull on it together", "[safety]") {
+    // A block 40 × 20 × 6 with two 10 × 10 pockets 3 mm deep: 200 mm² open
+    // against 600 mm² cured. Each alone would be 100 / 600; together a third.
+    TriangleMesh m;
+    appendBox(m, {0, 0, 0}, {40, 20, 3});
+    appendBox(m, {0, 0, 3}, {40, 5, 6});
+    appendBox(m, {0, 15, 3}, {40, 20, 6});
+    appendBox(m, {0, 5, 3}, {5, 15, 6});
+    appendBox(m, {15, 5, 3}, {25, 15, 6});
+    appendBox(m, {35, 5, 3}, {40, 15, 6});
+    placeOnPlate(m, {0, 0, 0}, 5);
+    const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+    REQUIRE(r.components.size() == 2);
+    for (const HollowComponent& h : r.components) {
+        const CupMeasures& c = h.cup;
+        CHECK(c.share == Approx(200.0 / 600).epsilon(0.01));
+        CHECK(c.open_area == Approx(200).epsilon(0.01));
+        CHECK(c.own_area == Approx(100).epsilon(0.01));
+        CHECK(c.cups_there == 2);
+        CHECK(c.cured_around == Approx(600).epsilon(0.01));
+        REQUIRE(c.by_layer.size() == static_cast<size_t>(h.layers()));
+        CHECK(c.layersFrom(0.3) == h.layers());
+        CHECK(gradeCup(c, h.layers()) == CupGrade::Warning);  // a third: over the 25 % note line
+    }
+    // Two blocks apart, a pocket in each: not one outline, so not added up.
+    TriangleMesh apart;
+    for (const double x : {0.0, 30.0}) {
+        appendBox(apart, {x, 0, 0}, {x + 20, 20, 3});
+        appendBox(apart, {x, 0, 3}, {x + 20, 5, 6});
+        appendBox(apart, {x, 15, 3}, {x + 20, 20, 6});
+        appendBox(apart, {x, 5, 3}, {x + 5, 15, 6});
+        appendBox(apart, {x + 15, 5, 3}, {x + 20, 15, 6});
+    }
+    placeOnPlate(apart, {0, 0, 0}, 5);
+    const HollowReport ra = analyzeHollows(sliceModel(apart, 0.1));
+    REQUIRE(ra.components.size() == 2);
+    for (const HollowComponent& h : ra.components) {
+        CHECK(h.cup.share == Approx(100.0 / 300).epsilon(0.01));
+        CHECK(h.cup.cups_there == 1);
+    }
+}
+
+TEST_CASE("a small cup beside a big one is graded as if the big one were fixed", "[safety]") {
+    // A block 40 × 20 × 6: a 20 × 10 pocket and a 4 × 4 one, 3 mm deep. 216 mm² open against 584 mm² cured.
+    TriangleMesh m;
+    appendBox(m, {0, 0, 0}, {40, 20, 3});
+    appendBox(m, {0, 0, 3}, {40, 5, 6});
+    appendBox(m, {0, 15, 3}, {40, 20, 6});
+    appendBox(m, {0, 5, 3}, {5, 15, 6});
+    appendBox(m, {25, 5, 3}, {30, 15, 6});
+    appendBox(m, {30, 5, 3}, {40, 8, 6});
+    appendBox(m, {30, 12, 3}, {40, 15, 6});
+    appendBox(m, {30, 8, 3}, {31, 12, 6});
+    appendBox(m, {35, 8, 3}, {40, 12, 6});
+    placeOnPlate(m, {0, 0, 0}, 5);
+    const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+    REQUIRE(r.components.size() == 2);
+    const CupMeasures& a = r.components[0].cup.own_area > r.components[1].cup.own_area ? r.components[0].cup : r.components[1].cup;
+    const CupMeasures& b = &a == &r.components[0].cup ? r.components[1].cup : r.components[0].cup;
+    // The big one: the whole of it.
+    CHECK(a.share == Approx(216.0 / 584).epsilon(0.01));
+    CHECK(a.cups_there == 2);
+    CHECK(a.all_cups == 2);
+    // The small one: itself only, though the layer pulls more with the big one.
+    CHECK(b.share == Approx(16.0 / 584).epsilon(0.02));
+    CHECK(b.cups_there == 1);
+    CHECK(b.all_cups == 2);
+    CHECK(b.all_open == Approx(216).epsilon(0.01));
+    CHECK(gradeCup(b, 30) == CupGrade::Note);
+    CHECK(gradeCup(a, 30) == CupGrade::Warning);
+}
+
+TEST_CASE("a cup's thinnest wall is found at one place on the outside, not the middle of all of them", "[safety]") {
+    TriangleMesh m = cup(true);
+    placeOnPlate(m, {0, 0, 0}, 5);
+    const HollowReport r = analyzeHollows(sliceModel(m, 0.1));
+    REQUIRE(r.components.size() == 1);
+    const CupMeasures& c = r.components[0].cup;
+    CHECK(c.wall == Approx(2).margin(0.02));
+    // The box is centred on the plate, 20 mm across: the spot is on its outside.
+    CHECK(std::max(std::abs(c.wall_at.x), std::abs(c.wall_at.y)) == Approx(10).margin(0.3));
+}
+
 TEST_CASE("cup grades: the limits, and depth", "[safety]") {
     CupMeasures c;
     c.share = 0.24;
@@ -239,6 +322,14 @@ TEST_CASE("cup grades: the limits, and depth", "[safety]") {
     c.share = 0.05;
     CHECK(gradeCup(c, 5000, l) == CupGrade::Note);
     CHECK(std::string(gradeName(CupGrade::Warning)) == "warning");
+    // Layer by layer: only the layers that pull past the note line count as deep.
+    CupMeasures d;
+    d.share = 0.5;
+    d.by_layer.assign(400, 0.1f);
+    d.by_layer.insert(d.by_layer.end(), 100, 0.5f);
+    CHECK(gradeCup(d, 500) == CupGrade::Warning);
+    d.by_layer.assign(300, 0.5f);
+    CHECK(gradeCup(d, 1) == CupGrade::Problem);
 }
 
 TEST_CASE("the generator names a cup by its grade, with its numbers", "[safety]") {
@@ -255,7 +346,9 @@ TEST_CASE("the generator names a cup by its grade, with its numbers", "[safety]"
             CHECK(w.values.at("width") == Approx(2).margin(0.02));
             CHECK(w.values.at("wall") == Approx(5).margin(0.02));
             CHECK(w.values.at("on_plate") == 0);
-            CHECK(w.message.find("notch") != std::string::npos);
+            CHECK(w.message.find("a vent from its lowest point") != std::string::npos);
+            CHECK(w.values.at("cups_there") == 1);
+            CHECK(w.values.at("own_mm2") == Approx(184).epsilon(0.01));
         }
     // Limits of its own: a quarter of that and it is a warning.
     SupportConfig cfg = fast();

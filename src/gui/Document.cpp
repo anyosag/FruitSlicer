@@ -488,6 +488,8 @@ JobStamp Document::stamp() const {
     s.hollow_applied = hollow.applied;
     s.hollow = hollow.choices;
     s.holes = hollow.manual;
+    s.vents = hollow.vents;
+    s.accepted = hollow.accepted;
     s.sample_path = print.settings.sample_path;
     s.print = print.settings;
     return s;

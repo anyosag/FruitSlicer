@@ -73,7 +73,7 @@ TEST_CASE("Hollow: a sealed hollow gets a drain and an air hole and then drains"
     const auto out = hollowOutcomes(p);
     REQUIRE(out.size() >= 2);
     CHECK(out[0].ok);
-    CHECK(out[0].title == "The hollow drains");
+    CHECK(out[0].title == "The resin trap drains");
     CHECK(out[1].title == "Wash it out after printing");
 }
 
@@ -85,8 +85,8 @@ TEST_CASE("Hollow: printing a sealed hollow solid, or leaving it", "[gui][hollow
     CHECK(filled.holes.empty());
     CHECK(filled.drains == std::vector<char>{1});  // nothing holds resin
     CHECK(filled.resin_saved == Approx(0).margin(2));  // its resin cured instead of trapped
-    CHECK(applyLabel(filled) == "Print it solid");
-    CHECK(hollowOutcomes(filled)[0].title == "The hollow is printed solid");
+    CHECK(applyLabel(filled) == "Print the trap solid");
+    CHECK(hollowOutcomes(filled)[0].title == "The resin trap is printed solid");
 
     c.fix = HollowChoices::Fix::Leave;
     const HollowPlan left = planHollow(*doc, c, {}, kH, fruit::JobControl::none());
@@ -235,8 +235,8 @@ TEST_CASE("Hollow: what the step bar, the Orient card and the 3D view say", "[gu
     CHECK(hollowsToFix(*doc) == 1);
     HollowOutcome s = hollowSummary(*doc);
     CHECK_FALSE(s.ok);
-    CHECK(s.title == "1 hollow holds resin");
-    CHECK(s.detail == "Drain it, fill it or leave it.");
+    CHECK(s.title == "1 hollow to fix");
+    CHECK(s.detail == "The Hollow screen shows where each one is, and the fixes that fit it.");
 
     // Planned with holes, not yet applied: still to fix, labelled as it is.
     doc->hollow.plan = std::make_shared<const HollowPlan>(
@@ -365,7 +365,7 @@ const SupportProblem* problem(const std::vector<SupportProblem>& ps, const std::
 
 }  // namespace
 
-TEST_CASE("Hollow: a shallow groove is a note, in numbers, with a notch for a fix", "[gui][hollow]") {
+TEST_CASE("Hollow: a shallow groove is a note, in numbers, with a vent out through its wall", "[gui][hollow]") {
     const auto doc = load(groove(), "hollow_groove.stl");
     onPlate(*doc);
     const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
@@ -374,15 +374,20 @@ TEST_CASE("Hollow: a shallow groove is a note, in numbers, with a notch for a fi
     CHECK(p.grade(0) == fruit::CupGrade::Note);
     CHECK(cavityGradeText(p, 0) == "Suction cup · note");
     CHECK(p.toFix() == 0);
-    const std::string pull = cavityPull(c, p.grade(0), fruit::CupLimits{});
-    CHECK_THAT(pull, ContainsSubstring("Its opening is 184 mm², 18 % of the 1,016 mm² cured round it"));
-    CHECK_THAT(pull, ContainsSubstring("each of its 10 layers pulls about 18 % harder"));
-    CHECK_THAT(pull, ContainsSubstring("Under 25 %, so it is a note."));
-    CHECK_THAT(pull, ContainsSubstring("assumed, not measured on prints"));
-    const std::string fix = cavityFix(c);
-    CHECK_THAT(fix, ContainsSubstring("A groove 2.0 mm wide"));
-    CHECK_THAT(fix, ContainsSubstring("a notch through the 5.0 mm wall to the outside"));
-    CHECK_THAT(fix, ContainsSubstring("the floor stands on the plate, which seals it"));
+    const std::string pull = cavityPull(c, kH, fruit::CupLimits{});
+    CHECK_THAT(pull, ContainsSubstring("It pulls hardest at 2.1 mm: what is open there is 18 % of what is cured round "
+                                       "it (184 mm² open against 1,016 mm² cured)"));
+    CHECK_THAT(pull, ContainsSubstring("Under 25 % on all of its 10 layers."));
+    const std::string why = cavityGradeWhy(c, p.grade(0), fruit::CupLimits{});
+    CHECK_THAT(why, ContainsSubstring("Under 25 % everywhere, so it is a note."));
+    CHECK_THAT(why, ContainsSubstring("guesses, not measured on prints"));
+    CHECK(cavityHeights(c, kH) == "2.0 to 3.0 mm");
+    // No hole goes into it unasked; the vent it would take goes level out through its wall, not down into the plate.
+    CHECK(p.holes.empty());
+    REQUIRE(p.vent_for[0].has_value());
+    const fruit::Transform t = doc->part().transform();
+    CHECK(t.apply(p.vent_for[0]->at).z > 1.9);
+    CHECK(std::abs(t.applyLinear(p.vent_for[0]->axis).z) < 1e-6);
     CHECK_FALSE(cavityMeaning(c, false).find("full of resin") != std::string::npos);
     // The step bar and the Orient card: nothing to fix.
     doc->hollow.plan = std::make_shared<const HollowPlan>(p);
@@ -397,7 +402,9 @@ TEST_CASE("Hollow: a shallow groove is a note, in numbers, with a notch for a fi
     REQUIRE(note != nullptr);
     CHECK(note->level == SupportProblem::Level::Note);
     CHECK(note->title == "Small suction cups");
-    CHECK_THAT(note->body, ContainsSubstring("Its opening is 184 mm², 18 % of the 1,016 mm² cured round it, on 20 layers (2.0 to 3.0 mm)"));
+    CHECK_THAT(note->body, ContainsSubstring("It pulls hardest at 2."));
+    CHECK_THAT(note->body, ContainsSubstring(" mm: 184 mm² open, 18 % of the 1,016 mm² cured round it. It spans 20 layers "
+                                             "(2.0 to 3.0 mm)."));
     CHECK(problem(now, "suction_cup") == nullptr);
     // Limits of the job's own, under Advanced: a problem.
     doc->supports.choices.advanced["cup_note_below"] = 5;
@@ -407,17 +414,27 @@ TEST_CASE("Hollow: a shallow groove is a note, in numbers, with a notch for a fi
     CHECK(strict.toFix() == 1);
 }
 
-TEST_CASE("Hollow: on the plate, a groove's drain hole goes out through its wall and it drains", "[gui][hollow]") {
+TEST_CASE("Hollow: on the plate, a groove's vent goes out through its wall and then it drains", "[gui][hollow]") {
     const auto doc = load(groove(), "hollow_groove_holes.stl");
     onPlate(*doc);
     const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
-    REQUIRE(p.holes.size() == 2);
+    CHECK(p.holes.empty());
+    REQUIRE(p.vent_for[0].has_value());
+    REQUIRE(p.vent_preview[0].has_value());
+    doc->hollow.vents.push_back(*p.vent_for[0]);
+    const HollowPlan v = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
+    REQUIRE(v.holes.size() == 1);
+    CHECK(v.holes[0].vent);
+    CHECK(v.into_own == std::vector<int>{0});
     const fruit::Transform t = doc->part().transform();
-    for (const fruit::DrainHole& h : p.holes) {
-        CHECK(t.apply(h.at).z > 1.9);  // not up from the plate, which would seal it
-        CHECK(std::abs(t.applyLinear(h.axis).z) < 1e-6);
-    }
-    CHECK(p.drains == std::vector<char>{1});
+    CHECK(t.apply(v.holes[0].at).z > 1.9);  // not up from the plate, which would seal it
+    CHECK(std::abs(t.applyLinear(v.holes[0].axis).z) < 1e-6);
+    CHECK(v.drains == std::vector<char>{1});
+    CHECK(v.own_drains == std::vector<char>{1});
+    CHECK_FALSE(v.vent_for[0].has_value());  // it has one
+    CHECK(applyLabel(v) == "Add a vent");
+    CHECK(cavityGradeText(v, 0, true) == "Suction cup · vented");
+    CHECK(cavityGradeText(v, 0, false) == "Suction cup · note");
 }
 
 TEST_CASE("Hollow: an accepted hollow is kept with the job, left out of the fix, and shows again when it changes",
@@ -427,19 +444,21 @@ TEST_CASE("Hollow: an accepted hollow is kept with the job, left out of the fix,
     REQUIRE(p.closed.cavities.size() == 1);
     CHECK(p.grade(0) == fruit::CupGrade::Problem);
     CHECK(p.toFix() == 1);
-    REQUIRE(p.holes.size() == 2);
+    CHECK(p.holes.empty());  // a cup gets a vent only when asked
+    CHECK(p.vent_for[0].has_value());
     // Accepted: not counted, no holes go into it, and it says so.
     doc->hollow.accepted.push_back(acceptedFor(*doc, p, 0));
     const HollowPlan q = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
     CHECK(q.isAccepted(0));
     CHECK(q.toFix() == 0);
     CHECK(q.holes.empty());
+    CHECK_FALSE(q.vent_for[0].has_value());
     CHECK(q.fixing.cavities.empty());
     CHECK(cavityGradeText(q, 0) == "Suction cup · accepted");
     CHECK(cavityLabel(q, 0, false).ok);
     const std::vector<HollowOutcome> out = hollowOutcomes(q);
     REQUIRE_FALSE(out.empty());
-    CHECK(out[0].title == "The hollow prints as it is");
+    CHECK(out[0].title == "The suction cup prints as it is");
     CHECK(out[0].ok);
     // Made before it was accepted, the supports' warning moves to a note of its own.
     const SupportResult s = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
@@ -485,8 +504,10 @@ TEST_CASE("Hollow: a cup between the limits is worth a look, not counted as a pr
     REQUIRE(p.closed.cavities.size() == 1);
     CHECK(p.grade(0) == fruit::CupGrade::Warning);
     CHECK(p.toFix() == 0);
-    CHECK_THAT(cavityPull(p.closed.cavities[0], p.grade(0), fruit::CupLimits{}),
-               ContainsSubstring("80 % of the 500 mm²"));
+    CHECK_THAT(cavityPull(p.closed.cavities[0], kH, fruit::CupLimits{}),
+               ContainsSubstring("80 % of what is cured round it (400 mm² open against 500 mm² cured)"));
+    CHECK_THAT(cavityGradeWhy(p.closed.cavities[0], p.grade(0), fruit::CupLimits{}),
+               ContainsSubstring("At most between 25 % and 100 %, so it is a warning."));
     const SupportResult s = generate(*doc, SupportChoices{}, {}, fruit::JobControl::none());
     const std::vector<SupportProblem> now = problemsNow(*doc, s);
     const SupportProblem* look = problem(now, "suction_cup_warning");
@@ -494,4 +515,114 @@ TEST_CASE("Hollow: a cup between the limits is worth a look, not counted as a pr
     CHECK(look->level == SupportProblem::Level::Warn);
     CHECK(look->title == "Suction cups worth a look");
     CHECK_THAT(look->body, ContainsSubstring("adds 25 % to 100 % to the pull"));
+}
+
+TEST_CASE("Hollow: filling prints resin traps solid and leaves suction cups as they are", "[gui][hollow]") {
+    // The open box, standing on supports: a cup. Filled it would lose its shape.
+    const auto doc = load(openBox(), "hollow_fill_cup.stl");
+    HollowChoices c;
+    c.fix = HollowChoices::Fix::Fill;
+    const HollowPlan p = planHollow(*doc, c, {}, kH, fruit::JobControl::none());
+    REQUIRE(p.closed.cavities.size() == 1);
+    CHECK(p.filled == std::vector<char>{0});
+    CHECK_FALSE(p.changes());
+    CHECK(applyLabel(p) == "Leave it");
+    CHECK(p.toFix() == 1);
+    // Applied, it still counts: filling is for resin traps.
+    doc->hollow.choices = c;
+    doc->hollow.applied = true;
+    doc->hollow.plan = std::make_shared<const HollowPlan>(p);
+    doc->hollow.plan_revision = doc->revision();
+    CHECK(hollowsToFix(*doc) == 1);
+    CHECK_FALSE(hollowSummary(*doc).ok);
+    // A sealed void is filled.
+    const auto trap = load(sealed(), "hollow_fill_trap.stl");
+    const HollowPlan t = planHollow(*trap, c, {}, kH, fruit::JobControl::none());
+    REQUIRE(t.closed.cavities.size() == 1);
+    CHECK(t.filled == std::vector<char>{1});
+    CHECK(applyLabel(t) == "Print the trap solid");
+    CHECK(cavityGradeText(t, 0, true) == "Resin trap · printed solid");
+    // Its resin is cured, not trapped: nothing saved, and it prints as much as the block.
+    CHECK(t.resin_saved == Approx(0).margin(2));
+    CHECK(t.print_volume == Approx(20 * 20 * 12).margin(10));
+}
+
+TEST_CASE("Hollow: a cup is never part of what hollowing fills", "[gui][hollow]") {
+    // 30 × 30 × 9 with a 20 × 20 recess 3 mm deep in its top, on supports.
+    fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 30, 6});
+    m.append(fruit::makeBox({0, 0, 6}, {5, 30, 9}));
+    m.append(fruit::makeBox({25, 0, 6}, {30, 30, 9}));
+    m.append(fruit::makeBox({0, 0, 6}, {30, 5, 9}));
+    m.append(fruit::makeBox({0, 25, 6}, {30, 30, 9}));
+    const auto doc = load(m, "hollow_cup_hollowed.stl");
+    HollowChoices c;
+    c.hollow = true;
+    c.wall = 1.5;
+    const HollowPlan p = planHollow(*doc, c, {}, kH, fruit::JobControl::none());
+    REQUIRE(p.closed.cavities.size() == 1);
+    REQUIRE(p.closed.cavities[0].opens_up);
+    CHECK(p.filled == std::vector<char>{0});
+    // Half-way up the recess, its middle is still open in what prints.
+    const fruit::BBox3 b = doc->placedBox();
+    const std::size_t L = p.layers->layerAt(b.min.z + 7.5);
+    CHECK_FALSE(inside(p.layers->slices[L], {(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2}));
+}
+
+TEST_CASE("Hollow: a cup's vent, on supports, goes up through its floor and is kept with the job", "[gui][hollow]") {
+    const auto doc = load(openBox(), "hollow_vent.stl");  // 5 mm up, on supports
+    const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
+    REQUIRE(p.vent_for[0].has_value());
+    const fruit::Transform t = doc->part().transform();
+    CHECK(t.applyLinear(p.vent_for[0]->axis).z == Approx(1).margin(1e-6));
+    doc->hollow.vents.push_back(*p.vent_for[0]);
+    const HollowPlan v = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
+    CHECK(v.own_drains == std::vector<char>{1});
+    CHECK(v.changes());
+    // Not counted once applied; counted until then.
+    doc->hollow.plan = std::make_shared<const HollowPlan>(v);
+    doc->hollow.plan_revision = doc->revision();
+    CHECK(hollowsToFix(*doc) == 1);
+    doc->hollow.applied = true;
+    CHECK(hollowsToFix(*doc) == 0);
+    CHECK(hollowSummary(*doc).title == "Vent added");
+    const std::vector<HollowOutcome> out = hollowOutcomes(v);
+    REQUIRE_FALSE(out.empty());
+    CHECK(out[0].title == "The suction cup is vented");
+    // Saved with the job, and drilled again when opened.
+    const auto job = (std::filesystem::temp_directory_path() / "fruit_hollow_tests" / "vent.fruitjob").string();
+    std::filesystem::create_directories(std::filesystem::path(job).parent_path());
+    saveJob(job, *doc);
+    const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
+    REQUIRE(o.doc->hollow.vents.size() == 1);
+    CHECK(o.doc->hollow.vents[0].vent);
+    CHECK(fruit::distance(o.doc->hollow.vents[0].at, doc->hollow.vents[0].at) < 1e-6);
+}
+
+TEST_CASE("Hollow: the paint is on the faces round each hollow, and a cup's opening has a sheet", "[gui][hollow]") {
+    const auto doc = load(openBox(), "hollow_paint.stl");
+    const HollowPlan p = planHollow(*doc, HollowChoices{}, {}, kH, fruit::JobControl::none());
+    REQUIRE(p.paint.size() == 1);
+    REQUIRE(p.opening.size() == 1);
+    // The inside: four walls 16 × 8 and the 16 × 16 floor; the outside is not painted.
+    double painted = 0;
+    for (std::size_t f = 0; f < p.paint[0].faces.size(); ++f) painted += p.paint[0].faceArea(f);
+    CHECK(painted == Approx(4 * 16 * 8 + 16 * 16).epsilon(0.05));
+    const fruit::BBox3 sheet = p.opening[0].bbox();
+    CHECK(sheet.size().x == Approx(16).margin(0.1));
+    CHECK(sheet.min.z == Approx(doc->placedBox().max.z).margin(0.06));
+}
+
+TEST_CASE("Hollow: a tilt that takes a cup under the problem line", "[gui][hollow]") {
+    const auto doc = load(openBox(), "hollow_tilt.stl");
+    const CupTilt t = findCupTilt(*doc, doc->selectedId(), fruit::JobControl::none());
+    CHECK(t.now.cups == 1);
+    CHECK(t.now.grade == fruit::CupGrade::Problem);
+    REQUIRE_FALSE(t.tries.empty());
+    for (std::size_t k = 1; k < t.tries.size(); ++k) CHECK(std::abs(t.tries[k].deg) > std::abs(t.tries[k - 1].deg));
+    if (t.pick >= 0) {
+        const CupTiltTry& k = t.tries[static_cast<std::size_t>(t.pick)];
+        CHECK(k.grade != fruit::CupGrade::Problem);
+        CHECK(k.cup_volume < t.now.cup_volume);
+        CHECK_THAT(tiltWords(k), ContainsSubstring("no cup is a problem"));
+    }
 }

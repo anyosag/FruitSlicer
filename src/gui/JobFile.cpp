@@ -460,6 +460,16 @@ void saveJob(const std::string& path, const Document& doc) {
         accepted.push_back(std::move(x));
     }
     if (!accepted.empty()) j["hollow"]["accepted"] = std::move(accepted);
+    // Suction cups' vents, asked for cup by cup (in their part's coordinates).
+    json vents = json::array();
+    for (const fruit::DrainHole& h : hs.vents) {
+        const int slot = partSlot(doc, h.part);
+        if (slot < 0) continue;
+        json x = {{"at", vec(h.at)}, {"axis", vec(h.axis)}};
+        if (doc.partCount() > 1) x["part"] = slot;
+        vents.push_back(std::move(x));
+    }
+    if (!vents.empty()) j["hollow"]["vents"] = std::move(vents);
     const PrintSettings& s = doc.print.settings;
     j["print"] = {{"exposure", s.exposure},
                   {"bottom_exposure", s.bottom_exposure},
@@ -675,6 +685,13 @@ OpenedJob openJob(const std::string& path, const fruit::PrinterProfile& printer,
             if (part < 0) throw std::runtime_error("the job has a drain hole on a part it doesn't have");
             hs.manual.push_back({vecFrom(h.at("at")), vecFrom(h.at("axis")), h.value("diameter", 3.0), false, part});
         }
+        for (const auto& h : hj.value("vents", json::array())) {
+            const int part = partFrom(*doc, h);
+            if (part < 0) throw std::runtime_error("the job has a vent on a part it doesn't have");
+            fruit::DrainHole v{vecFrom(h.at("at")), vecFrom(h.at("axis")), hc.hole_diameter, false, part};
+            v.vent = true;
+            hs.vents.push_back(v);
+        }
         hs.applied = hj.value("applied", false);
     }
 
@@ -805,7 +822,8 @@ std::vector<std::string> changesSince(const JobStamp& a, const JobStamp& b) {
     else if (a.supports == b.supports && (!(a.choices == other) || a.own != b.own || a.shared != b.shared))
         out.push_back("changed support settings");
     if (!(a.job == b.job)) out.push_back("changed the lift or raft for all parts");
-    if (a.hollow_applied != b.hollow_applied || !(a.hollow == b.hollow) || a.holes != b.holes)
+    if (a.hollow_applied != b.hollow_applied || !(a.hollow == b.hollow) || a.holes != b.holes ||
+        a.vents != b.vents || a.accepted != b.accepted)
         out.push_back("changed how its hollows print");
     if (a.sample_path != b.sample_path || a.print != b.print)
         out.push_back("changed the print settings");

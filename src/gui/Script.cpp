@@ -578,6 +578,26 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (i == 0) throw std::runtime_error("hollow_accept: 1 is the first hollow, -1 takes it back");
             if (!app.acceptHollow(static_cast<std::size_t>(std::abs(i) - 1), i > 0))
                 throw std::runtime_error("hollow_accept: no such hollow, or the hollows aren't found yet");
+        } else if (step.contains("hollow_select")) {
+            // 1 = the Hollow screen's first hollow, chosen and the view turned to it; 0 chooses none.
+            app.selectHollow(step["hollow_select"].get<int>() - 1);
+        } else if (step.contains("hollow_vent")) {
+            // 1 = a vent into the first hollow, where the screen suggests one; negative takes its vents out.
+            const int i = step["hollow_vent"].get<int>();
+            if (i == 0) throw std::runtime_error("hollow_vent: 1 is the first hollow, -1 takes its vents out");
+            if (i > 0 && !app.addVent(static_cast<std::size_t>(i - 1)))
+                throw std::runtime_error("hollow_vent: no vent fits that hollow, or the hollows aren't found yet");
+            if (i < 0) app.removeVents(static_cast<std::size_t>(-i - 1));
+        } else if (step.contains("hollow_tilt")) {
+            // {"hollow_tilt": 1}: find a tilt for the first hollow's part; {"hollow_tilt": "use"}: turn it as found.
+            if (step["hollow_tilt"].is_string()) {
+                const auto& doc = app.document();
+                if (!doc || !doc->hollow.tilt || doc->hollow.tilt->pick < 0)
+                    throw std::runtime_error("hollow_tilt: no tilt found to use");
+                app.useCupTilt(doc->hollow.tilt->tries[static_cast<std::size_t>(doc->hollow.tilt->pick)]);
+            } else {
+                app.findCupTilt(static_cast<std::size_t>(step["hollow_tilt"].get<int>() - 1));
+            }
         } else if (step.contains("use")) {
             app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
         } else if (step.contains("supports")) {

@@ -35,6 +35,7 @@ uniform vec3 uEye;
 uniform float uOverhangSin;   // > 0: tint faces leaning more than this
 uniform vec3 uOverhangColor;
 uniform float uShade;         // how much the light shades it: 1 for the model, less for paint
+uniform float uAlpha;         // under 1: see-through
 out vec4 fragColor;
 void main() {
     vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
@@ -48,7 +49,7 @@ void main() {
     float d = 0.38 + 0.55 * max(dot(n, key), 0.0) + 0.22 * max(dot(n, fill), 0.0);
     vec3 c = base * mix(1.0, d, uShade);
     if (!gl_FrontFacing) c *= 0.45;
-    fragColor = vec4(c, 1.0);
+    fragColor = vec4(c, uAlpha);
 }
 )";
 
@@ -309,11 +310,13 @@ void Renderer::clearCut() {
     destroyCap();
 }
 
-void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible, bool paint) {
+void Renderer::setExtraStyle(std::size_t i, unsigned rgb, bool visible, bool paint, float alpha, bool xray) {
     if (i >= extras_.size()) return;
     extras_[i].rgb = rgb;
     extras_[i].visible = visible;
     extras_[i].paint = paint;
+    extras_[i].alpha = alpha;
+    extras_[i].xray = xray;
 }
 
 unsigned Renderer::uploadMask(int w, int h, const std::vector<unsigned char>& alpha, unsigned rgb) {
@@ -426,6 +429,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
     glUniform3f(glGetUniformLocation(mesh_prog_, "uEye"), eye.x, eye.y, eye.z);
     glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
     glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), 1.0f);
+    glUniform1f(glGetUniformLocation(mesh_prog_, "uAlpha"), 1.0f);
     glUniform4f(glGetUniformLocation(mesh_prog_, "uClip"), 0, 0, 0, 1);
     float c[3];
     rgb(0x1C2028, c);
@@ -488,7 +492,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         const M4 identity;
         glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
         for (const Extra& e : extras_) {
-            if (!e.visible || !e.mesh.vao || e.paint) continue;
+            if (!e.visible || !e.mesh.vao || e.paint || e.alpha < 1.0f) continue;
             rgb(e.rgb, c);
             glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
             glBindVertexArray(e.mesh.vao);
@@ -501,7 +505,7 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
         glPolygonOffset(-1.0f, -4.0f);
         glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), kPaintShade);
         for (const Extra& e : extras_) {
-            if (!e.visible || !e.mesh.vao || !e.paint) continue;
+            if (!e.visible || !e.mesh.vao || !e.paint || e.alpha < 1.0f) continue;
             rgb(e.rgb, c);
             glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
             glBindVertexArray(e.mesh.vao);
@@ -524,6 +528,43 @@ unsigned Renderer::render(int w, int h, const Camera& cam, int msaa_samples) {
             glDrawArrays(GL_TRIANGLES, 0, cp.count);
         }
         glDepthMask(GL_TRUE);
+    }
+    // See-through extras last, over what is drawn: tested against it, not
+    // written, so what lies behind them still shows. Cut away like the rest.
+    bool glass = false;
+    for (const Extra& e : extras_) glass = glass || (e.visible && e.mesh.vao && e.alpha < 1.0f);
+    if (glass) {
+        glUseProgram(mesh_prog_);
+        const M4 identity;
+        glUniformMatrix4fv(glGetUniformLocation(mesh_prog_, "uModel"), 1, GL_FALSE, identity.m);
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uOverhangSin"), 0.0f);
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), kPaintShade);
+        if (cut_) glEnable(GL_CLIP_DISTANCE0);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        for (const Extra& e : extras_) {
+            if (!e.visible || !e.mesh.vao || e.alpha >= 1.0f) continue;
+            rgb(e.rgb, c);
+            glUniform3f(glGetUniformLocation(mesh_prog_, "uColor"), c[0], c[1], c[2]);
+            glUniform1f(glGetUniformLocation(mesh_prog_, "uAlpha"), e.alpha);
+            // Seen through the model, and not cut away: a marker of where something is.
+            if (e.xray) {
+                glDisable(GL_DEPTH_TEST);
+                if (cut_) glDisable(GL_CLIP_DISTANCE0);
+            }
+            glBindVertexArray(e.mesh.vao);
+            glDrawElements(GL_TRIANGLES, e.mesh.count, GL_UNSIGNED_INT, nullptr);
+            if (e.xray) {
+                glEnable(GL_DEPTH_TEST);
+                if (cut_) glEnable(GL_CLIP_DISTANCE0);
+            }
+        }
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uAlpha"), 1.0f);
+        glUniform1f(glGetUniformLocation(mesh_prog_, "uShade"), 1.0f);
+        if (cut_) glDisable(GL_CLIP_DISTANCE0);
     }
     glBindVertexArray(0);
     glUseProgram(0);

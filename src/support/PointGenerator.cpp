@@ -1441,27 +1441,25 @@ void Generator::finalize() {
                 std::snprintf(b, sizeof b, "%.*f", decimals, v);
                 return std::string(b);
             };
-            m << "suction cup (" << gradeName(g) << "): " << num(c.open_area, 0) << " mm² open towards the film on "
-              << h.layers() << " layers (z " << num(z0, 2) << "–" << num(z1, 2) << "), " << std::lround(100 * c.share)
-              << " % of the " << num(c.cured_around, 0) << " mm² cured round it";
+            const double at_z = layers().layerTop(c.share_layer);
+            m << "suction cup (" << gradeName(g) << "): pulls hardest at z " << num(at_z, 2) << ", where "
+              << num(c.open_area, 0) << " mm² is open towards the film";
+            if (c.cups_there > 1) m << " in it and " << c.cups_there - 1 << " other cup(s) no bigger beside it";
+            if (c.all_cups > c.cups_there) m << " (a bigger cup there too: graded as if it were fixed)";
+            m << ", " << std::lround(100 * c.share) << " % of the " << num(c.cured_around, 0)
+              << " mm² cured round it; " << h.layers() << " layers (z " << num(z0, 2) << "–" << num(z1, 2) << ")";
             if (c.channel()) m << "; a groove " << num(c.width, 1) << " mm wide";
             else m << "; " << num(c.across, 1) << " mm across";
-            if (c.wall >= 0) m << ", " << num(c.wall, 1) << " mm from the outside";
             if (h.first_layer == 0) m << "; the plate is its floor and seals it";
             else if (c.floor_on_plate) m << "; its floor stands on the plate, which seals a hole down through it";
-            if (c.channel() && c.wall >= 0)
-                m << ". A notch through that wall lets resin in from the side";
-            else if (!c.floor_on_plate)
-                m << ". A vent hole up through its floor lets resin in, or turn the opening towards the plate";
-            else
-                m << ". A hole through its thinnest side wall at its floor lets resin in, or turn the opening "
-                     "towards the plate";
+            m << ". Tilting the model shrinks it; a vent from its lowest point lets resin in";
             const std::string code = g == CupGrade::Problem   ? "suction_cup"
                                      : g == CupGrade::Warning ? "suction_cup_warning"
                                                               : "suction_cup_note";
             Warning w{code, m.str(), h.first_layer,
                       {h.inside.x, h.inside.y, 0.5 * (z0 + z1)}, {}};
             w.values = {{"open_mm2", c.open_area},     {"cured_mm2", c.cured_around}, {"share", c.share},
+                        {"own_mm2", c.own_area},       {"cups_there", c.cups_there},   {"at_z", at_z},
                         {"layers", h.layers()},        {"z0", z0},                    {"z1", z1},
                         {"width", c.width},            {"length", c.length},          {"across", c.across},          {"wall", c.wall},
                         {"wall_x", c.wall_at.x},       {"wall_y", c.wall_at.y},       {"on_plate", c.floor_on_plate},
