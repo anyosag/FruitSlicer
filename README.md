@@ -325,6 +325,9 @@ Every command reads STL (binary or text), OBJ and 3MF models.
 
 # Week-1 compatibility test: overlapping shells (see below)
 ./build/src/fruitslicer coupon overlap -o overlap_coupon.stl --png-dir out/overlap_ref
+
+# The tops of holes through 2 mm walls, printed bare (see below)
+./build/src/fruitslicer coupon crowns -o crowns_coupon.stl
 ```
 
 ### Mesh repair
@@ -770,6 +773,18 @@ shows solid material at each height (compare with the reference PNGs). Rings
 around the tips, a square hole in the plate, or a hollow cross mean that the
 slicer fills shells even-odd, and FruitSlicer will need to export a merged mesh
 instead.
+
+### Hole-tops coupon
+
+The planner leaves bare the top of a round hole through a 1.5 to 3 mm wall:
+a straight hole about 5 to 12.8 mm across, and, on a model taller than
+80 mm, a tapered bore whose gap a millimetre under its top is up to 12 mm.
+`coupon crowns` prints that on a box of 2 mm walls laid out like a corner of
+TubeRack: 6.5 and 11.8 mm holes with bare tops, a 14 mm hole and a lattice
+that keep their tips, and TubeRack's two tapered bores. `coupon crowns-tall`
+adds a post to 82 mm, so that the bores' tops are planned bare too. What each
+piece tests, and how to score the print:
+[`docs/crowns-coupon.md`](docs/crowns-coupon.md).
 
 ## Licence
 

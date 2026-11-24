@@ -845,6 +845,43 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   12.4 to 8.3 ml, eye cup 12.0 to 9.0, CHamber 10.5 to 9.3, TheDipper_full
   23.8 to 21.0, TubeRack_v3 (after the two changes above) 45.1 to 33.2; each
   equal to its sliced union less its model.
+- **A coupon for the tops of holes (2026-11-24).** The replay cannot judge
+  whether a bare top prints, so `fruitslicer coupon crowns` prints the
+  closings rule above. It is a box of four 2 mm walls laid out like a corner
+  of TubeRack_v3 (75.6 × 42.5 × 37 mm, 12 ml):
+  - front: straight holes of 6.5, 6.5, 11.8 and 11.8 mm, whose tops the rule
+    leaves bare, and one of 14 mm that keeps its tips;
+  - ends: TubeRack's tapered bores, measured off its mesh. Its 17.5 mm ones
+    go from 16.70 to 18.25 mm across the wall, rising 21°; its 30 mm ones
+    from 29.25 to 30.53 mm, rising 18°;
+  - back: its lattice (windows 9.96 × 9.27 mm, struts 1.2 mm leaning 47°),
+    which keeps its tips.
+
+  A tapered top is bare only on a model taller than 80 mm, so `crowns-tall`
+  adds a 6 mm post up to 82 mm. Planned in the app (Generate, hinge at the
+  back), short and tall:
+  - the four tops: no tips either way;
+  - the 14 mm hole: 11; the lattice: 86 and 85;
+  - the 17.5 mm bore: 15, and none on the tall one;
+  - the 30 mm bore: 25, and 15 on the tall one, 14 in a row along the rim of
+    its outer face and one at the top of its inner face.
+
+  Found while measuring it: where a tapered top is judged, the wall's faces
+  are looked for 1.5 mm into the side beside the gap (`kSideInset`). At the
+  30 mm bore's narrow end that spot is inside the wide end's opening. The
+  wall reads 1.87 mm deep, and what is held stops 0.03 mm short of the outer
+  face; the sliver it leaves in each layer gets the tips. TubeRack's own 30 mm
+  bores read 1.93 mm, placed so that they are held right across, by 0.03 mm
+  (the command line on TubeRack: no tips on any of their tops). The coupon's
+  other closings read the full 2 mm. Not changed here.
+
+  Print time with the user's settings, the 5 mm lift included: about 2¼ h at
+  0.05 mm layers (3¾ h at 0.03), the tall one 4½ h (7½ h). What to look for
+  and how to score it: `docs/crowns-coupon.md`. Tests: `test_closings.cpp`
+  (one closed piece of the stated size; its 6.5 and 11.8 mm tops get no tips,
+  while the 14 mm one and every window keep theirs; the bores keep theirs on
+  the short one; on the tall one, the 17.5 mm bore none and the 30 mm one at
+  most 20). Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

@@ -12,6 +12,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "calibration/Coupons.h"
 #include "mesh/Placement.h"
 #include "mesh/Primitives.h"
 #include "ops/MeshOps.h"
@@ -286,4 +287,87 @@ TEST_CASE("closings change nothing under a ceiling held all round, a slab over a
         floor = minus(floor, makeBox({x0, 2, 4}, {x0 + 0.6, 10, 7.5}));
     }
     sameEitherWay(floor);
+}
+
+namespace {
+
+// Tips on the top of a coupon's hole: on its surface, within 45° of the top, anywhere through its wall.
+std::vector<SupportPoint> onTop(const std::vector<SupportPoint>& pts, const CouponHole& h) {
+    std::vector<SupportPoint> out;
+    const double len = norm(h.b - h.a);
+    const Vec3 u = (h.b - h.a) / len;  // along the hole: level
+    for (const auto& p : pts) {
+        const Vec3 q = p.pos - h.a;
+        const double s = dot(q, u);
+        if (s < -0.2 || s > len + 0.2) continue;
+        const double r = h.ra + (h.rb - h.ra) * std::clamp(s / len, 0.0, 1.0);
+        const Vec3 off = q - u * s;
+        const double across = std::hypot(off.x, off.y);
+        if (off.z > 0 && std::abs(std::hypot(across, off.z) - r) <= 0.2 && std::atan2(across, off.z) <= deg2rad(45))
+            out.push_back(p);
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("crowns coupon: one closed piece, a box of 2 mm walls like TubeRack's", "[calibration][closings]") {
+    for (const bool tall : {false, true}) {
+        const Coupon c = crownsCoupon(tall);
+        CAPTURE(tall);
+        CHECK(ops::whyNotSolid(c.mesh).empty());
+        CHECK(ops::countPieces(c.mesh) == 1);
+        const BBox3 b = c.mesh.bbox();
+        CHECK(std::abs(b.max.x - b.min.x - 75.6) < 1e-3);
+        CHECK(std::abs(b.max.y - b.min.y - 42.5) < 1e-3);
+        CHECK(std::abs(b.max.z - b.min.z - (tall ? 82.0 : 37.0)) < 1e-3);
+        CHECK(c.holes.size() == 7);
+        CHECK(c.windows.size() == 23);
+        // Four of the holes are planned bare on both; the two bores only on the tall one.
+        CHECK(std::count_if(c.holes.begin(), c.holes.end(), [](const CouponHole& h) { return h.bare; }) ==
+              (tall ? 6 : 4));
+    }
+}
+
+TEST_CASE("crowns coupon: its 6.5 and 11.8 mm tops get no tips, its controls keep theirs", "[points][closings]") {
+    // As the app plans it: 0.05 mm layers, lifted 5 mm, rule 4 on.
+    for (const bool tall : {false, true}) {
+        Coupon c = crownsCoupon(tall);
+        const Transform placed = placeOnPlate(c.mesh, {0, 0, 0}, kLift);
+        const PointGenResult r = plan(c.mesh, config(true), true);
+        CAPTURE(tall);
+        CHECK(r.stats.closings_held >= (tall ? 6 : 4));
+        for (CouponHole h : c.holes) {
+            h.a = placed.apply(h.a);
+            h.b = placed.apply(h.b);
+            const auto top = onTop(r.points, h);
+            CAPTURE(h.name, top.size());
+            if (!h.bare) {
+                CHECK(top.size() >= 4);  // the 14 mm hole; the bores on a model under 80 mm
+            } else if (h.ra == h.rb) {
+                CHECK(top.empty());  // 6.5 and 11.8 mm
+            } else if (h.ra < 10) {
+                CHECK(top.empty());  // the 17.5 mm bore on the tall coupon
+            } else {
+                // The 30 mm bore on the tall coupon keeps about 15 of its 25 tips: a row along the rim of its wide
+                // face, and one at the top of its narrow face. Where its top is judged, the wall's faces are looked
+                // for 1.5 mm into the side beside the gap, which at the narrow end is inside the wide end's opening
+                // there. The wall reads 1.87 mm deep, and what is held stops 0.03 mm short of the wide face; the
+                // sliver left in each layer gets the tips. (TubeRack's own 30 mm bores read 1.93 mm, centred so
+                // that they are held right across.)
+                CHECK(top.size() <= 20);
+            }
+        }
+        // The lattice keeps its tips: every window has one on its top half.
+        for (CouponWindow w : c.windows) {
+            w.centre = placed.apply(w.centre);
+            const bool held = std::any_of(r.points.begin(), r.points.end(), [&](const SupportPoint& p) {
+                const Vec3 d = p.pos - w.centre;
+                const double edge = std::abs(d.x) / w.half_wide + d.z / w.half_tall;
+                return std::abs(d.y) < 1.2 && d.z > 0 && edge > 0.9 && edge < 1.1;
+            });
+            CAPTURE(w.centre.x, w.centre.z);
+            CHECK(held);
+        }
+    }
 }

@@ -216,11 +216,14 @@ int cmdSlice(const std::string& path, const PlacementOpts& place, double layer_h
 }
 
 int cmdCoupon(const std::string& kind, const std::string& out, double layer_h, const std::string& png_dir) {
-    if (kind != "overlap" && kind != "orientation") {
-        std::cerr << "unknown coupon '" << kind << "' (available: overlap, orientation)\n";
+    Coupon c;
+    if (kind == "overlap") c = overlapCoupon();
+    else if (kind == "orientation") c = orientationCoupon();
+    else if (kind == "crowns" || kind == "crowns-tall") c = crownsCoupon(kind == "crowns-tall");
+    else {
+        std::cerr << "unknown coupon '" << kind << "' (available: overlap, orientation, crowns, crowns-tall)\n";
         return 2;
     }
-    const Coupon c = kind == "overlap" ? overlapCoupon() : orientationCoupon();
     const std::string stl = out.empty() ? kind + "_coupon.stl" : out;
     writeStl(stl, c.mesh);
     json r;
@@ -1108,7 +1111,7 @@ int main(int argc, char** argv) {
 
     std::string coupon_kind = "overlap", coupon_out;  // default: <kind>_coupon.stl
     auto* coupon = app.add_subcommand("coupon", "Generate a test print");
-    coupon->add_option("kind", coupon_kind, "Coupon kind: overlap | orientation");
+    coupon->add_option("kind", coupon_kind, "Coupon kind: overlap | orientation | crowns | crowns-tall");
     coupon->add_option("-o,--output", coupon_out, "Output STL (default <kind>_coupon.stl)");
     coupon->add_option("--layer", layer_h, "Layer height for reference slices (mm)");
     coupon->add_option("--png-dir", png_dir, "Write reference slice PNGs here");
