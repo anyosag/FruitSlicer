@@ -9,7 +9,7 @@
     {"orientation_fix": "use"}, {"hinge": "left"},
     {"plate": "tips"}, {"plate_save_to": "@demo-stl"}, {"shot": "c3b_plate_saved"},
     {"score": "tips"}, {"score_demo": 20}, {"shot": "c3b_score_part"},
-    {"score_select": 9}, {"shot": "c3b_score_partly"},
+    {"score_select": 7}, {"shot": "c3b_score_partly"},
     {"score_mirrored": true}, {"shot": "c3b_score_mirrored"}, {"score_mirrored": false},
     {"screen": "calibrate"}, {"shot": "c3b_hub_scored"},
     {"score": "spacing"}, {"shot": "c3b_score_unsaved"},

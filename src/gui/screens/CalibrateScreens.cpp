@@ -222,9 +222,10 @@ void calibrate(App& app) {
         const char* measures;
     };
     const Plate plates[] = {
-        {"tips", "Tips", "128 coupons · 14 mm tall",
-         ps.hinge ? "How much each tip size holds and which leaves the smallest mark, by the hinge and far from it."
-                  : "How much each tip size holds and which leaves the smallest mark."},
+        {"tips", "Tips", "96 coupons · 11 mm tall",
+         ps.hinge ? "How much each tip size holds on the supports a job gets, and which leaves the smallest mark, by "
+                    "the hinge and far from it."
+                  : "How much each tip size holds on the supports a job gets, and which leaves the smallest mark."},
         {"spacing", "Spacing", "37 coupons · 19 mm tall",
          "How far apart tips can be on tilted faces, and how steep a face can print without tips."},
         {"islands", "Islands", "36 coupons · 7 mm tall",
