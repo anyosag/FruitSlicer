@@ -9,6 +9,7 @@
 #include <set>
 #include <sstream>
 
+#include "ProcessTemp.h"
 #include "calibration/ABPlate.h"
 #include "calibration/CalibrationPlates.h"
 #include "mesh/Primitives.h"
@@ -239,7 +240,7 @@ TEST_CASE("A/B score sheets: blind, and every score reads back", "[calibration][
     ABPlateOptions o;
     o.copies = 4;
     const ABPlate a = makeABPlate(makeBox({-5, -5, 5}, {5, 5, 8}), makeBox({-6, -6, 0}, {6, 6, 5}), p, o);
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_ab_tests";
+    const auto dir = testfiles::temp() / "fruit_ab_tests";
     std::filesystem::create_directories(dir);
     const std::string manifest = (dir / "ab.json").string(), sheet = (dir / "ab.results.csv").string();
     std::ofstream(manifest) << a.manifest.dump(2);

@@ -21,7 +21,6 @@ set(FRUIT_LICENCE_FILES
   clipper2 ${clipper2_SOURCE_DIR}/LICENSE
   manifold ${manifold_SOURCE_DIR}/LICENSE
   json ${json_SOURCE_DIR}/LICENSE.MIT
-  httplib ${httplib_SOURCE_DIR}/LICENSE
   miniz ${miniz_SOURCE_DIR}/LICENSE
   pugixml ${pugixml_SOURCE_DIR}/LICENSE.md
   sdl3 ${sdl3_SOURCE_DIR}/LICENSE.txt
@@ -29,6 +28,9 @@ set(FRUIT_LICENCE_FILES
   imgui ${imgui_SOURCE_DIR}/LICENSE.txt
   glad ${PROJECT_SOURCE_DIR}/third_party/glad/LICENSES.txt
   inter ${inter_SOURCE_DIR}/LICENSE.txt)
+if(FRUIT_WIFI)
+  list(APPEND FRUIT_LICENCE_FILES httplib ${httplib_SOURCE_DIR}/LICENSE)
+endif()
 set(licence_sources)
 list(LENGTH FRUIT_LICENCE_FILES n)
 math(EXPR last "${n} - 1")
@@ -101,7 +103,6 @@ set(app_sources
   Print.cpp
   Resins.cpp
   Risk.cpp
-  Send.cpp
   Setup.cpp
   Script.cpp
   Supports.cpp
@@ -121,7 +122,6 @@ set(app_sources
   screens/PlateScreens.cpp
   screens/PrintStep.cpp
   screens/ResinsScreen.cpp
-  screens/SendDialog.cpp
   screens/SettingsScreens.cpp
   screens/SupportsAdvanced.cpp
   screens/SupportsRaft.cpp
@@ -136,17 +136,51 @@ set(app_sources
   view3d/Renderer.cpp
   platform/Platform.cpp
   ${font_sources})
+if(FRUIT_WIFI)
+  list(APPEND app_sources Send.cpp screens/SendDialog.cpp)
+endif()
 if(APPLE)
   list(APPEND app_sources platform/PlatformMac.mm macos/FruitSlicer.icns)
   set_source_files_properties(platform/PlatformMac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 endif()
 
 add_executable(fruitslicer_app ${app_sources})
+fruit_windows_exe(fruitslicer_app)
 target_include_directories(fruitslicer_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(fruitslicer_app PRIVATE GL_SILENCE_DEPRECATION FRUIT_VERSION="${PROJECT_VERSION}")
-# fruit_net_mock: an SDCP printer on loopback, started only by scripted runs
-# ({"mock_printer": true}) so the Wi-Fi screens can be captured without a printer.
-target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_net fruit_net_mock fruit_imgui fruit_glad fruit_licences miniz)
+target_link_libraries(fruitslicer_app PRIVATE fruit_core fruit_imgui fruit_glad fruit_licences miniz)
+if(FRUIT_WIFI)
+  # fruit_net_mock: an SDCP printer on loopback, started only by scripted runs
+  # ({"mock_printer": true}) so the Wi-Fi screens can be captured without a printer.
+  target_link_libraries(fruitslicer_app PRIVATE fruit_net fruit_net_mock)
+endif()
+
+# The licence texts of everything compiled into the app travel with it, as
+# the MIT, Apache and OFL licences ask: inside the macOS bundle, and in a
+# Licenses folder beside the Windows exe. `out` gets the copy commands.
+set(fruit_shipped_licences
+  FruitSlicer ${PROJECT_SOURCE_DIR}/LICENSE
+  Clipper2 ${clipper2_SOURCE_DIR}/LICENSE
+  Manifold ${manifold_SOURCE_DIR}/LICENSE
+  nlohmann-json ${json_SOURCE_DIR}/LICENSE.MIT
+  SDL3 ${sdl3_SOURCE_DIR}/LICENSE.txt
+  DearImGui ${imgui_SOURCE_DIR}/LICENSE.txt
+  glad ${PROJECT_SOURCE_DIR}/third_party/glad/LICENSES.txt
+  miniz ${miniz_SOURCE_DIR}/LICENSE
+  pugixml ${pugixml_SOURCE_DIR}/LICENSE.md
+  Inter ${inter_SOURCE_DIR}/LICENSE.txt)
+if(FRUIT_WIFI)
+  list(APPEND fruit_shipped_licences cpp-httplib ${httplib_SOURCE_DIR}/LICENSE)
+endif()
+function(fruit_copy_licences dir out)
+  set(licences ${fruit_shipped_licences})
+  set(cmds)
+  while(licences)
+    list(POP_FRONT licences name file)
+    list(APPEND cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different ${file} ${dir}/${name}.txt)
+  endwhile()
+  set(${out} ${cmds} PARENT_SCOPE)
+endfunction()
 
 if(APPLE)
   set_source_files_properties(macos/FruitSlicer.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -226,26 +260,8 @@ if(APPLE)
     MACOSX_BUNDLE_ICON_FILE FruitSlicer.icns)
   target_link_libraries(fruitslicer_app PRIVATE "-framework Foundation" "-framework AppKit")
 
-  # The licence texts of everything compiled into the app travel with it,
-  # as the MIT, Apache and OFL licences ask.
   set(lic_dir "$<TARGET_BUNDLE_CONTENT_DIR:fruitslicer_app>/Resources/Licenses")
-  set(licences
-    FruitSlicer ${PROJECT_SOURCE_DIR}/LICENSE
-    Clipper2 ${clipper2_SOURCE_DIR}/LICENSE
-    Manifold ${manifold_SOURCE_DIR}/LICENSE
-    nlohmann-json ${json_SOURCE_DIR}/LICENSE.MIT
-    cpp-httplib ${httplib_SOURCE_DIR}/LICENSE
-    SDL3 ${sdl3_SOURCE_DIR}/LICENSE.txt
-    DearImGui ${imgui_SOURCE_DIR}/LICENSE.txt
-    glad ${PROJECT_SOURCE_DIR}/third_party/glad/LICENSES.txt
-    miniz ${miniz_SOURCE_DIR}/LICENSE
-    pugixml ${pugixml_SOURCE_DIR}/LICENSE.md
-    Inter ${inter_SOURCE_DIR}/LICENSE.txt)
-  set(copy_licences)
-  while(licences)
-    list(POP_FRONT licences name file)
-    list(APPEND copy_licences COMMAND ${CMAKE_COMMAND} -E copy_if_different ${file} ${lic_dir}/${name}.txt)
-  endwhile()
+  fruit_copy_licences("${lic_dir}" copy_licences)
   # Signed ad hoc after every build, so the bundle (resources included) is
   # sealed. Without a Developer ID, macOS asks once before the first launch.
   add_custom_command(TARGET fruitslicer_app POST_BUILD
@@ -253,5 +269,17 @@ if(APPLE)
     ${copy_licences}
     COMMAND codesign --force --sign - --timestamp=none $<TARGET_BUNDLE_DIR:fruitslicer_app>
     COMMENT "Adding licence texts and signing FruitSlicer.app"
+    VERBATIM)
+endif()
+
+if(WIN32)
+  # FruitSlicer.exe, with the licence texts in Licenses\ beside it.
+  set_target_properties(fruitslicer_app PROPERTIES OUTPUT_NAME FruitSlicer)
+  set(lic_dir "$<TARGET_FILE_DIR:fruitslicer_app>/Licenses")
+  fruit_copy_licences("${lic_dir}" copy_licences)
+  add_custom_command(TARGET fruitslicer_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${lic_dir}
+    ${copy_licences}
+    COMMENT "Adding licence texts beside FruitSlicer.exe"
     VERBATIM)
 endif()

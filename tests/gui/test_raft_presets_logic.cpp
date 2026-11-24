@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "ProcessTemp.h"
 #include "RaftPresets.h"
 #include "RaftPreview.h"
 
@@ -59,7 +60,7 @@ TEST_CASE("Raft presets: built in or yours, by name, and where a copy came from"
 }
 
 TEST_CASE("Raft presets: yours and the one new jobs start with are kept on this computer", "[gui][raft]") {
-    const fs::path dir = fs::temp_directory_path() / "fruit_raft_presets_tests";
+    const fs::path dir = testfiles::temp() / "fruit_raft_presets_tests";
     fs::remove_all(dir);
     const std::string file = (dir / "rafts.json").string();
     CHECK(loadRaftPresets(file) == RaftPresets{});  // none yet: Least resin starts new jobs

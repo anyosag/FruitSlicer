@@ -8,17 +8,12 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
-#ifdef _WIN32
-#include <process.h>
-#define getpid _getpid
-#else
-#include <unistd.h>
-#endif
 
 #include "Calibration.h"
 #include "Document.h"
 #include "Preferences.h"
 #include "Print.h"
+#include "ProcessTemp.h"
 #include "Resins.h"
 #include "SlicingSettings.h"
 #include "Supports.h"
@@ -33,11 +28,7 @@ using namespace gui;
 
 namespace {
 
-std::filesystem::path tmp(const char* name) {
-    const auto dir = std::filesystem::temp_directory_path() / ("fruit_slicing_tests_" + std::to_string(getpid()));
-    std::filesystem::create_directories(dir);
-    return dir / name;
-}
+std::filesystem::path tmp(const char* name) { return testfiles::temp() / name; }
 
 // A 10 × 8 × 3 mm box, lifted 5 mm onto supports: its top is at 8 mm.
 std::shared_ptr<Document> box() {

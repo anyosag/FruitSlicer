@@ -5,11 +5,23 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <ctime>
 #include <string>
 
 #include "geometry/Vec.h"
 
 namespace gui {
+
+// The local time at `t` (localtime_r; Windows has localtime_s, its arguments the other way round).
+inline std::tm localTime(std::time_t t) {
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    return tm;
+}
 
 // printf into a string of any length (a fixed buffer once cut long sentences off mid-word).
 inline std::string strf(const char* f, ...) {

@@ -7,16 +7,11 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
-#ifdef _WIN32
-#include <process.h>
-#define getpid _getpid
-#else
-#include <unistd.h>
-#endif
 
 #include "Document.h"
 #include "Layers.h"
 #include "Print.h"
+#include "ProcessTemp.h"
 #include "Supports.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
@@ -29,11 +24,7 @@ namespace {
 
 // A folder of this test process's own: ctest runs the cases side by side,
 // and a shared box.stl could be read while another case rewrites it.
-std::filesystem::path tmp(const char* name) {
-    const auto dir = std::filesystem::temp_directory_path() / ("fruit_print_tests_" + std::to_string(getpid()));
-    std::filesystem::create_directories(dir);
-    return dir / name;
-}
+std::filesystem::path tmp(const char* name) { return testfiles::temp() / name; }
 
 std::shared_ptr<Document> box() {
     const auto path = tmp("print_box.stl");

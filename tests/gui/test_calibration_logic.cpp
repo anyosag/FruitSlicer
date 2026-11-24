@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "ProcessTemp.h"
 #include "Calibration.h"
 #include "calibration/Coupons.h"
 #include "formats/GooExport.h"
@@ -19,7 +20,7 @@ using namespace gui;
 namespace {
 
 std::filesystem::path dir() {
-    const auto d = std::filesystem::temp_directory_path() / "fruit_calibration_tests";
+    const auto d = testfiles::temp() / "fruit_calibration_tests";
     std::filesystem::create_directories(d);
     return d;
 }

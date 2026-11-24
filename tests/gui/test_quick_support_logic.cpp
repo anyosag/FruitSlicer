@@ -15,6 +15,7 @@
 #include <miniz.h>
 #include <nlohmann/json.hpp>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "Parts.h"
@@ -49,7 +50,7 @@ double tipSize(const SupportChoices& c) { return tipSizes(c)[0]; }
 
 std::shared_ptr<Document> docOf(const fruit::TriangleMesh& m, const char* name, const fruit::Vec3& turned = {0, 0, 0},
                                 bool on_plate = false) {
-    const auto path = fs::temp_directory_path() / name;
+    const auto path = testfiles::temp() / name;
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     fs::remove(path);
@@ -472,7 +473,7 @@ TEST_CASE("Quick support: a job saved with the three sliders plans as it did", "
 
 TEST_CASE("Quick support: the controls are saved with the job, and jobs with the old sliders convert",
           "[gui][supports][quick][jobs]") {
-    const fs::path dir = fs::temp_directory_path() / "fruit_quick_tests";
+    const fs::path dir = testfiles::temp() / "fruit_quick_tests";
     fs::create_directories(dir);
     const auto doc = bracket("quick_bracket.stl");
     const auto job = (dir / "plain.fruitjob").string();
@@ -738,7 +739,7 @@ TEST_CASE("Raft: the job's raft reaches the engine, is saved with the job and ma
     fruit::resolveSettings(nullptr, ch, cfg, &tc);
     CHECK(tc.raft == fruit::RaftStyle::None);
 
-    const fs::path dir = fs::temp_directory_path() / "fruit_full_raft_tests";
+    const fs::path dir = testfiles::temp() / "fruit_full_raft_tests";
     fs::create_directories(dir);
     const auto doc = bracket("full_raft_bracket.stl");
     const auto pads = (dir / "pads.fruitjob").string();
@@ -759,7 +760,7 @@ TEST_CASE("Raft: the job's raft reaches the engine, is saved with the job and ma
 }
 
 TEST_CASE("Raft: a job saved before the Raft page opens with the same raft", "[gui][supports][jobs][raft]") {
-    const fs::path dir = fs::temp_directory_path() / "fruit_full_raft_tests";
+    const fs::path dir = testfiles::temp() / "fruit_full_raft_tests";
     fs::create_directories(dir);
     const auto doc = bracket("old_raft_bracket.stl");
     const auto path = (dir / "old.fruitjob").string();

@@ -197,8 +197,7 @@ std::string whenWords(const std::string& when, std::time_t now) {
         return capital(when);
     static const char* const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    std::tm today{};
-    localtime_r(&now, &today);
+    const std::tm today = localTime(now);
     // Whole days between the two dates, each taken at noon (no daylight saving trouble).
     std::tm a{};
     a.tm_year = y - 1900, a.tm_mon = mo - 1, a.tm_mday = da, a.tm_hour = 12, a.tm_isdst = -1;

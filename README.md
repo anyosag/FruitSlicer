@@ -41,6 +41,17 @@ cmake --build build
 ctest --test-dir build
 ```
 
+**Windows** (being brought up; `.github/workflows/windows.yml` builds it on a
+GitHub-hosted Windows machine): Microsoft's compiler from a Visual Studio
+x64 developer prompt, with Ninja. Windows copies are built without Wi-Fi
+sending (`FRUIT_WIFI` is off there): they save to a USB drive or a folder.
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DFRUIT_BUILD_APP=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+cmake --build build
+ctest --test-dir build
+```
+
 ## Desktop app (early build)
 
 A Mac app is being built in stages on top of the same engine. Today it
@@ -725,7 +736,7 @@ so the default is off, as in SatelLite.
 `fruitslicer-printer` finds the printer on the local network, shows its
 status, uploads a `.goo` and, only when asked, starts it (SDCP V3; notes and
 sources in [`docs/wifi-sdcp.md`](docs/wifi-sdcp.md)). Not yet tried on a real
-printer.
+printer. Built only with `FRUIT_WIFI` on (the default, except on Windows).
 
 ```sh
 ./build/src/net/fruitslicer-printer discover

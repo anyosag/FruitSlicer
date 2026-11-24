@@ -1,0 +1,181 @@
+name: Windows
+
+# FruitSlicer built with Microsoft's compiler (MSVC) on a GitHub-hosted
+# Windows machine, without Wi-Fi sending (FRUIT_WIFI is off on Windows): the
+# engine, the command line, the tests and the app. Its own workflow, so
+# pushing the windows-ci branch runs this alone (ci.yml, and with it the
+# self-hosted Mac, runs on main and pull requests only).
+on:
+  push:
+    branches: [main, windows-ci]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh  # Git Bash's /usr/bin/link would stand in for MSVC's link.exe
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Microsoft's compiler (x64)
+        # Visual Studio's own vcvars64.bat, found with vswhere, its environment
+        # kept for the steps that follow (whichever Visual Studio the image has).
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "No Visual Studio with the C++ tools on this machine" }
+          $script = Join-Path $env:RUNNER_TEMP 'vcvars-env.cmd'
+          "@call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul`r`n@set" | Set-Content -Encoding ascii $script
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          & cmd /c $script | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$' -and $before[$matches[1]] -ne $matches[2]) {
+              "$($matches[1])=$($matches[2])" >> $env:GITHUB_ENV
+            }
+          }
+
+      - name: Install ccache, and the tools' versions
+        run: |
+          choco install -y --no-progress ccache
+          if ($LASTEXITCODE) { throw "Could not install ccache" }
+          cl 2>&1 | Select-Object -First 1  # cl writes its banner to stderr
+          cmake --version | Select-Object -First 1
+          "ninja $(ninja --version)"
+          ccache --version | Select-Object -First 1
+          exit 0  # (cl without a file to compile may not exit with 0)
+
+      - name: Set up the compiler cache
+        id: ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+          restore-keys: ccache-${{ github.job }}-
+
+      - name: Point ccache at it
+        run: |
+          "CCACHE_DIR=$env:GITHUB_WORKSPACE\.ccache" >> $env:GITHUB_ENV
+          "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
+          "CCACHE_MAXSIZE=500M" >> $env:GITHUB_ENV
+          $env:CCACHE_DIR = "$env:GITHUB_WORKSPACE\.ccache"
+          ccache --zero-stats
+
+      - name: Configure
+        # Static C runtime, so the exe runs without the Visual C++
+        # redistributable; the policy default makes every library use it
+        # (miniz enables C under an older CMake minimum).
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DFRUIT_BUILD_APP=ON -DFRUIT_WIFI=OFF
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        # -k 0: every file that fails is reported, not only the first.
+        run: cmake --build build -j -- -k 0
+
+      - name: Save the compiler cache
+        # Saved straight after the build, so a run whose tests fail keeps it too.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ github.job }}-${{ github.sha }}
+
+      - name: How much the compiler cache saved
+        run: ccache --show-stats
+
+      - name: ctest finds every test
+        # Test names with "°" or "mm²" must reach ctest whole: as many tests
+        # as the test programs list themselves.
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $found = ctest --test-dir build -N | Select-String 'Total Tests: (\d+)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value }
+          $own = 0
+          foreach ($exe in 'build\tests\fruit_tests.exe', 'build\tests\fruit_gui_tests.exe') {
+            $own += (& $exe --list-tests --verbosity quiet | Measure-Object -Line).Lines
+          }
+          "ctest found $found tests; the test programs list $own"
+          if ($found -ne $own) { throw "ctest and the test programs disagree on the tests" }
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+
+      - name: Smoke test CLI
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          .\build\src\fruitslicer.exe coupon overlap -o overlap.stl
+          .\build\src\fruitslicer.exe slice overlap.stl --elevate 0
+
+      - name: Self-test
+        run: .\build\src\gui\FruitSlicer.exe --self-test
+
+      # Hosted Windows machines have no graphics card: OpenGL 3.3 comes from
+      # Mesa's software renderer (llvmpipe), a pinned build checked against its
+      # SHA-256. Whether it runs there is not ours to control, so the OpenGL
+      # steps report without failing the job, as on macOS.
+      - name: Software OpenGL (Mesa llvmpipe)
+        continue-on-error: true
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = '26.2.6'
+          $sha256 = 'b2e00615feaba45942343c265cc8c5f576142ca682c1ac6661922d4b72492877'
+          $archive = Join-Path $env:RUNNER_TEMP 'mesa.7z'
+          Invoke-WebRequest "https://github.com/pal1000/mesa-dist-win/releases/download/$version/mesa3d-$version-release-msvc.7z" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $sha256) { throw "The Mesa download does not match its pinned SHA-256" }
+          $mesa = Join-Path $env:RUNNER_TEMP 'mesa'
+          7z x $archive "-o$mesa" -y | Out-Null
+          Get-ChildItem "$mesa\x64" -Filter *.dll | ForEach-Object { "$($_.Name)  $($_.Length)" }
+          foreach ($dll in 'opengl32.dll', 'libgallium_wgl.dll', 'libglapi.dll') {
+            if (Test-Path "$mesa\x64\$dll") { Copy-Item "$mesa\x64\$dll" build\src\gui\ }
+          }
+          if (-not (Test-Path build\src\gui\opengl32.dll)) { throw "No opengl32.dll in the Mesa archive" }
+          "GALLIUM_DRIVER=llvmpipe" >> $env:GITHUB_ENV
+
+      - name: Self-test with OpenGL
+        continue-on-error: true
+        run: .\build\src\gui\FruitSlicer.exe --self-test-gl
+
+      - name: Screenshots with Mesa (for review, not compared)
+        # Every script in tests/gui but the Wi-Fi one, one after another (they
+        # share scratch folders). Never copied into tests/gui/golden: the
+        # goldens come from CI's Linux renders only.
+        continue-on-error: true
+        run: |
+          $failed = @()
+          foreach ($s in Get-ChildItem tests\gui\*.json) {
+            if ($s.Name -eq 'b3c_send.json') { continue }  # Wi-Fi sending is not built on Windows
+            & .\build\src\gui\FruitSlicer.exe --script $s.FullName --shots shots-windows
+            if ($LASTEXITCODE -ne 0) { $failed += "$($s.Name) (exit $LASTEXITCODE)" }
+          }
+          if ($failed.Count) { "Scripts that failed: $($failed -join ', ')"; exit 1 }
+
+      - name: Upload the Windows screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-screens-windows
+          path: shots-windows
+          if-no-files-found: ignore
+
+      - name: Zip the app
+        # FruitSlicer.exe and the licence texts beside it (not Mesa's DLLs).
+        run: |
+          New-Item -ItemType Directory -Force pkg\FruitSlicer | Out-Null
+          Copy-Item build\src\gui\FruitSlicer.exe pkg\FruitSlicer\
+          Copy-Item build\src\gui\Licenses pkg\FruitSlicer\ -Recurse
+          Compress-Archive -Path pkg\FruitSlicer -DestinationPath FruitSlicer-Windows.zip -Force
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v7
+        with:
+          path: FruitSlicer-Windows.zip
+          archive: false

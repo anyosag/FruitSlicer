@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "ProcessTemp.h"
 #include "core/JobControl.h"
 #include "core/OutFile.h"
 #include "core/Parallel.h"
@@ -37,7 +38,7 @@ using Catch::Approx;
 namespace {
 
 std::filesystem::path tmpDir() {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_test_jobs";
+    const auto dir = testfiles::temp() / "fruit_test_jobs";
     std::filesystem::create_directories(dir);
     return dir;
 }

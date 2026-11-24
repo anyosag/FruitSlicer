@@ -7,6 +7,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <filesystem>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "Repairs.h"
@@ -21,7 +22,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_repair_tests";
+    const auto d = testfiles::temp() / "fruit_repair_tests";
     fs::create_directories(d);
     return d;
 }

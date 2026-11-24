@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "ProcessTemp.h"
 #include "formats/ThreeMf.h"
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
@@ -179,7 +180,7 @@ TEST_CASE("3MF: numbers read the same under a decimal-comma locale", "[3mf]") {
 
 TEST_CASE("loadModel reads .3mf files by extension", "[3mf]") {
     const std::string res = R"(<object id="1">)" + cubeMesh() + "</object>";
-    const auto path = std::filesystem::temp_directory_path() / "fruitslicer_test_cube.3mf";
+    const auto path = testfiles::temp() / "fruitslicer_test_cube.3mf";
     {
         std::ofstream f(path, std::ios::binary);
         f << makeZip({{"_rels/.rels", kRels}, {"3D/3dmodel.model", model("millimeter", res, R"(<item objectid="1"/>)")}});

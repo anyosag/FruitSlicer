@@ -25,15 +25,18 @@ FetchContent_Declare(json
 
 # cpp-httplib (MIT) - WebSocket and HTTP multipart client for Wi-Fi sending
 # (src/net). Plain HTTP only: no TLS or compression libraries are linked.
-set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
-set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
-set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
-set(HTTPLIB_USE_ZSTD_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
-set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(httplib
-  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG v0.62.0
-  GIT_SHALLOW TRUE)
+# Fetched only when Wi-Fi sending is built in (FRUIT_WIFI).
+if(FRUIT_WIFI)
+  set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+  set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+  set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+  set(HTTPLIB_USE_ZSTD_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+  set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.62.0
+    GIT_SHALLOW TRUE)
+endif()
 
 # miniz (MIT) - zip archives (3MF packages) and zlib (PNG).
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -80,7 +83,12 @@ FetchContent_Declare(imgui
   GIT_TAG v1.93.0
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(clipper2 cli11 json httplib miniz pugixml manifold inter imgui)
+set(fruit_fetch clipper2 cli11 json)
+if(FRUIT_WIFI)
+  list(APPEND fruit_fetch httplib)
+endif()
+list(APPEND fruit_fetch miniz pugixml manifold inter imgui)
+FetchContent_MakeAvailable(${fruit_fetch})
 
 # Our code uses miniz's mz_ names only; its zlib-style aliases are unused
 # static functions that warn in every file including miniz.h.

@@ -7,6 +7,7 @@
 #include <fstream>
 
 #include "Document.h"
+#include "ProcessTemp.h"
 #include "mesh/StlIO.h"
 
 using Catch::Approx;
@@ -15,7 +16,7 @@ using gui::Document;
 namespace {
 
 std::shared_ptr<Document> loadDemo(const char* name = "doc_test_bracket.stl") {
-    const auto path = std::filesystem::temp_directory_path() / name;
+    const auto path = testfiles::temp() / name;
     fruit::writeStl(path.string(), gui::demoModel());
     auto doc = gui::loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -86,7 +87,7 @@ TEST_CASE("Document: the transform and the placed mesh agree", "[gui]") {
 }
 
 TEST_CASE("Document: an empty file is refused with a message", "[gui]") {
-    const auto path = std::filesystem::temp_directory_path() / "doc_test_empty.stl";
+    const auto path = testfiles::temp() / "doc_test_empty.stl";
     { std::ofstream(path) << "solid empty\nendsolid empty\n"; }
     CHECK_THROWS(gui::loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none()));
     std::filesystem::remove(path);

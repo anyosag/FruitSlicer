@@ -8,6 +8,7 @@
 #include <fstream>
 #include <random>
 
+#include "ProcessTemp.h"
 #include "formats/GooExport.h"
 #include "formats/GooFile.h"
 #include "formats/GooSetup.h"
@@ -20,7 +21,7 @@ using Catch::Approx;
 namespace {
 
 std::string tmp(const std::string& name) {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_test_goo";
+    const auto dir = testfiles::temp() / "fruit_test_goo";
     std::filesystem::create_directories(dir);
     return (dir / name).string();
 }

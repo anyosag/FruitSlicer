@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <numeric>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "Orient.h"
 #include "mesh/Primitives.h"
@@ -20,7 +21,7 @@ using namespace gui;
 namespace {
 
 std::shared_ptr<Document> load(const fruit::TriangleMesh& m, const char* name) {
-    const auto path = std::filesystem::temp_directory_path() / name;
+    const auto path = testfiles::temp() / name;
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);

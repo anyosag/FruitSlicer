@@ -11,6 +11,7 @@
 #include <set>
 
 #include "Document.h"
+#include "ProcessTemp.h"
 #include "Supports.h"
 #include "mesh/Primitives.h"
 #include "mesh/StlIO.h"
@@ -22,7 +23,7 @@ using namespace gui;
 namespace {
 
 std::shared_ptr<Document> bracket() {
-    const auto path = std::filesystem::temp_directory_path() / "supports_test_bracket.stl";
+    const auto path = testfiles::temp() / "supports_test_bracket.stl";
     fruit::writeStl(path.string(), demoModel());
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -37,7 +38,7 @@ std::shared_ptr<Document> sidewaysCap() {
     m.append(fruit::makeBox({0, 0, 28}, {30, 30, 30}));
     m.append(fruit::makeBox({0, 0, 0}, {2, 30, 30}));
     m.append(fruit::makeBox({28, 0, 0}, {30, 30, 30}));
-    const auto path = std::filesystem::temp_directory_path() / "supports_test_sideways_cap.stl";
+    const auto path = testfiles::temp() / "supports_test_sideways_cap.stl";
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -93,7 +94,7 @@ TEST_CASE("Supports: on the plate, the job's own bottom layers hold what they pr
     // A block with a shelf whose underside is 0.15 mm above the plate.
     fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 8, 10});
     m.append(fruit::makeBox({5, -5, 0.15}, {25, 0.5, 3}));
-    const auto path = std::filesystem::temp_directory_path() / "supports_test_low_shelf.stl";
+    const auto path = testfiles::temp() / "supports_test_low_shelf.stl";
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -215,7 +216,7 @@ TEST_CASE("Supports: the planner says which bottom layers its tips are right for
     auto shelved = [](bool shelf) {
         fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {30, 8, 10});
         if (shelf) m.append(fruit::makeBox({5, -5, 0.15}, {25, 0.5, 3}));
-        const auto path = std::filesystem::temp_directory_path() / "supports_test_held_layers.stl";
+        const auto path = testfiles::temp() / "supports_test_held_layers.stl";
         fruit::writeStl(path.string(), m);
         auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
         std::filesystem::remove(path);
@@ -723,7 +724,7 @@ TEST_CASE("Supports: a tip built smaller than planned, or a little way off, show
     m.append(fruit::makeBox({w, -5, 5}, {5, 5, 12}));
     m.append(fruit::makeBox({-w, -5, 5}, {w, -w, 12}));
     m.append(fruit::makeBox({-w, w, 5}, {w, 5, 12}));
-    const auto path = std::filesystem::temp_directory_path() / "supports_test_tube.stl";
+    const auto path = testfiles::temp() / "supports_test_tube.stl";
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);

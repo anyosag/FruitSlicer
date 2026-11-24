@@ -11,6 +11,7 @@
 #include <miniz.h>
 #include <nlohmann/json.hpp>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "Navigation.h"
@@ -29,7 +30,7 @@ namespace {
 const fruit::PrinterProfile kPrinter = fruit::PrinterProfile::saturn4Ultra16k();
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_placing_tests";
+    const auto d = testfiles::temp() / "fruit_placing_tests";
     fs::create_directories(d);
     return d;
 }

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "ShapeTools.h"
@@ -26,7 +27,7 @@ namespace {
 const fruit::PrinterProfile kPrinter = fruit::PrinterProfile::saturn4Ultra16k();
 
 std::shared_ptr<Document> docWith(const fruit::TriangleMesh& mesh, const char* name) {
-    const auto d = fs::temp_directory_path() / "fruit_shape_tests";
+    const auto d = testfiles::temp() / "fruit_shape_tests";
     fs::create_directories(d);
     const auto path = d / name;
     fruit::writeStl(path.string(), mesh);

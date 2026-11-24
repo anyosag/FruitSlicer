@@ -9,6 +9,7 @@
 #include <fstream>
 #include <string>
 
+#include "ProcessTemp.h"
 #include "Calibration.h"
 #include "Licences.h"
 #include "Preferences.h"
@@ -28,7 +29,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_settings_tests";
+    const auto d = testfiles::temp() / "fruit_settings_tests";
     fs::create_directories(d);
     return d;
 }
@@ -159,14 +160,18 @@ TEST_CASE("Setup: a SatelLite file's settings are kept for new jobs; another pri
 
 TEST_CASE("About: every library built in comes with its full licence text", "[gui][settings]") {
     const auto& all = licences();
-    REQUIRE(all.size() == 12);
+    // cpp-httplib is built in only with Wi-Fi sending (FRUIT_WIFI), and listed only then.
+    REQUIRE(all.size() == (FRUIT_WIFI ? 12u : 11u));
+    for (const Licence& x : all) CHECK((FRUIT_WIFI || std::string(x.name) != "cpp-httplib"));
     CHECK(std::string(all[0].name) == "FruitSlicer");
     CHECK_THAT(std::string(all[0].text), ContainsSubstring("GNU AFFERO GENERAL PUBLIC LICENSE"));
     const std::pair<const char*, const char*> expect[] = {
         {"Clipper2", "Boost Software License"},
         {"Manifold", "Apache License"},
         {"nlohmann/json", "MIT License"},
+#if FRUIT_WIFI
         {"cpp-httplib", "MIT License"},
+#endif
         {"miniz", "Permission is hereby granted"},
         {"pugixml", "MIT License"},
         {"SDL 3", "This software is provided 'as-is'"},

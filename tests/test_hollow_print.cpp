@@ -10,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "ProcessTemp.h"
 #include "formats/GooExport.h"
 #include "layers/Drain.h"
 #include "mesh/Placement.h"
@@ -97,7 +98,7 @@ TEST_CASE("a hollowed, drilled part prints: no tips in its hole, nothing floatin
     h.print.exposure = 2.5f;
     h.print.bottom_exposure = 25.0f;
     const RasterGrid grid = RasterGrid::fromPrinter(PrinterProfile::saturn4Ultra16k());
-    const std::string path = (std::filesystem::temp_directory_path() / "fruit_hollow_print.goo").string();
+    const std::string path = (testfiles::temp() / "fruit_hollow_print.goo").string();
     const GooExportResult written = exportGooLayers(print, &placed, h, grid, GooExportOptions{}, path);
     CHECK(written.layers == print.size());
     CHECK(written.volume_mm3 == Approx(volume(print)).epsilon(0.02));

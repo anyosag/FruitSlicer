@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 
+#include "ProcessTemp.h"
 #include "Send.h"
 #include "net/testing/MockPrinter.h"
 
@@ -27,7 +28,7 @@ NetPorts portsFor(const MockPrinter& m) {
 }
 
 std::string goo(const std::string& name, std::size_t size) {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_send_tests";
+    const auto dir = testfiles::temp() / "fruit_send_tests";
     std::filesystem::create_directories(dir);
     const auto p = dir / name;
     std::ofstream out(p, std::ios::binary | std::ios::trunc);
@@ -94,7 +95,7 @@ TEST_CASE("Send: cancelling leaves nothing on the printer; silence reads plainly
 }
 
 TEST_CASE("Send: printer addresses added by hand are kept", "[gui][send]") {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_send_tests" / "data";
+    const auto dir = testfiles::temp() / "fruit_send_tests" / "data";
     std::filesystem::remove_all(dir);
     const std::string file = (dir / "printers.json").string();
     CHECK(loadPrinterAddresses(file).empty());

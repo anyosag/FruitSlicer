@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "LayerScroll.h"
 #include "Layers.h"
@@ -17,7 +18,7 @@ using namespace gui;
 namespace {
 
 std::shared_ptr<Document> load(const fruit::TriangleMesh& m, const char* name) {
-    const auto path = std::filesystem::temp_directory_path() / name;
+    const auto path = testfiles::temp() / name;
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);

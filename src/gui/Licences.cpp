@@ -13,7 +13,9 @@ FRUIT_LICENCE(fruitslicer)
 FRUIT_LICENCE(clipper2)
 FRUIT_LICENCE(manifold)
 FRUIT_LICENCE(json)
+#if FRUIT_WIFI
 FRUIT_LICENCE(httplib)
+#endif
 FRUIT_LICENCE(miniz)
 FRUIT_LICENCE(pugixml)
 FRUIT_LICENCE(sdl3)
@@ -37,7 +39,9 @@ const std::vector<Licence>& licences() {
         {"Clipper2", "polygon clipping", "Boost Software License 1.0", FRUIT_TEXT(clipper2)},
         {"Manifold", "joining, cutting and labelling models", "Apache-2.0", FRUIT_TEXT(manifold)},
         {"nlohmann/json", "JSON files", "MIT", FRUIT_TEXT(json)},
+#if FRUIT_WIFI
         {"cpp-httplib", "sending over Wi-Fi", "MIT", FRUIT_TEXT(httplib)},
+#endif
         {"miniz", "compression, 3MF and job files", "MIT", FRUIT_TEXT(miniz)},
         {"pugixml", "3MF models", "MIT", FRUIT_TEXT(pugixml)},
         {"SDL 3", "window, input and file dialogs", "zlib", FRUIT_TEXT(sdl3)},

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 // Wi-Fi sending (src/net) against the in-process mock printer, loopback only.
+#include "ProcessTemp.h"
 #include "net/Discovery.h"
 #include "net/Md5.h"
 #include "net/Sdcp.h"
@@ -52,7 +53,7 @@ StartOptions fastStart() {
 }
 
 std::filesystem::path tempFile(const std::string& name, std::size_t size, unsigned seed = 1) {
-    auto dir = std::filesystem::temp_directory_path() / "fruit_net_tests";
+    auto dir = testfiles::temp() / "fruit_net_tests";
     std::filesystem::create_directories(dir);
     auto p = dir / name;
     std::mt19937 rng(seed);

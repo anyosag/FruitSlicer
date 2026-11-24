@@ -13,6 +13,7 @@
 
 #include "Document.h"
 #include "Layers.h"
+#include "ProcessTemp.h"
 #include "Risk.h"
 #include "Supports.h"
 #include "layers/LayerStack.h"
@@ -47,7 +48,7 @@ fruit::StabilityResult replay(const fruit::TriangleMesh& m, int replays = 400) {
 double surface(const fruit::TriangleMesh& m) { return m.surfaceArea(); }
 
 std::shared_ptr<Document> bracket() {
-    const auto path = std::filesystem::temp_directory_path() / "risk_test_bracket.stl";
+    const auto path = testfiles::temp() / "risk_test_bracket.stl";
     fruit::writeStl(path.string(), demoModel());
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -473,7 +474,7 @@ TEST_CASE("No raft: a separate piece that starts inside the bottom layers stands
     auto job = [](double up) {
         fruit::TriangleMesh m = fruit::makeBox({0, 0, 0}, {20, 10, 8});
         m.append(fruit::makeBox({24, 2, up}, {30, 8, 6}));
-        const auto path = std::filesystem::temp_directory_path() / "risk_test_plate_piece.stl";
+        const auto path = testfiles::temp() / "risk_test_plate_piece.stl";
         fruit::writeStl(path.string(), m);
         auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
         std::filesystem::remove(path);
@@ -577,7 +578,7 @@ TEST_CASE("Risk: the demo bracket on its own supports is replayed, the same ever
 TEST_CASE("Risk: replaying the print and strengthening it makes losing part of the model less likely", "[gui][risk][slow]") {
     // A plate 20 x 20 mm, 1 mm thick, 6 mm up, its supports made as usual and then thinned to every fourth tip:
     // what is left is pulled far harder than its tips are trusted with.
-    const auto path = std::filesystem::temp_directory_path() / "risk_test_plate.stl";
+    const auto path = testfiles::temp() / "risk_test_plate.stl";
     fruit::writeStl(path.string(), fruit::makeBox({0, 0, 6}, {20, 20, 7}));
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -654,7 +655,7 @@ TEST_CASE("Risk: replaying the print and strengthening it makes losing part of t
 
 TEST_CASE("Risk: the strengthening loop leaves tips whose letting go costs none of the model", "[gui][risk][slow]") {
     // The same plate with all its supports: some of its tips may let go, but their neighbours keep the plate.
-    const auto path = std::filesystem::temp_directory_path() / "risk_test_plate_full.stl";
+    const auto path = testfiles::temp() / "risk_test_plate_full.stl";
     fruit::writeStl(path.string(), fruit::makeBox({0, 0, 6}, {20, 20, 7}));
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);

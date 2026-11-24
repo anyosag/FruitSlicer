@@ -10,6 +10,7 @@
 #include <map>
 #include <sstream>
 
+#include "ProcessTemp.h"
 #include "calibration/CalibrationFit.h"
 #include "support/SupportGeometry.h"
 #include "calibration/CalibrationPlates.h"
@@ -26,7 +27,7 @@ namespace {
 // Writes the manifest and a results CSV filled by `judge(params) -> {ok, scar}`.
 template <class Judge>
 std::string writePlate(const CalibrationPlate& plate, const std::string& name, Judge judge) {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_test_fit";
+    const auto dir = testfiles::temp() / "fruit_test_fit";
     std::filesystem::create_directories(dir);
     const std::string stl = (dir / (name + ".stl")).string();
     std::ofstream(stl + ".json") << plate.manifest().dump();
@@ -190,7 +191,7 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
 }
 
 TEST_CASE("results CSV errors are reported clearly", "[fit]") {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_test_fit_bad";
+    const auto dir = testfiles::temp() / "fruit_test_fit_bad";
     std::filesystem::create_directories(dir);
     const CalibrationPlate plate = islandsPlate({}, PrinterProfile::saturn4Ultra16k());
     std::ofstream((dir / "p.stl.json").string()) << plate.manifest().dump();
@@ -202,7 +203,7 @@ TEST_CASE("results CSV errors are reported clearly", "[fit]") {
 TEST_CASE("blind score sheets: no parameters, and every score reads back", "[fit]") {
     const PrinterProfile pr = PrinterProfile::saturn4Ultra16k();
     const CalibrationPlate plate = tipsPlate(TipsPlateOptions{}, pr);
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_blind_sheet";
+    const auto dir = testfiles::temp() / "fruit_blind_sheet";
     std::filesystem::create_directories(dir);
     const std::string manifest = (dir / "tips.stl.json").string(), csv = (dir / "tips.stl.results.csv").string();
     std::ofstream(manifest) << plate.manifest().dump(2);

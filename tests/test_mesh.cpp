@@ -7,6 +7,7 @@
 #include <fstream>
 #include <random>
 
+#include "ProcessTemp.h"
 #include "mesh/AabbTree.h"
 #include "mesh/MeshAnalysis.h"
 #include "mesh/Placement.h"
@@ -53,7 +54,7 @@ TEST_CASE("segmentsFor honours chord error", "[mesh]") {
 }
 
 TEST_CASE("STL round trip preserves geometry and welds vertices", "[mesh][io]") {
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_test_stl";
+    const auto dir = testfiles::temp() / "fruit_test_stl";
     std::filesystem::create_directories(dir);
     const auto path = (dir / "cyl.stl").string();
     const TriangleMesh cyl = makeCylinder({1, 2, 3}, 2, 5, 48);

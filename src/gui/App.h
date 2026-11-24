@@ -35,7 +35,9 @@
 #include "Placing.h"
 #include "Resins.h"
 #include "Risk.h"
+#if FRUIT_WIFI
 #include "Send.h"
+#endif
 #include "platform/Platform.h"
 #include "mesh/AabbTree.h"
 #include "printer/PrinterProfile.h"
@@ -71,6 +73,7 @@ struct HealthDialog {
     double custom_percent = 100;
 };
 
+#if FRUIT_WIFI
 // The "Send to the printer" dialog (canvas board "SendWifi").
 struct SendDialog {
     bool open = false;
@@ -84,6 +87,7 @@ struct SendDialog {
     std::shared_ptr<const SendResult> sent;          // what arrived
     double send_started = -1;                        // seconds, for the time left
 };
+#endif
 
 class App {
 public:
@@ -621,14 +625,17 @@ public:
     int& driveChoice() { return drive_choice_; }          // index into drives(), -1 = choose a folder
     bool& orientationAsk() { return orientation_ask_; }  // the "save before checking?" question is open
     // Over Wi-Fi: "Save to" picks the printer; saving writes the file to a
-    // temporary folder, checks it, then opens the send dialog.
+    // temporary folder, checks it, then opens the send dialog. (A copy built
+    // without Wi-Fi sending, FRUIT_WIFI off, never offers it: this stays false.)
     bool& sendOverWifi() { return send_wifi_; }
+#if FRUIT_WIFI
     SendDialog& send() { return send_; }
     void findPrinters();                       // search the network (and the addresses added by hand)
     void addPrinter(const std::string& host);  // ask one address and remember it
     void sendToPrinter();                      // upload to the chosen printer (and start it, if asked)
     void closeSend();
     void useMockPrinter(bool silent = false);  // scripts: a printer on loopback (or nothing that answers)
+#endif
     // Calibrate: the printer's settings and the image orientation check.
     const PrinterSetup& printerSetup() const { return printer_setup_; }
     void saveOrientationPiece();                     // f.stl, through a save dialog
@@ -1034,11 +1041,13 @@ private:
     double drives_checked_ = -1;  // when the drive list was last read (seconds)
     bool orientation_ask_ = false, orientation_asked_ = false;
     bool send_wifi_ = false;
+#if FRUIT_WIFI
     SendDialog send_;
     NetPorts net_ports_;
     std::vector<std::string> printer_hosts_;  // added by hand
     bool printer_hosts_loaded_ = false;
     std::shared_ptr<void> mock_printer_;      // scripts only
+#endif
     std::vector<RecentJob> recent_;
     struct HomePicture {
         unsigned tex = 0;

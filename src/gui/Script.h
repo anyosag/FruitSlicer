@@ -71,6 +71,7 @@
 //   {"mock_printer": true | "silent"} a printer on loopback (or none answering); {"search": true}
 //   {"save_target": "wifi" | "folder"}
 //   {"printer": n (1-based)} {"start_print": bool} {"send": "go" | "close"}
+//     (these printer steps, and save_target "wifi", fail in a copy built without Wi-Fi sending)
 //   {"edit_tips": bool} {"tip_tool": "select" | "add" | "zone"} {"tip_select": i} {"tip_delete": i}
 //   {"tip_resize": [i, mm]} {"tip_pin": i} {"tip_undo": i | -1 | "all"}
 //   {"tip_delete_over": mm} Delete on every tip higher than that above the plate, one after the other (waits for each)

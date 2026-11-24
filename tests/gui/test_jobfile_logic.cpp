@@ -10,6 +10,7 @@
 #include <miniz.h>
 #include <nlohmann/json.hpp>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "Hollows.h"
 #include "JobFile.h"
@@ -28,7 +29,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_job_tests";
+    const auto d = testfiles::temp() / "fruit_job_tests";
     fs::create_directories(d);
     return d;
 }

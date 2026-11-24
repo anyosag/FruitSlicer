@@ -154,7 +154,11 @@ void about(App& app) {
           "them",
           "Print time beyond one file: the 2.4 s of tilting per layer comes from one SatelLite file, where the "
           "estimate is within 1 % of SatelLite's",
+#if FRUIT_WIFI
           "Sending over Wi-Fi and ejecting USB drives with a real printer: tried against a stand-in printer only"})
+#else
+          "Ejecting USB drives with a real printer: tried against a stand-in drive only"})
+#endif
         unchecked.push_back(s);
     const float gap = 16, cw = std::floor((w - gap) / 2);
     beginCard("checked", ImVec2(cw, 0), 16, col::Panel, col::Border);

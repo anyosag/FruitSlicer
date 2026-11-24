@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 
+#include "ProcessTemp.h"
 #include "ABTest.h"
 #include "mesh/Primitives.h"
 
@@ -17,7 +18,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path freshDir(const std::string& name) {
-    const auto d = fs::temp_directory_path() / "fruit_ab_logic_tests" / name;
+    const auto d = testfiles::temp() / "fruit_ab_logic_tests" / name;
     fs::remove_all(d);
     fs::create_directories(d);
     return d;
@@ -34,9 +35,10 @@ fruit::ABPlate plateOf(int copies) {
 }  // namespace
 
 TEST_CASE("the B file is named after the A file", "[ab]") {
-    CHECK(abFileB("/tmp/x/bracket AB_A.stl") == "/tmp/x/bracket AB_B.stl");
+    // Compared as paths: Windows joins the folder and the name with a backslash.
+    CHECK(fs::path(abFileB("/tmp/x/bracket AB_A.stl")) == fs::path("/tmp/x/bracket AB_B.stl"));
     CHECK(abFileB("bracket.stl") == "bracket_B.stl");
-    CHECK(abFileB("/a/b/test_A.STL") == "/a/b/test_B.stl");
+    CHECK(fs::path(abFileB("/a/b/test_A.STL")) == fs::path("/a/b/test_B.stl"));
 }
 
 TEST_CASE("the copies offered are even, at most 8, and fit", "[ab]") {

@@ -7,6 +7,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <filesystem>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "Hollows.h"
 #include "JobFile.h"
@@ -24,7 +25,7 @@ using namespace gui;
 namespace {
 
 std::shared_ptr<Document> load(const fruit::TriangleMesh& m, const char* name) {
-    const auto path = std::filesystem::temp_directory_path() / name;
+    const auto path = testfiles::temp() / name;
     fruit::writeStl(path.string(), m);
     auto doc = loadDocument(path.string(), fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
     std::filesystem::remove(path);
@@ -202,7 +203,7 @@ TEST_CASE("Hollow: applied, the supports, the layers and the print file use the 
     req.bottom_layers = 6;
     req.transition_layers = 6;
     const fruit::GooPrintSetup setup = fruit::buildGooSetup(fruit::PrinterProfile::saturn4Ultra16k(), req);
-    const auto dir = std::filesystem::temp_directory_path() / "fruit_hollow_tests";
+    const auto dir = testfiles::temp() / "fruit_hollow_tests";
     std::filesystem::create_directories(dir);
     const std::string sample = (dir / "sample_003.goo").string();
     fruit::exportGoo(fruit::makeBox({-2, -2, 0}, {2, 2, 1}), setup.header, setup.grid, fruit::GooExportOptions{}, sample);
@@ -480,7 +481,7 @@ TEST_CASE("Hollow: an accepted hollow is kept with the job, left out of the fix,
     CHECK(countOf(now, SupportProblem::Level::Review) + countOf(now, SupportProblem::Level::Blocks) ==
           countOf(s.problems, SupportProblem::Level::Review) + countOf(s.problems, SupportProblem::Level::Blocks) - 1);
     // Saved with the job.
-    const auto job = (std::filesystem::temp_directory_path() / "fruit_hollow_tests" / "accepted.fruitjob").string();
+    const auto job = (testfiles::temp() / "fruit_hollow_tests" / "accepted.fruitjob").string();
     std::filesystem::create_directories(std::filesystem::path(job).parent_path());
     saveJob(job, *doc);
     const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());

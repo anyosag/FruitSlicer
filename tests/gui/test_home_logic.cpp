@@ -9,6 +9,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "Home.h"
 #include "JobFile.h"
@@ -26,7 +27,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_home_tests";
+    const auto d = testfiles::temp() / "fruit_home_tests";
     fs::create_directories(d);
     return d;
 }

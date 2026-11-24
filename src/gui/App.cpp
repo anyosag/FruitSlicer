@@ -22,7 +22,9 @@
 #include "mesh/ModelLoad.h"
 #include "mesh/StlIO.h"
 #include "ops/MeshOps.h"
+#if FRUIT_WIFI
 #include "net/testing/MockPrinter.h"
+#endif
 #include "support/SupportSettings.h"
 
 #include "Dialogs.h"
@@ -332,8 +334,7 @@ void App::remember(const Document& d) {
         r.when = "today";
     } else {
         const std::time_t t = std::time(nullptr);
-        std::tm tm{};
-        localtime_r(&t, &tm);
+        const std::tm tm = localTime(t);
         char b[32];
         std::strftime(b, sizeof b, "%Y-%m-%d %H:%M", &tm);
         r.when = b;
@@ -2804,6 +2805,7 @@ void App::savePrint() {
         return;
     }
     const std::string name = doc_->name + ".goo";
+#if FRUIT_WIFI
     if (send_wifi_) {
         // Written and checked here first, then sent from the dialog.
         const auto dir = std::filesystem::temp_directory_path() / "FruitSlicer outgoing";
@@ -2812,6 +2814,7 @@ void App::savePrint() {
         savePrintTo((dir / name).string(), "", true);
         return;
     }
+#endif
     if (drive_choice_ >= 0 && drive_choice_ < static_cast<int>(drives_.size())) {
         const platform::Volume& v = drives_[static_cast<std::size_t>(drive_choice_)];
         savePrintTo((std::filesystem::path(v.path) / name).string(), v.name);
@@ -2867,6 +2870,7 @@ void App::savePrintTo(const std::string& path, const std::string& drive, bool to
                 }
                 return;
             }
+#if FRUIT_WIFI
             if (to_send) {
                 send_ = SendDialog{};
                 send_.open = true;
@@ -2878,6 +2882,9 @@ void App::savePrintTo(const std::string& path, const std::string& drive, bool to
                 findPrinters();
                 return;
             }
+#else
+            (void)to_send;  // only ever true with Wi-Fi sending built in
+#endif
             d->print.saved = std::make_shared<const SaveResult>(std::move(*out));
             d->print.saved_from = layers;
             d->print.drive = drive;
@@ -2886,6 +2893,7 @@ void App::savePrintTo(const std::string& path, const std::string& drive, bool to
         });
 }
 
+#if FRUIT_WIFI
 void App::findPrinters() {
     if (!printer_hosts_loaded_ && !opts_.deterministic) {
         printer_hosts_ = loadPrinterAddresses((std::filesystem::path(platform::dataDir()) / "printers.json").string());
@@ -3019,6 +3027,7 @@ void App::useMockPrinter(bool silent) {
     net_ports_.control = mock->controlPort();
     mock_printer_ = mock;
 }
+#endif
 
 void App::setPrinterSetup(const PrinterSetup& s) {
     printer_setup_ = s;
@@ -4435,7 +4444,9 @@ void App::frame() {
     dialogs::health(*this);
     dialogs::shortcuts(*this, shortcuts_open_);
     screens::parts::orientationQuestion(*this);
+#if FRUIT_WIFI
     screens::parts::sendDialog(*this);
+#endif
     screens::parts::unsavedDialog(*this);
     screens::parts::relinkDialog(*this);
     errorDialog();

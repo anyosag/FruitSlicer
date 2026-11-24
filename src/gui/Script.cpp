@@ -1242,7 +1242,10 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (a == "cancel") app.orientationAsk() = false;
             else throw std::runtime_error("unknown answer " + a);
         } else if (step.contains("save_target")) {
-            app.sendOverWifi() = step["save_target"].get<std::string>() == "wifi";
+            const bool wifi = step["save_target"].get<std::string>() == "wifi";
+            if (wifi && !FRUIT_WIFI) throw std::runtime_error("Wi-Fi sending is not built into this copy (FRUIT_WIFI off)");
+            app.sendOverWifi() = wifi;
+#if FRUIT_WIFI
         } else if (step.contains("mock_printer")) {
             app.useMockPrinter(step["mock_printer"].is_string() && step["mock_printer"].get<std::string>() == "silent");
         } else if (step.contains("search")) {
@@ -1254,6 +1257,11 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
         } else if (step.contains("send")) {
             if (step["send"].get<std::string>() == "close") app.closeSend();
             else app.sendToPrinter();
+#else
+        } else if (step.contains("mock_printer") || step.contains("search") || step.contains("printer") ||
+                   step.contains("start_print") || step.contains("send")) {
+            throw std::runtime_error("Wi-Fi sending is not built into this copy (FRUIT_WIFI off): " + step.dump());
+#endif
         } else if (step.contains("saved")) {
             if (step["saved"].get<std::string>() != "back") throw std::runtime_error("unknown saved step");
             app.dismissSaved();

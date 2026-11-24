@@ -9,6 +9,7 @@
 #include <fstream>
 #include <string>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "Layers.h"
@@ -30,7 +31,7 @@ using Source = ResinValue::Source;
 namespace {
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_resin_tests";
+    const auto d = testfiles::temp() / "fruit_resin_tests";
     fs::create_directories(d);
     return d;
 }

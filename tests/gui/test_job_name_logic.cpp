@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <string>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "mesh/ModelLoad.h"
@@ -23,7 +24,7 @@ const fruit::PrinterProfile kPrinter = fruit::PrinterProfile::saturn4Ultra16k();
 // Each test's files in a folder of its own: tests may run at the same time.
 struct Folder {
     fs::path dir;
-    explicit Folder(const std::string& test) : dir(fs::temp_directory_path() / "fruit_job_name_tests" / test) {
+    explicit Folder(const std::string& test) : dir(testfiles::temp() / "fruit_job_name_tests" / test) {
         fs::remove_all(dir);
         fs::create_directories(dir);
     }

@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string>
 
+#include "ProcessTemp.h"
 #include "Plates.h"
 #include "Resins.h"
 
@@ -37,7 +38,7 @@ const fruit::CalibrationPlate& plateOf(const char* kind) {
 
 // A fresh, empty folder for one test.
 fs::path freshDir(const std::string& name) {
-    const auto d = fs::temp_directory_path() / "fruit_plate_tests" / name;
+    const auto d = testfiles::temp() / "fruit_plate_tests" / name;
     fs::remove_all(d);
     fs::create_directories(d);
     return d;

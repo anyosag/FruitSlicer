@@ -256,7 +256,9 @@ void saveArea(App& app, Document& doc) {
             choice = -1;
             wifi = false;
         }
+#if FRUIT_WIFI
         if (ImGui::Selectable("Printer over Wi-Fi", wifi)) wifi = true;
+#endif
         ImGui::EndCombo();
     }
     ImGui::PopStyleColor(3);

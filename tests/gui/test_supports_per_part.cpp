@@ -14,6 +14,7 @@
 #include <miniz.h>
 #include <nlohmann/json.hpp>
 
+#include "ProcessTemp.h"
 #include "Document.h"
 #include "JobFile.h"
 #include "Print.h"
@@ -75,7 +76,7 @@ const SupportCheck* check(const SupportResult& r, const std::string& title) {
 }
 
 fs::path dir() {
-    const auto d = fs::temp_directory_path() / "fruit_per_part_tests";
+    const auto d = testfiles::temp() / "fruit_per_part_tests";
     fs::create_directories(d);
     return d;
 }

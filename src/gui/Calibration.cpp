@@ -6,6 +6,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
@@ -169,7 +170,12 @@ OrientationCheck checkOrientation(const std::string& satellite_goo, const fruit:
     } catch (const std::exception&) {
         throw std::runtime_error("That file has no exposure times. Choose the .goo SatelLite saved for the F.");
     }
-    const auto ours_path = (std::filesystem::temp_directory_path() / "FruitSlicer orientation F.goo").string();
+    // A name of its own each time: two copies of FruitSlicer, or two tests side
+    // by side, never write the same file (Windows will not replace a file that
+    // another process has open).
+    const auto ours_path = (std::filesystem::temp_directory_path() /
+                            ("FruitSlicer orientation F " + std::to_string(std::random_device{}()) + ".goo"))
+                               .string();
     fruit::exportGoo(fruit::orientationCoupon().mesh, setup.header, setup.grid, fruit::GooExportOptions{}, ours_path,
                      ctl.sub(0, 0.7));
     const fruit::GooFileInfo ours = fruit::readGoo(ours_path);

@@ -3,6 +3,7 @@
 #include "formats/ThreeMf.h"
 
 #include <locale.h>
+#include <stdlib.h>
 #if defined(__APPLE__)
 #include <xlocale.h>
 #endif
@@ -28,10 +29,16 @@ namespace {
 constexpr std::uint64_t kMaxPartBytes = std::uint64_t(2) << 30;  // 2 GiB of XML per part
 constexpr int kMaxDepth = 32;                                    // component nesting
 
-// 3MF numbers always use '.', whatever the user's locale.
-locale_t cLocale() {
+// strtod in the "C" locale: 3MF numbers always use '.', whatever the user's
+// locale. (POSIX strtod_l; Windows calls it _strtod_l, with its own locale type.)
+double cStrtod(const char* s, char** end) {
+#if defined(_WIN32)
+    static const _locale_t loc = _create_locale(LC_ALL, "C");
+    return _strtod_l(s, end, loc);
+#else
     static const locale_t loc = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
-    return loc;
+    return strtod_l(s, end, loc);
+#endif
 }
 
 // "p:path" -> "path": element and attribute names compared without prefixes.
@@ -51,7 +58,7 @@ pugi::xml_node child(const pugi::xml_node& n, const char* local) {
 double number(const pugi::xml_node& n, const char* name) {
     const char* s = n.attribute(name).value();
     char* end = nullptr;
-    const double v = strtod_l(s, &end, cLocale());
+    const double v = cStrtod(s, &end);
     if (end == s || !std::isfinite(v))
         throw std::runtime_error(std::string("3MF: <") + n.name() + "> has a bad " + name + " value \"" + s + "\"");
     return v;
@@ -77,7 +84,7 @@ Transform transformOf(const pugi::xml_node& n) {
     double m[12];
     for (double& v : m) {
         char* end = nullptr;
-        v = strtod_l(s, &end, cLocale());
+        v = cStrtod(s, &end);
         if (end == s || !std::isfinite(v))
             throw std::runtime_error(std::string("3MF: <") + n.name() + "> has a bad transform \"" + a.value() + "\"");
         s = end;

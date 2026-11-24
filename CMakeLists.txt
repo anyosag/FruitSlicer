@@ -21,14 +21,43 @@ option(FRUIT_BUILD_APP "Build the desktop app (SDL3 + OpenGL + Dear ImGui)" OFF)
 # Copies built without it, for tests, CI or other branches, are FruitSlicer's
 # ".dev" and leave job files alone.
 option(FRUIT_OPENS_JOB_FILES "macOS: this copy is FruitSlicer itself, the one Finder opens .fruitjob files with" OFF)
+# Sending print files to the printer over Wi-Fi (src/net, cpp-httplib). Its
+# network code is written for macOS and Linux; Windows copies save to a USB
+# drive or a folder instead.
+if(WIN32)
+  set(fruit_wifi_default OFF)
+else()
+  set(fruit_wifi_default ON)
+endif()
+option(FRUIT_WIFI "Wi-Fi sending to the printer (src/net)" ${fruit_wifi_default})
 
 include(cmake/Dependencies.cmake)
 
 # Determinism: no fused multiply-add contraction, so results match across
 # compilers/flags (support point hashes are compared in tests).
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if(MSVC)
+  # Microsoft's compiler (and clang-cl): sources are UTF-8 ("mm²", "⌘"),
+  # standard C++, room for the big generated files. /fp:precise, the default,
+  # never contracts a multiply and an add (Visual Studio 2022 and later).
+  add_compile_options(/utf-8 /bigobj $<$<COMPILE_LANGUAGE:CXX>:/permissive-> $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>)
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic -ffp-contract=off)
 endif()
+
+# Windows programs: the main thread's stack as on macOS and Linux (8 MB, not
+# Windows' 1 MB; the tests and the command line run the engine on it, and
+# threads started with no size of their own get it too), and UTF-8 as their
+# code page (cmake/fruit-utf8.manifest). Nothing elsewhere.
+function(fruit_windows_exe target)
+  if(MSVC)
+    target_link_options(${target} PRIVATE /STACK:8388608)
+    target_sources(${target} PRIVATE ${PROJECT_SOURCE_DIR}/cmake/fruit-utf8.manifest)
+  endif()
+endfunction()
+
+# Every target sees the same FRUIT_WIFI (0 or 1): App's members depend on it.
+add_compile_definitions(FRUIT_WIFI=$<BOOL:${FRUIT_WIFI}>)
 
 add_subdirectory(src)
 

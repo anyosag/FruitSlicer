@@ -71,4 +71,7 @@ target_link_libraries(fruit_core PUBLIC Threads::Threads)
 
 add_executable(fruitslicer app/main.cpp)
 target_link_libraries(fruitslicer PRIVATE fruit_core CLI11::CLI11)
-add_subdirectory(net)
+fruit_windows_exe(fruitslicer)
+if(FRUIT_WIFI)
+  add_subdirectory(net)
+endif()

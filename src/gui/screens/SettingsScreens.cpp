@@ -404,7 +404,11 @@ bool optionCard(const char* id, const char* title, const char* body, bool select
 void welcome(App& app) {
     stepHeading(1, "Welcome to FruitSlicer",
                 "FruitSlicer turns a 3D model into a print file for your printer. It checks the model, finds a good "
+#if FRUIT_WIFI
                 "way to stand it, adds supports, cuts the layers and saves a .goo, to a USB drive or over Wi-Fi.");
+#else
+                "way to stand it, adds supports, cuts the layers and saves a .goo to a USB drive or a folder.");
+#endif
     const fruit::PrinterProfile& pr = app.printer();
     beginCard("printer", ImVec2(std::min(ImGui::GetContentRegionAvail().x, 660.0f), 0), 18, col::Panel, col::Border);
     text("Your printer", fonts().semibold, size::Help, col::TextMuted);

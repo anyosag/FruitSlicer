@@ -1382,7 +1382,7 @@ Paths SupportTree::fullRaftOutline(const TreeConfig& cfg, double inset) const {
         if (P.on_model || P.merged) continue;
         Path d;
         for (int i = 0; i < n; ++i) {
-            const double a = 2 * M_PI * i / n;
+            const double a = 2 * kPi * i / n;
             d.push_back(toPoint({P.xy.x + r * std::cos(a), P.xy.y + r * std::sin(a)}));
         }
         discs.push_back(std::move(d));
@@ -1577,7 +1577,7 @@ Paths SupportTree::raftFootprint(const TreeConfig& cfg) const {
             if (P.merged || P.on_model) continue;
             Path d;
             for (int i = 0; i < n; ++i) {
-                const double a = 2 * M_PI * i / n;
+                const double a = 2 * kPi * i / n;
                 d.push_back(toPoint({P.xy.x + r * std::cos(a), P.xy.y + r * std::sin(a)}));
             }
             parts.push_back(std::move(d));
