@@ -2373,14 +2373,22 @@ void App::syncCut() {
         cut_through_ = -2;
         return;
     }
-    // Through the hollow chosen: along its vent when it has one (shown, or
-    // added), so the cut shows where the vent goes through the model; else
-    // through its middle. With none chosen, through the job's middle.
+    // Through the hollow chosen: along a hole into it when it has one (a
+    // vent shown or added, a drain hole), so the cut shows where the hole goes
+    // through the model; else through its middle. With none chosen, through the biggest hollow's
+    // middle (the job's middle may miss it, with several parts), or with none
+    // at all the job's middle.
     const int through =
         hollow_selected_ >= 0 && static_cast<std::size_t>(hollow_selected_) < plan->closed.cavities.size() ? hollow_selected_ : -1;
     const fruit::BBox3 job = doc_->placedBox();
     fruit::Vec2 at{(job.min.x + job.max.x) / 2, (job.min.y + job.max.y) / 2};
-    if (through >= 0) {
+    if (through < 0) {
+        const fruit::HollowResult& cav = plan->cavities();
+        std::size_t biggest = cav.cavities.size();
+        for (std::size_t i = 0; i < cav.cavities.size(); ++i)
+            if (biggest == cav.cavities.size() || cav.cavities[i].volume > cav.cavities[biggest].volume) biggest = i;
+        if (biggest < cav.cavities.size()) at = cavityLabelAt(cav, biggest, plan->layer_height).xy();
+    } else {
         const auto t = static_cast<std::size_t>(through);
         std::optional<fruit::PlacedHole> vent;
         if (doc_->hollow.planFresh(doc_->revision()) && t < plan->vent_preview.size()) vent = plan->vent_preview[t];
