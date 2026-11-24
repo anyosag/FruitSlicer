@@ -39,9 +39,9 @@ fs::path dir() {
 // A profile like `fruitslicer fit` writes for a tips plate scored as a resin
 // a little weaker than the borrowed values.
 nlohmann::json tipsProfile(const std::vector<double>& diameters = {0.2, 0.3, 0.4, 0.6}) {
-    fruit::TipsPlateOptions o;
+    fruit::DiscTipsPlateOptions o;
     o.tip_diameters = diameters;
-    const fruit::CalibrationPlate plate = fruit::tipsPlate(o, fruit::PrinterProfile::saturn4Ultra16k());
+    const fruit::CalibrationPlate plate = fruit::discTipsPlate(o, fruit::PrinterProfile::saturn4Ultra16k());
     fruit::PlateResults res;
     res.kind = plate.kind;
     res.settings = plate.settings;

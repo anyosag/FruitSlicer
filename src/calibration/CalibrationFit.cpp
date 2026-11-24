@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 FruitSlicer contributors
 #include "calibration/CalibrationFit.h"
+#include "stability/Stability.h"
 #include "support/SupportGeometry.h"
 
 #include <algorithm>
@@ -145,8 +146,11 @@ PlateResults loadPlateResults(const std::string& manifest_path, const std::strin
         }
         if (c_tips >= 0 && static_cast<int>(f.size()) > c_tips && !trim(f[c_tips]).empty()) {
             c.tips_let_go = std::stoi(f[c_tips]);
-            if (c.tips_let_go < 0 || c.tips_let_go > 3)
-                throw std::runtime_error(csv_path + ":" + std::to_string(line_no) + ": tips_let_go must be 0..3 (or empty)");
+            // Up to the coupon's own tips: three on a disc, as many as the planner gave a tile.
+            const int most = c.params.value("tips", 3);
+            if (c.tips_let_go < 0 || c.tips_let_go > most)
+                throw std::runtime_error(csv_path + ":" + std::to_string(line_no) + ": tips_let_go must be 0.." +
+                                         std::to_string(most) + " (or empty)");
         }
         const size_t from = c_notes >= 0 ? static_cast<size_t>(c_notes) : static_cast<size_t>(c_scar) + 1;
         for (size_t k = from; k < f.size(); ++k)
@@ -267,6 +271,17 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
             auto areaOf = [&](const CouponResult* c) {
                 return contactArea(num(c->params, "tip_diameter"), num(c->params, "penetration"));
             };
+            // A coupon held when every one of its tips did. Its load is the one a tip alone lets go at as often
+            // as one of them does, on the replay's weakest-link curve (StabilityConfig::steepness): then the
+            // strength found is a single tip's, the one the replay and the planner's table stand for. A tile
+            // of the tips plate has it from the replay (load_mm2). A disc on equal tips: its load per tip
+            // times tips^(1/steepness), 1.17 for three (until 2026-11-24 the load per tip alone was taken, and
+            // a tip's strength came out about 15 % low).
+            const double steep = plate.settings.value("steepness", StabilityConfig{}.steepness);
+            auto loadOf = [&](const CouponResult* c) {
+                if (c->params.contains("load_mm2")) return num(c->params, "load_mm2");
+                return num(c->params, "load_per_tip_mm2") * std::pow(c->params.value("tips", 1.0), 1 / steep);
+            };
             auto peelAt = [](const CouponResult* c, double b) {
                 return c->params.contains("peel_t") ? 1 + b * 0.5 * (num(c->params, "peel_t") + 1) : 1.0;
             };
@@ -299,7 +314,7 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                         for (const auto* c : cs) {
                             const std::string side = c->params.value("side", std::string());
                             if (side != "hinge" && side != "far") continue;
-                            (side == "hinge" ? xh : xf).push_back(num(c->params, "load_per_tip_mm2") / areaOf(c));
+                            (side == "hinge" ? xh : xf).push_back(loadOf(c) / areaOf(c));
                             (side == "hinge" ? yh : yf).push_back(c->ok ? 1 : 0);
                         }
                         if (xh.empty() || xf.empty()) continue;
@@ -312,7 +327,7 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                     auto misfits = [&](double b) {
                         std::vector<std::pair<double, int>> v;
                         for (const auto* c : rec)
-                            v.push_back({num(c->params, "load_per_tip_mm2") * peelAt(c, b) / areaOf(c), c->ok ? 1 : 0});
+                            v.push_back({loadOf(c) * peelAt(c, b) / areaOf(c), c->ok ? 1 : 0});
                         std::sort(v.begin(), v.end());
                         int fails_below = 0, held_above = 0;
                         for (const auto& e : v) held_above += e.second;
@@ -347,14 +362,14 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                             peel["bias"] = bias;
                         }
                     } else {
-                        notes.push_back("tips plate in two sets: every disc held, or every one let go, so the extra "
+                        notes.push_back("tips plate in two sets: every coupon held, or every one let go, so the extra "
                                         "pull far from the hinge stays as it was");
                     }
                     fits["peel"] = peel;
                 }
             }
             auto strengthOf = [&](const CouponResult* c) {
-                return num(c->params, "load_per_tip_mm2") * peelAt(c, bias) / areaOf(c);
+                return loadOf(c) * peelAt(c, bias) / areaOf(c);
             };
 
             // Each size and depth's own coupons: the strongest that held, the weakest that let go.
@@ -404,11 +419,11 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
             if (std::isinf(model.l50) && model.l50 > 0) {
                 s_keep = o.capacity_fraction * s_max;
                 model_basis = "lower bound";
-                notes.push_back("tips: every disc held; holds are a floor (test higher loads)");
+                notes.push_back("tips: every coupon held; holds are a floor (test higher loads)");
             } else if (std::isinf(model.l50)) {
                 s_keep = 0.5 * s_min;
                 model_basis = "upper bound";
-                notes.push_back("tips: every disc let go; holds set to half the lightest (test lower loads)");
+                notes.push_back("tips: every coupon let go; holds set to half the lightest (test lower loads)");
             } else if (!(model.l50 > 0) || model.b > 0) {
                 s_keep = o.capacity_fraction * s_min;
                 model_basis = "no load dependence";
@@ -448,7 +463,7 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                 double max_held = -1, min_failed = -1;
                 for (const auto* c : cs) {
                     Depth& k = depths[num(c->params, "penetration")];
-                    const double load = num(c->params, "load_per_tip_mm2") * peelAt(c, bias), st = strengthOf(c);
+                    const double load = loadOf(c) * peelAt(c, bias), st = strengthOf(c);
                     ++k.n;
                     if (c->ok) {
                         ++k.held, ++held;
@@ -490,7 +505,9 @@ json fitProfile(const std::vector<PlateResults>& plates, const FitOptions& o) {
                                   {"contact_mm2", contactArea(d, p)},
                                   {"mean_scar", kk.scar_n ? json(kk.scar / kk.scar_n) : json(nullptr)}});
                 cap_table.push_back({d, cap});
-                pen_table.push_back({d, pen});
+                // A depth is chosen only where the plate tried more than one (the tips plate since 2026-11-24
+                // puts each size as deep as a job does: nothing to choose, and the planner's own rule stays).
+                if (depths.size() > 1) pen_table.push_back({d, pen});
                 const double m = mark(k);
                 cands.push_back({d, cap, m > 0 ? m : 0});
                 detail.push_back({{"tip_diameter", d},

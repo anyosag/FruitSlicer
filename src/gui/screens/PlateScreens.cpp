@@ -293,8 +293,20 @@ void holdTable(const std::vector<TipHold>& holds, float w) {
 
 void plate(App& app) {
     beginPage("plate");
-    const fruit::CalibrationPlate& p = app.plate();
     const std::string kind = app.plateKind();
+    const fruit::CalibrationPlate* made = app.plateIfMade();
+    if (!made) {  // being made on its own thread: the tips plate plans and replays every tile
+        header(app, plateTitle(kind), "Making the plate…", [](float, float) {});
+        beginCard("making", ImVec2(0, 0), 18, col::Panel, col::Border);
+        text(kind == "tips" ? "Each tile gets the supports FruitSlicer makes for it in a job, and the replay of the "
+                              "print works out what every tip carries. This takes a few seconds."
+                            : "This takes a moment.",
+             fonts().regular, size::Body, col::TextMuted, true);
+        endCard();
+        endPage();
+        return;
+    }
+    const fruit::CalibrationPlate& p = *made;
     const Resin& resin = app.newJobResin();
     const bool has_print = !resin.sample_path.empty() || (resin.print.exposure > 0 && resin.print.bottom_exposure > 0);
     const bool busy = app.jobs().busy();
@@ -531,20 +543,28 @@ void score(App& app) {
                                                           : "Held: every tip still on. Partly: some let go. Fell off: "
                                                             "gone, so look on the film for cured bits.";
     text(hint, fonts().regular, size::Help, col::TextMuted, true);
-    // A tips coupon that partly held: how many of its tips let go. One of three is a single tip's hold.
+    // A tips coupon that partly held: how many of its tips let go. One of three is a single tip's hold. A tile
+    // of the tips plate has as many tips as the planner gave it: a number to type, not a button each.
     const int tips_on = r ? r->params.value("tips", 0) : 0;
     const bool ask_tips = kind == "tips" && outcome == App::Outcome::Partly && tips_on > 1;
     if (ask_tips) {
+        const char* piece = r && r->params.contains("tile_mm") ? "tile" : "disc";
         ImGui::Dummy(ImVec2(0, 6));
         text("How many tips let go?", fonts().semibold, size::Body, col::Text);
-        for (int k = 1; k < tips_on; ++k) {
-            ImGui::PushID(200 + k);
-            if (segmentButton(std::to_string(k).c_str(), let_go == k)) let_go = let_go == k ? -1 : k;
-            ImGui::PopID();
-            if (k < tips_on - 1) ImGui::SameLine(0, 4);
+        if (tips_on <= 4) {
+            for (int k = 1; k < tips_on; ++k) {
+                ImGui::PushID(200 + k);
+                if (segmentButton(std::to_string(k).c_str(), let_go == k)) let_go = let_go == k ? -1 : k;
+                ImGui::PopID();
+                if (k < tips_on - 1) ImGui::SameLine(0, 4);
+            }
+        } else {
+            int typed = std::max(let_go, 0);
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputInt("##let_go", &typed, 1, 5)) let_go = typed > 0 ? std::min(typed, tips_on - 1) : -1;
         }
-        text(let_go > 0 ? strf("%d of %d let go; the disc stayed on the rest.", let_go, tips_on).c_str()
-                        : "Count the tips no longer joined to the disc.",
+        text(let_go > 0 ? strf("%d of %d let go; the %s stayed on the rest.", let_go, tips_on, piece).c_str()
+                        : strf("Count the tips no longer joined to the %s.", piece).c_str(),
              fonts().regular, size::Help, col::TextMuted, true);
     }
     const bool can_mark = !gaps && outcome != App::Outcome::FellOff;

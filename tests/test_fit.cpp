@@ -17,6 +17,7 @@
 #include "mesh/Placement.h"
 #include "mesh/Primitives.h"
 #include "support/PointGenerator.h"
+#include "support/SupportTree.h"
 
 using namespace fruit;
 using Catch::Approx;
@@ -80,14 +81,15 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
         const double cd = contactDiameter(sp);
         return 3.14159265358979 * cd * cd / 4;
     };
-    TipsPlateOptions to;
+    // The plate printed until 2026-11-24, discs on three tips: it alone tries two depths.
+    DiscTipsPlateOptions to;
     to.ladders.clear();
     for (double d : {0.2, 0.3, 0.4, 0.6})
         for (double pen : {0.1, 0.2}) to.ladders.push_back({d, pen, {5, 10, 20}});
     to.neck_sets.clear();
     for (double d : {0.2, 0.3, 0.4, 0.6}) to.neck_sets.push_back({d, {5, 10, 20}});
     to.neck_copies = 2;
-    const std::string tips = writePlate(tipsPlate(to, printer), "tips", [&](const json& p) {
+    const std::string tips = writePlate(discTipsPlate(to, printer), "tips", [&](const json& p) {
         const double d = p["tip_diameter"].get<double>();
         const bool ok = p["load_per_tip_mm2"].get<double>() < 60 * contact(d, p["penetration"].get<double>());
         const int scar = std::clamp(static_cast<int>(std::lround(1 + 6 * d)), 1, 5);
@@ -112,14 +114,16 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     fo.layer_height = 0.05;
     const json prof = fitProfile(plates, fo);
 
-    // Tips: one strength over every coupon. The heaviest that held is 0.4 mm 0.1 mm deep at 5 mm² (52 mm² of
-    // layer per mm² of contact), the lightest that let go 0.6 mm 0.1 mm deep at 10 (63): the strength found
-    // lies between, around the true 60.
+    // Tips: one strength over every coupon. A disc held when all three of its tips did, so its load is read as
+    // the one a tip alone lets go at as often: 3^(1/7) = 1.17 times its load per tip. The heaviest that held is
+    // 0.4 mm 0.1 mm deep at 5 mm² per tip (52 mm² of layer per mm² of contact, 61 as one tip), the lightest that
+    // let go 0.6 mm 0.1 mm deep at 10 (63, 74): the strength found lies between, around the true 60 × 1.17 = 70.
     const json& model = prof["fits"]["tips_model"];
     CHECK(model["basis"] == "gap midpoint");
     const double s50 = model["strength_50pct"].get<double>();
-    CHECK(s50 > 52);
-    CHECK(s50 < 63);
+    const double one = std::pow(3.0, 1 / 7.0);
+    CHECK(s50 > 52 * one);
+    CHECK(s50 < 63 * one);
     CHECK(prof["capacity_measured"] == true);
     // Each size's hold: 70 % of that strength times what it touches at its depth. Marks don't differ by depth
     // here, so the deeper one is kept, which touches more.
@@ -138,8 +142,8 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     for (double d : {0.2, 0.3, 0.4, 0.6}) CHECK(tip.at(d)["basis"] == "contact model");
     CHECK(tip.at(0.4)["held"].get<int>() == 4);  // 5 mm², at 2 depths, twice
     CHECK(tip.at(0.4)["coupons"].get<int>() == 12);
-    CHECK(tip.at(0.4)["max_held_mm2"].get<double>() == Approx(5));
-    CHECK(tip.at(0.4)["min_failed_mm2"].get<double>() == Approx(10));
+    CHECK(tip.at(0.4)["max_held_mm2"].get<double>() == Approx(5 * one));
+    CHECK(tip.at(0.4)["min_failed_mm2"].get<double>() == Approx(10 * one));
     CHECK(tip.at(0.6)["held"].get<int>() == 6);  // 5 at both depths, 10 at 0.2 mm
     CHECK(tip.at(0.2)["max_held_mm2"].is_null());  // never held, yet its hold is measured through the others
     CHECK(tip.at(0.2)["contact_mm2"].get<double>() == Approx(contact(0.2, 0.2)));
@@ -188,6 +192,69 @@ TEST_CASE("fit turns filled plates into a resin profile", "[fit]") {
     const size_t before = generateSupportPoints(m, base).points.size();
     const size_t after = generateSupportPoints(m, cfg).points.size();
     CHECK(after > before);
+}
+
+TEST_CASE("fit reads a tile's loads from the replay, and keeps the planner's depths", "[fit][tiles]") {
+    const PrinterProfile printer = PrinterProfile::saturn4Ultra16k();
+    const auto contact = [](double d, double pen) {
+        PinheadSpec sp;
+        sp.tip_diameter = d;
+        sp.penetration = pen;
+        sp.head_length = 1.0;
+        sp.shaft_diameter = shaftDiameterFor(d);
+        const double cd = contactDiameter(sp);
+        return 3.14159265358979 * cd * cd / 4;
+    };
+    // One set (no hinge): a resin whose tips hold 100 mm² of layer per mm² they touch, one tip alone. A tile held
+    // while the load one tip alone would let go at as often as one of its tips (load_mm2) is under that.
+    const CalibrationPlate plate = tipsPlate(TipsPlateOptions{}, printer);
+    REQUIRE(plate.coupons.size() == 96);
+    double held_max = 0, failed_min = 1e9;
+    const std::string csv = writePlate(plate, "tiles", [&](const json& p) {
+        const double st = p["load_mm2"].get<double>() / contact(p["tip_diameter"].get<double>(), p["penetration"].get<double>());
+        const bool ok = st < 100;
+        if (ok) held_max = std::max(held_max, st);
+        else failed_min = std::min(failed_min, st);
+        return std::pair{ok, ok ? 2 : 0};
+    });
+    REQUIRE(held_max > 0);
+    REQUIRE(failed_min < 1e9);
+    FitOptions fo;
+    fo.resin = "test resin";
+    const json prof = fitProfile({loadPlateResults(manifestForResults(csv), csv)}, fo);
+    const json& model = prof["fits"]["tips_model"];
+    CHECK(model["coupons"].get<int>() == 96);
+    const double s50 = model["strength_50pct"].get<double>();
+    CHECK(s50 > held_max);
+    CHECK(s50 < failed_min);
+    CHECK(s50 == Approx(100).epsilon(0.1));
+    CHECK(prof["capacity_measured"] == true);
+    std::map<double, double> cap;
+    for (const auto& e : prof["capacity_table"]) cap[e[0].get<double>()] = e[1].get<double>();
+    REQUIRE(cap.size() == 4);
+    for (const auto& [d, c] : cap) CHECK(c == Approx(0.7 * s50 * contact(d, tipPenetration(d, TreeConfig{}))));
+    // Each size at the depth a job uses, and only that one: no depth is chosen, the planner's own rule stays.
+    CHECK_FALSE(prof.contains("penetration_table"));
+    SupportConfig cfg;
+    TreeConfig tc;
+    applyProfile(prof, cfg, &tc, nullptr);
+    CHECK(tc.penetration_table.empty());
+    CHECK(cfg.tip_load_limit == Approx(kMeasuredTipLoadLimit));
+
+    // A tile that partly held says how many of its tips let go: up to all but one of its own, not three.
+    const PlateCoupon& big = *std::max_element(plate.coupons.begin(), plate.coupons.end(), [](const auto& a, const auto& b) {
+        return a.params["tips"].template get<int>() < b.params["tips"].template get<int>();
+    });
+    const int n = big.params["tips"].get<int>();
+    REQUIRE(n > 3);
+    const auto dir = testfiles::temp() / "fruit_test_fit";  // where writePlate put the manifest
+    const std::string m = (dir / "tiles.stl.json").string(), sheet = (dir / "tiles_partly.stl.results.csv").string();
+    std::ofstream(sheet) << "id,row,col,result,scar,tips_let_go,notes\n" << big.id << ",0,0,partial,3," << n - 1 << ",\n";
+    const PlateResults back = loadPlateResults(m, sheet);
+    REQUIRE(back.coupons.size() == 1);
+    CHECK(back.coupons[0].tips_let_go == n - 1);
+    std::ofstream(sheet) << "id,row,col,result,scar,tips_let_go,notes\n" << big.id << ",0,0,partial,3," << n + 1 << ",\n";
+    CHECK_THROWS(loadPlateResults(m, sheet));
 }
 
 TEST_CASE("results CSV errors are reported clearly", "[fit]") {

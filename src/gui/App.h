@@ -560,7 +560,10 @@ public:
         unsigned tex = 0;
     };
     const RaftPreview& raftPreview(const fruit::RaftSpec& s, double min_thick, int w, int h, bool* current);
-    void pollSideJobs() { raft_jobs_.poll(); }  // each frame, with jobs().poll()
+    void pollSideJobs() {  // each frame, with jobs().poll()
+        raft_jobs_.poll();
+        plate_jobs_.poll();
+    }
     // Scripts: open a preset's ··· menu on the next frame the Raft page draws.
     void openRaftMenu(const std::string& name) { raft_menu_for_ = name.empty() ? std::string("\x01") : name; }  // "": close it
     std::string takeRaftMenu() { return std::exchange(raft_menu_for_, std::string()); }
@@ -699,7 +702,10 @@ public:
     // resin new jobs use: its manifests and scores are kept with it.
     void openPlate(const std::string& kind);
     const std::string& plateKind() const { return plate_kind_; }
-    const fruit::CalibrationPlate& plate();       // the open kind's, made once
+    const fruit::CalibrationPlate& plate();       // the open kind's, made once (here and now, if it isn't yet)
+    // The open kind's, once made; until then null, and it is being made on a thread of its own (the tips plate
+    // plans and replays every tile, a second or more), never in the way of the job's own work.
+    const fruit::CalibrationPlate* plateIfMade();
     int& plateSelected() { return plate_selected_; }  // a coupon id
     void savePlate(bool goo);                     // through a dialog
     void savePlateTo(const std::string& path);    // .stl, or .goo with the resin's print settings
@@ -709,7 +715,7 @@ public:
     int& scoreSelected() { return score_selected_; }
     bool& scoreMirrored() { return score_mirrored_; }  // the plate printed mirrored
     enum class Outcome { None, Held, Partly, FellOff };
-    // `tips_let_go`: on a tips coupon that partly held, how many of its tips let go (1 or 2); -1 not given.
+    // `tips_let_go`: on a tips coupon that partly held, how many of its tips let go (fewer than it has); -1 not given.
     void setScore(int id, Outcome o, int scar, const std::string& notes, int tips_let_go = -1);
     void importScores();                          // a filled sheet, through a dialog
     void importScoresFile(const std::string& csv);
@@ -805,6 +811,7 @@ private:
     AppOptions opts_;
     JobRunner jobs_;
     JobRunner raft_jobs_;  // the Raft page's preview: never in the way of the job's own work
+    JobRunner plate_jobs_;  // test plates being made (plateIfMade): never in the way either
     fruit::PrinterProfile printer_ = fruit::PrinterProfile::saturn4Ultra16k();
     Screen screen_ = Screen::Home;
     Step step_ = Step::Model;

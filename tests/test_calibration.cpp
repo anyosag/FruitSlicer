@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -15,6 +16,7 @@
 #include "mesh/Primitives.h"
 #include "geometry/Polygon.h"
 #include "layers/IslandGraph.h"
+#include "support/PointGenerator.h"
 #include "support/SupportGeometry.h"
 #include "support/SupportTree.h"
 
@@ -58,20 +60,20 @@ TEST_CASE("head direction clamps to 45 degrees from vertical", "[support]") {
     CHECK(mild.y == Approx(normalized(Vec3{0, 0.3, -1}).y));
 }
 
-TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[calibration]") {
+TEST_CASE("disc tips plate: all combinations, fits, connected, deterministic", "[calibration]") {
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
-    TipsPlateOptions o;
-    const CalibrationPlate a = tipsPlate(o, p);
+    DiscTipsPlateOptions o;
+    const CalibrationPlate a = discTipsPlate(o, p);
     // Twice: 8 ladders (4 sizes × 2 depths) of 5 loads, and 0.3 mm's 3 in-between loads twice at each depth;
     // then necked: 0.3 and 0.6 mm, 2 necks × 3 loads, twice.
     CHECK(a.coupons.size() == 2 * (8 * 5 + 2 * 2 * 3) + 2 * 2 * 3 * 2);
     requireFitsAndUnique(a, p);
     requireOnlyRaftIslands(a);
-    const CalibrationPlate b = tipsPlate(o, p);
+    const CalibrationPlate b = discTipsPlate(o, p);
     REQUIRE(b.coupons.size() == a.coupons.size());
     for (size_t i = 0; i < a.coupons.size(); ++i) CHECK(a.coupons[i].params == b.coupons[i].params);
     o.common.seed = 7;
-    const CalibrationPlate c = tipsPlate(o, p);
+    const CalibrationPlate c = discTipsPlate(o, p);
     bool differs = false;
     for (size_t i = 0; i < a.coupons.size(); ++i) differs |= a.coupons[i].params != c.coupons[i].params;
     CHECK(differs);
@@ -79,14 +81,14 @@ TEST_CASE("tips plate: all combinations, fits, connected, deterministic", "[cali
     CHECK(a.manifest()["coupons"].size() == a.coupons.size());
 }
 
-TEST_CASE("tips plate: every disc widens from its tips, with nothing hanging past them", "[calibration]") {
+TEST_CASE("disc tips plate: every disc widens from its tips, with nothing hanging past them", "[calibration]") {
     // A flat disc's first layer reached 1.9-3.8 mm past its tips, more than a part is trusted with
     // (skin_reach 1.6 mm), so a disc could fail as an overhang before its tips let go. Each layer
     // must stand on the one below: no more than 45° out. Where a pad starts on a tip it is up to
     // 0.3 mm wider than the tip's narrowing point under it, as any face is round a tip's contact.
-    TipsPlateOptions o;
+    DiscTipsPlateOptions o;
     o.peel_axis = {0, -1};
-    const CalibrationPlate plate = tipsPlate(o, PrinterProfile::saturn4Ultra16k());
+    const CalibrationPlate plate = discTipsPlate(o, PrinterProfile::saturn4Ultra16k());
     CHECK(plate.settings["disc_underside"] == "45deg");
     const double step = 0.05;
     const LayerStack ls = sliceModel(plate.mesh, step);
@@ -102,10 +104,10 @@ TEST_CASE("tips plate: every disc widens from its tips, with nothing hanging pas
     CHECK(biggest == Approx(60));
 }
 
-TEST_CASE("tips plate: three shafts a coupon, apart, each as wide as a job's", "[calibration]") {
-    TipsPlateOptions o;
+TEST_CASE("disc tips plate: three shafts a coupon, apart, each as wide as a job's", "[calibration]") {
+    DiscTipsPlateOptions o;
     o.peel_axis = {0, -1};
-    const CalibrationPlate plate = tipsPlate(o, PrinterProfile::saturn4Ultra16k());
+    const CalibrationPlate plate = discTipsPlate(o, PrinterProfile::saturn4Ultra16k());
     // Half way up the shafts, above their feet and the marker: every shaft its own island.
     const LayerStack ls = sliceModel(plate.mesh, 0.1);
     const double z = (plate.settings["raft_thickness"].get<double>() + plate.settings["tip_height"].get<double>()) / 2 + 1;
@@ -143,6 +145,90 @@ TEST_CASE("tips plate raft: one piece, with no closed pocket and no solid slab",
     CHECK(area(raft) > 0.4 * rect);  // still a raft under every coupon
 }
 
+TEST_CASE("tips plate: tiles on the supports a job of them gets, in two sets, deterministic", "[calibration][tiles]") {
+    const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
+    TipsPlateOptions o;
+    o.peel_axis = {0, -1};  // hinged at the back
+    const CalibrationPlate a = tipsPlate(o, p);
+    // 4 sizes × 6 strengths, twice a side.
+    REQUIRE(a.coupons.size() == 96);
+    requireFitsAndUnique(a, p);
+    requireOnlyRaftIslands(a);  // every tile held: nothing starts in mid-air
+    std::map<std::string, int> sides;
+    for (const auto& c : a.coupons) {
+        ++sides[c.params["side"].get<std::string>()];
+        // Its tips are all built, one size, each as deep as a job puts it.
+        CHECK(c.params["tips"] == c.params["tips_planned"]);
+        CHECK(c.params["tips_smaller"] == 0);
+        CHECK(c.params["tips"].get<int>() >= 8);
+        const double d = c.params["tip_diameter"].get<double>();
+        CHECK(c.params["penetration"].get<double>() == Approx(tipPenetration(d, TreeConfig{})));
+        // What the replay says each carries: the busiest first, and the load the fit reads at least that.
+        const auto& loads = c.params["tip_loads_mm2"];
+        REQUIRE(loads.size() == c.params["tips"].get<size_t>());
+        CHECK(loads.front().get<double>() == Approx(c.params["load_max_mm2"].get<double>()));
+        CHECK(c.params["load_mm2"].get<double>() >= c.params["load_max_mm2"].get<double>());
+    }
+    CHECK(sides["hinge"] == 48);
+    CHECK(sides["far"] == 48);
+    // Made again, alike; made one tile at a time, alike too (the tiles are made side by side).
+    TipsPlateOptions one = o;
+    one.threads = 1;
+    const CalibrationPlate b = tipsPlate(one, p);
+    REQUIRE(b.coupons.size() == a.coupons.size());
+    for (size_t i = 0; i < a.coupons.size(); ++i) CHECK(a.coupons[i].params == b.coupons[i].params);
+    CHECK(b.mesh.faceCount() == a.mesh.faceCount());
+    CHECK(a.manifest()["settings"]["loads"] == "replayed");
+}
+
+TEST_CASE("tips plate: a tile's tips are the planner's own, and carry more the stronger it was planned for", "[calibration][tiles]") {
+    const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
+    TipsPlateOptions o;
+    o.peel_axis = {0, -1};
+    const CalibrationPlate plate = tipsPlate(o, p);
+    // One tile planned again, by hand, as a job of it: the same tips.
+    const PlateCoupon& c = plate.coupons.front();
+    const double d = c.params["tip_diameter"].get<double>(), k = c.params["strength"].get<double>();
+    const double s = c.params["tile_mm"].get<double>(), z0 = plate.settings["lift"].get<double>();
+    const TriangleMesh tile = makeBox({c.center.x - s / 2, c.center.y - s / 2, z0}, {c.center.x + s / 2, c.center.y + s / 2, z0 + 1});
+    const SupportConfig cfg = tileSupportConfig(d, k, o.peel_axis);
+    CHECK(cfg.tip_classes.size() == 1);
+    CHECK(cfg.capacity.capacity(d) == Approx(k * CapacityModel{}.capacity(d)));
+    CHECK(cfg.peel_bias == Approx(kAssumedPeelBias));
+    CHECK(cfg.tip_load_limit == Approx(SupportConfig{}.tip_load_limit));
+    TreeConfig tc;
+    tc.raft_thickness = plate.settings["raft_thickness"].get<double>();
+    PointGenOptions po;
+    po.relieve = true;
+    po.support_lengths = [&](const std::vector<SupportPoint>& pts) {
+        return supportLengthsOnModel(tile, pts, tc, p.minRaftThickness());
+    };
+    const PointGenResult planned = generateSupportPoints(tile, cfg, po);
+    CHECK(planned.points.size() == c.params["tips_planned"].get<size_t>());
+    for (const SupportPoint& t : planned.points) CHECK(t.tip_diameter == Approx(d));
+    // By size: the load the fit reads grows at each stronger step (copies averaged), until the planner's spacing
+    // sets the fewest tips; the lightest step well under the heaviest. (The busiest tip alone need not: at the
+    // weakest steps 0.6 mm tiles get 40-50 tips and their edge tips carry about 4.3 mm² either way.)
+    std::map<double, std::map<double, std::vector<double>>> by;  // tip -> strength -> loads the fit reads
+    for (const auto& cp : plate.coupons)
+        by[cp.params["tip_diameter"].get<double>()][cp.params["strength"].get<double>()].push_back(
+            cp.params["load_mm2"].get<double>());
+    REQUIRE(by.size() == 4);
+    for (const auto& [tip, steps] : by) {
+        CAPTURE(tip);
+        REQUIRE(steps.size() == 6);
+        double last = 0, first = -1;
+        for (const auto& [strength, loads] : steps) {
+            double mean = 0;
+            for (double l : loads) mean += l / static_cast<double>(loads.size());
+            CHECK(mean >= last - 1e-9);
+            last = mean;
+            if (first < 0) first = mean;
+        }
+        CHECK(last > 3 * first);
+    }
+}
+
 TEST_CASE("spacing plate: tilted plates and wedges are held by their tips", "[calibration]") {
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     const CalibrationPlate plate = spacingPlate(SpacingPlateOptions{}, p);
@@ -164,12 +250,20 @@ TEST_CASE("islands plate: columns start in mid-air on 1-3 tips", "[calibration]"
 
 TEST_CASE("plates that do not fit are rejected; thin rafts are rejected", "[calibration]") {
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
-    TipsPlateOptions o;
+    DiscTipsPlateOptions o;
     o.neck_copies = 10;
-    CHECK_THROWS(tipsPlate(o, p));
-    TipsPlateOptions thin;
+    CHECK_THROWS(discTipsPlate(o, p));
+    DiscTipsPlateOptions thin;
     thin.common.raft_thickness = 0.2;
-    CHECK_THROWS(tipsPlate(thin, p));
+    CHECK_THROWS(discTipsPlate(thin, p));
+    // The tiles: three copies a side would want 144 cells of the 97 there are; and a raft too thin.
+    TipsPlateOptions more;
+    more.peel_axis = {0, -1};
+    more.common.replicates = 3;
+    CHECK_THROWS(tipsPlate(more, p));
+    TipsPlateOptions thin_tiles;
+    thin_tiles.common.raft_thickness = 0.1;
+    CHECK_THROWS(tipsPlate(thin_tiles, p));
 }
 
 TEST_CASE("A/B plate: balanced shuffled arms that fit the plate", "[calibration][ab]") {

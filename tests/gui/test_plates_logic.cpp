@@ -15,8 +15,10 @@
 #include "ProcessTemp.h"
 #include "Plates.h"
 #include "Resins.h"
+#include "calibration/CalibrationPlates.h"
 
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::EndsWith;
 using Catch::Matchers::StartsWith;
 using namespace gui;
 namespace fs = std::filesystem;
@@ -58,6 +60,12 @@ std::string firstLine(const std::string& path) {
     return line;
 }
 
+// The tips plate printed until 2026-11-24 (discs on three tips): its sheets still read.
+const fruit::CalibrationPlate& discPlate() {
+    static const fruit::CalibrationPlate p = fruit::discTipsPlate(fruit::DiscTipsPlateOptions{}, printer());
+    return p;
+}
+
 const fruit::PlateCoupon& couponWhere(const fruit::CalibrationPlate& p, const char* key, const char* value) {
     for (const auto& c : p.coupons)
         if (c.params.value(key, std::string()) == value) return c;
@@ -68,7 +76,8 @@ const fruit::PlateCoupon& couponWhere(const fruit::CalibrationPlate& p, const ch
 
 TEST_CASE("each plate is described as it is made", "[plates]") {
     // The Calibrate page writes these without making the plates.
-    CHECK(plateSubtitle(plateOf("tips")) == "128 coupons · 14 mm tall");
+    CHECK(plateSubtitle(plateOf("tips")) == "96 coupons · 11 mm tall");
+    CHECK(plateSubtitle(discPlate()) == "128 coupons · 14 mm tall");
     CHECK(plateSubtitle(plateOf("spacing")) == "37 coupons · 19 mm tall");
     CHECK(plateSubtitle(plateOf("islands")) == "36 coupons · 7 mm tall");
     CHECK(plateSubtitle(plateOf("gaps")) == "48 coupons · 18 mm tall");
@@ -76,7 +85,21 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
     REQUIRE(gaps.size() == 5);
     CHECK(gaps[0] == "Shafts 0.15, 0.2, 0.25, 0.3, 0.4 and 0.5 mm from the model");
 
-    const auto tips = plateTests(plateOf("tips"));
+    // Tiles on FruitSlicer's own supports.
+    const auto tiles = plateTests(plateOf("tips"));
+    REQUIRE(tiles.size() == 6);
+    CHECK(tiles[0] == "Flat tiles 6, 8 and 10 mm across and 1 mm thick, 10 mm above the plate");
+    CHECK(tiles[1] == "Each held by the supports FruitSlicer makes for it in a job: its own tips, heads, shafts and trunks");
+    CHECK(tiles[2] == "Tip sizes 0.2, 0.3, 0.4 and 0.6 mm, one size a tile, as deep as jobs put them");
+    CHECK(tiles[3] == "Each tile planned as if its tips held 0.125 to 2.83 times FruitSlicer's starting values: fewer "
+                      "tips, each carrying more");
+    CHECK_THAT(tiles[4], StartsWith("As the replay of the print works it out, the busiest tip carries: 0.2 mm tips "));
+    CHECK_THAT(tiles[4], ContainsSubstring("; 0.6 mm tips "));
+    CHECK_THAT(tiles[4], EndsWith(" mm² of layer"));
+    CHECK(tiles[5] == "96 tiles, shuffled");
+
+    // The disc plate, as it was described.
+    const auto tips = plateTests(discPlate());
     REQUIRE(tips.size() == 8);
     CHECK(tips[0] == "Tip sizes 0.2, 0.3, 0.4 and 0.6 mm");
     CHECK(tips[1] == "Contact depths 0.1 and 0.2 mm");
@@ -112,8 +135,26 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
 }
 
 TEST_CASE("each coupon is put in words from its own settings", "[plates]") {
-    nlohmann::json t, n;  // a plain coupon and a necked one
-    for (const auto& c : plateOf("tips").coupons) (c.params.value("neck_back", 0.0) > 0 ? n : t) = c.params;
+    // A tile: its size, tips, the busiest tip's load and what it was planned for.
+    const auto& tile = plateOf("tips").coupons.front().params;
+    const auto lf = couponFacts("tips", tile);
+    REQUIRE(lf.size() == 4);  // one set: no side to say
+    CHECK(lf[0].label == "Tip size");
+    char text[96];
+    std::snprintf(text, sizeof text, "%g mm, %g mm deep", tile["tip_diameter"].get<double>(), tile["penetration"].get<double>());
+    CHECK(lf[0].value == text);
+    std::snprintf(text, sizeof text, "%g mm across, on %d tips", tile["tile_mm"].get<double>(), tile["tips"].get<int>());
+    CHECK(lf[1].label == "Tile");
+    CHECK(lf[1].value == text);
+    CHECK(lf[2].label == "Busiest tip carries");
+    CHECK_THAT(lf[2].value, EndsWith(" mm² of layer"));
+    CHECK(lf[3].label == "Planned as if tips held");
+    CHECK_THAT(lf[3].value, ContainsSubstring("× FruitSlicer's own"));
+    CHECK_THAT(couponMeaning("tips", tile), StartsWith("A tile "));
+    CHECK_THAT(couponMeaning("tips", tile), ContainsSubstring("placed as FruitSlicer places them in a job"));
+
+    nlohmann::json t, n;  // a plain disc and a necked one
+    for (const auto& c : discPlate().coupons) (c.params.value("neck_back", 0.0) > 0 ? n : t) = c.params;
     const auto tf = couponFacts("tips", t);
     REQUIRE(tf.size() == 4);
     const auto nf = couponFacts("tips", n);
@@ -190,16 +231,20 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
     const fruit::CalibrationPlate& p = plateOf("tips");
     PlateFiles f = keptAt(d, "tips");
     keepPlate(p, f);
-    CHECK(f.coupons == 128);
+    CHECK(f.coupons == 96);
     CHECK(f.scored == 0);
+    CHECK(f.design == "tiles");  // the tips plate since 2026-11-24
+    PlateFiles disc_files = keptAt(freshDir("keep-disc"), "tips");
+    keepPlate(discPlate(), disc_files);
+    CHECK(disc_files.design.empty());
     // No settings in the sheet, so they can't sway whoever scores.
     CHECK(firstLine(f.results) == "id,row,col,result,scar,tips_let_go,notes");
 
     PlateScores s = loadScores(f);
     CHECK(s.kind == "tips");
-    REQUIRE(s.coupons.size() == 128);
+    REQUIRE(s.coupons.size() == 96);
     CHECK(s.scored() == 0);
-    CHECK(s.layout.cells.size() == 128);
+    CHECK(s.layout.cells.size() == 96);
     s.coupons[0].recorded = true;
     s.coupons[0].ok = true;
     s.coupons[0].scar = 2;
@@ -207,7 +252,7 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
     s.coupons[1].partial = true;
     s.coupons[1].scar = 3;
     s.coupons[2].recorded = true;  // fell off
-    s.coupons[2].notes = "gone, film has a disc";
+    s.coupons[2].notes = "gone, film has a tile";
     saveScores(f, s);
     CHECK(f.scored == 3);
 
@@ -226,7 +271,7 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
     CHECK(back.find(s.coupons[2].id)->recorded);
     CHECK_FALSE(back.find(s.coupons[2].id)->ok);
     CHECK_FALSE(back.find(s.coupons[2].id)->partial);
-    CHECK(back.find(s.coupons[2].id)->notes == "gone, film has a disc");
+    CHECK(back.find(s.coupons[2].id)->notes == "gone, film has a tile");
     CHECK_FALSE(back.find(s.coupons[3].id)->recorded);
     CHECK_FALSE(fs::exists(d / "tips.earlier.results.csv"));
 }
@@ -389,8 +434,19 @@ TEST_CASE("the Calibrate page's next step follows the plates", "[plates]") {
     CHECK(nextPlateStep(r).action == Action::Print);
     CHECK(nextPlateStep(r).kind == "tips");
     CHECK(nextPlateStep(r).text == "Print the resin test plates, starting with the tips plate.");
+    // A tips plate from before 2026-11-24 (discs on three tips), scored in part, as the user's was: the new plate
+    // is the one to print.
+    PlateFiles disc;
+    disc.coupons = 120;
+    disc.scored = 41;
+    r.plates["tips"] = disc;
+    CHECK(nextPlateStep(r).action == Action::Print);
+    CHECK(nextPlateStep(r).kind == "tips");
+    CHECK(nextPlateStep(r).text == "Print the new tips plate: its tiles stand on the supports FruitSlicer makes for a "
+                                   "job. The earlier one's scores are kept.");
     PlateFiles f;
     f.coupons = 48;
+    f.design = "tiles";
     r.plates["tips"] = f;
     CHECK(nextPlateStep(r).action == Action::Score);
     CHECK(nextPlateStep(r).text == "Score the tips plate once it's printed.");

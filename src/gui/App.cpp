@@ -48,7 +48,7 @@ std::string preferencesFile() { return (std::filesystem::path(platform::dataDir(
 }  // namespace
 
 App::App(SDL_Window* window, AppOptions opts, std::function<void()> wake)
-    : window_(window), opts_(opts), jobs_(wake), raft_jobs_(std::move(wake)) {
+    : window_(window), opts_(opts), jobs_(wake), raft_jobs_(wake), plate_jobs_(std::move(wake)) {
     camera_.preset(ViewPreset::Angled);
     if (opts_.deterministic) {
         // Each scripted run starts from an empty scratch folder (never this machine's own).
@@ -3355,9 +3355,39 @@ void App::openPlate(const std::string& kind) {
 }
 
 const fruit::CalibrationPlate& App::plate() {
+    plate_jobs_.wait();  // one being made already: it lands in plates_
     auto& p = plates_[plate_kind_];
     if (!p) p = std::make_shared<const fruit::CalibrationPlate>(makePlate(plate_kind_, printer_, printer_setup_.hinge));
     return *p;
+}
+
+const fruit::CalibrationPlate* App::plateIfMade() {
+    const auto it = plates_.find(plate_kind_);
+    if (it != plates_.end() && it->second) return it->second.get();
+    if (plate_jobs_.busy()) return nullptr;
+    const std::string kind = plate_kind_;
+    const fruit::PrinterProfile printer = printer_;
+    const std::optional<fruit::HingeSide> hinge = printer_setup_.hinge;
+    auto made = std::make_shared<std::shared_ptr<const fruit::CalibrationPlate>>();
+    plate_jobs_.start(
+        "Making the " + plateWord(kind) + " plate",
+        [kind, printer, hinge, made](const fruit::JobControl&) {
+            *made = std::make_shared<const fruit::CalibrationPlate>(makePlate(kind, printer, hinge));
+        },
+        [this, kind, made](std::exception_ptr err) {
+            if (!err && *made) {
+                auto& slot = plates_[kind];
+                if (!slot) slot = *made;
+                return;
+            }
+            try {
+                if (err) std::rethrow_exception(err);
+            } catch (const fruit::Cancelled&) {
+            } catch (const std::exception& e) {
+                showError("Couldn't make the " + plateWord(kind) + " plate", e.what());
+            }
+        });
+    return nullptr;
 }
 
 void App::savePlate(bool goo) {

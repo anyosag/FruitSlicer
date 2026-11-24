@@ -11,6 +11,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "Fit.h"
 #include "Format.h"
 
 namespace gui {
@@ -150,6 +151,41 @@ std::string plateSubtitle(const fruit::CalibrationPlate& p) {
 std::vector<std::string> plateTests(const fruit::CalibrationPlate& p) {
     const int reps = std::max(1, p.settings.value("replicates", 1));
     const std::size_t n = p.coupons.size(), per = static_cast<std::size_t>(reps);
+    if (p.kind == "tips" && p.settings.contains("tiles")) {
+        // Tiles on FruitSlicer's own supports: by tip size, its tile, depth and what its busiest tip carries.
+        struct Size {
+            double tile = 0, depth = 0, lo = 1e9, hi = 0;
+        };
+        std::map<double, Size> by;
+        std::set<double> strengths;
+        for (const auto& c : p.coupons) {
+            Size& s = by[num(c.params, "tip_diameter")];
+            s.tile = num(c.params, "tile_mm");
+            s.depth = num(c.params, "penetration");
+            s.lo = std::min(s.lo, num(c.params, "load_max_mm2"));
+            s.hi = std::max(s.hi, num(c.params, "load_max_mm2"));
+            strengths.insert(num(c.params, "strength"));
+        }
+        std::set<double> tiles, tips, depths;
+        std::string busiest = "As the replay of the print works it out, the busiest tip carries:";
+        for (const auto& [d, s] : by) {
+            tiles.insert(s.tile), tips.insert(d), depths.insert(s.depth);
+            busiest += strf(" %g mm tips %s-%s mm²;", d, oneDecimal(s.lo).c_str(), oneDecimal(s.hi).c_str());
+        }
+        busiest.pop_back();  // the last semicolon
+        std::vector<std::string> out{
+            strf("Flat tiles %s mm across and %g mm thick, %g mm above the plate", listOf(tiles).c_str(),
+                 p.settings.value("tile_thickness", 1.0), p.settings.value("lift", 10.0)),
+            "Each held by the supports FruitSlicer makes for it in a job: its own tips, heads, shafts and trunks",
+            "Tip sizes " + listOf(tips) + " mm, one size a tile, as deep as jobs put them",
+            strf("Each tile planned as if its tips held %g to %g times FruitSlicer's starting values: fewer tips, "
+                 "each carrying more",
+                 strengths.empty() ? 0.0 : *strengths.begin(), strengths.empty() ? 0.0 : *strengths.rbegin()),
+            busiest + " of layer"};
+        out.push_back(p.settings.value("sides", false) ? strf("%zu tiles, half by the hinge and half far from it", n)
+                                                       : strf("%zu tiles, shuffled", n));
+        return out;
+    }
     if (p.kind == "tips") {
         std::size_t necked = 0;
         for (const auto& c : p.coupons) necked += c.params.value("neck_back", 0.0) > 0 ? 1 : 0;
@@ -280,6 +316,17 @@ PlateLayout layoutOf(const json& m) {
 }
 
 std::vector<CouponFact> couponFacts(const std::string& kind, const json& p) {
+    if (kind == "tips" && p.contains("load_mm2")) {
+        std::vector<CouponFact> f{{"Tip size", strf("%g mm, %g mm deep", num(p, "tip_diameter"), num(p, "penetration"))},
+                                  {"Tile", strf("%g mm across, on %g tips", num(p, "tile_mm"), num(p, "tips"))},
+                                  {"Busiest tip carries", oneDecimal(num(p, "load_max_mm2")) + " mm² of layer"},
+                                  {"Planned as if tips held",
+                                   strf("%g × FruitSlicer's own (%s mm²)", num(p, "strength"),
+                                        oneDecimal(num(p, "assumed_mm2")).c_str())}};
+        if (p.contains("side"))
+            f.push_back({"Where", str(p, "side") == "hinge" ? "By the hinge" : "Far from the hinge"});
+        return f;
+    }
     if (kind == "tips") {
         std::vector<CouponFact> f{{"Tip size", strf("%g mm", num(p, "tip_diameter"))},
                                   {"Contact depth", strf("%g mm", num(p, "penetration"))},
@@ -310,6 +357,11 @@ std::vector<CouponFact> couponFacts(const std::string& kind, const json& p) {
 }
 
 std::string couponMeaning(const std::string& kind, const json& p) {
+    if (kind == "tips" && p.contains("load_mm2"))
+        return strf("A tile %g mm across on %g tips of %g mm, placed as FruitSlicer places them in a job. The busiest "
+                    "carries %s mm² of layer. ",
+                    num(p, "tile_mm"), num(p, "tips"), num(p, "tip_diameter"), oneDecimal(num(p, "load_max_mm2")).c_str()) +
+               "If the tile is there with every tip still on it, tips like these hold that much in your resin.";
     if (kind == "tips")
         return strf("A disc hangs from %g tips, %g mm² of it for each. ", num(p, "tips"),
                     num(p, "load_per_tip_mm2")) +
@@ -364,6 +416,13 @@ void keepPlate(const fruit::CalibrationPlate& p, PlateFiles& f) {
     const PlateScores s = loadScores(f);
     f.scored = s.scored();
     f.coupons = static_cast<int>(s.coupons.size());
+    f.design = plateDesign(m);
+}
+
+std::string plateDesign(const json& manifest) {
+    return manifest.value("kind", std::string()) == "tips" && manifest.value("settings", json::object()).contains("tiles")
+               ? "tiles"
+               : "";
 }
 
 int PlateScores::scored() const {
@@ -416,6 +475,7 @@ void saveScores(PlateFiles& f, const PlateScores& s) {
     writeWhole(f.results, fruit::blindResultsCsv(s.manifest, s.coupons));
     f.scored = s.scored();
     f.coupons = static_cast<int>(s.coupons.size());
+    f.design = plateDesign(s.manifest);
 }
 
 PlateScores readScoreSheet(const std::string& csv) {

@@ -74,7 +74,7 @@ void neckValues(FitSummary& s, const json& necks) {
 // The tips plate in two sets: how much harder the peel pulls far from the hinge.
 void peelValues(FitSummary& s, const json& p) {
     if (p.value("unpinned", false)) {
-        s.unsure.push_back("By the hinge and far from it, too few discs held to tell the two sides apart: any extra "
+        s.unsure.push_back("By the hinge and far from it, too few coupons held to tell the two sides apart: any extra "
                            "pull far from the hinge fits the scores as well, so it is still the 25 % guess.");
         return;
     }
@@ -88,7 +88,7 @@ void peelValues(FitSummary& s, const json& p) {
     v.value = strf("up to +%.0f %%", 100 * num(p, "bias"));
     const json& r = p.contains("bias_range") ? p["bias_range"] : json::array({num(p, "bias"), num(p, "bias")});
     const int bad = static_cast<int>(num(p, "misfits"));
-    v.how = strf("With the pull that much harder at the far edge, the discs that held and the ones that let go, by "
+    v.how = strf("With the pull that much harder at the far edge, the coupons that held and the ones that let go, by "
                  "the hinge and far from it, fit each tip size's hold %s; anything from +%.0f %% to +%.0f %% fits as "
                  "well, the middle is kept.",
                  bad == 0 ? "with none out of place" : strf("with %d out of place", bad).c_str(),
@@ -130,9 +130,9 @@ void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
     const int n_all = model.value("coupons", 0);
     const std::string model_basis = model.value("basis", std::string());
     if (model_basis == "lower bound")
-        s.unsure.push_back("No disc on the tips plate let go, so each hold is only a floor: 70 % of the heaviest load.");
+        s.unsure.push_back("No coupon on the tips plate let go, so each hold is only a floor: 70 % of the heaviest load.");
     else if (model_basis == "upper bound")
-        s.unsure.push_back("Every disc on the tips plate let go, so each hold is a guess: half the lightest load.");
+        s.unsure.push_back("Every coupon on the tips plate let go, so each hold is a guess: half the lightest load.");
     for (const json& t : tips) {
         TipHold h;
         h.tip = num(t, "tip_diameter");
@@ -170,11 +170,11 @@ void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
                          pen, area(dmax).c_str(), area(dmin).c_str());
         } else if (basis == "lower bound") {
             h.basis = Basis::Bound;
-            h.how = strf("Every disc held, so this is only a floor: 70 %% of the heaviest load, for what this tip "
+            h.how = strf("Every coupon held, so this is only a floor: 70 %% of the heaviest load, for what this tip "
                          "touches (%.2f mm²). Its own coupons held %d of %d.", contact, held, n);
         } else if (basis == "upper bound") {
             h.basis = Basis::Guess;
-            h.how = strf("Every disc let go, so this is a guess: half the lightest load, for what this tip touches "
+            h.how = strf("Every coupon let go, so this is a guess: half the lightest load, for what this tip touches "
                          "(%.2f mm²).", contact);
         } else {
             h.how = "Light loads let go as often as heavy ones, so this is set low: 70 % of the lightest load tested.";
@@ -208,6 +208,8 @@ void tipValues(FitSummary& s, const json& tips, const fruit::FitOptions& o) {
             if (num(p, "penetration") == pen) chosen = &p;
             else others.push_back(&p);
         }
+        // One depth tried (the tips plate since 2026-11-24 puts each size as deep as a job does): nothing chosen.
+        if (depths.size() < 2) continue;
         int held_any = 0;
         for (const json& p : depths) held_any += p.value("held", 0);
         if (held_any == 0) continue;  // none held at any depth: nothing to choose by

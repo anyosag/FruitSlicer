@@ -8,8 +8,11 @@
 // fixed seed so plate position (peel direction, vat temperature gradient) is
 // not confounded with the parameter being tested.
 //
-//   tips    — capacity: a disc of known area held by tips of a given diameter
-//             and penetration → load each tip size holds.
+//   tips    — capacity: flat tiles held by the supports FruitSlicer makes for
+//             them in a job (its own planner and support tree), one tip size
+//             a tile, planned for a range of strengths → what each tip size
+//             holds, as the replay of the print loads it. (Until 2026-11-24:
+//             a disc of known area on three tips, discTipsPlate.)
 //   spacing — coverage: plates tilted 0–60° supported by tip grids at a given
 //             spacing → largest spacing without warp; plus unsupported
 //             wedges → self-supporting overhang angle.
@@ -31,6 +34,7 @@
 
 #include "mesh/TriangleMesh.h"
 #include "printer/PrinterProfile.h"
+#include "support/SupportConfig.h"
 
 namespace fruit {
 
@@ -71,7 +75,66 @@ struct PlateCommon {
     bool shafts_as_jobs = false;
 };
 
+// The tips plate: what tips of each size hold in your resin, placed as
+// FruitSlicer places them (2026-11-24). The plate printed on 2026-11-18 held
+// discs of 15-60 mm² on three tips each: far fewer tips, further apart, than
+// the planner ever puts under a face, on supports unlike a job's. Here each
+// coupon is a flat tile on a lift, held by the supports a job of that tile
+// gets: the planner's own tips (its spacing, the tips along free edges, each
+// tip's own load) and the support tree's own heads, depths, shafts and feet,
+// at FruitSlicer's own settings. A tile has one tip size, and is planned as
+// if that size held `strength` times FruitSlicer's starting value
+// (CapacityModel): the planner then puts fewer tips under it, each carrying
+// more, until its spacing rule (the coverage curve) sets the fewest. What
+// each of a tile's tips carries is worked out by the replay of the print, as
+// it is for a job, and kept in the manifest for the fit: "load_mm2" is the
+// load one tip alone would let go at as often as one of the tile's tips does
+// (the replay's weakest-link curve over all of them), "load_max_mm2" the
+// busiest tip's. Neither counts the extra pull far from the hinge: the fit
+// measures that from the two sets.
 struct TipsPlateOptions {
+    // Lift 10 mm (the jobs saved in November stand on 5 and 10 mm, their tips
+    // 7.5-25 mm up); one raft under every tile, as the coupons of the disc
+    // plate stood on; two copies a side.
+    PlateCommon common = [] {
+        PlateCommon c;
+        c.elevation = 10.0;
+        c.one_raft = true;
+        return c;
+    }();
+    // The direction from the vat's hinge to the far side (as
+    // SupportConfig::peel_axis), when the hinge is known: two sets, by the
+    // hinge and far from it, and the planner pulls harder far from it, as in
+    // a job. Zero: one set, shuffled over the plate (twice as many copies).
+    Vec2 peel_axis{0, 0};
+    // Each size's tile (mm across) and strengths, × FruitSlicer's starting
+    // value for that size, in steps of about 1.41 (kOneLoadStep): from where
+    // the planner puts a tip about every millimetre to where its spacing rule
+    // takes over (13 tips on a 10 mm tile, 8 on a 6 mm one; strengths past
+    // that change nothing). Smaller tips on smaller tiles, so no tile gets
+    // more than about 60 tips. Replayed, the busiest tip carries about 1.1
+    // times its share (prototypes, 2026-11-24): 0.2 mm 1.5-8 mm² of layer,
+    // 0.3 mm 2.5-12, 0.4 mm 3-18, 0.6 mm 3.5-18; per mm² of the part each
+    // touches, roughly 15 to 260. That spans the disc plate's 45 and
+    // FruitSlicer's starting values, about 270 at the replay's half-let-go load.
+    struct Size {
+        double tip = 0.3;
+        double tile = 8;
+        std::vector<double> strengths;
+    };
+    std::vector<Size> sizes{{0.2, 6, {0.5, 0.71, 1, 1.41, 2, 2.83}},
+                            {0.3, 8, {0.35, 0.5, 0.71, 1, 1.41, 2}},
+                            {0.4, 10, {0.25, 0.35, 0.5, 0.71, 1, 2}},
+                            {0.6, 10, {0.125, 0.18, 0.25, 0.35, 0.5, 0.71}}};
+    double tile_thickness = 1.0;  // thin: a tile that lets go leaves little in the vat
+    double layer_height = 0.05;   // what the planner and the replay work on
+    unsigned threads = 0;         // tiles made side by side (0 = all cores)
+};
+
+// The tips plate as printed until 2026-11-24 (discs on three tips). Kept so
+// its score sheets still read and fit, and for the fit's depth and neck
+// comparisons, which it alone has.
+struct DiscTipsPlateOptions {
     PlateCommon common;
     // The direction from the vat's hinge to the far side, in plate
     // coordinates (as SupportConfig::peel_axis), when the hinge is known:
@@ -176,6 +239,11 @@ struct GapsPlateOptions {
 
 // Throws std::runtime_error if the coupons do not fit on the printer plate.
 CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& printer);
+CalibrationPlate discTipsPlate(const DiscTipsPlateOptions& o, const PrinterProfile& printer);
+// A tips plate's tile planned as tipsPlate plans it: FruitSlicer's own
+// settings, tips of `tip` mm only, trusted with `strength` times its starting
+// value, and the hinge's extra pull along `peel_axis` (zero: none).
+SupportConfig tileSupportConfig(double tip, double strength, const Vec2& peel_axis, double layer_height = 0.05);
 CalibrationPlate spacingPlate(const SpacingPlateOptions& o, const PrinterProfile& printer);
 CalibrationPlate islandsPlate(const IslandsPlateOptions& o, const PrinterProfile& printer);
 CalibrationPlate gapsPlate(const GapsPlateOptions& o, const PrinterProfile& printer);

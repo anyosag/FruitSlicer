@@ -59,6 +59,9 @@ std::string couponMeaning(const std::string& kind, const nlohmann::json& params)
 struct PlateFiles {
     std::string file, manifest, results;
     int scored = 0, coupons = 0;  // as of the last save, for the Calibrate page
+    // Which tips plate it is: "tiles" since 2026-11-24 (FruitSlicer's own supports); "" for an earlier one, discs
+    // on three tips, whose tips weren't placed as a job's (and for the other plates).
+    std::string design;
     bool operator==(const PlateFiles&) const = default;
 };
 
@@ -97,6 +100,9 @@ void keepScores(const PlateScores& s, PlateFiles& f);
 // The coupon to score after `id`: the next one not scored yet, in id order
 // (wrapping round), else simply the next one.
 int nextToScore(const PlateScores& s, int id);
+
+// A manifest's PlateFiles::design.
+std::string plateDesign(const nlohmann::json& manifest);
 
 // Shared with the A/B test's kept files.
 void writeWhole(const std::string& path, const std::string& text);  // whole or not at all; throws

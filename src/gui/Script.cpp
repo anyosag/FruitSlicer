@@ -155,6 +155,12 @@ std::string demoPath(const std::string& which) {
     return p;
 }
 
+// A tips coupon's load as the demo scorer judges it: a tile's from the replay
+// (as the fit reads it), a disc's per tip.
+double demoLoad(const nlohmann::json& p) {
+    return p.contains("load_mm2") ? p["load_mm2"].get<double>() : p["load_per_tip_mm2"].get<double>();
+}
+
 // "@demo-profile": a resin profile from `fruitslicer fit`, fitted to a tips
 // plate scored as a resin a little weaker than the borrowed values would be.
 std::string demoProfile() {
@@ -168,7 +174,7 @@ std::string demoProfile() {
         r.id = c.id;
         r.params = c.params;
         r.recorded = true;
-        const double d = c.params["tip_diameter"].get<double>(), load = c.params["load_per_tip_mm2"].get<double>();
+        const double d = c.params["tip_diameter"].get<double>(), load = demoLoad(c.params);
         r.ok = load <= 0.8 * fruit::CapacityModel{}.capacity(d);
         r.scar = r.ok ? (d >= 0.6 ? 4 : d >= 0.4 ? 2 : 1) : 0;
         res.coupons.push_back(r);
@@ -185,7 +191,7 @@ std::string demoProfile() {
 // close enough tips hold elsewhere.
 App::Outcome demoOutcome(const std::string& kind, const nlohmann::json& p) {
     if (kind == "tips") {
-        const double d = p["tip_diameter"].get<double>(), load = p["load_per_tip_mm2"].get<double>();
+        const double d = p["tip_diameter"].get<double>(), load = demoLoad(p);
         const double cap = fruit::CapacityModel{}.capacity(d);
         return load <= 0.8 * cap ? App::Outcome::Held : load <= cap ? App::Outcome::Partly : App::Outcome::FellOff;
     }
@@ -1281,6 +1287,7 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const std::string kind = step["plate"].get<std::string>();
             if (!isPlateKind(kind)) throw std::runtime_error("no plate called " + kind);
             app.openPlate(kind);
+            app.plate();  // made here and now: the page shows it from the first frame, as a shot wants
             continue;
         }
         if (step.contains("plate_select")) {

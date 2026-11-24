@@ -882,6 +882,49 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   while the 14 mm one and every window keep theirs; the bores keep theirs on
   the short one; on the tall one, the 17.5 mm bore none and the 30 mm one at
   most 20). Not printed.
+- **The tips plate, on the supports a job gets (2026-11-24).** The plate
+  printed on 2026-11-18 held discs of 15-60 mm² on three tips each, 1 mm
+  shafts for every size, 5 mm up: 106 of 120 let go, which read as tips 7 to
+  9 times weaker than the replay takes them. The user: those tips "did not
+  test supports appropriately", and a new plate should test how supports
+  would be placed, "as accurate as possible". The planner never puts three
+  tips under a face that size: its spacing rule wants one within 3.2 mm of
+  every point, and each tip's own load is held to what it is trusted with.
+  Now each coupon is a flat tile (6, 8 or 10 mm across, 1 mm thick, 10 mm up)
+  held by what a job of it gets: `generateSupportPoints` with the job's rules
+  (each tip's own load included) and `buildSupportTree` with FruitSlicer's own
+  heads, depths, shafts, trunks and feet, on one raft. One tip size a tile
+  (`tileSupportConfig`), planned as if that size held 0.125 to 2.83 times
+  FruitSlicer's starting value, in steps of 1.41: the planner puts fewer
+  tips under it, each carrying more, until the spacing rule sets the fewest
+  (13 tips on a 10 mm tile, 8 on a 6 mm one). The replay of the print
+  (`analyzeStability`, the tile and its tree, no extra pull far from the
+  hinge) works out each tip's load; the manifest keeps every tip's, the
+  busiest (`load_max_mm2`) and the load one tip alone lets go at as often as
+  one of the tile's does on the replay's weakest-link curve, (Σ lᵢ⁷)^(1/7)
+  (`load_mm2`). Measured (two sets, 96 tiles, 2.2 s on all cores): the
+  busiest tip carries 0.2 mm 1.4-7.5 mm², 0.3 mm 1.9-11, 0.4 mm 2.5-15.7,
+  0.6 mm 4-15.7 (the 0.6 mm ladder's two lightest steps both get edge tips
+  of about 4.3 mm²: 40-50 tips under the tile); per mm² each touches, about
+  15 to 260, spanning the disc plate's 45 and the starting values' 270 (the
+  replay's half-let-go load). Replayed at strengths round each tile's
+  `load_mm2`, the replay's own chance that some tip lets go matches 1 −
+  2^(−(l/h)⁷) to three places, and a tile is lost about 7 % sooner than its
+  first tip lets go: a tile with a tip off it is scored "partly". The 0.1 vs
+  0.2 mm depth comparison and the breakaway necks are gone from this plate
+  (jobs use one depth per size and plain heads; the user agreed); the disc
+  plate is kept as `discTipsPlate` for its sheets and the fit's tests of
+  those. **The fit** reads `load_mm2`, and a disc's load per tip times 3^(1/7)
+  (1.17): a disc held only when all three tips did, so until now each tip's
+  strength came out about 15 % low. A depth is fitted only where a size was
+  tried at more than one (`penetration_table` otherwise left out); a partly
+  held tile may name up to all but one of its own tips. **The app** makes a
+  plate on a thread of its own ("Making the plate…", a second or two for the
+  tips plate, 0.6 s before), counts a tile's tips let go in a field instead of
+  a button each, says "coupon" for "disc" on the Fit page, and a kept tips
+  plate notes its design: an earlier disc plate's sheet makes Calibrate's
+  next step "Print the new tips plate" instead of scoring or fitting it (its
+  scores stay, set aside when the new plate is saved). Not printed yet.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

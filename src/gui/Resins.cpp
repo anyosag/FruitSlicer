@@ -63,8 +63,10 @@ bool hasMeasured(const json& p, const char* key) { return p.is_object() && p.con
 
 json platesJson(const Resin& r) {
     json j = json::object();
-    for (const auto& [kind, f] : r.plates)
+    for (const auto& [kind, f] : r.plates) {
         j[kind] = {{"file", f.file}, {"scored", f.scored}, {"coupons", f.coupons}};  // the rest is kept by id
+        if (!f.design.empty()) j[kind]["design"] = f.design;
+    }
     return j;
 }
 
@@ -77,6 +79,7 @@ void readPlates(const json& j, Resin& r) {
         p.file = f.value("file", std::string());
         p.scored = f.value("scored", 0);
         p.coupons = f.value("coupons", 0);
+        p.design = f.value("design", std::string());
         r.plates[it.key()] = p;
     }
 }
@@ -271,6 +274,12 @@ PlateStep nextPlateStep(const Resin& r) {
                                 : "Print the " + k + " plate next."};
         }
         const PlateFiles& f = it->second;
+        // A tips plate from before 2026-11-24: discs on three tips, which a job never puts under a face. Its
+        // sheet stays, set aside when the new plate is saved; the new plate is the one to print.
+        if (k == "tips" && f.design != "tiles" && !measured)
+            return {Action::Print, kind,
+                    "Print the new tips plate: its tiles stand on the supports FruitSlicer makes for a job. The "
+                    "earlier one's scores are kept."};
         if (f.coupons > 0 && f.scored >= f.coupons) {
             to_fit |= !measured;
             continue;

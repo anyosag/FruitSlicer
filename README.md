@@ -386,17 +386,26 @@ angle) depend on your resin and printer, and no vendor publishes them. Three
 plates measure them:
 
 ```sh
-./build/src/fruitslicer calibrate tips    -o tips.stl     # tip diameter × penetration × load
+./build/src/fruitslicer calibrate tips    -o tips.stl     # tiles on FruitSlicer's own supports: tip size × strength
 ./build/src/fruitslicer calibrate spacing -o spacing.stl  # tilted plates × tip pitch, plus wedges
 ./build/src/fruitslicer calibrate islands -o islands.stl  # island size × number of tips
 ```
 
 Each writes `<name>.stl.json` (which cell holds which parameters) and
-`<name>.stl.results.csv` (one row per coupon to fill in). Every coupon sits on
-its own small raft in a grid; the L-shaped marker in the corner cell shows
-which way the rows and columns run. Parameter combinations are shuffled over
-the plate with a fixed seed, so position on the plate does not line up with
-any one parameter.
+`<name>.stl.results.csv` (one row per coupon to fill in). The coupons sit in a
+grid; the L-shaped marker in the corner cell shows which way the rows and
+columns run. Parameter combinations are shuffled over the plate with a fixed
+seed, so position on the plate does not line up with any one parameter.
+
+The tips plate's coupons are flat tiles, 6 to 10 mm across, 10 mm above one
+raft, each held by the supports FruitSlicer makes for it in a job: the
+planner's own tips and the support tree's own heads, depths, shafts and
+trunks. A tile has one tip size, and is planned as if that size held 0.125 to
+2.83 times FruitSlicer's starting value, so the planner puts fewer tips under
+it, each carrying more. The replay of the print works out what every tip
+carries, and the manifest keeps it for `fit`. (Until 2026-11-24 the plate held
+discs on three tips: far fewer tips, further apart, than the planner ever puts
+under a face. Its sheets still read and fit.)
 
 ### Support points
 
@@ -655,9 +664,11 @@ After printing the plates, fill in the `result` column (`ok`, `failed` or
 `fit` estimates the following:
 
 - **from the tips plate:** how much layer area each tip size holds (70 % of
-  the load at which half the tips fail), the best penetration for each size,
-  and a default tip (the lowest scar score among tips that hold at least
-  4 mm²);
+  the load at which half of such tips let go, one tip alone: a coupon held
+  only if every one of its tips did), the best penetration for each size
+  where a plate tried more than one (the disc plate did; the tile plate puts
+  each size as deep as a job does), and a default tip (the lowest scar score
+  among tips that hold at least 1 mm²);
 - **from the spacing plate:** the coverage radius (the widest tip pitch that
   held at every angle, divided by √2) and the critical overhang angle;
 - **from the islands plate:** how large an island one or two tips can hold.

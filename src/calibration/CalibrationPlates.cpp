@@ -3,14 +3,19 @@
 #include "calibration/CalibrationPlates.h"
 
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 
+#include "core/Parallel.h"
+#include "layers/LayerStack.h"
 #include "mesh/Primitives.h"
 #include "ops/MeshOps.h"
+#include "stability/Stability.h"
+#include "support/PointGenerator.h"
 #include "support/SupportGeometry.h"
 #include "support/SupportTree.h"
 
@@ -179,9 +184,10 @@ json CalibrationPlate::manifest() const {
 std::string CalibrationPlate::csvTemplate() const {
     std::ostringstream out;
     std::vector<std::string> keys;
+    // One column a setting; a list (a tile's tip loads) stays in the manifest: its commas would split it.
     if (!coupons.empty())
         for (auto it = coupons.front().params.begin(); it != coupons.front().params.end(); ++it)
-            keys.push_back(it.key());
+            if (it.value().is_primitive()) keys.push_back(it.key());
     out << "id,row,col";
     for (const auto& k : keys) out << "," << k;
     out << ",result,scar,notes\n";
@@ -296,7 +302,7 @@ CalibrationPlate assembleSides(const std::string& kind, const std::vector<json>&
     return plate;
 }
 
-CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
+CalibrationPlate discTipsPlate(const DiscTipsPlateOptions& o, const PrinterProfile& p) {
     const bool sides = norm(o.peel_axis) > 0;
     if (o.ladders.empty()) throw std::runtime_error("tips plate: no loads");
     // A size's ladders; a size with none, the nearest size's, scaled by tip area (as the starting values
@@ -311,7 +317,7 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
                 for (double& x : v) x = std::max(0.05, std::round(x * k * 20) / 20);
             return v;
         };
-        std::vector<TipsPlateOptions::Ladder> out;
+        std::vector<DiscTipsPlateOptions::Ladder> out;
         for (const auto& l : o.ladders)
             if (std::abs(l.tip - near) < 1e-9) out.push_back({d, l.depth, scale(l.loads), scale(l.extra)});
         return out;
@@ -415,6 +421,138 @@ CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
     plate.settings["disc_underside"] = "45deg";
     plate.settings["shafts_as_jobs"] = true;  // 0.8 / 1.0 / 1.2 mm, by tip (shaftDiameterFor)
     plate.settings["tip_height"] = z0;
+    return plate;
+}
+
+SupportConfig tileSupportConfig(double tip, double strength, const Vec2& peel_axis, double layer_height) {
+    SupportConfig cfg;  // FruitSlicer's own, as a job with no resin values of its own starts
+    cfg.layer_height = layer_height;
+    // The hinge's extra pull far from it, as resolveSettings sets it for a job with the hinge known.
+    if (norm(peel_axis) > 0) {
+        cfg.peel_axis = normalized(peel_axis);
+        cfg.peel_bias = kAssumedPeelBias;
+    }
+    // One size: the usual tip, the tip for spots in mid-air and the tip near edges alike, so a tip that would
+    // carry too much gets a neighbour (as at the biggest size) and is not made bigger.
+    cfg.tip_classes = {{"plate", tip}};
+    cfg.default_tip = cfg.minima_tip = cfg.edge_tip = 0;
+    // Trusted with `strength` times FruitSlicer's own value. The limit on each tip's own load stays the one
+    // FruitSlicer's own table has (1): the strength is what changes.
+    cfg.capacity.table = {{tip, strength * CapacityModel{}.capacity(tip)}};
+    return cfg;
+}
+
+namespace {
+
+// A tile and its supports, as a job of that tile gets them, and what the replay says each tip carries.
+struct TileMade {
+    TriangleMesh mesh;  // the tile and its supports, without a raft (the plate's raft is under them)
+    json params;        // what the manifest keeps of it
+};
+
+TileMade makeTile(const PlateCoupon& pc, const TipsPlateOptions& o, const PrinterProfile& p, bool sided) {
+    const double d = pc.params.at("tip_diameter").get<double>(), k = pc.params.at("strength").get<double>();
+    const double s = pc.params.at("tile_mm").get<double>(), z0 = o.common.elevation;
+    TriangleMesh tile = makeBox({pc.center.x - s / 2, pc.center.y - s / 2, z0},
+                                {pc.center.x + s / 2, pc.center.y + s / 2, z0 + o.tile_thickness});
+    const SupportConfig cfg = tileSupportConfig(d, k, sided ? o.peel_axis : Vec2{0, 0}, o.layer_height);
+    TreeConfig tc;  // FruitSlicer's own heads, depths, shafts, trunks and feet
+    tc.raft_thickness = o.common.raft_thickness;
+    const double min_raft = p.minRaftThickness();
+    PointGenOptions po;
+    po.relieve = true;  // each tip's own load, as the app plans a job
+    po.slice_threads = 1;
+    po.support_lengths = [&](const std::vector<SupportPoint>& pts) {
+        return supportLengthsOnModel(tile, pts, tc, min_raft);
+    };
+    const PointGenResult planned = generateSupportPoints(tile, cfg, po);
+    const SupportTree tree = buildSupportTree(tile, planned.points, tc, min_raft);
+    if (tree.heads.empty()) throw std::runtime_error("tips plate: a tile got no supports");
+
+    // The replay of the print, as for a job: the tile, its supports and their own raft (what holds them up
+    // while the tile prints). Only the loads are wanted, so one replay; the extra pull far from the hinge is
+    // left out (the fit measures it).
+    const TriangleMesh sup = tree.mesh(tc);
+    const LayerStack sup_layers = sliceModel(sup, o.layer_height, nullptr, 1);
+    const LayerStack& model_layers = *planned.analysis.layers;
+    const LayerStack print = unionLayers(model_layers, sup_layers, 1);
+    StabilityInput in;
+    in.print = &print;
+    in.model = &model_layers;
+    in.supports = &sup_layers;
+    in.model_graph = planned.analysis.islands;
+    for (const Head& h : tree.heads) in.tips.push_back({h.contact, h.spec.tip_diameter});
+    StabilityConfig sc = stabilityConfig(cfg);
+    sc.peel_bias = 0;
+    sc.replays = 1;
+    sc.threads = 1;
+    const StabilityResult res = analyzeStability(in, sc);
+    std::vector<double> loads;
+    for (const TipRisk& t : res.tips)
+        if (t.contact >= 0 && t.contact < static_cast<int>(tree.heads.size()) && !t.foot) loads.push_back(t.load);
+    if (loads.size() != tree.heads.size()) throw std::runtime_error("tips plate: the replay lost a tile's tips");
+    std::sort(loads.rbegin(), loads.rend());
+    double sum = 0;
+    for (double l : loads) sum += std::pow(l, sc.steepness);
+    auto round2 = [](double v) { return std::round(v * 100) / 100; };
+    json each = json::array();
+    for (double l : loads) each.push_back(round2(l));
+
+    // A head the tree had to build smaller (no room at its own size) would make the tile two sizes.
+    int smaller = 0;
+    for (const Head& h : tree.heads) smaller += std::abs(h.spec.tip_diameter - d) > 1e-9 ? 1 : 0;
+
+    TileMade out;
+    out.mesh = std::move(tile);
+    out.mesh.append(tree.mesh(tc, false));
+    out.params = {{"penetration", tipPenetration(d, tc)},
+                  {"tips", tree.heads.size()},
+                  {"tips_planned", planned.points.size()},
+                  {"tips_smaller", smaller},
+                  {"assumed_mm2", round2(cfg.capacity.capacity(d))},
+                  {"load_mm2", round2(std::pow(sum, 1 / sc.steepness))},
+                  {"load_max_mm2", round2(loads.front())},
+                  {"tip_loads_mm2", each}};
+    return out;
+}
+
+}  // namespace
+
+CalibrationPlate tipsPlate(const TipsPlateOptions& o, const PrinterProfile& p) {
+    const bool sides = norm(o.peel_axis) > 0;
+    if (o.sizes.empty()) throw std::runtime_error("tips plate: no tip sizes");
+    double biggest = 0;
+    std::vector<json> combos;
+    for (const auto& sz : o.sizes) {
+        if (sz.strengths.empty()) throw std::runtime_error("tips plate: a tip size with no strengths");
+        biggest = std::max(biggest, sz.tile);
+        for (double k : sz.strengths) combos.push_back({{"tip_diameter", sz.tip}, {"strength", k}, {"tile_mm", sz.tile}});
+    }
+    // A tile's supports reach about 2 mm past it where they stand (the feet of the trunks at its edges): the
+    // cells leave room for them on the plate's raft, whose pad under each cell is 2 mm smaller than the cell.
+    const double cell = std::ceil(biggest + 4.0);
+    PlateCommon common = o.common;
+    common.one_raft = true;
+    std::vector<json> all = combos;
+    if (!sides) all.insert(all.end(), combos.begin(), combos.end());  // one set: as many tiles as two would have
+    // The cells and each tile's parameters first; then every tile with its supports, side by side.
+    auto none = [](TriangleMesh&, const Vec2&, const json&, double) {};
+    CalibrationPlate plate = sides ? assembleSides("tips", combos, cell, common, p, o.peel_axis, none)
+                                   : assemble("tips", all, cell, common, p, none);
+    std::vector<TileMade> made(plate.coupons.size());
+    parallelFor(plate.coupons.size(), o.threads,
+                [&](size_t i) { made[i] = makeTile(plate.coupons[i], o, p, sides); });
+    for (size_t i = 0; i < made.size(); ++i) {
+        plate.mesh.append(made[i].mesh);
+        plate.coupons[i].params.update(made[i].params);
+    }
+    plate.settings["tiles"] = "flat tiles held by FruitSlicer's own tips and supports, one tip size a tile";
+    plate.settings["tile_thickness"] = o.tile_thickness;
+    plate.settings["lift"] = o.common.elevation;
+    plate.settings["head_length"] = TreeConfig{}.head_length;
+    plate.settings["shafts_as_jobs"] = true;  // the tree's own: 0.8 / 1.0 / 1.2 mm by tip (shaftDiameterFor)
+    plate.settings["loads"] = "replayed";     // load_mm2 and the rest, from the replay of the print
+    plate.settings["steepness"] = StabilityConfig{}.steepness;
     return plate;
 }
 
