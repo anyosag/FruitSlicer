@@ -102,6 +102,14 @@ struct TreeConfig {
     double max_merge_distance = 8.0;
     int max_tips_per_trunk = 6;
     double max_trunk_diameter = 1.8;
+    // Floors stacked one over another send their supports down one line. A
+    // pillar whose middle is within a pixel (0.01 mm) of a longer column's
+    // is drawn as that column, which carries its tips too (up to
+    // max_tips_per_trunk), where the column drops more than this from its top
+    // to where its foot starts: in the print the two are one shaft already.
+    // It is as wide as the wider of the two. No pillar on a part lower than
+    // this is that long, so such parts keep their supports as they were.
+    double fold_min_drop = 70.0;
     RaftStyle raft = RaftStyle::Pads;
     double raft_thickness = 1.0;       // raised to the printer's bottom+transition layers if thinner
     double base_diameter = 3.0;
@@ -166,6 +174,8 @@ struct Pillar {
     // share the pillar (their supports would have stood on the same spot), as
     // much contact as those tips have together.
     double foot_tip = 0.4;
+    // Where pillars drawn as this one join it: their tops (TreeConfig::fold_min_drop).
+    std::vector<double> joints;
 };
 
 struct Rod {  // bridges and braces
@@ -195,6 +205,7 @@ struct SupportTree {
     // at their own size and place no head found a way down (Head::smaller, moved).
     size_t smaller_heads = 0, moved_heads = 0;
     size_t braces_skipped_trap = 0;  // pillar pairs left unbraced because model passes between them
+    size_t folded = 0;               // pillars drawn as the longer column they stand in (TreeConfig::fold_min_drop)
 
     size_t trunks() const {  // pillars standing on the raft
         size_t n = 0;

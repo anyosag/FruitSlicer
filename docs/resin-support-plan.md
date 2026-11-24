@@ -797,6 +797,37 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   a fin into a wall and a plate 0.65 mm over a top keep theirs; a tapered bore
   only past the height; a box of holes with rule 4; the socket, the slab over
   two fingers and the slotted floor the same either way). Not printed.
+- **Stacked floors drawn as one column (2026-11-24).** On TubeRack_v3 the
+  floors stacked over one another send their supports down one line: of
+  1,234 raft pillars before branching, 497 stood within 0.005 mm of a taller
+  one (every such column had its two bridges taken, so the head below drew
+  its own). In the print the two are one shaft; the tree drew, braced and
+  branched them as two (1,703 of 5,060 braces under 0.01 mm sideways, 398 of
+  1,028 raft links under 0.01 mm). Now, after the heads have chosen their
+  ways down, a pillar whose middle is within 0.01 mm (under a pixel) of a
+  longer column's is drawn as that column, which carries its tips too (up to
+  6, `max_tips_per_trunk`), where the column drops more than 70 mm to its
+  foot (`fold_min_drop`). It is as wide as the wider of the two, as it
+  printed; braces and branches keep 2 mm (`flex_zone`) clear below where it
+  joins, and two tall columns that close get no brace or branch between
+  them. No pillar on a part lower than 70 mm can be that long (a pillar's
+  top is below a tip, so the eye cup's longest possible is 61.6 mm), so
+  those parts keep their trees bit for bit. Columns near each other but not
+  in one line (a median 0.46 mm apart) are left as they are: joining them
+  would make the print weaker. Measured, app, Generate, after the closings
+  rule above:
+  - TubeRack_v3: the same 1,503 tips (the plans identical); trunks 482 to
+    422, pillars 1,100 to 998, braces 1,555 to 1,275, branches 250 to 208;
+    supports' resin 33.6 ml to 33.2 (the shown sum 51.6 to 45.1). The replay
+    the same as it is, 1.41 times weaker and with the tips alone 3 times
+    weaker; 3 times weaker, 1,352 to 1,353 of 1,500 lose model, expected loss
+    153 to 112 mm³.
+  - Lid, eye cup, CHamber, TheDipper_full: identical.
+  Tests: `test_tree.cpp` [fold] (shelves 30 mm apart, the top one 85 mm up:
+  the column drawn once, heads and bridges as they were, nothing in the band
+  below a joint, the same resin when branching is off; the same rack under
+  70 mm keeps every pillar, rod and triangle; a column takes no more than 6
+  tips). Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

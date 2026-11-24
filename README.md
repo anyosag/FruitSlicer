@@ -542,9 +542,15 @@ Each point gets:
   very place another head does (their junctions within 0.25 mm), when that
   one has a way to the raft, goes down with it instead of standing on the
   model. Standing on the model is reported because it marks an upper surface
-  (`anchor_drop` limits how far down the model may be; 0 turns it off);
+  (`anchor_drop` limits how far down the model may be; 0 turns it off). On a
+  tall part, floors stacked one over another send their supports down the
+  same line: a pillar standing in another's column (their middles less than
+  0.01 mm apart, finer than a pixel) is drawn as that one column, carrying
+  the tips of both (up to 6), where the column is longer than 70 mm. It is as
+  wide as the wider of the two, as it already printed, and braces and
+  branches keep 2 mm clear below where each pillar joins it;
 - a gap to the model everywhere but at the tip: shafts, bridges, braces and
-  feet stay 0.15 mm clear of it. A pillar grows 0.1 mm for each other tip
+  feet stay 0.30 mm clear of it. A pillar grows 0.1 mm for each other tip
   it takes on, and takes one on only where it keeps that gap at its new
   width, all the way down and at its foot (one placed right at its gap
   beside a wall used to grow into it). A pillar's foot flares to 3 mm where it

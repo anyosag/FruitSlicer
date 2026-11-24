@@ -76,6 +76,9 @@ Vec3 plateHead(const Head& h, TriangleMesh* m, const GeometryQuality& q) {
     return foot;
 }
 
+// Two columns whose middles are closer than this (mm, under a 14 × 19 µm pixel) print as one shaft.
+constexpr double kSameSpot = 0.01;
+
 class Builder {
 public:
     Builder(const TriangleMesh& m, const TreeConfig& c, double min_raft)
@@ -450,7 +453,15 @@ private:
     void brace();
     void braceGroup(bool on_model);
     void raft();
+    // A pillar standing in a longer column (the two one shaft in the print) is drawn as that column.
+    void foldColumns();
     void mergePillars();
+    // A column that drops further than fold_min_drop to its foot (TreeConfig::fold_min_drop).
+    bool tall(const Pillar& P) const {
+        return !P.on_model && P.top - (out_.raft_top + cfg_.base_height) > cfg_.fold_min_drop;
+    }
+    // Two tall columns closer than this are one: no brace or branch between them.
+    double apart(const Pillar& A, const Pillar& B) const { return tall(A) && tall(B) ? kSameSpot : 1e-6; }
 
     const TriangleMesh& mesh_;
     const TreeConfig& cfg_;
@@ -790,9 +801,10 @@ void Builder::braceGroup(bool on_model) {
         }
     }
     for (size_t v = 1; v < n; ++v) {
-        if (parent[v] < 0 || best[v] > cfg_.brace_max_distance || best[v] < 1e-6) continue;
+        if (parent[v] < 0 || best[v] > cfg_.brace_max_distance) continue;
         const Pillar& A = out_.pillars[idx[parent[v]]];
         const Pillar& B = out_.pillars[idx[v]];
+        if (best[v] < apart(A, B)) continue;
         const double h = std::min(A.top, B.top) - cfg_.flex_zone;
         const double z0 = std::max(shaftFoot(A), shaftFoot(B)) + 1.0;
         if (std::max(A.top - ground(A), B.top - ground(B)) < cfg_.brace_min_height || h - z0 < best[v]) continue;
@@ -808,15 +820,80 @@ void Builder::braceGroup(bool on_model) {
             ++out_.braces_skipped_trap;
             continue;
         }
-        // Zig-zag at 45°, levels at least `brace_step` apart.
+        // Zig-zag at 45°, levels at least `brace_step` apart; none ends just below where a folded pillar joins
+        // its column (in the flex zone of that pillar's heads).
+        const auto nearJoint = [&](const Pillar& P, double z) {
+            return std::any_of(P.joints.begin(), P.joints.end(),
+                               [&](double j) { return z > j - cfg_.flex_zone && z <= j; });
+        };
         bool from_a = true;
         for (double z = z0; z + best[v] <= h; z += std::max(best[v], cfg_.brace_step)) {
-            const Vec3 a{(from_a ? A : B).xy.x, (from_a ? A : B).xy.y, z};
-            const Vec3 b{(from_a ? B : A).xy.x, (from_a ? B : A).xy.y, z + best[v]};
-            if (segmentClear(a, b, cfg_.brace_diameter / 2)) out_.braces.push_back({a, b, cfg_.brace_diameter});
+            const Pillar& lo = from_a ? A : B;
+            const Pillar& hi = from_a ? B : A;
+            const Vec3 a{lo.xy.x, lo.xy.y, z};
+            const Vec3 b{hi.xy.x, hi.xy.y, z + best[v]};
+            if (!nearJoint(lo, z) && !nearJoint(hi, z + best[v]) && segmentClear(a, b, cfg_.brace_diameter / 2))
+                out_.braces.push_back({a, b, cfg_.brace_diameter});
             from_a = !from_a;
         }
     }
+}
+
+void Builder::foldColumns() {
+    // Tallest first: each pillar is drawn as the nearest longer column within kSameSpot that has room for its tips,
+    // else stays a column of its own. What the heads chose (their pillars, bridges and routes) is as it was.
+    const size_t n = out_.pillars.size();
+    std::vector<size_t> order(n);
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::stable_sort(order.begin(), order.end(),
+                     [&](size_t a, size_t b) { return out_.pillars[a].top > out_.pillars[b].top; });
+    std::vector<size_t> columns;
+    std::vector<char> gone(n, 0);
+    for (const size_t q : order) {
+        const Pillar& Q = out_.pillars[q];
+        if (Q.on_model) continue;
+        size_t into = n;
+        double nearest = kSameSpot;
+        for (const size_t c : columns) {
+            const Pillar& P = out_.pillars[c];
+            if (!tall(P) || P.tips + Q.tips > cfg_.max_tips_per_trunk) continue;
+            if (const double d = distance(P.xy, Q.xy); d < nearest) {
+                nearest = d;
+                into = c;
+            }
+        }
+        if (into == n) {
+            columns.push_back(q);
+            continue;
+        }
+        Pillar& P = out_.pillars[into];
+        if (Q.diameter > P.diameter) {
+            // As wide as the wider of the two all the way down: where that has no room, both stay.
+            const double room = footRoom(P.xy, Q.diameter / 2);
+            if (!segmentClear({P.xy.x, P.xy.y, P.bottom}, {P.xy.x, P.xy.y, P.top}, Q.diameter / 2) ||
+                room < Q.diameter - 1e-9) {
+                columns.push_back(q);
+                continue;
+            }
+            P.diameter = Q.diameter;
+            P.base_diameter = std::max(P.diameter, std::min(P.base_diameter > 0 ? P.base_diameter : cfg_.base_diameter,
+                                                            room));
+        }
+        P.heads.insert(P.heads.end(), Q.heads.begin(), Q.heads.end());
+        P.tips += Q.tips;
+        P.bridges += Q.bridges;
+        P.lowest_attach = std::min(P.lowest_attach, Q.lowest_attach);
+        P.joints.push_back(Q.top);
+        P.joints.insert(P.joints.end(), Q.joints.begin(), Q.joints.end());
+        gone[q] = 1;
+        ++out_.folded;
+    }
+    if (out_.folded == 0) return;
+    std::vector<Pillar> kept;
+    kept.reserve(n - out_.folded);
+    for (size_t i = 0; i < n; ++i)
+        if (!gone[i]) kept.push_back(std::move(out_.pillars[i]));
+    out_.pillars = std::move(kept);
 }
 
 void Builder::mergePillars() {
@@ -843,7 +920,7 @@ void Builder::mergePillars() {
         const Pillar& B = out_.pillars[static_cast<size_t>(j)];
         if (!active(A) || !active(B)) return;
         const double d = distance(A.xy, B.xy);
-        if (d > cfg_.max_merge_distance || d < 1e-6) return;
+        if (d > cfg_.max_merge_distance || d < apart(A, B)) return;
         if (A.tips + B.tips > cfg_.max_tips_per_trunk) return;
         waiting.push({d, i, j});
     };
@@ -856,8 +933,10 @@ void Builder::mergePillars() {
     const auto meetOf = [&](const Pair& p) {
         const Pillar& A = out_.pillars[static_cast<size_t>(p.i)];
         const Pillar& B = out_.pillars[static_cast<size_t>(p.j)];
-        const double zs = std::min({std::min(A.top, B.top) - cfg_.flex_zone, A.lowest_attach - 0.5,
-                                    B.lowest_attach - 0.5});
+        double zs = std::min({std::min(A.top, B.top) - cfg_.flex_zone, A.lowest_attach - 0.5,
+                              B.lowest_attach - 0.5});
+        for (const Pillar* P : {&A, &B})  // below every place a folded pillar joins either, as below its top
+            for (double j : P->joints) zs = std::min(zs, j - cfg_.flex_zone);
         const Vec2 mid = (A.xy + B.xy) * 0.5;
         return Meet{zs, {mid.x, mid.y, zs - p.d / 2}};
     };
@@ -1217,6 +1296,7 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
         }
     }
     ctl.step("tree", 0.7);
+    foldColumns();
     mergePillars();
     ctl.step("tree", 0.85);
     brace();
@@ -1564,6 +1644,7 @@ void appendTree(SupportTree& into, const SupportTree& from, int point_offset) {
     into.smaller_heads += from.smaller_heads;
     into.moved_heads += from.moved_heads;
     into.braces_skipped_trap += from.braces_skipped_trap;
+    into.folded += from.folded;
 }
 
 SupportTree buildSupportTree(const TriangleMesh& model, const std::vector<SupportPoint>& points, const TreeConfig& cfg,

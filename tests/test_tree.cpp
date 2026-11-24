@@ -6,6 +6,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "layers/LayerStack.h"
 #include "mesh/Placement.h"
 #include "mesh/Primitives.h"
 #include "printer/PrinterProfile.h"
@@ -907,4 +908,164 @@ TEST_CASE("the gap down where the bottom layers print widens with their light", 
     const Pillar& P = t.pillars[0];
     const double foot = (P.base_diameter > 0 ? P.base_diameter : tc.base_diameter) / 2;
     CHECK(P.xy.x - foot >= tc.foot_clearance - 0.02);
+}
+
+
+namespace {
+
+// A wall with shelves one over another, `pitch` apart, the lowest `first` above the lift, and a ledge one pitch
+// under the lowest so that every shelf has one below it. Two tips under each shelf's free end: each head finds
+// its way down beside the shelf below, all of them to one line, as on a rack's stacked floors. Six tips under
+// the wall's foot hold it.
+struct Rack {
+    TriangleMesh mesh;
+    std::vector<SupportPoint> tips;
+};
+Rack rack(int shelves, double first, double pitch) {
+    const double lift = 5.0;
+    Rack r;
+    r.mesh = makeBox({0, 0, lift}, {2, 10, lift + first + (shelves - 1) * pitch + 3});
+    const auto tip = [&](double x, double y, double z) {
+        SupportPoint p;
+        p.pos = {x, y, z};
+        p.normal = {0, 0, -1};
+        p.tip_diameter = 0.4;
+        r.tips.push_back(p);
+    };
+    for (const double x : {0.5, 1.5})
+        for (const double y : {1.0, 5.0, 9.0}) tip(x, y, lift);
+    r.mesh.append(makeBox({2, 0, lift + first - pitch + 3}, {5, 10, lift + first - pitch + 4.5}));
+    for (int i = 0; i < shelves; ++i) {
+        const double z = lift + first + i * pitch;
+        r.mesh.append(makeBox({2, 0, z}, {5, 10, z + 1.5}));
+        for (const double y : {4.6, 5.4}) tip(4.4, y, z);
+    }
+    return r;
+}
+
+SupportTree buildRack(const Rack& r, double fold_min_drop = TreeConfig{}.fold_min_drop, bool merge = true) {
+    TreeConfig tc;
+    tc.fold_min_drop = fold_min_drop;
+    tc.merge_pillars = merge;
+    return buildSupportTree(r.mesh, r.tips, tc, PrinterProfile::saturn4Ultra16k().minRaftThickness());
+}
+
+// Raft pillars standing in one another's column: middles closer than a pixel.
+std::size_t sameSpot(const SupportTree& t) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < t.pillars.size(); ++i)
+        for (std::size_t j = i + 1; j < t.pillars.size(); ++j)
+            n += !t.pillars[i].on_model && !t.pillars[j].on_model && distance(t.pillars[i].xy, t.pillars[j].xy) < 0.01;
+    return n;
+}
+
+double slicedVolume(const TriangleMesh& m) {
+    const LayerStack ls = sliceModel(m, 0.05);
+    double a = 0;
+    for (const Paths& s : ls.slices) a += std::abs(area(s));
+    return a * 0.05;
+}
+
+bool sameHeads(const SupportTree& a, const SupportTree& b) {
+    if (a.heads.size() != b.heads.size() || a.bridges.size() != b.bridges.size()) return false;
+    for (std::size_t i = 0; i < a.heads.size(); ++i)
+        if (a.heads[i].point != b.heads[i].point || norm(a.heads[i].contact - b.heads[i].contact) > 0 ||
+            norm(a.heads[i].junction - b.heads[i].junction) > 0)
+            return false;
+    for (std::size_t i = 0; i < a.bridges.size(); ++i)
+        if (norm(a.bridges[i].a - b.bridges[i].a) > 0 || norm(a.bridges[i].b - b.bridges[i].b) > 0) return false;
+    return true;
+}
+
+}  // namespace
+
+TEST_CASE("stacked floors over 70 mm: a pillar in a longer one's column is drawn as that column", "[tree][fold]") {
+    // Three shelves 30 mm apart, the top one 85 mm up: the middle shelf's support stands where the top one's
+    // column goes down.
+    const Rack r = rack(3, 20, 30);
+    const SupportTree apart = buildRack(r, 1e9), one = buildRack(r);
+    REQUIRE(sameSpot(apart) >= 1);
+    CHECK(one.folded == sameSpot(apart));
+    CHECK(sameSpot(one) == 0);
+    // What the heads chose is as it was.
+    CHECK(sameHeads(one, apart));
+    CHECK(one.dropped_points == apart.dropped_points);
+    std::size_t joints = 0;
+    for (const Pillar& P : one.pillars) {
+        if (!P.on_model && !P.merged) CHECK(P.tips <= TreeConfig{}.max_tips_per_trunk);
+        joints += P.joints.size();
+        // Nothing starts just below where a pillar joins it: no brace end, no branch.
+        for (const double j : P.joints) {
+            for (const Rod& b : one.braces)
+                for (const Vec3& e : {b.a, b.b})
+                    if (distance(e.xy(), P.xy) < 0.01) CHECK_FALSE((e.z > j - TreeConfig{}.flex_zone && e.z <= j));
+            for (const Rod& b : one.branches)
+                if (distance(b.a.xy(), P.xy) < 0.01) CHECK(b.a.z <= j - TreeConfig{}.flex_zone + 1e-9);
+        }
+    }
+    CHECK(joints == one.folded);
+    // Branching then has fewer pillars to join: no more resin than before.
+    const TreeConfig tc;
+    const TriangleMesh m_one = one.mesh(tc), m_apart = apart.mesh(tc);
+    CAPTURE(slicedVolume(m_one), slicedVolume(m_apart));
+    CHECK(slicedVolume(m_one) <= slicedVolume(m_apart) * 1.002);
+    // Folded alone (no branching after it), it is the same supports in the print, drawn once.
+    {
+        const SupportTree a = buildRack(r, 1e9, false), o = buildRack(r, TreeConfig{}.fold_min_drop, false);
+        REQUIRE(o.folded >= 1);
+        const TriangleMesh ma = a.mesh(tc), mo = o.mesh(tc);
+        CHECK(mo.volume() < ma.volume());
+        CAPTURE(slicedVolume(mo), slicedVolume(ma));
+        CHECK(std::abs(slicedVolume(mo) - slicedVolume(ma)) <= 0.002 * slicedVolume(ma));
+    }
+    const ValidationReport v_one = validateSupported(r.mesh, m_one, 0.1, SupportConfig{}.link_grow);
+    const ValidationReport v_apart = validateSupported(r.mesh, m_apart, 0.1, SupportConfig{}.link_grow);
+    CHECK(v_one.floating.size() == v_apart.floating.size());
+    CHECK(v_one.floating.empty());
+    CHECK(v_one.first_layer_islands == 1);
+}
+
+TEST_CASE("stacked floors on a part under 70 mm keep their supports as they were", "[tree][fold]") {
+    // The longest column is 50 mm: nothing is folded, and every pillar, rod and triangle is the same.
+    const Rack r = rack(3, 15, 18);
+    const SupportTree apart = buildRack(r, 1e9), one = buildRack(r);
+    REQUIRE(sameSpot(apart) >= 1);
+    CHECK(one.folded == 0);
+    REQUIRE(one.pillars.size() == apart.pillars.size());
+    for (std::size_t i = 0; i < one.pillars.size(); ++i) {
+        const Pillar &a = one.pillars[i], &b = apart.pillars[i];
+        CHECK((a.xy.x == b.xy.x && a.xy.y == b.xy.y && a.top == b.top && a.bottom == b.bottom &&
+               a.diameter == b.diameter && a.tips == b.tips && a.merged == b.merged && a.heads == b.heads));
+        CHECK(a.joints.empty());
+    }
+    const auto same_rods = [](const std::vector<Rod>& x, const std::vector<Rod>& y) {
+        if (x.size() != y.size()) return false;
+        for (std::size_t i = 0; i < x.size(); ++i)
+            if (norm(x[i].a - y[i].a) > 0 || norm(x[i].b - y[i].b) > 0 || x[i].diameter != y[i].diameter) return false;
+        return true;
+    };
+    CHECK(same_rods(one.braces, apart.braces));
+    CHECK(same_rods(one.branches, apart.branches));
+    CHECK(same_rods(one.raft_links, apart.raft_links));
+    const TreeConfig tc;
+    const TriangleMesh m_one = one.mesh(tc), m_apart = apart.mesh(tc);
+    CHECK(m_one.vertices == m_apart.vertices);
+    CHECK(m_one.faces == m_apart.faces);
+}
+
+TEST_CASE("a column carries no more tips than a trunk may", "[tree][fold]") {
+    // Five shelves 20 mm apart, the supports of all five in one line, two tips each. The tallest takes the next
+    // two (six tips); the last two stay columns of their own (too short to take another).
+    const Rack r = rack(5, 20, 20);
+    const SupportTree apart = buildRack(r, 1e9), one = buildRack(r);
+    CAPTURE(sameSpot(apart), one.folded, sameSpot(one));
+    REQUIRE(sameSpot(apart) == 10);  // five in one line
+    CHECK(one.folded == 2);
+    CHECK(sameSpot(one) == 3);
+    int most = 0;
+    for (const Pillar& P : one.pillars) {
+        CHECK(P.tips <= TreeConfig{}.max_tips_per_trunk);
+        if (!P.joints.empty()) most = std::max(most, P.tips);
+    }
+    CHECK(most == TreeConfig{}.max_tips_per_trunk);
 }
