@@ -598,7 +598,7 @@ TEST_CASE("Hollow: a cup's vent, on supports, goes up through its floor and is k
     REQUIRE_FALSE(out.empty());
     CHECK(out[0].title == "The suction cup is vented");
     // Saved with the job, and drilled again when opened.
-    const auto job = (std::filesystem::temp_directory_path() / "fruit_hollow_tests" / "vent.fruitjob").string();
+    const auto job = (testfiles::temp() / "fruit_hollow_tests" / "vent.fruitjob").string();
     std::filesystem::create_directories(std::filesystem::path(job).parent_path());
     saveJob(job, *doc);
     const OpenedJob o = openJob(job, fruit::PrinterProfile::saturn4Ultra16k(), fruit::JobControl::none());
