@@ -667,6 +667,23 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   same print files (all but the save time in the header) and the same
   screenshots of the supports, the Risk view and Layers for TubeRack_v2,
   CHamber, TheDipper_full, the lid and the eyecup. Not printed.
+- **The tree's join on every core (2026-11-23).** After the trunks, the
+  last part of a tree on one core was joining the tips in order (1.1 to
+  1.5 s a tree on the TubeRack, four trees a Generate). Nearly all of it
+  (over 90 %) was the 300 or so tips whose planned head found no way down,
+  each trying a smaller size and then nearby spots on the same face
+  (`supportSmallerOrMoved`), with every try's head, drop, route and stand
+  worked out one after another; half needed 9 to 32 tries. What a try works
+  out depends on the model alone, so a tip that may find no way down
+  (`Ahead::sure` false: only the supports made before it could give it one)
+  has its tries (`triesFor`) worked out in the first, side-by-side pass,
+  each to the end (`workOut(…, true)`, as supportTip goes given nothing),
+  as far as the first sure of a way: the join never goes past it. Joining
+  stays in order. A try not worked out ahead is worked out when needed, a
+  few side by side. TubeRack's join 1.1 to 1.5 s to 0.04 to 0.18 s a tree,
+  the first pass 0.1 s longer. Print files and screenshots the same as
+  main's for TubeRack_v2, CHamber, TheDipper_full, the lid and the eyecup;
+  649 tests pass.
 - **The supports card says where it is (2026-11-23).** The user asked for the
   app to keep them up to date while supports are made. The card listed six
   stages read off the bar's fraction as it was shared out before the
