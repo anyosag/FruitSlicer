@@ -114,7 +114,7 @@ void topBar(App& app) {
     text(doc ? doc->name.c_str() : "New job", fonts().semibold, size::Body + 1, col::Text);
     const char* state = doc ? doc->savedState() : "Not saved";
     text(state, fonts().regular, size::Help, col::TextMuted);
-    if (doc) tooltip(doc->job_path.empty() ? "Save the job with ⌘S." : doc->job_path.c_str());
+    if (doc) tooltip(doc->job_path.empty() ? ("Save the job with " + cmd("S") + ".").c_str() : doc->job_path.c_str());
     ImGui::EndGroup();
 
     // Prepare or Layers, in the middle. Layers opens once there are up-to-date
@@ -160,9 +160,9 @@ void topBar(App& app) {
     {
         const float right = ImGui::GetWindowWidth() - 16;
         ImGui::SetCursorPos(ImVec2(right - 34 - 6 - 34, 11));
-        iconButton("undo", icon::undo, doc && doc->canUndo(), "Undo (⌘Z)", [&app] { app.undo(); });
+        iconButton("undo", icon::undo, doc && doc->canUndo(), ("Undo (" + cmd("Z") + ")").c_str(), [&app] { app.undo(); });
         ImGui::SameLine(0, 6);
-        iconButton("redo", icon::redo, doc && doc->canRedo(), "Redo (⇧⌘Z)", [&app] { app.redo(); });
+        iconButton("redo", icon::redo, doc && doc->canRedo(), ("Redo (" + cmd("Z", true) + ")").c_str(), [&app] { app.redo(); });
     }
     endPanel();
 }

@@ -58,12 +58,36 @@ inline std::string percent(double scale) {
     return p == static_cast<long long>(p) ? strf("%.0f %%", p) : strf("%.1f %%", p);
 }
 
-// A shortcut as the platform writes it: "⌘O" on a Mac, "Ctrl O" elsewhere.
+// A shortcut as the platform writes it: "⌘O" on a Mac, "Ctrl+O" on Windows, "Ctrl O" elsewhere.
 inline std::string cmd(const char* key, bool shift = false) {
 #if defined(__APPLE__)
     return std::string(shift ? "⇧" : "") + "⌘" + key;
+#elif defined(_WIN32)
+    return std::string("Ctrl+") + (shift ? "Shift+" : "") + key;
 #else
     return std::string("Ctrl ") + (shift ? "Shift " : "") + key;
+#endif
+}
+
+// The button that shows a file where it is, as the platform names it.
+inline const char* showFileLabel() {
+#if defined(__APPLE__)
+    return "Show in Finder";
+#elif defined(_WIN32)
+    return "Show in Explorer";
+#else
+    return "Show in folder";
+#endif
+}
+
+// The computer, as a sentence starts with it: "The Mac doesn't list it as a drive".
+inline const char* thisComputer() {
+#if defined(__APPLE__)
+    return "The Mac";
+#elif defined(_WIN32)
+    return "Windows";
+#else
+    return "This computer";
 #endif
 }
 

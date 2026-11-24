@@ -142,6 +142,12 @@ endif()
 if(APPLE)
   list(APPEND app_sources platform/PlatformMac.mm macos/FruitSlicer.icns)
   set_source_files_properties(platform/PlatformMac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+elseif(WIN32)
+  # Windows: its platform pieces, the icon and version Explorer shows, and
+  # the manifest (common controls, the Windows versions it is written for).
+  set(FRUIT_ICO ${CMAKE_CURRENT_SOURCE_DIR}/windows/FruitSlicer.ico)
+  configure_file(windows/FruitSlicer.rc.in ${CMAKE_CURRENT_BINARY_DIR}/FruitSlicer.rc @ONLY)
+  list(APPEND app_sources platform/PlatformWin.cpp windows/FruitSlicer.manifest ${CMAKE_CURRENT_BINARY_DIR}/FruitSlicer.rc)
 endif()
 
 add_executable(fruitslicer_app ${app_sources})
@@ -273,8 +279,12 @@ if(APPLE)
 endif()
 
 if(WIN32)
-  # FruitSlicer.exe, with the licence texts in Licenses\ beside it.
-  set_target_properties(fruitslicer_app PROPERTIES OUTPUT_NAME FruitSlicer)
+  # FruitSlicer.exe, a windowed program (no console window) that still starts
+  # at main(), with the licence texts in Licenses\ beside it.
+  set_target_properties(fruitslicer_app PROPERTIES OUTPUT_NAME FruitSlicer WIN32_EXECUTABLE TRUE)
+  target_link_options(fruitslicer_app PRIVATE /ENTRY:mainCRTStartup)
+  # USB drives and ejecting them (setupapi, cfgmgr32), Explorer (shell32, ole32).
+  target_link_libraries(fruitslicer_app PRIVATE setupapi cfgmgr32 shell32 ole32)
   set(lic_dir "$<TARGET_FILE_DIR:fruitslicer_app>/Licenses")
   fruit_copy_licences("${lic_dir}" copy_licences)
   add_custom_command(TARGET fruitslicer_app POST_BUILD
@@ -282,4 +292,20 @@ if(WIN32)
     ${copy_licences}
     COMMENT "Adding licence texts beside FruitSlicer.exe"
     VERBATIM)
+
+  # The installer, where Inno Setup 6 is installed:
+  #   cmake --build build --target fruitslicer_installer
+  # writes FruitSlicer-Setup-<version>.exe into the build folder.
+  set(pf86 "ProgramFiles(x86)")
+  find_program(FRUIT_ISCC NAMES ISCC iscc PATHS "$ENV{${pf86}}/Inno Setup 6" "$ENV{ProgramFiles}/Inno Setup 6")
+  if(FRUIT_ISCC)
+    file(TO_NATIVE_PATH "${FRUIT_ICO}" FRUIT_ICO_NATIVE)
+    configure_file(windows/FruitSlicer.iss.in ${CMAKE_CURRENT_BINARY_DIR}/FruitSlicer.iss @ONLY)
+    add_custom_target(fruitslicer_installer
+      COMMAND "${FRUIT_ISCC}" /Q "/DAppDir=$<SHELL_PATH:$<TARGET_FILE_DIR:fruitslicer_app>>"
+              "/DOutDir=$<SHELL_PATH:${CMAKE_BINARY_DIR}>" "$<SHELL_PATH:${CMAKE_CURRENT_BINARY_DIR}/FruitSlicer.iss>"
+      COMMENT "Making the FruitSlicer installer"
+      VERBATIM)
+    add_dependencies(fruitslicer_installer fruitslicer_app)
+  endif()
 endif()

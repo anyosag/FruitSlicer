@@ -3340,10 +3340,8 @@ void App::notePlate(const std::string& resin_id, const std::string& kind, const 
 }
 
 bool App::onRemovableDrive(const std::string& path) const {
-    for (const platform::Volume& v : platform::removableVolumes()) {
-        const std::string root = !v.path.empty() && v.path.back() == '/' ? v.path : v.path + "/";
-        if (path.rfind(root, 0) == 0) return true;
-    }
+    for (const platform::Volume& v : platform::removableVolumes())
+        if (onVolume(path, v)) return true;
     return false;
 }
 
@@ -4008,7 +4006,8 @@ void App::ejectDrive() {
             ejectDrive(v.path);
             return;
         }
-    showError("Couldn't eject " + doc_->print.drive, "The Mac doesn't list it as a drive any more: it may be ejected already.");
+    showError("Couldn't eject " + doc_->print.drive,
+              std::string(thisComputer()) + " doesn't list it as a drive any more: it may be ejected already.");
 }
 
 bool App::canEject() const {

@@ -620,7 +620,7 @@ public:
     void ejectDrive();                         // the drive the print file was saved to
     void ejectDrive(const std::string& path);  // any drive of drives(), by where it is mounted
     bool canEject() const;                     // nothing is being written (the collisions check gives way)
-    void revealSaved();   // the saved file in Finder
+    void revealSaved();   // the saved file in Finder (Explorer on Windows)
     void dismissSaved();  // leave the "saved" page for the Print step
     void exportStl(bool supports_only);
     void exportStlTo(const std::string& path, bool supports_only);

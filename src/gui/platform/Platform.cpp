@@ -72,7 +72,11 @@ void pumpCallbacks() {
         if (fn) fn(path);
 }
 
-#if !defined(__APPLE__)
+#if !defined(_WIN32)
+void attachConsole() {}
+#endif
+
+#if !defined(__APPLE__) && !defined(_WIN32)  // (macOS: PlatformMac.mm, Windows: PlatformWin.cpp)
 void beginBusy(const std::string&) {}
 void endBusy() {}
 

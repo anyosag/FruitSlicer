@@ -1,0 +1,70 @@
+; The FruitSlicer installer for Windows (Inno Setup 6), filled in by
+; src/gui/CMakeLists.txt and made with
+;   cmake --build build --target fruitslicer_installer
+; (the command line gives it AppDir, where FruitSlicer.exe was built, and
+; OutDir). It installs for the person running it, with no administrator
+; needed (or for everyone, if they choose), puts FruitSlicer in the Start
+; menu, opens .fruitjob files with it, and lists it under "Open with" for STL,
+; OBJ and 3MF files without taking those over.
+
+#define AppVersion "@PROJECT_VERSION@"
+#ifndef AppDir
+  #error AppDir: the folder FruitSlicer.exe was built in
+#endif
+#ifndef OutDir
+  #define OutDir "."
+#endif
+
+[Setup]
+; Never changes: Windows knows an installed FruitSlicer, to update or remove, by it.
+AppId={{6994819A-05FF-4E99-843C-5BB20C31EC86}
+AppName=FruitSlicer
+AppVersion={#AppVersion}
+AppVerName=FruitSlicer {#AppVersion}
+AppPublisher=FruitSlicer contributors
+AppCopyright=Copyright (C) 2026 FruitSlicer contributors
+DefaultDirName={autopf}\FruitSlicer
+DefaultGroupName=FruitSlicer
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+; Windows 10 version 1903 or later: FruitSlicer's UTF-8 file names need it.
+MinVersion=10.0.18362
+ChangesAssociations=yes
+SetupIconFile=@FRUIT_ICO_NATIVE@
+UninstallDisplayIcon={app}\FruitSlicer.exe
+UninstallDisplayName=FruitSlicer
+WizardStyle=modern
+Compression=lzma2
+SolidCompression=yes
+OutputDir={#OutDir}
+OutputBaseFilename=FruitSlicer-Setup-{#AppVersion}
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Files]
+Source: "{#AppDir}\FruitSlicer.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AppDir}\Licenses\*"; DestDir: "{app}\Licenses"; Flags: ignoreversion recursesubdirs
+
+[Icons]
+Name: "{autoprograms}\FruitSlicer"; Filename: "{app}\FruitSlicer.exe"
+Name: "{autodesktop}\FruitSlicer"; Filename: "{app}\FruitSlicer.exe"; Tasks: desktopicon
+
+[Registry]
+; .fruitjob files are FruitSlicer jobs, opened with FruitSlicer.
+Root: HKA; Subkey: "Software\Classes\.fruitjob"; ValueType: string; ValueName: ""; ValueData: "FruitSlicer.Job"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\FruitSlicer.Job"; ValueType: string; ValueName: ""; ValueData: "FruitSlicer job"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\FruitSlicer.Job\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\FruitSlicer.exe,0"
+Root: HKA; Subkey: "Software\Classes\FruitSlicer.Job\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\FruitSlicer.exe"" ""%1"""
+; STL, OBJ and 3MF: FruitSlicer is offered under "Open with".
+Root: HKA; Subkey: "Software\Classes\FruitSlicer.Model"; ValueType: string; ValueName: ""; ValueData: "3D model"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\FruitSlicer.Model\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\FruitSlicer.exe"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.stl\OpenWithProgids"; ValueType: string; ValueName: "FruitSlicer.Model"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.obj\OpenWithProgids"; ValueType: string; ValueName: "FruitSlicer.Model"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.3mf\OpenWithProgids"; ValueType: string; ValueName: "FruitSlicer.Model"; ValueData: ""; Flags: uninsdeletevalue
+
+[Run]
+Filename: "{app}\FruitSlicer.exe"; Description: "{cm:LaunchProgram,FruitSlicer}"; Flags: nowait postinstall skipifsilent

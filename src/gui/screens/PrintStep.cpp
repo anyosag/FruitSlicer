@@ -386,8 +386,8 @@ void savedPage(App& app, Document& doc, ImVec2 size) {
     if (drive) {
         if (primaryButton("Eject the drive", ImVec2(140, 40), !busy)) app.ejectDrive();
         ImGui::SameLine(0, 10);
-        if (secondaryButton("Show in Finder", ImVec2(0, 40))) app.revealSaved();
-    } else if (primaryButton("Show in Finder", ImVec2(140, 40))) {
+        if (secondaryButton(showFileLabel(), ImVec2(0, 40))) app.revealSaved();
+    } else if (primaryButton(showFileLabel(), ImVec2(140, 40))) {
         app.revealSaved();
     }
     ImGui::SameLine(0, 10);
@@ -412,7 +412,7 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
     const fruit::PlateFit& f = off ? off->fit() : doc.fit();
     const bool several = doc.partCount() > 1;
     const char* title = "";
-    const char* body = "";
+    std::string body;
     switch (need) {
         case Need::Nothing: break;
         case Need::Fit:
@@ -429,7 +429,7 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
         case Need::FreshSupports:
             title = "The supports are out of date";
             body = "The model or the support settings changed after they were made, so layers cut now wouldn't match "
-                   "it. Remake them, or undo the change (⌘Z) to have these back.";
+                   "it. Remake them, or undo the change (" + cmd("Z") + ") to have these back.";
             break;
         case Need::Layers:
             title = "The layers aren't cut yet";
@@ -437,7 +437,7 @@ void needCard(App& app, Document& doc, Need need, ImVec2 size) {
             break;
     }
     text(title, fonts().semibold, size::Section + 2, col::Text);
-    text(body, fonts().regular, size::Body, col::TextSecondary, true);
+    text(body.c_str(), fonts().regular, size::Body, col::TextSecondary, true);
     ImGui::Dummy(ImVec2(0, 6));
     switch (need) {
         case Need::Nothing: break;

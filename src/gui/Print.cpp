@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cwchar>
 #include <filesystem>
 #include <stdexcept>
 #include <system_error>
@@ -78,12 +79,27 @@ BottomLayers bottomLayers(const Document& doc) {
 
 }  // namespace
 
-std::string driveHolding(const std::string& path, const std::vector<platform::Volume>& drives) {
-    for (const platform::Volume& v : drives) {
-        if (v.path.empty()) continue;
-        const std::string root = v.path.back() == '/' ? v.path : v.path + "/";
-        if (path.rfind(root, 0) == 0) return v.name.empty() ? v.path : v.name;
+bool onVolume(const std::string& path, const platform::Volume& v) {
+    if (v.path.empty() || path.empty()) return false;
+    namespace fs = std::filesystem;
+    const fs::path file = fs::path(path).lexically_normal(), root = fs::path(v.path).lexically_normal();
+    auto f = file.begin();
+    for (auto r = root.begin(); r != root.end(); ++r) {
+        if (r->empty()) continue;  // the drive written with a slash at the end
+        if (f == file.end()) return false;
+#if defined(_WIN32)
+        if (_wcsicmp(r->c_str(), f->c_str()) != 0) return false;  // Windows names don't care about case
+#else
+        if (*r != *f) return false;
+#endif
+        ++f;
     }
+    return f != file.end();  // a file on it, not the drive itself
+}
+
+std::string driveHolding(const std::string& path, const std::vector<platform::Volume>& drives) {
+    for (const platform::Volume& v : drives)
+        if (onVolume(path, v)) return v.name.empty() ? v.path : v.name;
     return "";
 }
 

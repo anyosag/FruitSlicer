@@ -88,6 +88,10 @@ std::shared_ptr<const fruit::GooHeader> loadSample(const std::string& path);
 // The name of the drive in `drives` that `path` is on ("" for none): a file
 // saved through the folder dialog onto a USB drive counts as saved to it.
 std::string driveHolding(const std::string& path, const std::vector<platform::Volume>& drives);
+// Whether `path` is on the drive `v`: compared folder by folder, so a file on
+// "/Volumes/DISK_IMG2" is not on "/Volumes/DISK_IMG"; on Windows "e:/prints/a.goo"
+// is on "E:\" whichever slashes and letter case either is written with.
+bool onVolume(const std::string& path, const platform::Volume& v);
 
 // Inside the printer's build volume (the plate is centred on the origin).
 bool fitsPlate(const fruit::PrinterProfile& printer, const fruit::BBox3& b);

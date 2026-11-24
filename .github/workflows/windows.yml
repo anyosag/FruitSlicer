@@ -115,8 +115,24 @@ jobs:
           .\build\src\fruitslicer.exe coupon overlap -o overlap.stl
           .\build\src\fruitslicer.exe slice overlap.stl --elevate 0
 
+      - name: The app, as Windows sees it
+        # A windowed program (no console window), with its version and its
+        # manifest (UTF-8 code page, common controls) built in.
+        run: |
+          $exe = 'build\src\gui\FruitSlicer.exe'
+          $subsystem = "$(dumpbin /headers $exe | Select-String 'subsystem \(')".Trim()
+          $subsystem
+          if ($subsystem -notmatch 'Windows GUI') { throw "FruitSlicer.exe is not a windowed program" }
+          (Get-Item $exe).VersionInfo | Format-List FileDescription, ProductName, ProductVersion, FileVersion, LegalCopyright
+          mt.exe -nologo "-inputresource:$exe;#1" -out:app.manifest
+          Get-Content app.manifest
+          if (-not (Select-String -Path app.manifest -Pattern 'activeCodePage' -Quiet)) { throw "No UTF-8 code page in the manifest" }
+
       - name: Self-test
-        run: .\build\src\gui\FruitSlicer.exe --self-test
+        # A windowed program is waited for, and writes there, when its output is piped.
+        run: |
+          .\build\src\gui\FruitSlicer.exe --self-test 2>&1 | ForEach-Object { "$_" }
+          exit $LASTEXITCODE
 
       # Hosted Windows machines have no graphics card: OpenGL 3.3 comes from
       # Mesa's software renderer (llvmpipe), a pinned build checked against its
@@ -144,7 +160,9 @@ jobs:
 
       - name: Self-test with OpenGL
         continue-on-error: true
-        run: .\build\src\gui\FruitSlicer.exe --self-test-gl
+        run: |
+          .\build\src\gui\FruitSlicer.exe --self-test-gl 2>&1 | ForEach-Object { "$_" }
+          exit $LASTEXITCODE
 
       - name: Screenshots with Mesa (for review, not compared)
         # Every script in tests/gui but the Wi-Fi one, one after another (they
@@ -155,7 +173,7 @@ jobs:
           $failed = @()
           foreach ($s in Get-ChildItem tests\gui\*.json) {
             if ($s.Name -eq 'b3c_send.json') { continue }  # Wi-Fi sending is not built on Windows
-            & .\build\src\gui\FruitSlicer.exe --script $s.FullName --shots shots-windows
+            & .\build\src\gui\FruitSlicer.exe --script $s.FullName --shots shots-windows 2>&1 | ForEach-Object { "$_" }
             if ($LASTEXITCODE -ne 0) { $failed += "$($s.Name) (exit $LASTEXITCODE)" }
           }
           if ($failed.Count) { "Scripts that failed: $($failed -join ', ')"; exit 1 }
@@ -180,4 +198,44 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           path: FruitSlicer-Windows.zip
+          archive: false
+
+      - name: Make the installer
+        # Inno Setup 6, already on the machine (src/gui/windows/FruitSlicer.iss.in).
+        run: cmake --build build --target fruitslicer_installer
+
+      - name: Install, open and uninstall, as a person would
+        # For the current user, silently: the files and the .fruitjob file type
+        # are there, the installed app passes its self-test, and uninstalling
+        # takes all of it away again.
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $setup = Get-ChildItem build\FruitSlicer-Setup-*.exe | Select-Object -First 1
+          if (-not $setup) { throw "No installer was made" }
+          "Installer: $($setup.Name), $($setup.Length) bytes"
+          $dir = Join-Path $env:RUNNER_TEMP 'FruitSlicer installed'
+          $p = Start-Process -FilePath $setup.FullName -Wait -PassThru `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$dir`""
+          if ($p.ExitCode -ne 0) { throw "The installer ended with $($p.ExitCode)" }
+          foreach ($f in 'FruitSlicer.exe', 'Licenses\FruitSlicer.txt', 'unins000.exe') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "$f was not installed" }
+          }
+          $type = (Get-ItemProperty 'HKCU:\Software\Classes\.fruitjob').'(default)'
+          $open = (Get-ItemProperty 'HKCU:\Software\Classes\FruitSlicer.Job\shell\open\command').'(default)'
+          ".fruitjob is $type, opened with: $open"
+          if ($type -ne 'FruitSlicer.Job' -or $open -notlike "*$dir\FruitSlicer.exe*") { throw ".fruitjob files are not FruitSlicer's" }
+          & (Join-Path $dir 'FruitSlicer.exe') --self-test 2>&1 | ForEach-Object { "$_" }
+          $p = Start-Process -FilePath (Join-Path $dir 'unins000.exe') -Wait -PassThru `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          if ($p.ExitCode -ne 0) { throw "The uninstaller ended with $($p.ExitCode)" }
+          # The uninstaller finishes in a copy of itself: give it a moment.
+          for ($i = 0; $i -lt 30 -and (Test-Path (Join-Path $dir 'FruitSlicer.exe')); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path (Join-Path $dir 'FruitSlicer.exe')) { throw "Uninstalling left FruitSlicer.exe behind" }
+          if (Test-Path 'HKCU:\Software\Classes\FruitSlicer.Job') { throw "Uninstalling left the .fruitjob file type behind" }
+          "Installed, opened and taken away again."
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/FruitSlicer-Setup-*.exe
           archive: false

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -56,6 +57,38 @@ struct Args {
     std::string script, shots, open;
     bool self_test = false, self_test_gl = false;
 };
+
+// How many of the window's pixels a point of FruitSlicer's layout takes,
+// beyond what SDL already gives (its pixel density). macOS counts a window in
+// points and hands out a framebuffer with more pixels (2 on a Retina screen,
+// the density); Windows counts it in pixels and reports the display's scale
+// instead (150 % on many laptops). FruitSlicer is laid out in points, so
+// where those differ it lays out in pixels / scale and draws at that scale,
+// as on a Retina Mac. 1 on a Mac, and on a display with no scale.
+float uiScale(SDL_Window* window) {
+    const float display = SDL_GetWindowDisplayScale(window), density = SDL_GetWindowPixelDensity(window);
+    if (!(display > 0) || !(density > 0)) return 1;
+    const float s = display / density;
+    return std::abs(s - 1) < 0.01f ? 1.0f : std::clamp(s, 0.5f, 4.0f);
+}
+
+// The mouse in the window's pixels, brought to the layout's points (see uiScale).
+void toPoints(SDL_Event& e, float s) {
+    switch (e.type) {
+        case SDL_EVENT_MOUSE_MOTION:
+            e.motion.x /= s, e.motion.y /= s, e.motion.xrel /= s, e.motion.yrel /= s;
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            e.button.x /= s, e.button.y /= s;
+            break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            e.wheel.mouse_x /= s, e.wheel.mouse_y /= s;
+            break;
+        default:
+            break;
+    }
+}
 
 Args parseArgs(int argc, char** argv) {
     Args a;
@@ -115,6 +148,7 @@ void wakeUi() {
 int main(int argc, char** argv) {
     const Args args = parseArgs(argc, argv);
     const bool scripted = !args.script.empty();
+    if (scripted || args.self_test) platform::attachConsole();  // (Windows: see there)
     log::open(scripted || args.self_test ? (std::filesystem::temp_directory_path() / "fruitslicer-test").string()
                                          : platform::dataDir());
     log::info("FruitSlicer " FRUIT_VERSION " starting");
@@ -143,6 +177,22 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_SetWindowMinimumSize(window, 960, 600);
+    if (!hidden) {
+        // The window opens at its design size in points: on a 150 % display
+        // that is 1.5 times as many pixels (as much of it as the display has).
+        if (const float s = uiScale(window); s != 1) {
+            int w = static_cast<int>(1440 * s), h = static_cast<int>(900 * s);
+            int mw = static_cast<int>(960 * s), mh = static_cast<int>(600 * s);
+            SDL_Rect usable{};
+            if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable) && usable.w > 0 && usable.h > 0) {
+                w = std::min(w, usable.w), h = std::min(h, usable.h);
+                mw = std::min(mw, usable.w), mh = std::min(mh, usable.h);
+            }
+            SDL_SetWindowMinimumSize(window, mw, mh);
+            SDL_SetWindowSize(window, w, h);
+            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        }
+    }
     SDL_GLContext gl = SDL_GL_CreateContext(window);
     if (!gl) {
         log::error(std::string("OpenGL 3.3 core context: ") + SDL_GetError());
@@ -254,6 +304,7 @@ int main(int argc, char** argv) {
         bool quit = false;
         int frames = 3;  // frames still to draw after the last event
         while (!quit) {
+            const float ui_scale = uiScale(window);  // the display the window is on may change
             SDL_Event e;
             const bool hovering = ImGui::GetCurrentContext() && ImGui::IsAnyItemHovered();
             bool got;
@@ -261,6 +312,7 @@ int main(int argc, char** argv) {
             if (frames > 0) got = SDL_PollEvent(&e);
             else got = SDL_WaitEventTimeout(&e, app.jobs().busy() || hovering ? 100 : 1000);
             while (got) {
+                if (ui_scale != 1) toPoints(e, ui_scale);
                 ImGui_ImplSDL3_ProcessEvent(&e);
                 // Closing asks first when the job has unsaved changes.
                 if (e.type == SDL_EVENT_QUIT) app.requestQuit();
@@ -279,6 +331,11 @@ int main(int argc, char** argv) {
             if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) continue;
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplSDL3_NewFrame();
+            if (ui_scale != 1) {  // laid out in points, drawn in pixels (see uiScale)
+                io.DisplaySize = ImVec2(io.DisplaySize.x / ui_scale, io.DisplaySize.y / ui_scale);
+                io.DisplayFramebufferScale =
+                    ImVec2(io.DisplayFramebufferScale.x * ui_scale, io.DisplayFramebufferScale.y * ui_scale);
+            }
             ImGui::NewFrame();
             app.frame();
             ImGui::Render();

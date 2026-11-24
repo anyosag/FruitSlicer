@@ -133,7 +133,7 @@ void partsList(App& app, Document* doc) {
             const float after = ImGui::GetCursorPosY();
             ImGui::SetCursorPos(ImVec2(x + ImGui::GetContentRegionAvail().x - aw, y + 2));
             if (linkButton(add)) app.addPartDialog();
-            tooltip("Put another model on the plate, beside these (⇧⌘O)");
+            tooltip(("Put another model on the plate, beside these (" + cmd("O", true) + ")").c_str());
             ImGui::SetCursorPosY(after);
         }
     }

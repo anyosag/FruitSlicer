@@ -44,9 +44,13 @@ void OutFile::write(const void* data, size_t bytes) {
     if (bytes && std::fwrite(data, 1, bytes, f_) != bytes) fail("cannot write");
 }
 
-void OutFile::seek(long offset) {
+void OutFile::seek(std::int64_t offset) {
     if (!f_) throw std::logic_error("seek after commit: " + path_);
-    if (std::fseek(f_, offset, SEEK_SET) != 0) fail("cannot seek in");
+#if defined(_WIN32)
+    if (_fseeki64(f_, offset, SEEK_SET) != 0) fail("cannot seek in");
+#else
+    if (fseeko(f_, static_cast<off_t>(offset), SEEK_SET) != 0) fail("cannot seek in");
+#endif
 }
 
 void OutFile::commit(bool sync_to_device) {
@@ -62,7 +66,8 @@ void OutFile::commit(bool sync_to_device) {
 #endif
     }
 #else
-    (void)sync_to_device;
+    // Windows: _commit writes the file's buffers through to the device (FlushFileBuffers).
+    if (sync_to_device && _commit(_fileno(f_)) != 0) fail("cannot flush");
 #endif
     std::FILE* f = f_;
     f_ = nullptr;

@@ -8,6 +8,7 @@
 // commit() succeeds; if the object is destroyed first (an exception, a
 // cancelled job) the partial file is deleted.
 
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -21,8 +22,8 @@ public:
     OutFile& operator=(const OutFile&) = delete;
 
     void write(const void* data, size_t bytes);
-    void seek(long offset);  // absolute position
-    // Flushes, forces the data onto the device (fsync; F_FULLFSYNC on macOS)
+    void seek(std::int64_t offset);  // absolute position (64-bit: Windows' long is 32)
+    // Flushes, forces the data onto the device (fsync; F_FULLFSYNC on macOS; _commit on Windows)
     // and closes. For atomic files, then renames over the final path.
     void commit(bool sync_to_device = false);
 

@@ -12,8 +12,14 @@ struct SDL_Window;
 namespace gui::platform {
 
 // Where settings, jobs and the log live
-// (macOS: ~/Library/Application Support/FruitSlicer).
+// (macOS: ~/Library/Application Support/FruitSlicer; Windows: %APPDATA%\FruitSlicer).
 std::string dataDir();
+
+// Windows: FruitSlicer.exe is a windowed program, so started from a command
+// prompt with --self-test or --script it borrows that prompt's console for
+// what it prints (run with its output piped, as CI does, it writes there
+// anyway). Nothing elsewhere.
+void attachConsole();
 
 // Native open-file dialog. `done` runs on the UI thread with the chosen
 // path, or an empty string when the user cancelled. Filters are extension
@@ -39,18 +45,19 @@ struct Volume {
     unsigned long long free_bytes = 0;
 };
 std::vector<Volume> removableVolumes();
-// Unmounts and ejects the drive at `path` (macOS). False with a message if
-// it could not, e.g. a file on it is still open. Safe on any thread.
+// Unmounts and ejects the drive at `path` (macOS, Windows). False with a
+// message if it could not, e.g. a file on it is still open. Safe on any thread.
 bool ejectVolume(const std::string& path, std::string* error);
 
-// Shows the file in Finder, selected (elsewhere: opens its folder).
+// Shows the file in Finder or Explorer, selected (elsewhere: opens its folder).
 void revealFile(const std::string& path);
 
 // Delivers dialog results on the UI thread; call once per frame.
 void pumpCallbacks();
 
 // Keeps macOS from napping the app while a job runs (App Nap would slow
-// background work down to a crawl).
+// background work down to a crawl); on Windows, the PC from sleeping and
+// Windows from throttling the app while its window is in the background.
 void beginBusy(const std::string& reason);
 void endBusy();
 

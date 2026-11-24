@@ -214,11 +214,15 @@ void settings(App& app) {
     text("Help and privacy", fonts().semibold, size::Section, col::Text);
     ImGui::Dummy(ImVec2(0, 2));
     settingRow("Usage data",
+#if FRUIT_WIFI
                "FruitSlicer sends nothing about your models or prints. It uses the network only to find your printer and "
                "send files to it, when you ask.",
+#else
+               "FruitSlicer sends nothing about your models or prints, and does not use the network at all.",
+#endif
                pillWidth("Never sent"), [] { valuePill("Never sent"); }, true);
     {
-        const char* label = "Show in Finder";
+        const char* label = showFileLabel();
         const float bw = textWidth(label, fonts().semibold, size::Body) + 28;
         const bool det = app.options().deterministic;
         settingRow("Log file",

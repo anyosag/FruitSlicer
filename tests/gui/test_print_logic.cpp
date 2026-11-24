@@ -311,3 +311,15 @@ TEST_CASE("Print: a file saved through the folder dialog onto a USB drive counts
     CHECK(driveHolding("/Users/me/Documents/a.goo", drives).empty());
     CHECK(driveHolding("/Volumes/DISK_IMG/a.goo", {}).empty());
 }
+
+#ifdef _WIN32
+TEST_CASE("Print: on Windows a file is on its drive whatever its slashes and letter case", "[gui][print]") {
+    const std::vector<platform::Volume> drives = {{"ELEGOO (E:)", "E:\\", "FAT32", 0}};
+    CHECK(driveHolding("E:\\DishRack5.goo", drives) == "ELEGOO (E:)");
+    CHECK(driveHolding("e:\\prints\\a.goo", drives) == "ELEGOO (E:)");
+    CHECK(driveHolding("E:/prints/a.goo", drives) == "ELEGOO (E:)");
+    CHECK(driveHolding("F:\\a.goo", drives).empty());
+    CHECK(driveHolding("C:\\Users\\me\\a.goo", drives).empty());
+    CHECK(driveHolding("E:\\", drives).empty());  // the drive itself is no file on it
+}
+#endif
