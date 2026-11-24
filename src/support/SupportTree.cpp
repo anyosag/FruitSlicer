@@ -391,6 +391,9 @@ private:
         bool roomier = false;
         Vec3 roomier_end;
         double roomier_foot = 0;
+        // A way down that needs none of the supports made before it: given
+        // this, supportTip finds one whatever was made before.
+        bool sure = false;
     };
     // How far a shaft that would run close beside the model walks at 45° for
     // more room (mm).
@@ -409,12 +412,27 @@ private:
     // A pillar where a route from head `hi`'s junction lands: a diagonal
     // bridge to its top.
     void routedPillar(int hi, const Vec3& end, double foot_room);
-    Ahead workOut(const SupportPoint& p) const;
+    // `to_the_end`: also as far as supportTip goes on with nothing worked out
+    // ahead (a stand on the model under a straight drop whose foot would be in
+    // a slot), so that supportTip given it does what it does given none.
+    Ahead workOut(const SupportPoint& p, bool to_the_end = false) const;
+    // What supportSmallerOrMoved tries for a tip, in order: smaller where it
+    // is, then nearby on the same face. And as many of them as were worked out
+    // ahead (workOut, to the end), from the first.
+    struct Try {
+        SupportPoint q;
+        double moved = 0;
+    };
+    struct Tries {
+        std::vector<Try> list;
+        std::vector<Ahead> ahead;
+    };
+    std::vector<Try> triesFor(const SupportPoint& p) const;
     // `ahead`: that tip's work, done before (null: done here).
     bool supportTip(const SupportPoint& p, int pi, const char*& why, const Ahead* ahead = nullptr);
     // The same at the planned size, then smaller ones; then a little way
     // across the same face. True when one of them got a head.
-    bool supportSmallerOrMoved(const SupportPoint& p, int pi);
+    bool supportSmallerOrMoved(const SupportPoint& p, int pi, Tries* known = nullptr);
     bool attachToPillar(int head);
     // `head`'s junction lies in the junction of a head that has a way down to
     // the raft (the two are one ball in the print): it shares that junction
@@ -918,29 +936,36 @@ void Builder::raft() {
 thread_local const std::vector<int>* Builder::t_own_details = nullptr;
 thread_local bool Builder::t_beside_mouths = false;
 
-Builder::Ahead Builder::workOut(const SupportPoint& p) const {
+Builder::Ahead Builder::workOut(const SupportPoint& p, bool to_the_end) const {
     const OwnDetails own(cfg_, p);
     // As supportTip goes, up to what depends on the supports built before it.
     Ahead a;
     a.head = placeHead(p, a.h, a.drop_ok);
     if (!a.head) return a;
     if (headBottom(a.h) < 0) {
-        a.plate = true;  // settled in order (it may be reported)
+        a.plate = a.sure = true;  // settled in order (it may be reported)
         return a;
     }
     const double shaft_r = a.h.spec.shaft_diameter / 2;
     a.room = a.drop_ok ? footRoom(a.h.junction.xy(), shaft_r) : 0;
     if (a.drop_ok && a.room >= 2 * shaft_r - 1e-9) {
         a.roomier = roomierDrop(a.h.junction, shaft_r, a.roomier_end, a.roomier_foot);
+        a.sure = true;
         return a;
     }
     a.route = groundRoute(a.h.junction, shaft_r, cfg_.max_route_length, a.route_end);
     if (a.route) {
         a.route_room = footRoom(a.route_end.xy(), shaft_r);
+        a.sure = true;
         return a;
     }
-    if (a.drop_ok) return a;
+    if (a.drop_ok) {
+        // A straight foot, unless that would be in a slot.
+        a.sure = !inDetail({a.h.junction.x, a.h.junction.y, out_.raft_top}, shaft_r);
+        if (a.sure || !to_the_end) return a;
+    }
     a.stand = modelStand(a.h.junction, a.h.spec.shaft_diameter / 2, a.stand_top, a.foot, a.foot_n);
+    a.sure = a.stand;
     return a;
 }
 
@@ -1050,7 +1075,7 @@ bool Builder::samePiece(const Vec3& a, const Vec3& b, const Vec3& n) const {
     return true;
 }
 
-bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi) {
+std::vector<Builder::Try> Builder::triesFor(const SupportPoint& p) const {
     // A smaller head is narrower, and so is its shaft: it may find a way down
     // where the planned size found none (beside a wall, inside a cup). Better
     // a smaller tip than none: the planner counted on one here.
@@ -1058,23 +1083,16 @@ bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi) {
     std::vector<double> sizes{p.tip_diameter};
     for (const double d : {0.4, 0.3})
         if (d < sizes.back() - 1e-9) sizes.push_back(d);
+    std::vector<Try> out;
     const auto atSizes = [&](const SupportPoint& at, double moved) {
         for (const double d : sizes) {
             if (moved == 0 && d == p.tip_diameter) continue;
             SupportPoint q = at;
             q.tip_diameter = d;
-            const char* w = nullptr;
-            if (!supportTip(q, pi, w)) continue;
-            Head& h = out_.heads.back();
-            h.smaller = d < p.tip_diameter - 1e-9;
-            h.moved = moved;
-            out_.smaller_heads += h.smaller;
-            out_.moved_heads += moved > 0;
-            return true;
+            out.push_back({q, moved});
         }
-        return false;
     };
-    if (atSizes(p, 0)) return true;
+    atSizes(p, 0);
     // Then the same face a little way off, nearest first: within a tip's
     // reach of where it was planned, so it still holds what it was for.
     const Vec3 n = normalized(p.normal);
@@ -1098,8 +1116,33 @@ bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi) {
             SupportPoint q = p;
             q.pos = hit->point;
             q.normal = hn;
-            if (atSizes(q, distance(q.pos, p.pos))) return true;
+            atSizes(q, distance(q.pos, p.pos));
         }
+    return out;
+}
+
+bool Builder::supportSmallerOrMoved(const SupportPoint& p, int pi, Tries* known) {
+    // Each try in turn, the first that finds a way taken. What a try works out of the model alone is worked
+    // out ahead where it was (run), and otherwise here, the next few side by side; only joining it to the
+    // supports already made goes one at a time.
+    Tries own;
+    Tries& t = known && !known->list.empty() ? *known : own;
+    if (t.list.empty()) t.list = triesFor(p);
+    for (size_t i = 0; i < t.list.size(); ++i) {
+        if (i == t.ahead.size()) {
+            const size_t to = std::min(t.list.size(), i + resolveThreads(0));
+            t.ahead.resize(to);
+            parallelFor(to - i, 0, [&](size_t k) { t.ahead[i + k] = workOut(t.list[i + k].q, true); });
+        }
+        const char* w = nullptr;
+        if (!supportTip(t.list[i].q, pi, w, &t.ahead[i])) continue;
+        Head& h = out_.heads.back();
+        h.smaller = t.list[i].q.tip_diameter < p.tip_diameter - 1e-9;
+        h.moved = t.list[i].moved;
+        out_.smaller_heads += h.smaller;
+        out_.moved_heads += t.list[i].moved > 0;
+        return true;
+    }
     return false;
 }
 
@@ -1110,13 +1153,25 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
     std::iota(order.begin(), order.end(), 0);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return pts[a].pos.z > pts[b].pos.z; });
     const double np = static_cast<double>(std::max<size_t>(order.size(), 1));
-    // Each tip's own work first, side by side (the most of it)...
+    // Each tip's own work first, side by side (the most of it). A tip that
+    // may find no way down, unless the supports made before it give it one,
+    // has its smaller and moved tries worked out too, as far as the first
+    // sure of a way: the join goes no further than that...
     std::vector<Ahead> ahead(pts.size());
+    std::vector<Tries> tries(pts.size());
     std::atomic<size_t> worked{0};
     parallelFor(order.size(), 0, [&](size_t k) {
         ctl.check();
         const size_t pi = static_cast<size_t>(order[k]);
         ahead[pi] = workOut(pts[pi]);
+        if (!ahead[pi].sure) {
+            Tries& t = tries[pi];
+            t.list = triesFor(pts[pi]);
+            for (const Try& one : t.list) {
+                t.ahead.push_back(workOut(one.q, true));
+                if (t.ahead.back().sure) break;
+            }
+        }
         if ((++worked & 15) == 0) ctl.report("tree", 0.5 * static_cast<double>(worked) / np);
     });
     // ...then joined in order, highest first.
@@ -1126,7 +1181,7 @@ SupportTree Builder::run(const std::vector<SupportPoint>& pts, const JobControl&
         const SupportPoint& p = pts[pi];
         const char* why = nullptr;
         if (supportTip(p, pi, why, &ahead[static_cast<size_t>(pi)])) continue;
-        if (supportSmallerOrMoved(p, pi)) continue;
+        if (supportSmallerOrMoved(p, pi, &tries[static_cast<size_t>(pi)])) continue;
         // An island with no way down at its place nor along its own piece: beside a slot's opening (OwnDetails).
         if (p.category == PointCategory::Island && cfg_.details) {
             t_beside_mouths = true;
