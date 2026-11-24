@@ -3,6 +3,15 @@
 // fruitslicer — resin support generator CLI.
 
 #include <CLI/CLI.hpp>
+// On Windows CLI11 brings in <windows.h>, whose "near" and "far" macros (left
+// over from 16-bit Windows) would wipe out the fields called near in
+// stability/Stability.h.
+#ifdef near
+#undef near
+#endif
+#ifdef far
+#undef far
+#endif
 #include <nlohmann/json.hpp>
 
 #include <filesystem>

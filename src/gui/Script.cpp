@@ -323,19 +323,27 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
     const int pw = static_cast<int>(width_ * scale_), ph = static_cast<int>(height_ * scale_);
     for (const auto& step : steps_) {
         log::info("script: " + step.dump());
+        // One `if` per kind of step, each ending in `continue`: not one long
+        // else-if chain, which nests too deeply for Microsoft's compiler.
         if (step.contains("screen")) {
             app.setScreen(screenFrom(step["screen"].get<std::string>()));
-        } else if (step.contains("open")) {
+            continue;
+        }
+        if (step.contains("open")) {
             std::string p = step["open"].get<std::string>();
             if (p == "@demo-job") p = (demoDir() / "bracket.fruitjob").string();
             else if (!p.empty() && p[0] == '@') p = demoPath(p);
             app.openPath(p);
-        } else if (step.contains("add_part")) {
+            continue;
+        }
+        if (step.contains("add_part")) {
             // Another model onto the plate (then the health dialog, as for open).
             std::string p = step["add_part"].get<std::string>();
             if (!p.empty() && p[0] == '@') p = demoPath(p);
             app.addPartFrom(p);
-        } else if (step.contains("select_part") || step.contains("remove_part")) {
+            continue;
+        }
+        if (step.contains("select_part") || step.contains("remove_part")) {
             const bool select = step.contains("select_part");
             const int i = step[select ? "select_part" : "remove_part"].get<int>() - 1;  // 1 = the first
             const auto& doc = app.document();
@@ -344,90 +352,136 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             const int id = doc->parts()[static_cast<std::size_t>(i)].id();
             if (select) app.selectPart(id);
             else app.removePart(id);
-        } else if (step.contains("select_at")) {
+            continue;
+        }
+        if (step.contains("select_at")) {
             // [x, y, z, dx, dy, dz]: a click in the 3D view along that ray (printer coordinates) selects the part it meets.
             const auto& a = step["select_at"];
             const int id = app.pickPart({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()},
                                         {a[3].get<double>(), a[4].get<double>(), a[5].get<double>()});
             if (id < 0) throw std::runtime_error("select_at: meets no part");
             app.selectPart(id);
-        } else if (step.contains("save_job")) {
+            continue;
+        }
+        if (step.contains("save_job")) {
             std::string p = step["save_job"].get<std::string>();
             if (p == "@demo") p = (demoDir() / "bracket.fruitjob").string();
             app.saveJobTo(p);
-        } else if (step.contains("unsaved")) {
+            continue;
+        }
+        if (step.contains("unsaved")) {
             const std::string a = step["unsaved"].get<std::string>();
             app.answerUnsaved(a == "save"      ? App::UnsavedAnswer::Save
                               : a == "discard" ? App::UnsavedAnswer::DontSave
                                                : App::UnsavedAnswer::Cancel);
-        } else if (step.contains("relink")) {
+            continue;
+        }
+        if (step.contains("relink")) {
             const std::string a = step["relink"].get<std::string>();
             if (a == "copy") app.relinkOpen();
             else if (a == "cancel") app.relinkCancel();
             else app.relinkTo(a == "@demo" ? demoPath("@demo") : a);
-        } else if (step.contains("remove")) {
+            continue;
+        }
+        if (step.contains("remove")) {
             // Test set-up: "@demo" removes the demo bracket's STL (to make a saved job's model go missing).
             std::string p = step["remove"].get<std::string>();
             if (p == "@demo") p = (demoDir() / "bracket.stl").string();
             std::error_code ec;
             std::filesystem::remove(p, ec);
-        } else if (step.contains("health")) {
+            continue;
+        }
+        if (step.contains("health")) {
             const std::string what = step["health"].get<std::string>();
             if (what == "place") app.placeChecked();
             else if (what == "cancel") app.cancelChecked();
             else app.chooseSize(sizeFrom(what), step.value("percent", 0.0));
-        } else if (step.contains("scale")) {
+            continue;
+        }
+        if (step.contains("scale")) {
             app.setScalePercent(step["scale"].get<double>());
-        } else if (step.contains("rotate")) {
+            continue;
+        }
+        if (step.contains("rotate")) {
             const auto& r = step["rotate"];
             app.setRotation({r[0].get<double>(), r[1].get<double>(), r[2].get<double>()});
-        } else if (step.contains("lay_face")) {
+            continue;
+        }
+        if (step.contains("lay_face")) {
             // The n-th largest flat face (1-based) of the selected part laid on the plate.
             const int n = step["lay_face"].get<int>();
             if (!app.layFace(n - 1)) throw std::runtime_error("lay_face: no flat face " + std::to_string(n) + " to lay down");
-        } else if (step.contains("hover_face")) {
+            continue;
+        }
+        if (step.contains("hover_face")) {
             app.setHoverFace(step["hover_face"].get<int>() - 1);  // lit as if the mouse were on it; 0 puts it out
-        } else if (step.contains("cube_hover")) {
+            continue;
+        }
+        if (step.contains("cube_hover")) {
             // {"cube_hover": [x, y]}: the view cube drawn as if the pointer were at that point of it
             // (pixels from its centre, y down); {"cube_hover": false} takes the stand-in away.
             const auto& v = step["cube_hover"];
             if (v.is_array()) app.setCubeHover(std::pair<float, float>{v[0].get<float>(), v[1].get<float>()});
             else app.setCubeHover(std::nullopt);
-        } else if (step.contains("cube_click")) {
+            continue;
+        }
+        if (step.contains("cube_click")) {
             // {"cube_click": [x, y]}: a click on that point of the view cube.
             app.clickViewCube(step["cube_click"][0].get<float>(), step["cube_click"][1].get<float>());
-        } else if (step.contains("cube_drag")) {
+            continue;
+        }
+        if (step.contains("cube_drag")) {
             // {"cube_drag": [dx, dy]}: the view cube dragged by so many pixels.
             app.dragViewCube(step["cube_drag"][0].get<float>(), step["cube_drag"][1].get<float>());
-        } else if (step.contains("hover_point")) {
+            continue;
+        }
+        if (step.contains("hover_point")) {
             // {"hover_point": [x, y, z]}: the selected part's surface nearest that point (printer mm) lit as
             // if the mouse were on it; {"hover_point": false} puts it out.
             const auto& v = step["hover_point"];
             if (v.is_array()) app.setHoverPoint(fruit::Vec3{v[0].get<double>(), v[1].get<double>(), v[2].get<double>()});
             else app.setHoverPoint(std::nullopt);
-        } else if (step.contains("lay_point")) {
+            continue;
+        }
+        if (step.contains("lay_point")) {
             // {"lay_point": [x, y, z]}: On plate's click on the selected part's surface nearest that point.
             const auto& v = step["lay_point"];
             const SurfacePick s = app.surfaceNear({v[0].get<double>(), v[1].get<double>(), v[2].get<double>()});
             if (s.kind == SurfacePick::Kind::None) throw std::runtime_error("lay_point: no surface of the selected part there");
             app.laySurface(s);
-        } else if (step.contains("sits")) {
+            continue;
+        }
+        if (step.contains("sits")) {
             app.setOnPlate(step["sits"].get<std::string>() == "flat");
-        } else if (step.contains("fit")) {
+            continue;
+        }
+        if (step.contains("fit")) {
             app.scaleToFit();
-        } else if (step.contains("move")) {
+            continue;
+        }
+        if (step.contains("move")) {
             const auto& m = step["move"];
             app.setPosition({m[0].get<double>(), m[1].get<double>()});
-        } else if (step.contains("nudge")) {
+            continue;
+        }
+        if (step.contains("nudge")) {
             const auto& m = step["nudge"];
             app.nudge(m[0].get<double>(), m[1].get<double>());
-        } else if (step.contains("centre")) {
+            continue;
+        }
+        if (step.contains("centre")) {
             app.centreModel();
-        } else if (step.contains("turn")) {
+            continue;
+        }
+        if (step.contains("turn")) {
             app.turnQuarter();
-        } else if (step.contains("slide_on")) {
+            continue;
+        }
+        if (step.contains("slide_on")) {
             app.slideOntoPlate();
-        } else if (step.contains("drag")) {
+            continue;
+        }
+        if (step.contains("drag")) {
             // ["move_x" | "move_y" | "turn_x" | "turn_y" | "turn_z", amount (mm or degrees), snap (⇧)]
             const auto& d = step["drag"];
             const std::string h = d[0].get<std::string>();
@@ -439,19 +493,31 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                                                   : Handle::None;
             if (handle == Handle::None) throw std::runtime_error("unknown handle " + h);
             app.dragHandleBy(handle, d[1].get<double>(), d.size() > 2 && d[2].get<bool>());
-        } else if (step.contains("undo")) {
+            continue;
+        }
+        if (step.contains("undo")) {
             for (int i = 0, n = step["undo"].get<int>(); i < n; ++i) app.undo();
-        } else if (step.contains("redo")) {
+            continue;
+        }
+        if (step.contains("redo")) {
             for (int i = 0, n = step["redo"].get<int>(); i < n; ++i) app.redo();
-        } else if (step.contains("step")) {
+            continue;
+        }
+        if (step.contains("step")) {
             app.goToStep(stepFrom(step["step"].get<std::string>()));
-        } else if (step.contains("tool")) {
+            continue;
+        }
+        if (step.contains("tool")) {
             app.openTool(toolFrom(step["tool"].get<std::string>()));
-        } else if (step.contains("mirror")) {
+            continue;
+        }
+        if (step.contains("mirror")) {
             const std::string a = step["mirror"].get<std::string>();
             if (a != "x" && a != "y" && a != "z") throw std::runtime_error("unknown mirror axis " + a);
             app.mirrorModel(a == "x" ? 0 : a == "y" ? 1 : 2);
-        } else if (step.contains("part_menu") || step.contains("part_menu_duplicate")) {
+            continue;
+        }
+        if (step.contains("part_menu") || step.contains("part_menu_duplicate")) {
             // {"part_menu": n} opens part n's menu (1-based) where a double-click on its row would, at
             // "at": [x, y] (default beside the Job panel's Parts list at 1440 x 900);
             // {"part_menu_duplicate": n} is that menu's Duplicate.
@@ -463,30 +529,46 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (dup) app.duplicateOnce(id);
             else if (step.contains("at")) app.openPartMenu(id, step["at"][0].get<float>(), step["at"][1].get<float>());
             else app.openPartMenu(id, 850, 236);
-        } else if (step.contains("duplicate")) {
+            continue;
+        }
+        if (step.contains("duplicate")) {
             app.partsTools().copies = std::clamp(step["duplicate"].get<int>(), 1, kMaxCopies);
             app.duplicateParts();
-        } else if (step.contains("layouts")) {
+            continue;
+        }
+        if (step.contains("layouts")) {
             // "find": Arrange's Find layouts (then {"wait": "jobs"}); "close": back to the job.
             const std::string a = step["layouts"].get<std::string>();
             if (a == "find") app.findLayouts();
             else if (a == "close") app.closeLayouts();
             else throw std::runtime_error("unknown layouts step " + a);
-        } else if (step.contains("layout_use")) {
+            continue;
+        }
+        if (step.contains("layout_use")) {
             app.useLayout(step["layout_use"].get<int>() - 1);  // 1 = the first
-        } else if (step.contains("arrange_turn")) {
+            continue;
+        }
+        if (step.contains("arrange_turn")) {
             app.partsTools().arrange_turn = step["arrange_turn"].get<bool>();
-        } else if (step.contains("arrange")) {
+            continue;
+        }
+        if (step.contains("arrange")) {
             if (step["arrange"].is_number()) app.partsTools().arrange_gap = step["arrange"].get<double>();
             app.arrangeAll();
-        } else if (step.contains("split")) {
+            continue;
+        }
+        if (step.contains("split")) {
             app.splitSelected();
-        } else if (step.contains("merge_parts")) {
+            continue;
+        }
+        if (step.contains("merge_parts")) {
             // {"merge_parts": "join" | "fuse"}; {"merge_pick": [n, ...]} (1-based) first leaves the others out
             const std::string how = step["merge_parts"].get<std::string>();
             if (how != "join" && how != "fuse") throw std::runtime_error("unknown merge " + how);
             app.mergeParts(how == "fuse");
-        } else if (step.contains("merge_pick")) {
+            continue;
+        }
+        if (step.contains("merge_pick")) {
             if (!app.document()) throw std::runtime_error("merge_pick: no job");
             std::vector<int> on;
             for (const auto& n : step["merge_pick"]) {
@@ -496,11 +578,15 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             }
             for (const Part& p : app.document()->parts())
                 app.mergePick(p.id(), std::find(on.begin(), on.end(), p.id()) != on.end());
-        } else if (step.contains("collisions")) {
+            continue;
+        }
+        if (step.contains("collisions")) {
             // {"collisions": "wait"} lets the background check finish; {"collisions": mm} sets the least gap
             if (step["collisions"].is_number()) app.collisionGap() = step["collisions"].get<double>();
             else app.finishCollisions();
-        } else if (step.contains("measure")) {
+            continue;
+        }
+        if (step.contains("measure")) {
             // Points on the plate; each is brought onto the surface along the line to the middle of the
             // part whose middle is nearest it (with one part, the model's middle).
             if (step["measure"].is_string()) {
@@ -520,25 +606,37 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                     app.measureClick(at);
                 }
             }
-        } else if (step.contains("close_tool")) {
+            continue;
+        }
+        if (step.contains("close_tool")) {
             app.closeToolPanel();
-        } else if (step.contains("job_tab")) {
+            continue;
+        }
+        if (step.contains("job_tab")) {
             const std::string tab = step["job_tab"].get<std::string>();
             app.jobTab() = tab == "collisions" ? 2 : tab == "hollows" ? 1 : 0;
-        } else if (step.contains("side")) {
+            continue;
+        }
+        if (step.contains("side")) {
             app.toggleSide(sideFrom(step["side"].get<std::string>()));
-        } else if (step.contains("orient")) {
+            continue;
+        }
+        if (step.contains("orient")) {
             const std::string what = step["orient"].get<std::string>();
             if (what == "find") app.findOrientation();
             else if (what == "settings") app.showOrientSettings();
             else throw std::runtime_error("unknown orient step " + what);
-        } else if (step.contains("hollow")) {
+            continue;
+        }
+        if (step.contains("hollow")) {
             const std::string what = step["hollow"].get<std::string>();
             if (what == "open") app.showHollow();
             else if (what == "apply") app.applyHollow();
             else throw std::runtime_error("unknown hollow step " + what);
-        } else if (step.contains("hollow_fix") || step.contains("hollow_it") || step.contains("hole_place") ||
-                   step.contains("hole_diameter")) {
+            continue;
+        }
+        if (step.contains("hollow_fix") || step.contains("hollow_it") || step.contains("hole_place") ||
+            step.contains("hole_diameter")) {
             const auto& doc = app.document();
             if (!doc) throw std::runtime_error("hollow choices: no model open");
             HollowChoices c = doc->hollow.choices;
@@ -555,7 +653,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (step.contains("hole_place")) c.auto_holes = step["hole_place"].get<std::string>() != "hand";
             c.hole_diameter = step.value("hole_diameter", c.hole_diameter);
             app.setHollowChoices(c);
-        } else if (step.contains("hole_ray")) {
+            continue;
+        }
+        if (step.contains("hole_ray")) {
             // [x, y, z, dx, dy, dz]: from (x, y, z) mm off the middle of the placed model, along (dx, dy, dz);
             // a hole goes in where that first meets the model, as a click there would put it.
             const auto& a = step["hole_ray"];
@@ -568,42 +668,60 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                                fruit::normalized({a[3].get<double>(), a[4].get<double>(), a[5].get<double>()}), &pos, &n))
                 throw std::runtime_error("hole_ray: misses the model");
             app.addHoleAt(pos, n);
-        } else if (step.contains("cut")) {
+            continue;
+        }
+        if (step.contains("cut")) {
             app.setCutAway(step["cut"].get<bool>());
-        } else if (step.contains("cut_axis")) {
+            continue;
+        }
+        if (step.contains("cut_axis")) {
             // The Hollow screen's cut: "x", "y" or "height", as its buttons set it.
             const std::string a = step["cut_axis"].get<std::string>();
             if (a != "x" && a != "y" && a != "height") throw std::runtime_error("cut_axis: x, y or height");
             app.setHollowCutAxis(a == "x" ? 0 : a == "y" ? 1 : 2);
-        } else if (step.contains("cut_at")) {
+            continue;
+        }
+        if (step.contains("cut_at")) {
             // Where along its axis, mm off the middle of the job (as its slider sets it).
             App::HollowCut c = app.hollowCut();
             const auto [lo, hi] = app.hollowCutRange(c.axis);
             c.at = (lo + hi) / 2 + step["cut_at"].get<double>();
             app.setHollowCut(c);
-        } else if (step.contains("cut_flip")) {
+            continue;
+        }
+        if (step.contains("cut_flip")) {
             App::HollowCut c = app.hollowCut();
             c.keep_above = !c.keep_above;
             app.setHollowCut(c);
-        } else if (step.contains("hole_remove")) {
+            continue;
+        }
+        if (step.contains("hole_remove")) {
             app.removeHole(step["hole_remove"].get<int>() - 1);  // 1 = the first
-        } else if (step.contains("hollow_accept")) {
+            continue;
+        }
+        if (step.contains("hollow_accept")) {
             // 1 = the Hollow screen's first hollow; negative takes it back.
             const int i = step["hollow_accept"].get<int>();
             if (i == 0) throw std::runtime_error("hollow_accept: 1 is the first hollow, -1 takes it back");
             if (!app.acceptHollow(static_cast<std::size_t>(std::abs(i) - 1), i > 0))
                 throw std::runtime_error("hollow_accept: no such hollow, or the hollows aren't found yet");
-        } else if (step.contains("hollow_select")) {
+            continue;
+        }
+        if (step.contains("hollow_select")) {
             // 1 = the Hollow screen's first hollow, chosen and the view turned to it; 0 chooses none.
             app.selectHollow(step["hollow_select"].get<int>() - 1);
-        } else if (step.contains("hollow_vent")) {
+            continue;
+        }
+        if (step.contains("hollow_vent")) {
             // 1 = a vent into the first hollow, where the screen suggests one; negative takes its vents out.
             const int i = step["hollow_vent"].get<int>();
             if (i == 0) throw std::runtime_error("hollow_vent: 1 is the first hollow, -1 takes its vents out");
             if (i > 0 && !app.addVent(static_cast<std::size_t>(i - 1)))
                 throw std::runtime_error("hollow_vent: no vent fits that hollow, or the hollows aren't found yet");
             if (i < 0) app.removeVents(static_cast<std::size_t>(-i - 1));
-        } else if (step.contains("hollow_tilt")) {
+            continue;
+        }
+        if (step.contains("hollow_tilt")) {
             // {"hollow_tilt": 1}: find a tilt for the first hollow's part; {"hollow_tilt": "use"}: turn it as found.
             if (step["hollow_tilt"].is_string()) {
                 const auto& doc = app.document();
@@ -613,9 +731,13 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.findCupTilt(static_cast<std::size_t>(step["hollow_tilt"].get<int>() - 1));
             }
-        } else if (step.contains("use")) {
+            continue;
+        }
+        if (step.contains("use")) {
             app.useOrientation(step["use"].get<int>() - 1);  // 1 = option 1; 0 keeps how it sits
-        } else if (step.contains("supports")) {
+            continue;
+        }
+        if (step.contains("supports")) {
             const std::string what = step["supports"].get<std::string>();
             if (what == "now") {
                 app.supportsNow();  // the accent button from any place
@@ -623,7 +745,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 if (what != "generate") throw std::runtime_error("unknown supports step " + what);
                 app.generateSupports();
             }
-        } else if (step.contains("quick")) {
+            continue;
+        }
+        if (step.contains("quick")) {
             // {"quick": {"how_many": 1-5, "tip": 0.3 | 0.4 | 0.6, "look_further": bool}}: the quick support controls
             if (!app.document()) throw std::runtime_error("quick: no model open");
             SupportChoices c = app.supportChoicesShown();  // All parts', or the selected part's
@@ -635,26 +759,42 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             }
             if (q.contains("look_further")) c.look_further = q["look_further"].get<bool>();
             app.setSupportChoices(c);
-        } else if (step.contains("scroll_panel")) {
+            continue;
+        }
+        if (step.contains("scroll_panel")) {
             app.scrollToolPanel(step["scroll_panel"].get<std::string>() == "end");
-        } else if (step.contains("quick_reset")) {
+            continue;
+        }
+        if (step.contains("quick_reset")) {
             app.resetQuickSupport();
-        } else if (step.contains("raft")) {
+            continue;
+        }
+        if (step.contains("raft")) {
             app.setOnPlate(!step["raft"].get<bool>());
-        } else if (step.contains("raft_type")) {
+            continue;
+        }
+        if (step.contains("raft_type")) {
             // {"raft_type": "pads" | "full"}: the raft's kind, with the supports made stale like any setting
             SupportChoices c = app.supportChoicesShown();
             const bool full = step["raft_type"].get<std::string>() == "full";
             c.raft = full ? fruit::plainBaseSpec() : fruit::leastResinSpec();
             c.raft_preset.name = full ? "Plain base" : fruit::kDefaultRaftPreset;
             app.setSupportChoices(c);
-        } else if (step.contains("height_correction")) {
+            continue;
+        }
+        if (step.contains("height_correction")) {
             app.setHeightCorrection(step["height_correction"].get<double>());
-        } else if (step.contains("lift_custom")) {
+            continue;
+        }
+        if (step.contains("lift_custom")) {
             app.liftCustomOpen() = step["lift_custom"].get<bool>();  // the Lift row's Custom… field
-        } else if (step.contains("lift")) {
+            continue;
+        }
+        if (step.contains("lift")) {
             app.setLift(step["lift"].get<double>());
-        } else if (step.contains("lift_slide")) {
+            continue;
+        }
+        if (step.contains("lift_slide")) {
             render();  // the panel drawn, so where its slider is is known
             const App::SliderTrack t = app.liftTrack();
             if (t.hi <= t.lo) throw std::runtime_error("lift_slide: the Lift height slider is not shown");
@@ -679,7 +819,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             frames(3);
             pointer_.reset();
             frames(2);
-        } else if (step.contains("click_part") || step.contains("click_empty")) {
+            continue;
+        }
+        if (step.contains("click_part") || step.contains("click_empty")) {
             // A click with the mouse in the 3D view: {"click_part": n} on the middle of part n (1-based),
             // {"click_empty": true} on the plate where no part is.
             render();  // the view drawn, so where it is is known
@@ -765,19 +907,25 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             frames(2);
             pointer_.reset();
             frames(1);
-        } else if (step.contains("handles_shown")) {
+            continue;
+        }
+        if (step.contains("handles_shown")) {
             // {"handles_shown": bool}: fails the script unless the handles that place a part are (not) shown.
             const bool want = step["handles_shown"].get<bool>();
             if (app.handlesShown() != want)
                 throw std::runtime_error(std::string("handles_shown: they are ") + (want ? "not shown" : "shown"));
-        } else if (step.contains("lift_is")) {
+            continue;
+        }
+        if (step.contains("lift_is")) {
             const double want = step["lift_is"].get<double>();
             const auto& doc = app.document();
             if (!doc) throw std::runtime_error("lift_is: no job open");
             const double got = doc->placement().elevation;
             if (std::abs(got - want) > 1e-6)
                 throw std::runtime_error(strf("lift_is: the lift is %g mm, not %g mm", got, want));
-        } else if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
+            continue;
+        }
+        if (step.contains("tip_size") || step.contains("spacing") || step.contains("merge")) {
             SupportChoices c = app.supportChoicesShown();
             if (step.contains("tip_size")) {
                 const double d = step["tip_size"].get<double>();
@@ -786,20 +934,26 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (step.contains("spacing")) c.density = step["spacing"].get<double>();
             if (step.contains("merge")) c.merge = step["merge"].get<bool>();
             app.setSupportChoices(c);
-        } else if (step.contains("supports_for")) {
+            continue;
+        }
+        if (step.contains("supports_for")) {
             // {"supports_for": "all" | "part"}: the Supports panel's switch (part: the selected one).
             const std::string what = step["supports_for"].get<std::string>();
             if (what != "all" && what != "part") throw std::runtime_error("supports_for: all or part");
             app.setSupportsForPart(what == "part");
-        } else if (step.contains("supports_section")) {
+            continue;
+        }
+        if (step.contains("supports_section")) {
             // {"supports_section": {"tips": false, "raft": true, "rafts": true}}: the panel's sections folded or open.
             for (const auto& [k, v] : step["supports_section"].items()) {
                 const int which = k == "tips" ? kSectionTips : k == "raft" ? kSectionRaft : k == "rafts" ? kSectionRafts : -1;
                 if (which < 0) throw std::runtime_error("supports_section: tips, raft or rafts");
                 app.setSupportsSectionOpen(which, v.get<bool>());
             }
-        } else if (step.contains("share_raft") || step.contains("separate_raft") || step.contains("own_raft") ||
-                   step.contains("use_job_values")) {
+            continue;
+        }
+        if (step.contains("share_raft") || step.contains("separate_raft") || step.contains("own_raft") ||
+            step.contains("use_job_values")) {
             // {"share_raft": [2, 1]}: part 2's raft goes with part 1's; {"separate_raft": 1}: the parts on
             // part 1's raft each on their own; {"own_raft": 2}: part 2 alone on its own; {"use_job_values": 2}:
             // part 2 back to All parts' values. Parts are counted from 1.
@@ -814,7 +968,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (step.contains("separate_raft")) app.separateRaft(id(step["separate_raft"]));
             else if (step.contains("own_raft")) app.leaveRaft(id(step["own_raft"]));
             else app.useJobValues(id(step["use_job_values"]));
-        } else if (step.contains("rafts_are")) {
+            continue;
+        }
+        if (step.contains("rafts_are")) {
             // {"rafts_are": [[1, 2], [3]]}: the rafts (as made when the supports are up to date, else as
             // chosen), each with its parts counted from 1; parts on the plate are on none.
             const auto& doc = app.document();
@@ -832,7 +988,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             }
             const auto want = step["rafts_are"].get<std::vector<std::vector<int>>>();
             if (got != want) throw std::runtime_error("rafts_are: the rafts are " + nlohmann::json(got).dump());
-        } else if (step.contains("part_is")) {
+            continue;
+        }
+        if (step.contains("part_is")) {
             // {"part_is": {"part": 2, "lift": 6, "on_plate": false, "tip": 0.6, "how_many": 4}}: part 2's
             // values as the panel would show them for it (any of them).
             const auto& doc = app.document();
@@ -852,43 +1010,67 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             }
             if (w.contains("how_many") && c.how_many != w["how_many"].get<int>())
                 throw std::runtime_error(strf("part_is: its How many is %d", c.how_many));
-        } else if (step.contains("supports_view")) {
+            continue;
+        }
+        if (step.contains("supports_view")) {
             const std::string v = step["supports_view"].get<std::string>();
             app.setSupportsView(v == "why"    ? SupportsView::Why
                                 : v == "tips" ? SupportsView::TipsOnly
                                 : v == "risk" ? SupportsView::Risk
                                               : SupportsView::Supports);
-        } else if (step.contains("risk")) {
+            continue;
+        }
+        if (step.contains("risk")) {
             // {"risk": "wait"} lets the replay of the print finish; {"risk": "show"} is "Show them on the model"
             const std::string what = step["risk"].get<std::string>();
             if (what == "show") app.showRisk();
             else app.finishRisk();
-        } else if (step.contains("risk_place")) {
+            continue;
+        }
+        if (step.contains("risk_place")) {
             app.selectRiskPlace(step["risk_place"].get<int>() - 1);  // 1-based, as numbered; 0: none
-        } else if (step.contains("risk_layer")) {
+            continue;
+        }
+        if (step.contains("risk_layer")) {
             app.showRiskLayer(step["risk_layer"].get<int>() - 1);  // the place's "Go to layer"
-        } else if (step.contains("layers_risk")) {
+            continue;
+        }
+        if (step.contains("layers_risk")) {
             app.setLayersRisk(step["layers_risk"].get<bool>());
-        } else if (step.contains("risk_colour")) {
+            continue;
+        }
+        if (step.contains("risk_colour")) {
             const std::string by = step["risk_colour"].get<std::string>();
             if (by != "lost" && by != "breaks") throw std::runtime_error("risk_colour: lost or breaks, not " + by);
             app.setRiskHeatOf(by == "lost" ? HeatOf::Lost : HeatOf::Breaks);
-        } else if (step.contains("select_tip")) {
+            continue;
+        }
+        if (step.contains("select_tip")) {
             app.selectTip(step["select_tip"].get<int>());
-        } else if (step.contains("layer")) {
+            continue;
+        }
+        if (step.contains("layer")) {
             app.setLayer(step["layer"].get<int>() - 1);  // 1-based, as shown
-        } else if (step.contains("show_below")) {
+            continue;
+        }
+        if (step.contains("show_below")) {
             app.setShowBelow(step["show_below"].get<bool>());
-        } else if (step.contains("problems")) {
+            continue;
+        }
+        if (step.contains("problems")) {
             app.showProblems(step["problems"].get<bool>());
-        } else if (step.contains("advanced")) {
+            continue;
+        }
+        if (step.contains("advanced")) {
             const std::string what = step["advanced"].get<std::string>();
             if (what == "open") app.showAdvanced(true);
             else if (what == "close") app.showAdvanced(false);
             else if (what == "reset") app.resetAdvanced();
             else if (what == "apply") app.applyAdvanced();
             else throw std::runtime_error("unknown advanced step " + what);
-        } else if (step.contains("slicing_page")) {
+            continue;
+        }
+        if (step.contains("slicing_page")) {
             // {"slicing_page": "open" | "used" | "close" | "slice" | "slice_now" | "layer_height" | "layer_height_close"}:
             // the Slicing settings page ("slice" is the Slice button; "used": as the Layers place opens it).
             const std::string what = step["slicing_page"].get<std::string>();
@@ -900,51 +1082,79 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (what == "layer_height") app.showLayerHeight(true);
             else if (what == "layer_height_close") app.showLayerHeight(false);
             else throw std::runtime_error("unknown slicing_page step " + what);
-        } else if (step.contains("slicing_open_is")) {
+            continue;
+        }
+        if (step.contains("slicing_open_is")) {
             // {"slicing_open_is": true}: fails unless the Slicing settings page is (or isn't) showing.
             if (app.slicingOpen() != step["slicing_open_is"].get<bool>())
                 throw std::runtime_error(std::string("slicing_open_is: the page is ") + (app.slicingOpen() ? "open" : "closed"));
-        } else if (step.contains("settings_before_slice")) {
+            continue;
+        }
+        if (step.contains("settings_before_slice")) {
             app.setSettingsBeforeSlice(step["settings_before_slice"].get<bool>());
-        } else if (step.contains("layer_height_pick")) {
+            continue;
+        }
+        if (step.contains("layer_height_pick")) {
             app.layerHeightPick() = step["layer_height_pick"].get<double>();  // a row on the Layer height page
-        } else if (step.contains("layer_height_use")) {
+            continue;
+        }
+        if (step.contains("layer_height_use")) {
             app.useLayerHeight(step["layer_height_use"].get<double>(), false);
-        } else if (step.contains("layer_height_is")) {
+            continue;
+        }
+        if (step.contains("layer_height_is")) {
             // {"layer_height_is": 0.05}: fails unless the print's layer height is that.
             if (!app.document()) throw std::runtime_error("layer_height_is: no job open");
             const double got = printLayerHeight(*app.document()), want = step["layer_height_is"].get<double>();
             if (std::abs(got - want) > 1e-6) throw std::runtime_error("layer_height_is: the print's is " + std::to_string(got));
-        } else if (step.contains("tested_light")) {
+            continue;
+        }
+        if (step.contains("tested_light")) {
             // {"tested_light": [0.05, 2.5, "published profile"]}: a tested time for the job's resin.
             const auto& t = step["tested_light"];
             if (!app.jobResin()) throw std::runtime_error("tested_light: the job's resin is not in the library");
             app.addTestedLight(t[0].get<double>(), t[1].get<double>(), t.size() > 2 ? t[2].get<std::string>() : std::string());
-        } else if (step.contains("raft_page")) {
+            continue;
+        }
+        if (step.contains("raft_page")) {
             // {"raft_page": "open" | "close" | "apply"}: the Raft page.
             const std::string what = step["raft_page"].get<std::string>();
             if (what == "open") app.showRaft(true);
             else if (what == "close") app.showRaft(false);
             else if (what == "apply") app.applyRaft();
             else throw std::runtime_error("unknown raft_page step " + what);
-        } else if (step.contains("raft_preset")) {
+            continue;
+        }
+        if (step.contains("raft_preset")) {
             app.useRaftPreset(step["raft_preset"].get<std::string>());  // a built-in preset or one of yours
-        } else if (step.contains("raft_value")) {
+            continue;
+        }
+        if (step.contains("raft_value")) {
             // {"raft_value": {"reach": 2.5, ...}}: values changed on the Raft page (keys as in the job file).
             if (!app.document()) throw std::runtime_error("raft_value: no job open");
             nlohmann::json j = fruit::raftSpecToJson(app.document()->supports.choices.raft);
             for (const auto& [k, v] : step["raft_value"].items()) j[k] = v;
             app.editRaft(fruit::raftSpecFromJson(j));
-        } else if (step.contains("raft_copy")) {
+            continue;
+        }
+        if (step.contains("raft_copy")) {
             app.askRaftCopy(step["raft_copy"].get<std::string>());  // Make a copy… on a preset's menu
-        } else if (step.contains("raft_menu")) {
+            continue;
+        }
+        if (step.contains("raft_menu")) {
             app.openRaftMenu(step["raft_menu"].get<std::string>());  // a preset's ··· menu, for a picture
-        } else if (step.contains("raft_new_jobs")) {
+            continue;
+        }
+        if (step.contains("raft_new_jobs")) {
             app.setNewJobsRaft(step["raft_new_jobs"].get<std::string>());
-        } else if (step.contains("raft_prompt_name")) {
+            continue;
+        }
+        if (step.contains("raft_prompt_name")) {
             if (!app.raftPrompt()) throw std::runtime_error("raft_prompt_name: no name is being asked for");
             app.raftPrompt()->name = step["raft_prompt_name"].get<std::string>();
-        } else if (step.contains("raft_prompt")) {
+            continue;
+        }
+        if (step.contains("raft_prompt")) {
             // {"raft_prompt": "save" | "cancel"}: the name prompt's buttons.
             const std::string what = step["raft_prompt"].get<std::string>();
             if (what == "save") {
@@ -954,7 +1164,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 throw std::runtime_error("unknown raft_prompt step " + what);
             }
-        } else if (step.contains("raft_is")) {
+            continue;
+        }
+        if (step.contains("raft_is")) {
             // {"raft_is": "name"}: fails unless the job's raft is that preset's (and has its values).
             const std::string want = step["raft_is"].get<std::string>();
             if (!app.document()) throw std::runtime_error("raft_is: no job open");
@@ -962,27 +1174,41 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (c.raft_preset.name != want) throw std::runtime_error("raft_is: the job's raft is " + c.raft_preset.name);
             const fruit::RaftSpec* s = presetSpec(want, app.raftPresets());
             if (!s || !(*s == c.raft)) throw std::runtime_error("raft_is: the job's raft has other values than " + want);
-        } else if (step.contains("raft_prompt_is")) {
+            continue;
+        }
+        if (step.contains("raft_prompt_is")) {
             // {"raft_prompt_is": "Copy of Easy release"}: the name the prompt offers ("" for no prompt).
             const std::string want = step["raft_prompt_is"].get<std::string>();
             const std::string got = app.raftPrompt() ? app.raftPrompt()->name : std::string();
             if (got != want) throw std::runtime_error("raft_prompt_is: the prompt offers \"" + got + "\"");
-        } else if (step.contains("setting")) {
+            continue;
+        }
+        if (step.contains("setting")) {
             const auto& kv = step["setting"];
             app.setAdvanced(kv[0].get<std::string>(), kv[1].get<double>());
-        } else if (step.contains("exposures")) {
+            continue;
+        }
+        if (step.contains("exposures")) {
             const auto& e = step["exposures"];
             app.setExposures(e[0].get<double>(), e[1].get<double>());
-        } else if (step.contains("start_setup")) {
+            continue;
+        }
+        if (step.contains("start_setup")) {
             app.startSetup();
-        } else if (step.contains("setup_step")) {
+            continue;
+        }
+        if (step.contains("setup_step")) {
             app.setupStep() = step["setup_step"].get<int>();
-        } else if (step.contains("default_sample")) {
+            continue;
+        }
+        if (step.contains("default_sample")) {
             // Setup's print settings, from a file (refused if it is for another printer).
             std::string p = step["default_sample"].get<std::string>();
             if (p == "@demo-sample") p = demoSample();
             app.useDefaultSample(p);
-        } else if (step.contains("typed_defaults")) {
+            continue;
+        }
+        if (step.contains("typed_defaults")) {
             const auto& t = step["typed_defaults"];
             App::TypedDefaults& d = app.typedDefaults();
             d.exposure = t[0].get<double>();
@@ -990,18 +1216,26 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             d.bottom_layers = t[2].get<int>();
             d.transition_layers = t[3].get<int>();
             app.setupTyped() = true;
-        } else if (step.contains("setup_typed")) {
+            continue;
+        }
+        if (step.contains("setup_typed")) {
             app.setupTyped() = step["setup_typed"].get<bool>();
-        } else if (step.contains("resin_import")) {
+            continue;
+        }
+        if (step.contains("resin_import")) {
             std::string p = step["resin_import"].get<std::string>();
             if (p == "@demo-profile") p = demoProfile();
             app.importResinFile(p);
-        } else if (step.contains("resin_new_from")) {
+            continue;
+        }
+        if (step.contains("resin_new_from")) {
             std::string p = step["resin_new_from"].get<std::string>();
             if (p == "@demo-sample") p = demoSample();
             app.newResinFromGooFile(p);
-        } else if (step.contains("resin_select") || step.contains("job_resin") || step.contains("new_job_resin") ||
-                   step.contains("resin_delete")) {
+            continue;
+        }
+        if (step.contains("resin_select") || step.contains("job_resin") || step.contains("new_job_resin") ||
+            step.contains("resin_delete")) {
             const char* key = step.contains("resin_select") ? "resin_select"
                               : step.contains("job_resin")   ? "job_resin"
                               : step.contains("resin_delete") ? "resin_delete"
@@ -1015,7 +1249,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (std::string(key) == "job_resin") app.useResinForJob(id);
             else if (std::string(key) == "resin_delete") app.resinToDelete() = id;
             else app.setNewJobResin(id);
-        } else if (step.contains("resin_print") || step.contains("resin_support")) {
+            continue;
+        }
+        if (step.contains("resin_print") || step.contains("resin_support")) {
             // The selected resin's own values, by field key: {"exposure": 1.8}.
             const bool print = step.contains("resin_print");
             const nlohmann::json& values = step[print ? "resin_print" : "resin_support"];
@@ -1023,33 +1259,53 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 if (print) app.setResinPrintValue(app.resinSelected(), it.key(), it.value().get<double>());
                 else app.setResinSupportValue(app.resinSelected(), it.key(), it.value().get<double>());
             }
-        } else if (step.contains("resin_print_reset")) {
+            continue;
+        }
+        if (step.contains("resin_print_reset")) {
             app.resetResinPrintRow(app.resinSelected(), step["resin_print_reset"].get<std::string>());
-        } else if (step.contains("resin_support_reset")) {
+            continue;
+        }
+        if (step.contains("resin_support_reset")) {
             app.resetResinSupportRow(app.resinSelected(), step["resin_support_reset"].get<std::string>());
-        } else if (step.contains("resin_delete_confirm")) {
+            continue;
+        }
+        if (step.contains("resin_delete_confirm")) {
             app.deleteResin(app.resinToDelete());
-        } else if (step.contains("resin_menu")) {
+            continue;
+        }
+        if (step.contains("resin_menu")) {
             app.resinMenu() = step["resin_menu"].get<bool>();
-        } else if (step.contains("plate")) {
+            continue;
+        }
+        if (step.contains("plate")) {
             const std::string kind = step["plate"].get<std::string>();
             if (!isPlateKind(kind)) throw std::runtime_error("no plate called " + kind);
             app.openPlate(kind);
-        } else if (step.contains("plate_select")) {
+            continue;
+        }
+        if (step.contains("plate_select")) {
             app.plateSelected() = step["plate_select"].get<int>();
-        } else if (step.contains("plate_save_to")) {
+            continue;
+        }
+        if (step.contains("plate_save_to")) {
             // "@demo": <kind>.goo in the demo folder, "@demo-stl": <kind>.stl, as the Save buttons would.
             std::string p = step["plate_save_to"].get<std::string>();
             if (p == "@demo") p = (demoDir() / (app.plateKind() + ".goo")).string();
             else if (p == "@demo-stl") p = (demoDir() / (app.plateKind() + ".stl")).string();
             app.savePlateTo(p);
-        } else if (step.contains("score")) {
+            continue;
+        }
+        if (step.contains("score")) {
             const std::string kind = step["score"].get<std::string>();
             if (!isPlateKind(kind)) throw std::runtime_error("no plate called " + kind);
             app.openScores(kind);
-        } else if (step.contains("score_select")) {
+            continue;
+        }
+        if (step.contains("score_select")) {
             app.scoreSelected() = step["score_select"].get<int>();
-        } else if (step.contains("score_demo")) {
+            continue;
+        }
+        if (step.contains("score_demo")) {
             // The first n coupons scored as by someone holding a resin a
             // little weaker than the borrowed values (as "@demo-profile").
             const int n = step["score_demo"].get<int>();
@@ -1060,26 +1316,38 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 app.setScore(c.id, demoOutcome(app.plateKind(), c.params), demoMark(c.params), "");
                 app.scoreSelected() = nextToScore(*app.scores(), c.id);  // as Save and go to the next coupon does
             }
-        } else if (step.contains("fit_page")) {
+            continue;
+        }
+        if (step.contains("fit_page")) {
             const std::string a = step["fit_page"].get<std::string>();
             if (a == "open") app.openFit();
             else if (a == "use") app.useFit();
             else throw std::runtime_error("unknown fit_page step " + a);
-        } else if (step.contains("ab")) {
+            continue;
+        }
+        if (step.contains("ab")) {
             if (step["ab"].get<std::string>() != "open") throw std::runtime_error("unknown ab step");
             app.openABSetup();
-        } else if (step.contains("tools")) {
+            continue;
+        }
+        if (step.contains("tools")) {
             const std::string t = step["tools"].get<std::string>();
             app.setScreen(Screen::Tools);
             app.toolsTab() = t == "compare" ? 1 : 0;
-        } else if (step.contains("goo_inspect")) {
+            continue;
+        }
+        if (step.contains("goo_inspect")) {
             std::string p = step["goo_inspect"].get<std::string>();
             if (p == "@demo-sample") p = demoSample();
             else if (p == "@demo-sample-2") p = demoSample2();
             app.inspectGooFile(p);
-        } else if (step.contains("goo_check")) {
+            continue;
+        }
+        if (step.contains("goo_check")) {
             app.checkGoo();
-        } else if (step.contains("goo_compare")) {
+            continue;
+        }
+        if (step.contains("goo_compare")) {
             // [A, B]: "@demo-sample", "@demo-sample-2" (other exposures), or paths.
             for (int side = 0; side < 2; ++side) {
                 std::string p = step["goo_compare"].at(static_cast<std::size_t>(side)).get<std::string>();
@@ -1087,13 +1355,21 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 else if (p == "@demo-sample-2") p = demoSample2();
                 app.setGooToCompare(side, p);
             }
-        } else if (step.contains("ab_results")) {
+            continue;
+        }
+        if (step.contains("ab_results")) {
             app.openABResults();
-        } else if (step.contains("ab_select")) {
+            continue;
+        }
+        if (step.contains("ab_select")) {
             app.abSelected() = step["ab_select"].get<int>();
-        } else if (step.contains("ab_reveal")) {
+            continue;
+        }
+        if (step.contains("ab_reveal")) {
             app.abRevealed() = step["ab_reveal"].get<bool>();
-        } else if (step.contains("ab_score_demo")) {
+            continue;
+        }
+        if (step.contains("ab_score_demo")) {
             // The first n copies scored as by someone whose A copies (FruitSlicer's)
             // marked less and cleaned up faster; the last B copy only partly printed.
             const int n = step["ab_score_demo"].get<int>();
@@ -1112,40 +1388,60 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                     app.setABScore(id, App::Outcome::Held, 3, 85 + 2 * id, "");
                 }
             }
-        } else if (step.contains("ab_copies")) {
+            continue;
+        }
+        if (step.contains("ab_copies")) {
             app.setABCopies(step["ab_copies"].get<int>());
-        } else if (step.contains("ab_save_to")) {
+            continue;
+        }
+        if (step.contains("ab_save_to")) {
             // "@demo": "<job> AB_A.stl" (and _B) in the demo folder, as the Save button would.
             std::string p = step["ab_save_to"].get<std::string>();
             if (p == "@demo" && app.document()) p = (demoDir() / (app.document()->name + " AB_A.stl")).string();
             app.saveABTo(p);
-        } else if (step.contains("fit_table")) {
+            continue;
+        }
+        if (step.contains("fit_table")) {
             app.fitTable() = step["fit_table"].get<bool>();
-        } else if (step.contains("fit_save_to")) {
+            continue;
+        }
+        if (step.contains("fit_save_to")) {
             // "@demo": the profile as "fitted profile.json" in the demo folder.
             std::string p = step["fit_save_to"].get<std::string>();
             if (p == "@demo") p = (demoDir() / "fitted profile.json").string();
             app.saveFitTo(p);
-        } else if (step.contains("score_mirrored")) {
+            continue;
+        }
+        if (step.contains("score_mirrored")) {
             app.scoreMirrored() = step["score_mirrored"].get<bool>();
-        } else if (step.contains("score_import")) {
+            continue;
+        }
+        if (step.contains("score_import")) {
             std::string p = step["score_import"].get<std::string>();
             if (p == "@demo") p = demoFilledSheet(app.plate());
             app.importScoresFile(p);
-        } else if (step.contains("licence")) {
+            continue;
+        }
+        if (step.contains("licence")) {
             app.licenceOpen() = step["licence"].get<std::string>();
-        } else if (step.contains("prefs")) {
+            continue;
+        }
+        if (step.contains("prefs")) {
             const auto& j = step["prefs"];
             Preferences q = app.preferences();
             q.smooth_view = j.value("smooth_view", q.smooth_view);
             q.cores = j.value("cores", q.cores);
             q.goo_to_drive = j.value("goo_to_drive", q.goo_to_drive);
             app.setPreferences(q);
-        } else if (step.contains("sample")) {
+            continue;
+        }
+        if (step.contains("sample")) {
             std::string p = step["sample"].get<std::string>();
             if (p == "@demo-sample") p = demoSample();
             app.useSample(p);
-        } else if (step.contains("drive")) {
+            continue;
+        }
+        if (step.contains("drive")) {
             // A stand-in USB drive: a folder under the demo directory.
             platform::Volume v;
             v.name = step["drive"].get<std::string>();
@@ -1155,18 +1451,26 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             std::filesystem::create_directories(v.path);
             app.drives().push_back(v);
             app.driveChoice() = static_cast<int>(app.drives().size()) - 1;
-        } else if (step.contains("save")) {
+            continue;
+        }
+        if (step.contains("save")) {
             app.savePrint();  // first time: the orientation question
-        } else if (step.contains("save_to")) {
+            continue;
+        }
+        if (step.contains("save_to")) {
             std::string p = step["save_to"].get<std::string>();
             if (p == "@demo" && app.document()) p = (demoDir() / (app.document()->name + ".goo")).string();
             app.savePrintTo(p, "");
-        } else if (step.contains("orientation_piece")) {
+            continue;
+        }
+        if (step.contains("orientation_piece")) {
             // "@demo": f.stl in the demo folder, as the Save f.stl… button would.
             std::string p = step["orientation_piece"].get<std::string>();
             if (p == "@demo") p = (demoDir() / "f.stl").string();
             app.saveOrientationPieceTo(p);
-        } else if (step.contains("orientation_sample")) {
+            continue;
+        }
+        if (step.contains("orientation_sample")) {
             // "@stand-in-flip-y" (or -flip-x, -as-is): a stand-in for SatelLite's slice of the F.
             std::string p = step["orientation_sample"].get<std::string>();
             if (p.rfind("@stand-in", 0) == 0) {
@@ -1175,9 +1479,13 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 writeStandInSatelliteF(p, fx, fy);
             }
             app.checkOrientationWith(p);
-        } else if (step.contains("orientation_fix")) {
+            continue;
+        }
+        if (step.contains("orientation_fix")) {
             app.useOrientationFix();
-        } else if (step.contains("hinge")) {
+            continue;
+        }
+        if (step.contains("hinge")) {
             const std::string h = step["hinge"].get<std::string>();
             if (h == "none") app.setHinge(std::nullopt);
             else if (h == "back") app.setHinge(HingeChoice::Back);
@@ -1185,12 +1493,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             else if (h == "right") app.setHinge(HingeChoice::Right);
             else if (h == "front") app.setHinge(HingeChoice::Front);
             else throw std::runtime_error("unknown hinge side " + h);
-        } else if (step.contains("edit_tips")) {
+            continue;
+        }
+        if (step.contains("edit_tips")) {
             app.editTips(step["edit_tips"].get<bool>());
-        } else if (step.contains("tip_tool")) {
+            continue;
+        }
+        if (step.contains("tip_tool")) {
             const std::string t = step["tip_tool"].get<std::string>();
             app.tipTool() = t == "add" ? App::TipTool::Add : t == "zone" ? App::TipTool::Zone : App::TipTool::Select;
-        } else if (step.contains("tip_add_near") || step.contains("tip_zone_near") || step.contains("tip_move_near")) {
+            continue;
+        }
+        if (step.contains("tip_add_near") || step.contains("tip_zone_near") || step.contains("tip_move_near")) {
             // [tip, dx, dy]: straight up from below the plate, (dx, dy) mm from that tip; move: the tip goes there.
             const char* key = step.contains("tip_add_near") ? "tip_add_near"
                               : step.contains("tip_zone_near") ? "tip_zone_near" : "tip_move_near";
@@ -1206,9 +1520,13 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             if (std::string(key) == "tip_add_near") app.addTipAt(pos, n);
             else if (std::string(key) == "tip_zone_near") app.addZoneAt(pos);
             else app.moveTip(i, pos, n);
-        } else if (step.contains("tip_select")) {
+            continue;
+        }
+        if (step.contains("tip_select")) {
             app.selectTip(step["tip_select"].get<int>());
-        } else if (step.contains("tip_delete_over")) {
+            continue;
+        }
+        if (step.contains("tip_delete_over")) {
             // Delete on every tip higher than this many mm above the plate, one after the other.
             const double z = step["tip_delete_over"].get<double>();
             for (;;) {
@@ -1225,49 +1543,79 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 app.jobs().wait();
                 if (app.document()->supports.result->points.size() >= before) throw std::runtime_error("tip_delete_over: a tip stayed");
             }
-        } else if (step.contains("tip_delete")) {
+            continue;
+        }
+        if (step.contains("tip_delete")) {
             app.deleteTip(step["tip_delete"].get<int>());
-        } else if (step.contains("tip_resize")) {
+            continue;
+        }
+        if (step.contains("tip_resize")) {
             app.resizeTip(step["tip_resize"][0].get<int>(), step["tip_resize"][1].get<double>());
-        } else if (step.contains("tip_pin")) {
+            continue;
+        }
+        if (step.contains("tip_pin")) {
             app.pinTip(step["tip_pin"].get<int>());
-        } else if (step.contains("tip_undo")) {
+            continue;
+        }
+        if (step.contains("tip_undo")) {
             const auto& u = step["tip_undo"];
             if (u.is_string() && u.get<std::string>() == "all") app.undoAllTipEdits();
             else app.undoTipEdit(u.get<int>());
-        } else if (step.contains("answer")) {
+            continue;
+        }
+        if (step.contains("answer")) {
             // The "save before checking the image orientation?" question.
             const std::string a = step["answer"].get<std::string>();
             if (a == "save_anyway") app.savePrintAfterAsking();
             else if (a == "cancel") app.orientationAsk() = false;
             else throw std::runtime_error("unknown answer " + a);
-        } else if (step.contains("save_target")) {
+            continue;
+        }
+        if (step.contains("save_target")) {
             const bool wifi = step["save_target"].get<std::string>() == "wifi";
             if (wifi && !FRUIT_WIFI) throw std::runtime_error("Wi-Fi sending is not built into this copy (FRUIT_WIFI off)");
             app.sendOverWifi() = wifi;
 #if FRUIT_WIFI
-        } else if (step.contains("mock_printer")) {
+            continue;
+        }
+        if (step.contains("mock_printer")) {
             app.useMockPrinter(step["mock_printer"].is_string() && step["mock_printer"].get<std::string>() == "silent");
-        } else if (step.contains("search")) {
+            continue;
+        }
+        if (step.contains("search")) {
             app.findPrinters();
-        } else if (step.contains("printer")) {
+            continue;
+        }
+        if (step.contains("printer")) {
             app.send().chosen = step["printer"].get<int>() - 1;
-        } else if (step.contains("start_print")) {
+            continue;
+        }
+        if (step.contains("start_print")) {
             app.send().start_print = step["start_print"].get<bool>();
-        } else if (step.contains("send")) {
+            continue;
+        }
+        if (step.contains("send")) {
             if (step["send"].get<std::string>() == "close") app.closeSend();
             else app.sendToPrinter();
 #else
-        } else if (step.contains("mock_printer") || step.contains("search") || step.contains("printer") ||
-                   step.contains("start_print") || step.contains("send")) {
+            continue;
+        }
+        if (step.contains("mock_printer") || step.contains("search") || step.contains("printer") ||
+            step.contains("start_print") || step.contains("send")) {
             throw std::runtime_error("Wi-Fi sending is not built into this copy (FRUIT_WIFI off): " + step.dump());
 #endif
-        } else if (step.contains("saved")) {
+            continue;
+        }
+        if (step.contains("saved")) {
             if (step["saved"].get<std::string>() != "back") throw std::runtime_error("unknown saved step");
             app.dismissSaved();
-        } else if (step.contains("shortcuts")) {
+            continue;
+        }
+        if (step.contains("shortcuts")) {
             app.showShortcuts(step["shortcuts"].get<bool>());
-        } else if (step.contains("cut_plane") || step.contains("cut_keep") || step.contains("cut_apply")) {
+            continue;
+        }
+        if (step.contains("cut_plane") || step.contains("cut_keep") || step.contains("cut_apply")) {
             // The Cut tool: the plane ["z" | "x" | "y", mm], what to keep, and applying it (then "wait": "jobs").
             CutSettings& c = app.shape().cut;
             if (step.contains("cut_plane")) {
@@ -1284,7 +1632,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.cutApply();
             }
-        } else if (step.contains("label_set") || step.contains("label_at") || step.contains("label_apply")) {
+            continue;
+        }
+        if (step.contains("label_set") || step.contains("label_at") || step.contains("label_apply")) {
             // The Label tool: its fields, a click on the part along a ray (printer coordinates), and applying it.
             LabelSettings& l = app.shape().label;
             if (step.contains("label_set")) {
@@ -1303,7 +1653,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.labelApply();
             }
-        } else if (step.contains("combine_with") || step.contains("combine_mode") || step.contains("combine_apply")) {
+            continue;
+        }
+        if (step.contains("combine_with") || step.contains("combine_mode") || step.contains("combine_apply")) {
             // The Combine tool: the second part (1-based, in the Parts list's order), the mode, and applying it.
             if (step.contains("combine_with")) {
                 const int i = step["combine_with"].get<int>() - 1;
@@ -1317,7 +1669,9 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.combineApply();
             }
-        } else if (step.contains("busy")) {
+            continue;
+        }
+        if (step.contains("busy")) {
             // A stand-in for slow work, to see its progress card: it runs, 40% done, until {"cancel_job": true}.
             app.jobs().start(
                 step["busy"].get<std::string>(),
@@ -1327,12 +1681,18 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                     ctl.check();
                 },
                 [](std::exception_ptr) {});
-        } else if (step.contains("cancel_job")) {
+            continue;
+        }
+        if (step.contains("cancel_job")) {
             app.jobs().cancel();
             app.jobs().wait();
-        } else if (step.contains("wait")) {
+            continue;
+        }
+        if (step.contains("wait")) {
             app.jobs().wait();
-        } else if (step.contains("view")) {
+            continue;
+        }
+        if (step.contains("view")) {
             const std::string v = step["view"].get<std::string>();
             if (v == "top") {  // from above, the whole plate's job in view
                 app.camera().lookFrom({0, -0.18f, 1});  // as steep as the camera goes, the plate square on
@@ -1340,16 +1700,22 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             } else {
                 app.setView(viewFrom(v));
             }
-        } else if (step.contains("look_at")) {
+            continue;
+        }
+        if (step.contains("look_at")) {
             // [x, y, z, radius]: the view turned on that point (printer mm), near enough to see that much round
             // it; [radius]: on the point it is turned on now.
             const auto& v = step["look_at"];
             if (v.size() == 1) app.camera().frame(app.camera().target(), v[0].get<float>());
             else app.camera().frame({v[0].get<float>(), v[1].get<float>(), v[2].get<float>()}, v[3].get<float>());
-        } else if (step.contains("view_turn")) {
+            continue;
+        }
+        if (step.contains("view_turn")) {
             const auto& v = step["view_turn"];  // [yaw, pitch] in degrees, from where the view is
             app.camera().turn(v[0].get<float>(), v[1].get<float>());
-        } else if (step.contains("show_patch")) {
+            continue;
+        }
+        if (step.contains("show_patch")) {
             // As the Model step's "Show the patch" link.
             const auto& doc = app.document();
             bool patched = false;
@@ -1357,9 +1723,13 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 for (const Part& part : doc->parts()) patched = patched || part.check().repair.patch_faces > 0;
             if (!patched) throw std::runtime_error("show_patch: nothing was patched");
             app.showPatch();
-        } else if (step.contains("frames")) {
+            continue;
+        }
+        if (step.contains("frames")) {
             for (int i = 0, n = step["frames"].get<int>(); i < n; ++i) render();
-        } else if (step.contains("shot")) {
+            continue;
+        }
+        if (step.contains("shot")) {
             const std::string name = step["shot"].get<std::string>();
             // The checks the app starts by itself (Collisions with several
             // parts, the replay of the print with supports) are let finish,
@@ -1378,10 +1748,10 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
                 writePngRgba(path, pw, ph, cur);
                 log::info("script: wrote " + path);
             }
-        } else {
-            log::error("script: unknown step " + step.dump());
-            return 2;
+            continue;
         }
+        log::error("script: unknown step " + step.dump());
+        return 2;
     }
     return 0;
 }
