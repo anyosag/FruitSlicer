@@ -48,9 +48,18 @@ fruit::PlateResults scoredPlate(const fruit::CalibrationPlate& p, Ok ok, int n =
     return r;
 }
 
+// Each kind's plate as the app makes it, made once (the tips plate takes a couple of seconds).
+// (A plain name: GCC takes a reference returned for a temporary string as dangling.)
+const fruit::CalibrationPlate& madePlate(const char* kind) {
+    static std::map<std::string, fruit::CalibrationPlate> made;
+    auto it = made.find(kind);
+    if (it == made.end()) it = made.emplace(kind, makePlate(kind, fruit::PrinterProfile::saturn4Ultra16k())).first;
+    return it->second;
+}
+
 template <class Ok>
 fruit::PlateResults scored(const std::string& kind, Ok ok, int n = -1) {
-    return scoredPlate(makePlate(kind, fruit::PrinterProfile::saturn4Ultra16k()), ok, n);
+    return scoredPlate(madePlate(kind.c_str()), ok, n);
 }
 
 // The tips plate printed until 2026-11-24, discs on three tips, as `makePlate` made it then.

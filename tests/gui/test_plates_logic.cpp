@@ -60,6 +60,17 @@ std::string firstLine(const std::string& path) {
     return line;
 }
 
+// A small tips plate (16 tiles: one size, four strengths, two copies of two), for what any tips plate shows:
+// the whole one takes a couple of seconds to make.
+const fruit::CalibrationPlate& smallTips() {
+    static const fruit::CalibrationPlate p = [] {
+        fruit::TipsPlateOptions o;
+        o.sizes = {{0.3, 8, {0.35, 0.5, 0.71, 1}}};
+        return fruit::tipsPlate(o, printer());
+    }();
+    return p;
+}
+
 // The tips plate printed until 2026-11-24 (discs on three tips): its sheets still read.
 const fruit::CalibrationPlate& discPlate() {
     static const fruit::CalibrationPlate p = fruit::discTipsPlate(fruit::DiscTipsPlateOptions{}, printer());
@@ -136,7 +147,7 @@ TEST_CASE("each plate is described as it is made", "[plates]") {
 
 TEST_CASE("each coupon is put in words from its own settings", "[plates]") {
     // A tile: its size, tips, the busiest tip's load and what it was planned for.
-    const auto& tile = plateOf("tips").coupons.front().params;
+    const auto& tile = smallTips().coupons.front().params;
     const auto lf = couponFacts("tips", tile);
     REQUIRE(lf.size() == 4);  // one set: no side to say
     CHECK(lf[0].label == "Tip size");
@@ -198,7 +209,7 @@ TEST_CASE("each coupon is put in words from its own settings", "[plates]") {
 TEST_CASE("the map's layout is the plate's, from it or from its manifest", "[plates]") {
     for (const char* kind : kPlateKinds) {
         INFO(kind);
-        const fruit::CalibrationPlate& p = plateOf(kind);
+        const fruit::CalibrationPlate& p = std::string(kind) == "tips" ? smallTips() : plateOf(kind);
         const PlateLayout a = layoutOf(p), b = layoutOf(p.manifest());
         CHECK(a.rows == p.rows);
         CHECK(a.cols == p.cols);
@@ -221,17 +232,17 @@ TEST_CASE("the map's layout is the plate's, from it or from its manifest", "[pla
         CHECK(ids.size() == a.cells.size());
         CHECK_FALSE(places.count({0, 0}));        // the marker's
     }
-    nlohmann::json bad = plateOf("tips").manifest();
+    nlohmann::json bad = smallTips().manifest();
     bad["coupons"][0]["row"] = 99;
     CHECK_THROWS_WITH(layoutOf(bad), ContainsSubstring("outside the plate's grid"));
 }
 
 TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]") {
     const fs::path d = freshDir("keep");
-    const fruit::CalibrationPlate& p = plateOf("tips");
+    const fruit::CalibrationPlate& p = smallTips();
     PlateFiles f = keptAt(d, "tips");
     keepPlate(p, f);
-    CHECK(f.coupons == 96);
+    CHECK(f.coupons == 16);
     CHECK(f.scored == 0);
     CHECK(f.design == "tiles");  // the tips plate since 2026-11-24
     PlateFiles disc_files = keptAt(freshDir("keep-disc"), "tips");
@@ -242,9 +253,9 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
 
     PlateScores s = loadScores(f);
     CHECK(s.kind == "tips");
-    REQUIRE(s.coupons.size() == 96);
+    REQUIRE(s.coupons.size() == 16);
     CHECK(s.scored() == 0);
-    CHECK(s.layout.cells.size() == 96);
+    CHECK(s.layout.cells.size() == 16);
     s.coupons[0].recorded = true;
     s.coupons[0].ok = true;
     s.coupons[0].scar = 2;
@@ -279,7 +290,7 @@ TEST_CASE("a kept plate's scores stay, blind, through another save", "[plates]")
 TEST_CASE("keeping another plate sets the earlier scores aside, never over them", "[plates]") {
     const fs::path d = freshDir("aside");
     PlateFiles f = keptAt(d, "tips");
-    keepPlate(plateOf("tips"), f);
+    keepPlate(smallTips(), f);
     // Nothing scored yet: replaced without a copy.
     keepPlate(plateOf("islands"), f);
     CHECK_FALSE(fs::exists(d / "tips.earlier.json"));
@@ -289,7 +300,7 @@ TEST_CASE("keeping another plate sets the earlier scores aside, never over them"
     s.coupons[0].recorded = s.coupons[0].ok = true;
     s.coupons[5].recorded = true;
     saveScores(f, s);
-    keepPlate(plateOf("tips"), f);
+    keepPlate(smallTips(), f);
     REQUIRE(fs::exists(d / "tips.earlier.json"));
     REQUIRE(fs::exists(d / "tips.earlier.results.csv"));
     CHECK(loadScores(f).kind == "tips");
@@ -310,14 +321,14 @@ TEST_CASE("keeping another plate sets the earlier scores aside, never over them"
 
     // A sheet that can't be read is someone's work too: it's kept.
     std::ofstream(f.results) << "id,result\nnot,a,sheet\n";
-    keepPlate(plateOf("tips"), f);
+    keepPlate(smallTips(), f);
     CHECK(fs::exists(d / "tips.earlier-3.results.csv"));
     CHECK(loadScores(f).scored() == 0);
 }
 
 TEST_CASE("a sheet filled in by hand is read with the manifest beside it", "[plates]") {
     const fs::path d = freshDir("import");
-    const fruit::CalibrationPlate& p = plateOf("tips");
+    const fruit::CalibrationPlate& p = smallTips();
     // As `fruitslicer calibrate` writes them: settings columns and all.
     const std::string base = (d / "by hand.stl").string();
     std::ofstream(base + ".json") << p.manifest().dump(2) << "\n";
@@ -381,7 +392,7 @@ TEST_CASE("the next coupon to score skips those scored", "[plates]") {
 }
 
 TEST_CASE("manifests are the same plate when the coupons and settings are", "[plates]") {
-    const nlohmann::json m = plateOf("tips").manifest();
+    const nlohmann::json m = smallTips().manifest();
     CHECK(samePlate(m, m));
     CHECK(samePlate(m, nlohmann::json::parse(m.dump())));
     nlohmann::json note = m;

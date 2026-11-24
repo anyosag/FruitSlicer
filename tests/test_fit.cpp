@@ -269,7 +269,11 @@ TEST_CASE("results CSV errors are reported clearly", "[fit]") {
 
 TEST_CASE("blind score sheets: no parameters, and every score reads back", "[fit]") {
     const PrinterProfile pr = PrinterProfile::saturn4Ultra16k();
-    const CalibrationPlate plate = tipsPlate(TipsPlateOptions{}, pr);
+    TipsPlateOptions small;  // the sheet, not the plate, is what this checks: four tiles do
+    small.sizes = {{0.3, 8, {0.5, 1}}};
+    small.common.replicates = 1;
+    const CalibrationPlate plate = tipsPlate(small, pr);
+    REQUIRE(plate.coupons.size() == 4);
     const auto dir = testfiles::temp() / "fruit_blind_sheet";
     std::filesystem::create_directories(dir);
     const std::string manifest = (dir / "tips.stl.json").string(), csv = (dir / "tips.stl.results.csv").string();

@@ -128,34 +128,19 @@ TEST_CASE("disc tips plate: three shafts a coupon, apart, each as wide as a job'
     }
 }
 
-TEST_CASE("tips plate raft: one piece, with no closed pocket and no solid slab", "[calibration]") {
-    TipsPlateOptions o;
-    o.peel_axis = {0, -1};
-    const CalibrationPlate plate = tipsPlate(o, PrinterProfile::saturn4Ultra16k());
-    const LayerStack ls = sliceModel(plate.mesh, 0.1);
-    // Half way up the raft: one outline, and no hole in it (a hole would be a pocket that seals
-    // against the film on every raft layer and pulls as a suction cup).
-    const ExPolygons raft = toExPolygons(ls.slices[ls.layerAt(plate.settings["raft_thickness"].get<double>() / 2)]);
-    REQUIRE(raft.size() == 1);
-    CHECK(raft.front().holes.empty());
-    // Pads and bars, not a slab over the whole grid: well under the rectangle they span.
-    const BBox3 b = plate.mesh.bbox();
-    const double rect = (b.max.x - b.min.x) * (b.max.y - b.min.y);
-    CHECK(area(raft) < 0.75 * rect);
-    CHECK(area(raft) > 0.4 * rect);  // still a raft under every coupon
-}
-
-TEST_CASE("tips plate: tiles on the supports a job of them gets, in two sets, deterministic", "[calibration][tiles]") {
+// The whole tips plate is made once here (2.2 s on all cores, more under a sanitizer): one case checks it all.
+TEST_CASE("tips plate: tiles on the supports a job of them gets, in two sets, on one raft", "[calibration][tiles]") {
     const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
     TipsPlateOptions o;
     o.peel_axis = {0, -1};  // hinged at the back
-    const CalibrationPlate a = tipsPlate(o, p);
+    const CalibrationPlate plate = tipsPlate(o, p);
     // 4 sizes × 6 strengths, twice a side.
-    REQUIRE(a.coupons.size() == 96);
-    requireFitsAndUnique(a, p);
-    requireOnlyRaftIslands(a);  // every tile held: nothing starts in mid-air
+    REQUIRE(plate.coupons.size() == 96);
+    requireFitsAndUnique(plate, p);
+    requireOnlyRaftIslands(plate);  // every tile held: nothing starts in mid-air
+    CHECK(plate.manifest()["settings"]["loads"] == "replayed");
     std::map<std::string, int> sides;
-    for (const auto& c : a.coupons) {
+    for (const auto& c : plate.coupons) {
         ++sides[c.params["side"].get<std::string>()];
         // Its tips are all built, one size, each as deep as a job puts it.
         CHECK(c.params["tips"] == c.params["tips_planned"]);
@@ -171,41 +156,44 @@ TEST_CASE("tips plate: tiles on the supports a job of them gets, in two sets, de
     }
     CHECK(sides["hinge"] == 48);
     CHECK(sides["far"] == 48);
-    // Made again, alike; made one tile at a time, alike too (the tiles are made side by side).
-    TipsPlateOptions one = o;
-    one.threads = 1;
-    const CalibrationPlate b = tipsPlate(one, p);
-    REQUIRE(b.coupons.size() == a.coupons.size());
-    for (size_t i = 0; i < a.coupons.size(); ++i) CHECK(a.coupons[i].params == b.coupons[i].params);
-    CHECK(b.mesh.faceCount() == a.mesh.faceCount());
-    CHECK(a.manifest()["settings"]["loads"] == "replayed");
-}
 
-TEST_CASE("tips plate: a tile's tips are the planner's own, and carry more the stronger it was planned for", "[calibration][tiles]") {
-    const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
-    TipsPlateOptions o;
-    o.peel_axis = {0, -1};
-    const CalibrationPlate plate = tipsPlate(o, p);
+    // The raft: one piece, half way up with no hole in it (a hole would be a pocket that seals against the film on
+    // every raft layer and pulls as a suction cup); pads and bars, not a slab over the whole grid.
+    {
+        const LayerStack ls = sliceModel(plate.mesh, 0.1);
+        const ExPolygons raft = toExPolygons(ls.slices[ls.layerAt(plate.settings["raft_thickness"].get<double>() / 2)]);
+        REQUIRE(raft.size() == 1);
+        CHECK(raft.front().holes.empty());
+        const BBox3 b = plate.mesh.bbox();
+        const double rect = (b.max.x - b.min.x) * (b.max.y - b.min.y);
+        CHECK(area(raft) < 0.75 * rect);
+        CHECK(area(raft) > 0.4 * rect);  // still a raft under every coupon
+    }
+
     // One tile planned again, by hand, as a job of it: the same tips.
-    const PlateCoupon& c = plate.coupons.front();
-    const double d = c.params["tip_diameter"].get<double>(), k = c.params["strength"].get<double>();
-    const double s = c.params["tile_mm"].get<double>(), z0 = plate.settings["lift"].get<double>();
-    const TriangleMesh tile = makeBox({c.center.x - s / 2, c.center.y - s / 2, z0}, {c.center.x + s / 2, c.center.y + s / 2, z0 + 1});
-    const SupportConfig cfg = tileSupportConfig(d, k, o.peel_axis);
-    CHECK(cfg.tip_classes.size() == 1);
-    CHECK(cfg.capacity.capacity(d) == Approx(k * CapacityModel{}.capacity(d)));
-    CHECK(cfg.peel_bias == Approx(kAssumedPeelBias));
-    CHECK(cfg.tip_load_limit == Approx(SupportConfig{}.tip_load_limit));
-    TreeConfig tc;
-    tc.raft_thickness = plate.settings["raft_thickness"].get<double>();
-    PointGenOptions po;
-    po.relieve = true;
-    po.support_lengths = [&](const std::vector<SupportPoint>& pts) {
-        return supportLengthsOnModel(tile, pts, tc, p.minRaftThickness());
-    };
-    const PointGenResult planned = generateSupportPoints(tile, cfg, po);
-    CHECK(planned.points.size() == c.params["tips_planned"].get<size_t>());
-    for (const SupportPoint& t : planned.points) CHECK(t.tip_diameter == Approx(d));
+    {
+        const PlateCoupon& c = plate.coupons.front();
+        const double d = c.params["tip_diameter"].get<double>(), k = c.params["strength"].get<double>();
+        const double s = c.params["tile_mm"].get<double>(), z0 = plate.settings["lift"].get<double>();
+        const TriangleMesh tile =
+            makeBox({c.center.x - s / 2, c.center.y - s / 2, z0}, {c.center.x + s / 2, c.center.y + s / 2, z0 + 1});
+        const SupportConfig cfg = tileSupportConfig(d, k, o.peel_axis);
+        CHECK(cfg.tip_classes.size() == 1);
+        CHECK(cfg.capacity.capacity(d) == Approx(k * CapacityModel{}.capacity(d)));
+        CHECK(cfg.peel_bias == Approx(kAssumedPeelBias));
+        CHECK(cfg.tip_load_limit == Approx(SupportConfig{}.tip_load_limit));
+        TreeConfig tc;
+        tc.raft_thickness = plate.settings["raft_thickness"].get<double>();
+        PointGenOptions po;
+        po.relieve = true;
+        po.support_lengths = [&](const std::vector<SupportPoint>& pts) {
+            return supportLengthsOnModel(tile, pts, tc, p.minRaftThickness());
+        };
+        const PointGenResult planned = generateSupportPoints(tile, cfg, po);
+        CHECK(planned.points.size() == c.params["tips_planned"].get<size_t>());
+        for (const SupportPoint& t : planned.points) CHECK(t.tip_diameter == Approx(d));
+    }
+
     // By size: the load the fit reads grows at each stronger step (copies averaged), until the planner's spacing
     // sets the fewest tips; the lightest step well under the heaviest. (The busiest tip alone need not: at the
     // weakest steps 0.6 mm tiles get 40-50 tips and their edge tips carry about 4.3 mm² either way.)
@@ -227,6 +215,24 @@ TEST_CASE("tips plate: a tile's tips are the planner's own, and carry more the s
         }
         CHECK(last > 3 * first);
     }
+}
+
+TEST_CASE("tips plate: alike made again, one tile at a time or side by side", "[calibration][tiles]") {
+    // A small plate: one size, two strengths, once a side.
+    const PrinterProfile p = PrinterProfile::saturn4Ultra16k();
+    TipsPlateOptions o;
+    o.peel_axis = {0, -1};
+    o.sizes = {{0.3, 8, {0.5, 1}}};
+    o.common.replicates = 1;
+    const CalibrationPlate a = tipsPlate(o, p);
+    REQUIRE(a.coupons.size() == 4);
+    TipsPlateOptions one = o;
+    one.threads = 1;
+    const CalibrationPlate b = tipsPlate(one, p);
+    REQUIRE(b.coupons.size() == a.coupons.size());
+    for (size_t i = 0; i < a.coupons.size(); ++i) CHECK(a.coupons[i].params == b.coupons[i].params);
+    CHECK(b.mesh.faceCount() == a.mesh.faceCount());
+    CHECK(b.mesh.vertices == a.mesh.vertices);
 }
 
 TEST_CASE("spacing plate: tilted plates and wedges are held by their tips", "[calibration]") {
