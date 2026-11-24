@@ -566,6 +566,7 @@ void topPill(App& app, Document* doc, ImVec2 origin, ImVec2 size) {
         if (segmentButton("Cut in half", app.cutAway())) app.setCutAway(true);
         ImGui::SameLine(0, 4);
         if (segmentButton("Whole model", !app.cutAway())) app.setCutAway(false);
+        if (app.cutAway() && doc->hollow.choices.auto_holes) hollowCutControls(app);
     }
     if (patched && !supports && !hollow) {
         ImDrawList* dl = ImGui::GetWindowDrawList();

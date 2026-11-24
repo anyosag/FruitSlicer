@@ -457,6 +457,47 @@ void hollowOutcomesList(App& app, Document& doc) {
     (void)app;
 }
 
+void hollowCutControls(App& app) {
+    ImGui::Dummy(ImVec2(0, 2));
+    static const char* const kAxes[] = {"Across X", "Across Y", "Height"};
+    const int axis = app.hollowCut().axis;
+    for (int a = 0; a < 3; ++a) {
+        if (a) ImGui::SameLine(0, 4);
+        if (segmentButton(kAxes[a], axis == a) && axis != a) app.setHollowCutAxis(a);
+    }
+    ImGui::SameLine(0, 12);
+    if (segmentButton("Flip", false)) {
+        App::HollowCut c = app.hollowCut();
+        c.keep_above = !c.keep_above;
+        app.setHollowCut(c);
+    }
+    tooltip("Shows the other side of the cut.");
+    // Where along that axis: a slider and the number, in mm.
+    App::HollowCut c = app.hollowCut();
+    const auto [lo, hi] = app.hollowCutRange(c.axis);
+    bool changed = false;
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, col::Input);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, col::Active);
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, col::Active);
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 14);
+    ImGui::PushStyleVar(ImGuiStyleVar_GrabRounding, 7);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 8));
+    ImGui::SetNextItemWidth(230);
+    float f = static_cast<float>(c.at);
+    if (ImGui::SliderFloat("##cut_at", &f, static_cast<float>(lo), static_cast<float>(hi), "", ImGuiSliderFlags_AlwaysClamp)) {
+        c.at = std::round(static_cast<double>(f) * 20) / 20;  // to the half tenth
+        changed = true;
+    }
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(3);
+    tooltip("Where the cut is. It stays there as you turn the view; choosing a hollow moves it to that one.");
+    ImGui::SameLine(0, 8);
+    if (numberField("cut_at", &c.at, 80, "%.2f", lo, hi)) changed = true;
+    ImGui::SameLine(0, 6);
+    text("mm", fonts().regular, size::Body, col::TextSecondary);
+    if (changed) app.setHollowCut(c);
+}
+
 void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* vp) {
     auto project = [&](const fruit::Vec3& w, ImVec2* out) {
         const float x = vp[0] * w.x + vp[4] * w.y + vp[8] * w.z + vp[12];
@@ -478,13 +519,15 @@ void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const fl
     const bool fresh = hs.planFresh(doc.revision());
     if (hs.plan && hs.plan_revision == doc.revision()) {
         const HollowPlan& p = *hs.plan;
-        // The hollow chosen, labelled where the cut goes through it (or at
-        // its top, with the view whole). The others are painted only.
+        // The hollow chosen, labelled in its middle, brought onto the cut
+        // when the cut takes that away (or at its top, with the view whole).
+        // The others are painted only.
         const int sel = app.hollowSelected();
         if (sel >= 0 && static_cast<std::size_t>(sel) < p.closed.cavities.size()) {
             const fruit::Cavity& c = p.closed.cavities[static_cast<std::size_t>(sel)];
             fruit::Vec3 at = cavityLabelAt(p.closed, static_cast<std::size_t>(sel), p.layer_height);
             if (!app.cutAway() || !hs.choices.auto_holes) at.z = (c.last_layer + 1) * p.layer_height + 1.5;
+            else at = app.ontoCut(at);
             ImVec2 a;
             if (project(at, &a)) {
                 const std::size_t of = p.hollowing() ? 0 : static_cast<std::size_t>(sel);

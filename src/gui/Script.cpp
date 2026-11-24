@@ -570,6 +570,21 @@ int Script::run(App& app, const std::string& shot_dir, const std::function<std::
             app.addHoleAt(pos, n);
         } else if (step.contains("cut")) {
             app.setCutAway(step["cut"].get<bool>());
+        } else if (step.contains("cut_axis")) {
+            // The Hollow screen's cut: "x", "y" or "height", as its buttons set it.
+            const std::string a = step["cut_axis"].get<std::string>();
+            if (a != "x" && a != "y" && a != "height") throw std::runtime_error("cut_axis: x, y or height");
+            app.setHollowCutAxis(a == "x" ? 0 : a == "y" ? 1 : 2);
+        } else if (step.contains("cut_at")) {
+            // Where along its axis, mm off the middle of the job (as its slider sets it).
+            App::HollowCut c = app.hollowCut();
+            const auto [lo, hi] = app.hollowCutRange(c.axis);
+            c.at = (lo + hi) / 2 + step["cut_at"].get<double>();
+            app.setHollowCut(c);
+        } else if (step.contains("cut_flip")) {
+            App::HollowCut c = app.hollowCut();
+            c.keep_above = !c.keep_above;
+            app.setHollowCut(c);
         } else if (step.contains("hole_remove")) {
             app.removeHole(step["hole_remove"].get<int>() - 1);  // 1 = the first
         } else if (step.contains("hollow_accept")) {

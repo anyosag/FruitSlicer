@@ -21,6 +21,7 @@
 #include "mesh/ModelCheck.h"
 #include "mesh/ModelLoad.h"
 #include "mesh/StlIO.h"
+#include "ops/MeshOps.h"
 #include "net/testing/MockPrinter.h"
 #include "support/SupportSettings.h"
 
@@ -1011,6 +1012,10 @@ void App::selectHollow(int i, bool frame) {
         return;
     }
     hollow_selected_ = i;
+    // The cut goes through it, on the axis it is on.
+    HollowCut cut = hollow_cut_;
+    cut.at = hollowCutAt(*p, i, cut.axis);
+    setHollowCut(cut);
     if (!frame) return;
     // Its room, and the plate under it, in view.
     const fruit::Cavity& c = p->closed.cavities[static_cast<std::size_t>(i)];
@@ -1044,15 +1049,13 @@ int App::pickHollow(const fruit::Vec3& o, const fruit::Vec3& d) {
         return own.cavityAt(static_cast<std::size_t>(q.z / h), q.xy());
     };
     const bool cut = cut_for_ != nullptr;
-    const fruit::Vec2 toward = cut_toward_;
-    auto cutAway = [&](const fruit::Vec3& q) {
-        return cut && toward.x * (q.x - cut_mid_.x) + toward.y * (q.y - cut_mid_.y) > 1e-6;
-    };
+    const fruit::Vec3 n = cut_normal_;
+    auto cutAway = [&](const fruit::Vec3& q) { return cut && fruit::dot(n, q - cut_mid_) > 1e-6; };
     // The cut first: it is drawn over the model.
     if (cut) {
-        const double along = toward.x * d.x + toward.y * d.y;
+        const double along = fruit::dot(n, d);
         if (std::abs(along) > 1e-9) {
-            const double t = (toward.x * (cut_mid_.x - o.x) + toward.y * (cut_mid_.y - o.y)) / along;
+            const double t = fruit::dot(n, cut_mid_ - o) / along;
             if (t > 0) {
                 const fruit::Vec3 q = o + d * t;
                 if (const int k = inside(q); k >= 0) return k;
@@ -2363,6 +2366,103 @@ void addMarker(fruit::TriangleMesh& m, const fruit::Vec3& c, double r) {
 
 }  // namespace
 
+namespace {
+
+// `v` along axis 0 X, 1 Y, 2 Z.
+double alongAxis(const fruit::Vec3& v, int axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; }
+
+// The triangles covering `region` (non-zero) flat at height z, for a cap.
+std::vector<float> flatTriangles(const fruit::Paths& region, double z) {
+    std::vector<float> out;
+    constexpr double kThick = 0.01;
+    for (const fruit::ExPolygon& ex : fruit::toExPolygons(region)) {
+        std::vector<std::vector<fruit::Vec2>> polys;
+        auto add = [&](const fruit::Path& path) {
+            std::vector<fruit::Vec2> v;
+            for (const fruit::Point64& q : path) v.push_back(fruit::toVec(q));
+            polys.push_back(std::move(v));
+        };
+        add(ex.contour);
+        for (const fruit::Path& h : ex.holes) add(h);
+        const fruit::ops::Solid slab = fruit::ops::extrude(polys, kThick);
+        if (!slab.valid() || slab.empty()) continue;
+        const fruit::TriangleMesh m = slab.toMesh();
+        for (const fruit::Face& f : m.faces) {
+            bool top = true;
+            for (int k = 0; k < 3; ++k) top = top && m.vertices[static_cast<std::size_t>(f[static_cast<std::size_t>(k)])].z > kThick / 2;
+            if (!top) continue;
+            for (int k = 0; k < 3; ++k) {
+                const fruit::Vec3& v = m.vertices[static_cast<std::size_t>(f[static_cast<std::size_t>(k)])];
+                out.insert(out.end(), {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(z)});
+            }
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+std::pair<double, double> App::hollowCutRange(int axis) const {
+    if (!doc_) return {0, 0};
+    const fruit::BBox3 b = doc_->placedBox();
+    return {alongAxis(b.min, axis), alongAxis(b.max, axis)};
+}
+
+void App::setHollowCut(const HollowCut& c) {
+    hollow_cut_ = c;
+    const auto [lo, hi] = hollowCutRange(c.axis);
+    // To a hundredth, as the field shows it, and never "-0.00".
+    hollow_cut_.at = std::round(std::clamp(c.at, lo, hi) * 100) / 100 + 0.0;
+    if (std::abs(hollow_cut_.at) < 0.005) hollow_cut_.at = 0;
+    hollow_cut_doc_ = doc_.get();
+}
+
+double App::hollowCutAt(const HollowPlan& p, int i, int axis) const {
+    const auto t = static_cast<std::size_t>(i);
+    const fruit::Cavity& c = p.closed.cavities.at(t);
+    if (axis == 2) return (c.first_layer + c.last_layer + 1) * p.layer_height / 2;  // half-way up it
+    std::optional<fruit::PlacedHole> hole;
+    if (doc_ && doc_->hollow.planFresh(doc_->revision()) && t < p.vent_preview.size()) hole = p.vent_preview[t];
+    for (std::size_t k = 0; !hole && k < p.placed.size() && k < p.into_own.size(); ++k)
+        if (p.into_own[k] == i) hole = p.placed[k];
+    if (hole) return alongAxis((hole->from + hole->to) * 0.5, axis);
+    return alongAxis(cavityLabelAt(p.closed, t, p.layer_height), axis);
+}
+
+void App::setHollowCutAxis(int axis) {
+    if (!doc_) return;
+    HollowCut c = hollow_cut_;
+    c.axis = std::clamp(axis, 0, 2);
+    const auto [lo, hi] = hollowCutRange(c.axis);
+    c.at = (lo + hi) / 2;
+    const HollowState& hs = doc_->hollow;
+    const HollowPlan* p = hs.plan && hs.plan_revision == doc_->revision() ? hs.plan.get() : nullptr;
+    if (p && hollow_selected_ >= 0 && static_cast<std::size_t>(hollow_selected_) < p->closed.cavities.size()) {
+        c.at = hollowCutAt(*p, hollow_selected_, c.axis);
+    } else if (p) {
+        // Through the biggest hollow: the job's middle may miss it, with several parts.
+        const fruit::HollowResult& cav = p->cavities();
+        std::size_t biggest = cav.cavities.size();
+        for (std::size_t i = 0; i < cav.cavities.size(); ++i)
+            if (biggest == cav.cavities.size() || cav.cavities[i].volume > cav.cavities[biggest].volume) biggest = i;
+        if (biggest < cav.cavities.size()) {
+            const fruit::Cavity& k = cav.cavities[biggest];
+            c.at = c.axis == 2 ? (k.first_layer + k.last_layer + 1) * p->layer_height / 2
+                               : alongAxis(cavityLabelAt(cav, biggest, p->layer_height), c.axis);
+        }
+    }
+    // The side away from the camera stays, so the cut faces it; for a height, what is below.
+    const V3 eye = camera_.eye();
+    c.keep_above = c.axis == 2 ? false : (c.axis == 0 ? eye.x : eye.y) < c.at;
+    setHollowCut(c);
+}
+
+fruit::Vec3 App::ontoCut(const fruit::Vec3& p) const {
+    if (!cut_for_) return p;
+    const double d = fruit::dot(cut_normal_, p - cut_mid_);
+    return d > 0 ? p - cut_normal_ * d : p;
+}
+
 void App::syncCut() {
     std::shared_ptr<const HollowPlan> plan;
     // Not while holes are placed by hand: a click must land on what is seen.
@@ -2372,79 +2472,72 @@ void App::syncCut() {
     if (!plan) {
         renderer_.clearCut();
         cut_for_.reset();
-        cut_through_ = -2;
         return;
     }
-    // Through the hollow chosen: along a hole into it when it has one (a
-    // vent shown or added, a drain hole), so the cut shows where the hole goes
-    // through the model; else through its middle. With none chosen, through the biggest hollow's
-    // middle (the job's middle may miss it, with several parts), or with none
-    // at all the job's middle.
-    const int through =
-        hollow_selected_ >= 0 && static_cast<std::size_t>(hollow_selected_) < plan->closed.cavities.size() ? hollow_selected_ : -1;
-    const fruit::BBox3 job = doc_->placedBox();
-    fruit::Vec2 at{(job.min.x + job.max.x) / 2, (job.min.y + job.max.y) / 2};
-    if (through < 0) {
-        const fruit::HollowResult& cav = plan->cavities();
-        std::size_t biggest = cav.cavities.size();
-        for (std::size_t i = 0; i < cav.cavities.size(); ++i)
-            if (biggest == cav.cavities.size() || cav.cavities[i].volume > cav.cavities[biggest].volume) biggest = i;
-        if (biggest < cav.cavities.size()) at = cavityLabelAt(cav, biggest, plan->layer_height).xy();
-    } else {
-        const auto t = static_cast<std::size_t>(through);
-        std::optional<fruit::PlacedHole> vent;
-        if (doc_->hollow.planFresh(doc_->revision()) && t < plan->vent_preview.size()) vent = plan->vent_preview[t];
-        for (std::size_t k = 0; !vent && k < plan->placed.size() && k < plan->into_own.size(); ++k)
-            if (plan->into_own[k] == through) vent = plan->placed[k];
-        if (vent) at = ((vent->from + vent->to) * 0.5).xy();
-        else at = cavityLabelAt(plan->closed, t, plan->layer_height).xy();
-    }
-    const bool moved = plan != cut_for_ || through != cut_through_ || at.x != cut_at_.x || at.y != cut_at_.y;
-    if (moved) {
-        cut_at_ = at;
-        cut_mid_ = {at.x, at.y, (job.min.z + job.max.z) / 2};
-    }
-    const V3 eye = camera_.eye();
-    fruit::Vec2 toward{eye.x - cut_mid_.x, eye.y - cut_mid_.y};
-    toward = fruit::norm(toward) > 1e-9 ? fruit::normalized(toward) : fruit::Vec2{0, -1};
-    // While the view is being turned the cut stays put (a big model's
-    // section takes a moment); it follows once the mouse is let go.
-    const bool turning = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-                         ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-    const bool turned = fruit::dot(toward, cut_toward_) < std::cos(1.0 * 3.14159265358979 / 180.0);
-    if (moved || (turned && !turning)) {
+    // Set up once for a job: facing the camera as it is then. After that it
+    // is only ever moved by hand, or to a hollow chosen.
+    if (hollow_cut_doc_ != doc_.get()) setHollowCutAxis(std::abs(camera_.eye().x - doc_->placedBox().center().x) >
+                                                                std::abs(camera_.eye().y - doc_->placedBox().center().y)
+                                                            ? 0
+                                                            : 1);
+    const HollowCut& c = hollow_cut_;
+    if (plan != cut_for_ || !(c == cut_built_)) {
         cut_for_ = plan;
-        cut_through_ = through;
-        cut_toward_ = toward;
-        const fruit::Vec2 along{-toward.y, toward.x};
-        const fruit::Vec2 at{cut_mid_.x, cut_mid_.y};
-        const HollowSection s = hollowSection(*plan, at, along);
-        const fruit::BBox3 b = doc_->placedBox();
-        const double rim = std::clamp(0.004 * fruit::norm(b.max - b.min), 0.1, 0.6);
-        auto quads = [&](const std::vector<SectionBand>& bands, double grow, unsigned rgb) {
-            Renderer::CapGroup g;
-            g.rgb = rgb;
-            g.triangles.reserve(bands.size() * 18);
-            for (const SectionBand& band : bands) {
-                const fruit::Vec2 a = at + along * (band.t0 - grow), c = at + along * (band.t1 + grow);
-                const float z0 = static_cast<float>(band.layer * s.layer_height - grow);
-                const float z1 = static_cast<float>((band.layer + 1) * s.layer_height + grow);
-                const float ax = static_cast<float>(a.x), ay = static_cast<float>(a.y);
-                const float cx = static_cast<float>(c.x), cy = static_cast<float>(c.y);
-                g.triangles.insert(g.triangles.end(),
-                                   {ax, ay, z0, cx, cy, z0, cx, cy, z1, ax, ay, z0, cx, cy, z1, ax, ay, z1});
+        cut_built_ = c;
+        const fruit::BBox3 job = doc_->placedBox();
+        const fruit::Vec3 centre = job.center();
+        const fruit::Vec3 e = c.axis == 0 ? fruit::Vec3{1, 0, 0} : c.axis == 1 ? fruit::Vec3{0, 1, 0} : fruit::Vec3{0, 0, 1};
+        cut_normal_ = c.keep_above ? e * -1.0 : e;
+        cut_mid_ = c.axis == 0 ? fruit::Vec3{c.at, centre.y, centre.z}
+                   : c.axis == 1 ? fruit::Vec3{centre.x, c.at, centre.z}
+                                 : fruit::Vec3{centre.x, centre.y, c.at};
+        const double rim = std::clamp(0.004 * fruit::norm(job.max - job.min), 0.1, 0.6);
+        Renderer::CapGroup dark{0x0E1014, {}}, prints{0xAEB6C4, {}}, edge{0xF2B84B, {}}, hollow{0x2A2412, {}};
+        if (c.axis < 2) {
+            // Upright: layer by layer, the bands where each crosses the cut.
+            const fruit::Vec2 at = cut_mid_.xy();
+            const fruit::Vec2 along = c.axis == 0 ? fruit::Vec2{0, 1} : fruit::Vec2{1, 0};
+            const HollowSection s = hollowSection(*plan, at, along);
+            auto quads = [&](std::vector<float>& to, const std::vector<SectionBand>& bands, double grow) {
+                to.reserve(bands.size() * 18);
+                for (const SectionBand& band : bands) {
+                    const fruit::Vec2 a = at + along * (band.t0 - grow), b = at + along * (band.t1 + grow);
+                    const float z0 = static_cast<float>(band.layer * s.layer_height - grow);
+                    const float z1 = static_cast<float>((band.layer + 1) * s.layer_height + grow);
+                    const float ax = static_cast<float>(a.x), ay = static_cast<float>(a.y);
+                    const float bx = static_cast<float>(b.x), by = static_cast<float>(b.y);
+                    to.insert(to.end(), {ax, ay, z0, bx, by, z0, bx, by, z1, ax, ay, z0, bx, by, z1, ax, ay, z1});
+                }
+            };
+            quads(dark.triangles, s.outline, 0);
+            quads(prints.triangles, s.prints, 0);
+            quads(edge.triangles, s.hollow, rim);
+            quads(hollow.triangles, s.hollow, 0);
+        } else if (plan->solid && plan->layers && plan->layer_height > 0 && c.at >= 0) {
+            // Level: the layer at that height, flat.
+            const auto L = static_cast<std::size_t>(c.at / plan->layer_height);
+            if (L < plan->solid->size() && L < plan->layers->size()) {
+                fruit::Paths whole = plan->solid->slices[L];
+                if (L < plan->closed.interior.size())
+                    whole.insert(whole.end(), plan->closed.interior[L].begin(), plan->closed.interior[L].end());
+                const fruit::HollowResult& cav = plan->cavities();
+                const fruit::Paths inside = !plan->filling() && L < cav.interior.size() ? cav.interior[L] : fruit::Paths{};
+                dark.triangles = flatTriangles(fruit::unionNonZero(whole), c.at);
+                prints.triangles = flatTriangles(plan->layers->slices[L], c.at);
+                if (!inside.empty()) {
+                    edge.triangles = flatTriangles(fruit::offset(inside, rim), c.at);
+                    hollow.triangles = flatTriangles(inside, c.at);
+                }
             }
-            return g;
-        };
+        }
         // Holes show through the dark of the whole; what prints over it;
         // then the hollows, with a rim.
-        cut_cap_ = {quads(s.outline, 0, 0x0E1014), quads(s.prints, 0, 0xAEB6C4), quads(s.hollow, rim, 0xF2B84B),
-                    quads(s.hollow, 0, 0x2A2412)};
+        cut_cap_ = {std::move(dark), std::move(prints), std::move(edge), std::move(hollow)};
         ++cut_key_;
     }
-    // Kept: the far side, where dot(toward, p - mid) <= 0.
-    const float plane[4] = {static_cast<float>(-cut_toward_.x), static_cast<float>(-cut_toward_.y), 0.0f,
-                            static_cast<float>(cut_toward_.x * cut_mid_.x + cut_toward_.y * cut_mid_.y)};
+    // Kept: where dot(normal, p - mid) <= 0.
+    const float plane[4] = {static_cast<float>(-cut_normal_.x), static_cast<float>(-cut_normal_.y),
+                            static_cast<float>(-cut_normal_.z), static_cast<float>(fruit::dot(cut_normal_, cut_mid_))};
     renderer_.setCut(plane, cut_cap_, cut_key_);
 }
 

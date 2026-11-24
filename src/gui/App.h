@@ -409,10 +409,29 @@ public:
     // work: then maintain() starts it once that is done.
     void planHollowPreview();
     bool planningHollow() const;
-    // The Hollow screen's view cut in half, through the middle and square
-    // to the camera, showing what prints and the hollows inside.
+    // The Hollow screen's view cut in half, showing what prints and the
+    // hollows inside. The cut is set by hand and stays put as the view
+    // turns: across the plate's X or Y, or level at a height; where along
+    // that axis (printer coordinates, mm); and which side of it stays.
+    // Choosing a hollow moves it there, on the same axis.
     bool cutAway() const { return cut_away_; }
     void setCutAway(bool on) { cut_away_ = on; }
+    struct HollowCut {
+        int axis = 1;            // 0 across X, 1 across Y, 2 at a height
+        double at = 0;           // mm along that axis
+        bool keep_above = true;  // the side where that coordinate is more than `at` stays
+        bool operator==(const HollowCut&) const = default;
+    };
+    const HollowCut& hollowCut() const { return hollow_cut_; }
+    void setHollowCut(const HollowCut& c);
+    // The job's extent along `axis`: where the cut can be.
+    std::pair<double, double> hollowCutRange(int axis) const;
+    // Turned to `axis`: through the hollow chosen (or the biggest), keeping
+    // the side away from the camera (below, for a height).
+    void setHollowCutAxis(int axis);
+    // `p`, or where it meets the cut when the cut takes it away (along the
+    // cut's square).
+    fruit::Vec3 ontoCut(const fruit::Vec3& p) const;
     // The results' pictures from below, as textures (-1: how it sits now).
     unsigned orientPicture(int option);
     // Supports.
@@ -987,11 +1006,15 @@ private:
     std::vector<fruit::TriangleMesh> risk_tip_meshes_;  // tips that may let go, by how likely
     void syncCut();
     bool cut_away_ = true;
+    HollowCut hollow_cut_;
+    const Document* hollow_cut_doc_ = nullptr;   // the job hollow_cut_ was set for (else it is set up again)
+    // Where `i` of the plan's own hollows is best cut along `axis`: along a
+    // hole into it, else through its middle.
+    double hollowCutAt(const HollowPlan& p, int i, int axis) const;
     std::shared_ptr<const HollowPlan> cut_for_;  // the plan the cap was built from
-    int cut_through_ = -2;                       // and the hollow it goes through (-1: the middle)
-    fruit::Vec2 cut_at_;                         // the point it goes through
-    fruit::Vec2 cut_toward_;                     // horizontal, from the model towards the camera
-    fruit::Vec3 cut_mid_;
+    HollowCut cut_built_;                        // and the cut
+    fruit::Vec3 cut_normal_;                     // unit, towards the side cut away
+    fruit::Vec3 cut_mid_;                        // on the cut
     std::vector<Renderer::CapGroup> cut_cap_;
     int cut_key_ = 0;
     fruit::TriangleMesh detail_mesh_;  // the slots and holes no support went into (the Why view)

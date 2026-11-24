@@ -184,5 +184,7 @@ void hollowPanel(App& app, Document& doc);
 void hollowApplyArea(App& app, Document& doc);  // the button that applies it, pinned under the panel
 void hollowOutcomesList(App& app, Document& doc);
 void hollowOverlay(App& app, Document& doc, ImVec2 origin, ImVec2 size, const float* view_proj);
+// Where the Hollow screen's cut is: its axis, a slider for where, and Flip (in the view's top bar).
+void hollowCutControls(App& app);
 
 }  // namespace gui::screens::parts
