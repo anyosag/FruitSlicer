@@ -360,7 +360,11 @@ struct SupportResult {
     fruit::ValidationReport validation;
     std::size_t tips = 0, island_tips = 0, extra_hold = 0;
     std::size_t trunks = 0, pillars = 0, braces = 0, on_model = 0;
-    double support_ml = 0;  // at most: where parts overlap they are counted twice
+    // The resin the supports add to the print, raft included: the print's
+    // layers less the model's (or the hollowed model's), so where pieces
+    // overlap each other or sink into the model they count once.
+    double support_ml = 0;
+    double support_sum_ml = 0;  // every piece's own volume added up, overlaps again: for the log
     std::vector<std::pair<double, std::size_t>> tip_sizes;  // diameter (mm), tips; biggest first
     fruit::Vec3 size_with_supports;
     std::vector<SupportCheck> checks;
@@ -380,7 +384,7 @@ struct SupportResult {
         int part = -1;                     // its id
         std::size_t first = 0, tips = 0;   // its tips: points[first, first + tips)
         std::size_t trunks = 0;
-        double ml = 0;                     // its supports, and its raft when it has one of its own
+        double ml = 0;                     // its supports' resin (and its raft's when it has one of its own), overlaps once
         int raft = -1;                     // index into rafts (-1: it stands on the plate)
         fruit::SupportConfig cfg;          // its settings
         fruit::TreeConfig tree_cfg;
@@ -465,6 +469,7 @@ JobPlan splitPlan(const Document& doc, SupportPlan plan);
 // and setup. Kept by finishWithEdits when it is given one; only for that.
 struct RebuildCache {
     std::shared_ptr<const fruit::DetailMap> details;  // the job's slots and holes
+    std::optional<double> model_mm3;                  // and what its layers hold (cut with them), mm³
     // The job's model, indexed (the index points into this copy), and its
     // sharp edges: for the check after making.
     std::shared_ptr<const fruit::TriangleMesh> model;
@@ -483,6 +488,8 @@ struct RebuildCache {
         std::optional<fruit::GapCheck> gaps;          // the check after making
         std::shared_ptr<const fruit::TriangleMesh> mesh;  // its supports' mesh
         bool mesh_raft = false;                       // made with its raft (not a shared one)
+        std::shared_ptr<const fruit::TriangleMesh> mm3_of;  // the mesh `mesh_mm3` is of
+        double mesh_mm3 = 0;                          // what that mesh's layers hold, mm³
         bool checked = false;                         // the two below
         fruit::DropCheck drops;                       // what the tips no support reached leave unheld
         std::size_t short_from_raft = 0;              // layers short of hold from the raft

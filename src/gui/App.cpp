@@ -1236,7 +1236,9 @@ void App::installSupports(const std::shared_ptr<Document>& d, std::shared_ptr<co
     s.result_settings = settings;
     s.selected_tip = -1;
     log::info("supports: " + std::to_string(s.result->tips) + " tips, " + std::to_string(s.result->pillars) +
-              " pillars in " + std::to_string(s.result->seconds) + " s");
+              " pillars, " + strf("%.2f ml of resin (%.2f ml added up piece by piece)", s.result->support_ml,
+                                  s.result->support_sum_ml) +
+              " in " + std::to_string(s.result->seconds) + " s");
 }
 
 bool App::SupportInputs::operator==(const SupportInputs& o) const {

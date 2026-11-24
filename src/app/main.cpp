@@ -578,13 +578,18 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
     r["dropped_points"] = tree.dropped_points;
     r["raft_thickness"] = tree.raft_top;
     r["support_triangles"] = sup.faceCount();
-    r["support_volume_ml"] = sup.volume() / 1000.0;  // overlapping shells: upper bound
+    r["support_volume_ml"] = sup.volume() / 1000.0;  // every piece added up, overlaps again: an upper bound
     r["fits_printer"] = printer.fitsXY(b.min.x, b.min.y) && printer.fitsXY(b.max.x, b.max.y) && b.max.z <= printer.build_z;
     r["tree_warnings"] = counts;
     if (!o.no_validate) {
         const ValidationReport v = validateSupported(mesh, sup, layer_h, cfg.link_grow, cfg.absorb_island_area,
                                                      printer.pixelX() * printer.pixelY(), JobControl::none(),
                                                      cfg.on_plate ? cfg.plate_hold_height : 0.0);
+        // The supports' resin, overlaps once: the print's layers less the model's own.
+        const double model_mm3 = layers && std::abs(layers->layer_height - layer_h) < 1e-9
+                                     ? layersVolume(*layers)
+                                     : layersVolume(sliceModel(mesh, layer_h));
+        r["support_resin_ml"] = std::max(0.0, v.volume - model_mm3) / 1000.0;
         json fl = json::array();
         for (const auto& f : v.floating)
             if (fl.size() < 20) fl.push_back({{"layer", f.layer}, {"z", f.z}, {"area_mm2", f.area}, {"at", {f.at.x, f.at.y}}});

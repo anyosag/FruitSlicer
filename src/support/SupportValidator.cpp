@@ -23,6 +23,7 @@ ValidationReport validateLayers(const LayerStack& ls, double link_grow, double s
     ctl.report("islands", 1);
     ValidationReport r;
     r.layers = ls.size();
+    r.volume = layersVolume(ls);
     if (ls.size()) r.first_layer_area = area(ls.slices[0]);
     for (const LayerPart& p : islands) {
         if (p.layer == 0) {

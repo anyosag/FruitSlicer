@@ -281,6 +281,19 @@ TEST_CASE("Supports: the demo bracket gets a raft, tips and a clean check", "[gu
     CHECK(r.trunks >= 1);
     CHECK(r.support_ml > 0);
     CHECK_FALSE(r.mesh.empty());
+    // The supports' resin: the layers of model and supports together less the model's own, so where pieces
+    // overlap or sink into the model they count once (less than every piece's volume added up).
+    {
+        fruit::TriangleMesh all = doc->placed();
+        all.append(r.mesh);
+        const double print = fruit::layersVolume(fruit::sliceModel(all, kLayerHeight));
+        const double model = fruit::layersVolume(fruit::sliceModel(doc->placed(), kLayerHeight));
+        CHECK(r.support_ml == Approx((print - model) / 1000).epsilon(1e-9));
+        CHECK(r.support_ml < r.support_sum_ml);
+        CHECK(r.support_sum_ml == Approx(r.mesh.volume() / 1000).epsilon(1e-9));
+        REQUIRE(r.parts.size() == 1);
+        CHECK(r.parts[0].ml == r.support_ml);
+    }
     // Model and supports together reach down to the plate.
     CHECK(r.size_with_supports.z == Approx(doc->placed().bbox().max.z).margin(0.01));
     REQUIRE(r.checks.size() == 6);

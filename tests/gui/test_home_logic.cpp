@@ -259,6 +259,15 @@ TEST_CASE("Home: recent jobs keep their counts; older lists read without them", 
     CHECK(old[0].parts == 0);
     CHECK(old[0].tips == -1);
     CHECK(old[0].support_ml < 0);
+    // Kept before the figure was the supports' resin, it added every piece up: not shown.
+    {
+        std::ofstream out(file);
+        out << R"({"jobs": [{"path": "/jobs/old.fruitjob", "name": "old", "tips": 371, "support_ml": 30.5}]})";
+    }
+    const auto summed = loadRecentJobs(file);
+    REQUIRE(summed.size() == 1);
+    CHECK(summed[0].tips == 371);
+    CHECK(summed[0].support_ml < 0);
 }
 
 TEST_CASE("Home: a job's picture shows it on the 3D view's ground, and is kept in its file", "[gui][home][jobs]") {

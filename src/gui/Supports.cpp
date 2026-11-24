@@ -2059,11 +2059,17 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         return false;
     };
     // The slots and holes no support goes into, in the whole job (one between two parts counts too).
-    if (n > 0 && cache && cache->details) r.details = cache->details;
+    double model_mm3 = 0;
+    if (n > 0 && cache && cache->details && cache->model_mm3) r.details = cache->details, model_mm3 = *cache->model_mm3;
     else if (n > 0) {
         const fruit::SupportConfig& c0 = made[0].cfg;
         const fruit::TreeConfig& t0 = made[0].tc;
         const fruit::LayerStack ls = fruit::sliceModel(doc.placed(), c0.layer_height, nullptr, 0, ctl.sub(0, 0.04));
+        // What the model's own layers hold, for the supports' resin (the print's layers less these): cut as
+        // the check after making cuts them.
+        model_mm3 = c0.layer_height == kLayerHeight
+                        ? fruit::layersVolume(ls)
+                        : fruit::layersVolume(fruit::sliceModel(doc.placed(), kLayerHeight, nullptr, 0, ctl.silent()));
         fruit::DetailMap map = fruit::DetailMap::build(ls, c0.detail_width, c0.detail_mouth_depth, ctl.sub(0.04, 0.05));
         // Holes in parts that stand on the plate, through the bottom layers, where a foot standing in one would
         // fill more than half of it: one foot at its full width with the bottom layers' gap on each side, twice.
@@ -2071,7 +2077,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         if (doc.anyOnPlate() && ls.size() > 0)
             map.addPlateHoles(ls.slices[0], std::max(min_raft, 0.5), 2 * (t0.base_diameter + 2 * t0.foot_clearance));
         r.details = std::make_shared<const fruit::DetailMap>(std::move(map));
-        if (cache) cache->details = r.details;
+        if (cache) cache->details = r.details, cache->model_mm3 = model_mm3;
     }
     for (Making& m : made) m.tc.details = r.details;
     // Each part's tree is its own (the job's model and its slots are only read): side by side.
@@ -2248,6 +2254,17 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         meshes[i] = std::make_shared<const fruit::TriangleMesh>(made[i].tree.mesh(made[i].tc, with_raft));
         if (usable[i]) keep[i]->mesh = meshes[i], keep[i]->mesh_raft = with_raft;
     });
+    // With more parts than one, what each part's supports hold, from their own layers (cut once per mesh).
+    std::vector<double> part_mm3(n, 0.0);
+    if (n > 1)
+        fruit::parallelFor(n, static_cast<unsigned>(n), [&](std::size_t i) {
+            if (keep[i] && keep[i]->mm3_of == meshes[i]) {
+                part_mm3[i] = keep[i]->mesh_mm3;
+                return;
+            }
+            part_mm3[i] = fruit::layersVolume(fruit::sliceModel(*meshes[i], kLayerHeight, nullptr, 0, ctl.silent()));
+            if (keep[i]) keep[i]->mm3_of = meshes[i], keep[i]->mesh_mm3 = part_mm3[i];
+        });
     for (std::size_t i = 0; i < n; ++i) {
         const Making& m = made[i];
         SupportResult::PartMade pm;
@@ -2264,7 +2281,7 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
         if (shared(m)) t.raft_links.clear();  // the shared raft's bars are its own, below
         fruit::appendTree(r.tree, t, static_cast<int>(pm.first));
         const fruit::TriangleMesh& mesh = *meshes[i];
-        pm.ml = std::max(0.0, mesh.volume()) / 1000.0;
+        pm.ml = part_mm3[i] / 1000.0;
         r.mesh.append(mesh);
         if (shared(m) && rafts[static_cast<std::size_t>(m.raft)].parts.back() == m.id) {
             RebuildCache::Raft* kept = keptRaft(rafts[static_cast<std::size_t>(m.raft)], true);
@@ -2439,7 +2456,11 @@ SupportResult finishWithEdits(const Document& doc, const SupportSetup& s, JobPla
     r.braces = r.tree.braces.size();
     for (const auto& pl : r.tree.pillars) r.on_model += pl.on_model;
     r.on_model += r.tree.stubs.size();  // short columns from the model just below a tip
-    r.support_ml = std::max(0.0, r.mesh.volume()) / 1000.0;
+    // The supports' resin: the print's layers less the model's own (hollowed or drilled, where it was).
+    r.support_sum_ml = std::max(0.0, r.mesh.volume()) / 1000.0;
+    const double model_held = r.hollow && r.hollow->layers ? fruit::layersVolume(*r.hollow->layers) : model_mm3;
+    r.support_ml = std::max(0.0, r.validation.volume - model_held) / 1000.0;
+    if (r.parts.size() == 1) r.parts[0].ml = r.support_ml;
     fruit::BBox3 b = doc.placed().bbox();
     b.extend(r.mesh.bbox());
     r.size_with_supports = b.size();

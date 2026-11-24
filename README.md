@@ -576,6 +576,12 @@ Each point gets:
 
 The report re-slices model plus supports and lists anything that would still
 start printing in mid-air (`validation.floating_islands`, which should be 0).
+From the same layers it gives the supports' resin, raft included
+(`support_resin_ml`): the layers of model and supports together less the
+model's own, so where pieces overlap each other or sink into the model they
+count once. `support_volume_ml` adds every piece's own volume up, overlaps
+again: an upper bound, kept for scripts. The app shows the first (on a rack
+175 mm tall, 33 ml where the pieces added up came to 45 ml).
 
 A tip with no head of its planned size that finds a way down is first built
 a size or two smaller (0.4, then 0.3 mm: a narrower head and shaft), then, at

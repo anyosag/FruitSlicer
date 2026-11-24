@@ -22,6 +22,7 @@ struct ValidationReport {
     size_t small_floating = 0;       // islands below `small_area` (absorbed / skipped by design)
     size_t subpixel = 0;             // slivers below one pixel's area: not printable, ignored
     double first_layer_area = 0;
+    double volume = 0;               // mm³: what the layers hold, overlaps once (layersVolume)
 };
 
 // `small_area`: islands below this are expected (the point generator skips

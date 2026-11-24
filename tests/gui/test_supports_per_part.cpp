@@ -148,6 +148,11 @@ TEST_CASE("Supports per part: each part gets its own tips and its own raft, apar
         }
     }
     CHECK(r.plans.size() == 2);
+    // Each part's supports' resin, from their own layers: together the job's, but for the tips sunk into the
+    // model (in a part's own, not in the job's), within 1 %.
+    CAPTURE(r.parts[0].ml, r.parts[1].ml, r.support_ml);
+    CHECK(r.parts[0].ml + r.parts[1].ml == Approx(r.support_ml).epsilon(0.01));
+    CHECK(r.parts[0].ml + r.parts[1].ml >= r.support_ml);
     CHECK(r.validation.floating.empty());
     CHECK(r.validation.first_layer_islands == 2);  // two rafts, each one piece
     const SupportCheck* c = check(r, "Each raft comes off in one piece");

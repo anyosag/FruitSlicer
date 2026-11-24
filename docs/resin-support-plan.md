@@ -828,6 +828,23 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   below a joint, the same resin when branching is off; the same rack under
   70 mm keeps every pillar, rod and triangle; a column takes no more than 6
   tips). Not printed.
+- **The supports' resin, counted once (2026-11-24).** The figure shown ("ml
+  of supports") added every piece's own volume up: where shafts, heads,
+  balls and bars overlap, and where tips sink into the model, the resin was
+  counted again. On TubeRack_v3 it read 115.0 ml for 51.4 ml of resin. Now it
+  is what the supports add to the print, raft included: the layers of model
+  and supports together (cut for the check after making) less the model's
+  own (or the hollowed model's), at 0.05 mm (`layersVolume`). On TubeRack's
+  model alone that cut gives 38.922 ml against 38.923 ml from its mesh. A
+  part of a job with more parts has its own supports' layers (sunk-in tips
+  in), so the parts add up to the job's within 1 %. "at most" is gone from
+  the Job panel; Home's recent jobs keep the new figure under a new name, so
+  an older entry's shows as not known. The command line reports it as
+  `support_resin_ml` (`support_volume_ml` is the old sum, an upper bound).
+  Measured, app (the same tips, trees and replays; only the figure): lid
+  12.4 to 8.3 ml, eye cup 12.0 to 9.0, CHamber 10.5 to 9.3, TheDipper_full
+  23.8 to 21.0, TubeRack_v3 (after the two changes above) 45.1 to 33.2; each
+  equal to its sliced union less its model.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

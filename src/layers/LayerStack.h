@@ -28,6 +28,11 @@ struct LayerStack {
 LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats* stats = nullptr,
                       unsigned threads = 0, const JobControl& ctl = JobControl::none());
 
+// What the layers hold, mm³: each layer's area times its height, the layers
+// summed in order (so the same every time). Where shapes overlapped in a
+// layer they were joined when it was cut: overlaps count once.
+double layersVolume(const LayerStack& ls, unsigned threads = 0);
+
 // Puts `n` copies of layer 0 in front, so every layer moves up `n` layers
 // (a print that stands on the plate prints taller by `n` layers, to make up
 // for the squashed first layers). `sample_z` is kept as each layer's

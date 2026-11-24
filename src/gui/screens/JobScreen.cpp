@@ -442,7 +442,7 @@ void statusBar(App& app) {
              col::TextSecondary);
         const std::vector<SupportProblem> now = problemsNow(*doc, r);  // notes, warnings and the accepted don't count
         problems = static_cast<int>(countOf(now, SupportProblem::Level::Review) + countOf(now, SupportProblem::Level::Blocks));
-        totals = strf("%zu tips · %.1f ml of supports at most", r.tips, r.support_ml);
+        totals = strf("%zu tips · %.1f ml of supports", r.tips, r.support_ml);
         if (!doc->supports.edits.empty()) {
             // The tips as shown: an edit's at once, while its supports are made.
             totals = strf("%zu tips · %s by you", app.shownTips().size(),

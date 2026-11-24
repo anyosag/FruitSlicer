@@ -163,6 +163,14 @@ TEST_CASE("Hollow: applied, the supports, the layers and the print file use the 
     REQUIRE(s.hollow->holes.size() == 2);
     CHECK(s.hollow->drains == std::vector<char>{1});
     CHECK(s.validation.floating.empty());
+    // The supports' resin: the print's layers less the drilled model's own.
+    {
+        const fruit::LayerStack print = fruit::unionLayers(*s.hollow->layers, fruit::sliceModel(s.mesh, kLayerHeight));
+        CHECK(s.support_ml ==
+              Approx((fruit::layersVolume(print) - fruit::layersVolume(*s.hollow->layers)) / 1000).epsilon(1e-9));
+        CHECK(s.support_ml > 0);
+        CHECK(s.support_ml < s.support_sum_ml);
+    }
     const fruit::Vec3 mouth = doc->part().transform().apply(s.hollow->holes[0].at);  // underneath, among the tips
     CHECK(mouth.z == Approx(5.0).margin(1e-6));
     for (const auto& p : s.points) CHECK(fruit::distance(p.pos, mouth) > s.hollow->placed[0].radius);

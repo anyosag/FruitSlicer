@@ -123,3 +123,17 @@ TEST_CASE("the height correction is whole layers of the print's height", "[slice
     CHECK(heightCorrectionLayers(0.10, 0) == 0);
     CHECK(heightCorrectionLayers(5, 0.05) == 10);  // past the largest: held to 0.5 mm
 }
+
+TEST_CASE("what the layers hold: shapes that overlap count once", "[slice]") {
+    // A 10 × 10 × 2 mm block and two 4 × 4 × 3 mm bars standing in it and in each other, every face on a layer
+    // boundary (0.05 mm layers).
+    TriangleMesh m = makeBox({0, 0, 0}, {10, 10, 2});
+    m.append(makeBox({2, 2, 1}, {6, 6, 4}));
+    m.append(makeBox({4, 4, 1}, {8, 8, 4}));
+    const LayerStack ls = sliceModel(m, 0.05);
+    // The block, then what the bars add above it (two 4 × 4 squares overlapping in 2 × 2), once.
+    const double once = 10 * 10 * 2 + (16 + 16 - 4) * 2.0;
+    CHECK(layersVolume(ls) == Approx(once).epsilon(1e-9));
+    CHECK(m.volume() == Approx(once + 2 * 16 * 1 + 4 * 2).epsilon(1e-9));  // the mesh counts the overlaps again
+    CHECK(layersVolume(ls) == layersVolume(ls, 1));                        // the same however it is shared out
+}

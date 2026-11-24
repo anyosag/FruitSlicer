@@ -30,6 +30,14 @@ LayerStack sliceModel(const TriangleMesh& mesh, double layer_height, SliceStats*
     return ls;
 }
 
+double layersVolume(const LayerStack& ls, unsigned threads) {
+    std::vector<double> a(ls.size(), 0.0);
+    parallelFor(ls.size(), threads, [&](size_t i) { a[i] = std::max(0.0, area(ls.slices[i])); });
+    double sum = 0;
+    for (const double v : a) sum += v;
+    return sum * ls.layer_height;
+}
+
 void addBaseLayers(LayerStack& ls, int n) {
     if (n <= 0 || ls.slices.empty()) return;
     const auto k = static_cast<size_t>(n);

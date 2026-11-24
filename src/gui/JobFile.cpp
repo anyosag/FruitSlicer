@@ -849,7 +849,8 @@ std::vector<RecentJob> loadRecentJobs(const std::string& file) {
                 // Named after its file, as it opens (Document::name), whatever was remembered.
                 out.push_back({path, fs::path(path).stem().string(), e.value("state", ""), e.value("when", ""),
                                e.value("parts", 0), e.value("on_plate", false), e.value("tips", -1L),
-                               e.value("support_ml", -1.0)});
+                               // Kept before it was the supports' resin (it added every piece up): not known.
+                               e.value("support_resin_ml", -1.0)});
             }
         return out;
     } catch (const std::exception&) {
@@ -865,7 +866,7 @@ void rememberJob(const std::string& file, const RecentJob& job, std::size_t keep
     json arr = json::array();
     for (const auto& r : jobs)
         arr.push_back({{"path", r.path}, {"name", r.name}, {"state", r.state}, {"when", r.when}, {"parts", r.parts},
-                       {"on_plate", r.on_plate}, {"tips", r.tips}, {"support_ml", r.support_ml}});
+                       {"on_plate", r.on_plate}, {"tips", r.tips}, {"support_resin_ml", r.support_ml}});
     const fs::path p(file);
     if (p.has_parent_path()) fs::create_directories(p.parent_path());
     const std::string tmp = file + ".tmp";

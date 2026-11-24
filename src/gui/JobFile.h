@@ -66,7 +66,7 @@ struct RecentJob {
     int parts = 0;           // 0: not known
     bool on_plate = false;   // standing on the plate, no raft
     long tips = -1;          // with supports up to date; -1: none, or not known
-    double support_ml = -1;  // the same
+    double support_ml = -1;  // the same: the supports' resin (SupportResult::support_ml)
 };
 std::vector<RecentJob> loadRecentJobs(const std::string& file);
 void rememberJob(const std::string& file, const RecentJob& job, std::size_t keep = 8);
