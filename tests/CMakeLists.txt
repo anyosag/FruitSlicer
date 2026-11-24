@@ -10,6 +10,7 @@ add_executable(fruit_tests
   test_points.cpp
   test_fresh_edges.cpp
   test_tip_edges.cpp
+  test_closings.cpp
   test_detail_room.cpp
   test_tree.cpp
   test_full_raft.cpp

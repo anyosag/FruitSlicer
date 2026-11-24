@@ -131,20 +131,22 @@ Paths simplify(const Paths& p, double tolerance_mm) {
     return out;
 }
 
-std::vector<std::pair<double, double>> lineSpans(const Paths& p, const Vec2& at, const Vec2& dir) {
-    // Each edge that crosses the line, where along it and which way; then
-    // the winding number swept along the line.
-    std::vector<std::pair<double, int>> hits;
-    for (const Path& path : p) {
-        const size_t n = path.size();
-        for (size_t i = 0; i < n; ++i) {
-            const Vec2 a = toVec(path[i]), b = toVec(path[(i + 1) % n]);
-            const double sa = cross(dir, a - at), sb = cross(dir, b - at);
-            if ((sa > 0) == (sb > 0)) continue;
-            const Vec2 q = a + (b - a) * (sa / (sa - sb));
-            hits.emplace_back(dot(q - at, dir), sb > 0 ? 1 : -1);
-        }
+namespace {
+
+// Each edge of `path` that crosses the line: where along it, and which way.
+void lineHits(const Path& path, const Vec2& at, const Vec2& dir, std::vector<std::pair<double, int>>& hits) {
+    const size_t n = path.size();
+    for (size_t i = 0; i < n; ++i) {
+        const Vec2 a = toVec(path[i]), b = toVec(path[(i + 1) % n]);
+        const double sa = cross(dir, a - at), sb = cross(dir, b - at);
+        if ((sa > 0) == (sb > 0)) continue;
+        const Vec2 q = a + (b - a) * (sa / (sa - sb));
+        hits.emplace_back(dot(q - at, dir), sb > 0 ? 1 : -1);
     }
+}
+
+// The winding number swept along the line: where it is not zero.
+std::vector<std::pair<double, double>> sweepHits(std::vector<std::pair<double, int>>& hits) {
     std::sort(hits.begin(), hits.end());
     std::vector<std::pair<double, double>> out;
     int winding = 0;
@@ -156,6 +158,24 @@ std::vector<std::pair<double, double>> lineSpans(const Paths& p, const Vec2& at,
         else if (before != 0 && winding == 0 && t > start) out.emplace_back(start, t);
     }
     return out;
+}
+
+}  // namespace
+
+std::vector<std::pair<double, double>> lineSpans(const Paths& p, const Vec2& at, const Vec2& dir) {
+    std::vector<std::pair<double, int>> hits;
+    for (const Path& path : p) lineHits(path, at, dir, hits);
+    return sweepHits(hits);
+}
+
+std::vector<std::pair<double, double>> lineSpans(const std::vector<const ExPolygon*>& p, const Vec2& at,
+                                                 const Vec2& dir) {
+    std::vector<std::pair<double, int>> hits;
+    for (const ExPolygon* e : p) {
+        lineHits(e->contour, at, dir, hits);
+        for (const Path& h : e->holes) lineHits(h, at, dir, hits);
+    }
+    return sweepHits(hits);
 }
 
 static void collect(const C::PolyPath64& node, ExPolygons& out) {

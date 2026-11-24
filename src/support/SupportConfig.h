@@ -112,6 +112,50 @@ struct SupportConfig {
     double skin_advance = 0.5;
     double skin_reach = 1.6;
 
+    // A gap closing from two sides through a wall: the top of a round hole
+    // through it, the crown of an arch. Each layer of it reaches out from
+    // both sides at once, the way a bridge is built, and the look-back above
+    // (anchor_window, self_supported_reach) reads it as two ledges reaching
+    // over nothing, so a crown got a tip every millimetre. It holds itself
+    // up where all of these hold, judged once where the gap closes and kept
+    // for every layer of it below:
+    //  - each piece of a layer is within `closing_reach` of the layer below;
+    //  - anchor_window below where it closes, the gap is `closing_gap_min`
+    //    across or more, and no wider than a round crown whose last layer
+    //    reaches `closing_reach` from each side (6.9 mm at 0.05 mm layers);
+    //    a crown that rises across the wall by `closing_ramp_deg` or more (a
+    //    tapered or tilted bore) closes a little at a time, and may be up to
+    //    `closing_gap_ramp` across;
+    //  - both sides are one wall `closing_wall_min` to `closing_wall_max`
+    //    deep, with the gap open past both its faces, each side at least
+    //    `closing_side_min` wide, and both came in over that last stretch,
+    //    neither by less than `closing_converge` of the other: an arch, not a
+    //    ledge reaching for a wall (nor a cup, a vault or a tunnel);
+    //  - it closes within `closing_rise` above the piece, and no flat face
+    //    over warn_flat_area appears within `closing_flat_clear` above it (a
+    //    plate printed just over a crown hangs from the tips under it).
+    // Flat crowns on a model taller than `closing_flat_min_height`, rising
+    // ones on one taller than `closing_ramp_min_height`: small parts tilted
+    // as they print have bores whose crowns rise steeply, and keep their tips.
+    // REASONING, not measured: closing_reach is half of skin_reach (a skin's
+    // edge is trusted 1.6 mm from a tip; here every point of it is 0.8 mm
+    // from a held edge), below self_supported_reach. 0 = off.
+    double closing_reach = 0.8;
+    double closing_gap_min = 4.0;
+    double closing_gap_ramp = 12.0;
+    double closing_ramp_deg = 14.0;
+    double closing_wall_min = 1.5;
+    double closing_wall_max = 3.0;
+    double closing_side_min = 1.0;
+    double closing_converge = 0.5;
+    double closing_rise = 4.0;
+    double closing_flat_clear = 2.0;
+    double closing_flat_min_height = 0.0;
+    double closing_ramp_min_height = 80.0;
+    // The spots for extra hold on such a crown are left out too, so that the
+    // rules for hold can't put a tip back on it.
+    bool closing_spots_off = true;
+
     // A tip's contact keeps this far inside every edge of the face it sits
     // on, beyond its own radius, so none of it hangs off the face: a contact
     // cures a little wider than drawn, and one over an edge pokes into the

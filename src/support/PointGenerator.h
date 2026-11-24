@@ -59,6 +59,12 @@ struct PointGenStats {
     size_t relief_added = 0;
     size_t relief_upgraded = 0;
     size_t relief_left = 0;
+    // Gaps closing from two sides through a wall (SupportConfig::closing_reach):
+    // how many were judged where they close, how many hold themselves up, and
+    // the new underside (mm²) that got no tips for it.
+    size_t closings_judged = 0;
+    size_t closings_held = 0;
+    double closing_area = 0;
     double peak_layer_area = 0;
     int peak_layer = 0;
     double seconds = 0;

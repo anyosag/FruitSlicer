@@ -416,6 +416,9 @@ int cmdPoints(const std::string& path, const PlacementOpts& place, double layer_
                   {"capacity_deficit_layers", st.capacity_deficits},
                   {"before_pruning", st.greedy_points},
                   {"pruned", st.pruned},
+                  {"closing_gaps_judged", st.closings_judged},
+                  {"closing_gaps_holding_themselves_up", st.closings_held},
+                  {"closing_underside_without_tips_mm2", st.closing_area},
                   {"peak_layer_area_mm2", st.peak_layer_area},
                   {"peak_layer", st.peak_layer},
                   {"seconds", st.seconds}};
@@ -530,7 +533,10 @@ int cmdSupport(const std::string& path, PlacementOpts place, double layer_h, Poi
                             {"tips_added_beside_overloaded_ones", res.stats.relief_added},
                             {"tips_made_bigger_instead", res.stats.relief_upgraded},
                             {"rounds_of_working_out_loads", res.stats.relief_rounds},
-                            {"tips_still_over_their_load", res.stats.relief_left}};
+                            {"tips_still_over_their_load", res.stats.relief_left},
+                            {"closing_gaps_judged", res.stats.closings_judged},
+                            {"closing_gaps_holding_themselves_up", res.stats.closings_held},
+                            {"closing_underside_without_tips_mm2", res.stats.closing_area}};
         json w = json::array();
         for (const auto& x : res.warnings) w.push_back({{"code", x.code}, {"message", x.message}});
         r["point_warnings"] = w;
@@ -690,7 +696,10 @@ int cmdStability(const std::string& path, PlacementOpts place, double layer_h, P
                          {"tips_added_beside_overloaded_ones", res.stats.relief_added},
                          {"tips_made_bigger_instead", res.stats.relief_upgraded},
                          {"rounds_of_working_out_loads", res.stats.relief_rounds},
-                         {"tips_still_over_their_load", res.stats.relief_left}};
+                         {"tips_still_over_their_load", res.stats.relief_left},
+                         {"closing_gaps_judged", res.stats.closings_judged},
+                         {"closing_gaps_holding_themselves_up", res.stats.closings_held},
+                         {"closing_underside_without_tips_mm2", res.stats.closing_area}};
     }
     const SupportTree tree = buildSupportTree(mesh, pts, tc, min_raft);
     const TriangleMesh sup = tree.mesh(tc);

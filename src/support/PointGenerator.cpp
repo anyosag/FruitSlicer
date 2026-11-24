@@ -3,7 +3,9 @@
 #include "support/PointGenerator.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -29,6 +31,13 @@ constexpr double kEdgeInset = 0.02; // mm: edge samples sit just inside the face
 constexpr double kRimBand = 0.1;    // mm: how near a part's outline counts as on it
 constexpr double kPastSlackDeg = 0.5;  // degrees past the angle that are rounding, not a face (processOverhang)
 constexpr double kReliefSlack = 1.1; // rule 4: a tip counts as carrying too much from this many times its limit
+// Gaps closing from two sides (heldClosings).
+constexpr double kProbeReach = 25.0;  // mm: how far a line looks for the other side of a gap
+constexpr int kChords = 24;           // lines through a point, for the narrowest gap through it
+constexpr double kClosingOpen = 0.5;  // mm: the gap goes on at least this far past both faces of the wall
+constexpr double kOneWall = 0.5;      // mm: the faces beside both sides agree within this: one wall
+constexpr double kSideInset = 1.5;    // mm: at most this far into a side, to find the wall's faces there
+constexpr double kAlongSlack = 0.1;   // mm: a closing's rectangle reaches this far past the wall's faces
 
 struct Sample {
     Vec3 pos, normal;
@@ -196,6 +205,52 @@ private:
     // `outer`: only the parts' outlines, their holes filled.
     Paths anchorFor(int part, bool outer = false) const;
     bool mergesSoon(int part, int layers) const;
+
+    // ---- gaps closing from two sides through a wall (SupportConfig::closing_reach)
+    // Where one closes, judged once: a rectangle across the gap and through
+    // the wall, over the layers from the lowest piece that asked to where it
+    // has closed right across. One that does not hold itself up is kept too,
+    // so the pieces under it are not judged again; it wins over one that does.
+    struct Closing {
+        Vec2 centre, across, along;  // across: from one side of the gap to the other; along: through the wall
+        double half_across = 0, half_along = 0;
+        int first = 0, last = 0;
+        bool held = false;
+        bool contains(const Vec2& p) const {
+            const Vec2 d = p - centre;
+            return std::abs(dot(d, across)) <= half_across && std::abs(dot(d, along)) <= half_along;
+        }
+        Paths rect(double grow = 0) const;
+    };
+    // Through the model at `layer` along the line through `at` (dir of unit
+    // length): its stretches, from the parts within `reach` of `at`.
+    std::vector<std::pair<double, double>> spansAt(int layer, const Vec2& at, const Vec2& dir, double reach) const;
+    bool solidAt(int layer, const Vec2& p) const;
+    // The gap at `layer` through `at`: of 24 lines through it, the narrowest
+    // with the model on both sides within `reach` (false: `at` is in the
+    // model, or no line has the model on both sides).
+    struct Chord {
+        Vec2 dir;
+        double lo = 0, hi = 0;            // the gap: from at + dir·lo to at + dir·hi
+        double side_lo = 0, side_hi = 0;  // the model's stretch beyond each end
+        double width() const { return hi - lo; }
+    };
+    bool narrowest(int layer, const Vec2& at, double reach, Chord& out) const;
+    // The first layer in [from, to] where `p` is in the model; -1: none.
+    int closesAt(const Vec2& p, int from, int to) const;
+    // The closing at `layer` that `p` is in: its index, -1 for none, -2 for
+    // one that does not hold itself up.
+    int closingAt(int layer, const Vec2& p) const;
+    int judgeClosing(int layer, const Vec2& c, const Chord& ch);
+    int addClosing(const Closing& z);
+    // Whether all of `e` is within `reach` of `below`; `held`: the part of it that is.
+    bool withinReach(const ExPolygon& e, const Paths& below, double reach, Paths* held = nullptr) const;
+    bool convergesHere(int layer, const Vec2& c, const Vec2& dir) const;
+    bool flatAbove(const Closing& z, int from, int to);
+    // The pieces of `N` (part `part`'s new underside, less what the look-back
+    // holds) that a closing holds up. `spots_from`: the first of this layer's
+    // spots for extra hold on that part.
+    Paths heldClosings(int part, const Paths& N, const Paths& below, size_t spots_from);
     void coverLayer(const std::vector<int>& layer_samples);
     // A tip about to go on `sample` moves into the nearest inside corner
     // within its reach when, there, it still holds every sample in `holds`
@@ -255,6 +310,19 @@ private:
     std::vector<Vec3> minima_normal_;  // per minimum: its downward normal (zero if none)
     double s_off_ = 0;
     int anchor_layers_ = 1;
+    // Closings (heldClosings): flat ones and rising ones judged on this model;
+    // the widest flat gap that holds itself up; each closing and, per layer,
+    // those that cover it; per part, what it adds past its parents where that
+    // is a flat face (the test above a closing).
+    bool flat_on_ = false, ramp_on_ = false;
+    double closing_g1_ = 0;
+    std::vector<Closing> closings_;
+    std::vector<std::vector<int>> closings_at_;
+    struct NewFace {
+        double area = 0;
+        Paths region;  // kept only where the area is over warn_flat_area
+    };
+    std::unordered_map<int, NewFace> new_face_;
 
     std::vector<Sample> samples_;
     std::vector<Tip> tips_;
@@ -795,6 +863,7 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     }
     // Any newly exposed underside (even self-supporting) is a place where
     // capacity tips can go; sampled coarsely and never needing coverage.
+    const size_t spots_from = samples_.size();
     {
         // Held or not, these spots are never used on a piece that stands on
         // the plate (enforceCapacity); they count for the held height only
@@ -858,6 +927,16 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     // below holds itself up.
     if (!anchor.empty()) N = difference(N, offset(anchor, cfg_.self_supported_reach));
     if (N.empty() || std::abs(area(N)) < 1e-4) return;
+    // A gap closing from two sides through a wall holds itself up as well:
+    // the look-back reads each side of it as a ledge over nothing.
+    if (flat_on_ || ramp_on_) {
+        const Paths held_up = heldClosings(part, N, below_union, spots_from);
+        if (!held_up.empty()) {
+            result_.stats.closing_area += std::abs(area(held_up));
+            N = offset(offset(difference(N, held_up), -0.002), 0.002);
+            if (N.empty() || std::abs(area(N)) < 1e-4) return;
+        }
+    }
     // What is left would get tips: the same again.
     if (stands) held_tight_.note(held, P.layer), held_loose_.note(held, P.layer);
     if (held) return;
@@ -877,6 +956,327 @@ void Generator::processOverhang(int part, std::vector<int>& layer_samples) {
     // the spacing of the edge samples) has a sample on it.
     if (!fresh.empty()) sampleRegion(fresh, P.layer, part, false, layer_samples, nullptr, true);
     sampleRegion(N, P.layer, part, false, layer_samples, &fresh);
+}
+
+// ---------------------------------------------------------------- closings
+
+
+// A point inside `e`: the middle of the longest stretch of it on the line
+// through its box's centre, along the box's longer side (else across it).
+bool pointInside(const ExPolygon& e, Vec2& c) {
+    const BBox2 b = e.bbox();
+    const Vec2 mid = b.center(), sz = b.size();
+    const Paths ps = e.toPaths();
+    const std::array<Vec2, 2> dirs = sz.x >= sz.y ? std::array<Vec2, 2>{Vec2{1, 0}, Vec2{0, 1}}
+                                                  : std::array<Vec2, 2>{Vec2{0, 1}, Vec2{1, 0}};
+    for (const Vec2& dir : dirs) {
+        double best = 0;
+        for (const auto& [s0, s1] : lineSpans(ps, mid, dir))
+            if (s1 - s0 > best) {
+                best = s1 - s0;
+                c = mid + dir * ((s0 + s1) / 2);
+            }
+        if (best > 0) return true;
+    }
+    return false;
+}
+
+Paths Generator::Closing::rect(double grow) const {
+    const double a = half_across + grow, b = half_along + grow;
+    const double corner[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+    Path p;
+    for (const auto& k : corner) p.push_back(toPoint(centre + across * (k[0] * a) + along * (k[1] * b)));
+    if (area(p) < 0) std::reverse(p.begin(), p.end());
+    return {p};
+}
+
+std::vector<std::pair<double, double>> Generator::spansAt(int layer, const Vec2& at, const Vec2& dir,
+                                                          double reach) const {
+    if (layer < 0 || static_cast<size_t>(layer) >= graph_.layerCount()) return {};
+    BBox2 seg;
+    seg.extend(at - dir * reach);
+    seg.extend(at + dir * reach);
+    std::vector<const ExPolygon*> near;
+    for (int p : graph_.partsInLayer(static_cast<size_t>(layer)))
+        if (graph_.part(p).box.overlaps(seg)) near.push_back(&graph_.part(p).shape);
+    return lineSpans(near, at, dir);
+}
+
+bool Generator::solidAt(int layer, const Vec2& p) const {
+    if (layer < 0 || static_cast<size_t>(layer) >= graph_.layerCount()) return false;
+    for (int q : graph_.partsInLayer(static_cast<size_t>(layer))) {
+        const LayerPart& P = graph_.part(q);
+        if (p.x < P.box.min.x || p.x > P.box.max.x || p.y < P.box.min.y || p.y > P.box.max.y) continue;
+        if (P.shape.contains(p)) return true;
+    }
+    return false;
+}
+
+bool Generator::narrowest(int layer, const Vec2& at, double reach, Chord& out) const {
+    bool found = false;
+    for (int i = 0; i < kChords; ++i) {
+        const double th = kPi * i / kChords;
+        const Vec2 dir{std::cos(th), std::sin(th)};
+        double lo = -1e18, hi = 1e18, side_lo = 0, side_hi = 0;
+        for (const auto& [a, b] : spansAt(layer, at, dir, reach)) {
+            if (a <= 0 && b >= 0) return false;  // in the model
+            if (b < 0) {
+                lo = b;
+                side_lo = b - a;
+            } else if (hi > 1e17) {
+                hi = a;
+                side_hi = b - a;
+            }
+        }
+        if (lo < -reach || hi > reach) continue;  // the model on one side only, or on neither
+        if (!found || hi - lo < out.width()) {
+            out = Chord{dir, lo, hi, side_lo, side_hi};
+            found = true;
+        }
+    }
+    return found;
+}
+
+int Generator::closesAt(const Vec2& p, int from, int to) const {
+    const int last = std::min(to, static_cast<int>(graph_.layerCount()) - 1);
+    if (from < 0 || from > last) return -1;
+    // A fifth of a millimetre at a time, then layer by layer back from where it is in the model.
+    const int step = std::max(1, static_cast<int>(std::lround(0.2 / layers().layer_height)));
+    for (int K = from;; K = std::min(K + step, last)) {
+        if (solidAt(K, p)) {
+            for (int k = std::max(from, K - step + 1); k < K; ++k)
+                if (solidAt(k, p)) return k;
+            return K;
+        }
+        if (K == last) return -1;
+    }
+}
+
+int Generator::closingAt(int layer, const Vec2& p) const {
+    if (layer < 0 || static_cast<size_t>(layer) >= closings_at_.size()) return -1;
+    int found = -1;
+    for (int zi : closings_at_[static_cast<size_t>(layer)]) {
+        const Closing& z = closings_[static_cast<size_t>(zi)];
+        if (!z.contains(p)) continue;
+        if (!z.held) return -2;
+        if (found < 0) found = zi;
+    }
+    return found;
+}
+
+int Generator::addClosing(const Closing& z) {
+    const int id = static_cast<int>(closings_.size());
+    closings_.push_back(z);
+    const int last = std::min(z.last, static_cast<int>(closings_at_.size()) - 1);
+    for (int L = std::max(z.first, 0); L <= last; ++L) closings_at_[static_cast<size_t>(L)].push_back(id);
+    if (z.held) ++result_.stats.closings_held;
+    return id;
+}
+
+bool Generator::withinReach(const ExPolygon& e, const Paths& below, double reach, Paths* held) const {
+    // Only what is near the piece can hold it: clipped to its box first.
+    if (held) held->clear();
+    const BBox2 b = e.bbox();
+    const double g = reach + 0.01;
+    const Clipper2Lib::Rect64 box(toUnits(b.min.x - g), toUnits(b.min.y - g), toUnits(b.max.x + g),
+                                  toUnits(b.max.y + g));
+    const Paths near = Clipper2Lib::RectClip(box, below);
+    if (near.empty()) return false;
+    const Paths grown = offset(near, reach);
+    const Paths ep = e.toPaths();
+    const Paths rest = difference(ep, grown);
+    const bool all = rest.empty() || std::abs(area(rest)) < 1e-4;
+    if (held) *held = all ? ep : intersection(ep, grown);
+    return all;
+}
+
+bool Generator::convergesHere(int layer, const Vec2& c, const Vec2& dir) const {
+    // The gap along `dir` through `c` in the layer below, and the model along it in this one.
+    double lo = -1e18, hi = 1e18;
+    for (const auto& [a, b] : spansAt(layer - 1, c, dir, kProbeReach)) {
+        if (a <= 0 && b >= 0) return false;
+        if (b < 0) lo = b;
+        else if (hi > 1e17) hi = a;
+    }
+    if (lo < -kProbeReach || hi > kProbeReach) return false;
+    const auto now = spansAt(layer, c, dir, kProbeReach);
+    const auto at = [&](double t) -> const std::pair<double, double>* {
+        for (const auto& s : now)
+            if (s.first <= t && s.second >= t) return &s;
+        return nullptr;
+    };
+    const auto* mine = at(0);
+    if (!mine) return false;
+    constexpr double eps = 0.01;
+    const bool from_lo = mine->first <= lo + eps, from_hi = mine->second >= hi - eps;
+    if (from_lo && from_hi) return true;  // closed right across in this layer
+    if (!from_lo && !from_hi) return false;
+    // One side reaches out to `c`: the other must come in too, by half as much at least.
+    const auto* other = at(from_lo ? hi + eps : lo - eps);
+    if (!other) return false;
+    const double near = from_lo ? mine->second - lo : hi - mine->first;
+    const double far = from_lo ? hi - other->first : other->second - lo;
+    return far >= cfg_.closing_converge * near;
+}
+
+bool Generator::flatAbove(const Closing& z, int from, int to) {
+    const int last = std::min(to, static_cast<int>(graph_.layerCount()) - 1);
+    const Paths near = z.rect(cfg_.closing_flat_clear);
+    const BBox2 nb = bbox(near);
+    for (int K = std::max(from, 1); K <= last; ++K)
+        for (int q : graph_.partsInLayer(static_cast<size_t>(K))) {
+            const LayerPart& P = graph_.part(q);
+            if (!P.box.overlaps(nb)) continue;
+            double before = 0;
+            for (int pp : P.parents) before += graph_.part(pp).area;
+            if (P.area - before <= cfg_.warn_flat_area / 2) continue;  // adds too little to be one
+            auto it = new_face_.find(q);
+            if (it == new_face_.end()) {
+                Paths under;
+                for (int pp : P.parents) {
+                    const Paths ps = graph_.part(pp).shape.toPaths();
+                    under.insert(under.end(), ps.begin(), ps.end());
+                }
+                Paths added = difference(P.shape.toPaths(), offset(unionNonZero(under), s_off_));
+                NewFace f;
+                f.area = std::abs(area(added));
+                if (f.area > cfg_.warn_flat_area) f.region = std::move(added);
+                it = new_face_.emplace(q, std::move(f)).first;
+            }
+            if (it->second.area > cfg_.warn_flat_area && !intersection(it->second.region, near).empty()) return true;
+        }
+    return false;
+}
+
+int Generator::judgeClosing(int layer, const Vec2& c, const Chord& ch) {
+    const double h = layers().layer_height;
+    const Vec2 m = c + ch.dir * ((ch.lo + ch.hi) / 2);  // the middle of the gap
+    const int rise = static_cast<int>(std::lround(cfg_.closing_rise / h));
+    const int Lc = closesAt(m, layer, layer + rise);
+    if (Lc < 0) return -1;  // not closing soon: asked again from higher up
+    ++result_.stats.closings_judged;
+    Closing z;
+    z.centre = m;
+    z.across = ch.dir;
+    z.along = {-ch.dir.y, ch.dir.x};
+    z.half_across = ch.width() / 2 + cfg_.closing_reach;
+    z.half_along = cfg_.closing_wall_max / 2 + kAlongSlack;
+    z.first = layer;
+    z.last = Lc;
+    const auto no = [&]() { return addClosing(z); };
+    // A window below where it closes (as the look-back sees it): the gap, its two sides, the wall they are.
+    const int A = Lc - anchor_layers_;
+    if (A < 1 || solidAt(A, m)) return no();
+    Chord an;
+    if (!narrowest(A, m, kProbeReach, an)) return no();
+    const double widest = std::max(flat_on_ ? closing_g1_ : 0.0, ramp_on_ ? cfg_.closing_gap_ramp : 0.0);
+    if (an.width() < cfg_.closing_gap_min || an.width() > widest) return no();
+    if (std::min(an.side_lo, an.side_hi) < cfg_.closing_side_min) return no();
+    const Vec2 u{-an.dir.y, an.dir.x};
+    // Across the wall, a little way into each side: where its faces are there.
+    const auto faces = [&](double t, double& f0, double& f1) {
+        for (const auto& [a, b] : spansAt(A, m + an.dir * t, u, kProbeReach))
+            if (a <= 0 && b >= 0) {
+                f0 = a;
+                f1 = b;
+                return true;
+            }
+        return false;
+    };
+    double a0 = 0, a1 = 0, b0 = 0, b1 = 0;
+    if (!faces(an.lo - std::min(an.side_lo / 2, kSideInset), a0, a1) ||
+        !faces(an.hi + std::min(an.side_hi / 2, kSideInset), b0, b1))
+        return no();
+    if (std::abs(a0 - b0) > kOneWall || std::abs(a1 - b1) > kOneWall) return no();  // not one wall
+    const double f0 = std::max(a0, b0), f1 = std::min(a1, b1), depth = f1 - f0;
+    if (depth < cfg_.closing_wall_min || depth > cfg_.closing_wall_max) return no();
+    // Through the wall: the gap goes on past both its faces (not a cup, a notch, a blind hole).
+    double v0 = -1e18, v1 = 1e18;
+    for (const auto& [a, b] : spansAt(A, m, u, kProbeReach)) {
+        if (a <= 0 && b >= 0) return no();
+        if (b < 0) v0 = b;
+        else if (v1 > 1e17) v1 = a;
+    }
+    if (v0 > f0 - kClosingOpen || v1 < f1 + kClosingOpen) return no();
+    // Both sides came in over the window, neither by much less than the other: an arch, not a ledge.
+    {
+        double lo = -1e18, hi = 1e18;
+        for (const auto& [a, b] : spansAt(Lc - 1, m, an.dir, kProbeReach)) {
+            if (a <= 0 && b >= 0) return no();
+            if (b < 0) lo = b;
+            else if (hi > 1e17) hi = a;
+        }
+        if (lo < -kProbeReach || hi > kProbeReach) return no();
+        const double in_lo = lo - an.lo, in_hi = an.hi - hi;
+        const double most = std::max(in_lo, in_hi);
+        if (most <= 0 || std::min(in_lo, in_hi) < cfg_.closing_converge * most) return no();
+    }
+    // Flat across the wall, or rising across it: where it closes a quarter of the way in from each face.
+    const double mid = (f0 + f1) / 2;
+    const Vec2 q0 = m + u * (mid - depth / 4), q1 = m + u * (mid + depth / 4);
+    const int L0 = closesAt(q0, A, Lc + rise), L1 = closesAt(q1, A, Lc + rise);
+    if (L0 < 0 || L1 < 0) return no();
+    const bool ramp = rad2deg(std::atan(std::abs(L0 - L1) * h / (depth / 2))) >= cfg_.closing_ramp_deg;
+    const int A0 = std::min(L0, L1) - anchor_layers_;
+    Chord first;
+    if (A0 < 1 || !narrowest(A0, L0 <= L1 ? q0 : q1, kProbeReach, first)) return no();
+    const double g0 = first.width();
+    if (g0 < cfg_.closing_gap_min) return no();
+    if (ramp ? (!ramp_on_ || g0 > cfg_.closing_gap_ramp) : (!flat_on_ || g0 > closing_g1_)) return no();
+    z.centre = m + u * mid;
+    z.across = an.dir;
+    z.along = u;
+    z.half_along = depth / 2 + kAlongSlack;
+    // Its layers: up to where it has closed right across, just inside both faces too.
+    z.last = std::max({Lc, L0, L1});
+    for (const double f : {f0 + kAlongSlack, f1 - kAlongSlack})
+        z.last = std::max(z.last, closesAt(m + u * f, A, Lc + rise));
+    // Nothing flat soon over it: that would hang from the tips under it.
+    if (flatAbove(z, z.last + 1, z.last + static_cast<int>(std::lround(cfg_.closing_flat_clear / h)))) return no();
+    z.held = true;
+    return addClosing(z);
+}
+
+Paths Generator::heldClosings(int part, const Paths& N, const Paths& below, size_t spots_from) {
+    const int L = graph_.part(part).layer;
+    const double a = cfg_.closing_reach;
+    Paths held;
+    std::vector<int> used;
+    for (const ExPolygon& E : toExPolygons(N)) {
+        if (E.area() > 2 * a * cfg_.closing_wall_max) continue;  // a ceiling, a wide ledge
+        const BBox2 eb = E.bbox();
+        int zi = closingAt(L, eb.center());
+        if (zi == -2) continue;  // in one that does not hold itself up
+        if (zi < 0 && std::hypot(eb.size().x, eb.size().y) > std::hypot(cfg_.closing_wall_max, 2 * a) + 0.5)
+            continue;  // longer than a wall is deep
+        Paths reach_part;
+        if (!withinReach(E, below, a, &reach_part) && (zi < 0 || reach_part.empty()))
+            continue;  // judged only where all of it is a step from the layer below; held, the part that is
+        Vec2 c;
+        if (!pointInside(E, c)) continue;
+        if (zi < 0) {
+            Chord ch;
+            if (!narrowest(L - 1, c, kProbeReach, ch)) continue;  // no gap with two sides under it
+            zi = judgeClosing(L, c, ch);
+            if (zi < 0 || !closings_[static_cast<size_t>(zi)].held) continue;
+        }
+        const Closing& z = closings_[static_cast<size_t>(zi)];
+        if (!convergesHere(L, c, z.across)) continue;
+        const Paths in = intersection(reach_part, z.rect());
+        if (in.empty()) continue;
+        held.insert(held.end(), in.begin(), in.end());
+        if (std::find(used.begin(), used.end(), zi) == used.end()) used.push_back(zi);
+    }
+    // This layer's spots for extra hold there are left out (made first, in order, so the thinning of the spots
+    // is the same as without the rule).
+    if (!held.empty() && cfg_.closing_spots_off)
+        for (size_t si = spots_from; si < samples_.size(); ++si)
+            for (int zi : used)
+                if (closings_[static_cast<size_t>(zi)].contains(samples_[si].pos.xy())) {
+                    samples_[si].excluded = true;
+                    break;
+                }
+    return held;
 }
 
 void Generator::moveToCorner(int sample, const std::vector<int>& holds) {
@@ -1146,6 +1546,20 @@ void Generator::setup() {
     }
     s_off_ = cfg_.layer_height * std::tan(deg2rad(cfg_.critical_angle_deg));
     anchor_layers_ = std::max(1, static_cast<int>(std::lround(cfg_.anchor_window / cfg_.layer_height)));
+    // Gaps closing from two sides: flat ones and rising ones, each on a model
+    // taller than its own height. The widest flat one is the gap, a window
+    // below where it closes, of a round crown whose last layer reaches
+    // closing_reach from each side (its chord there is the root of 2·r·h).
+    {
+        const double tall = mesh_.empty() ? 0.0 : mesh_.bbox().max.z - mesh_.bbox().min.z;
+        const bool on = cfg_.closing_reach > 0;
+        flat_on_ = on && tall > cfg_.closing_flat_min_height;
+        ramp_on_ = on && tall > cfg_.closing_ramp_min_height;
+        const double h = cfg_.layer_height, w = anchor_layers_ * h, a = cfg_.closing_reach;
+        const double v = a * a * w / h - w * w;
+        closing_g1_ = v > 0 ? 2 * std::sqrt(v) : 0.0;
+        if (flat_on_ || ramp_on_) closings_at_.assign(layers().size(), {});
+    }
     const size_t np = graph_.parts().size();
     uf_.resize(np);
     std::iota(uf_.begin(), uf_.end(), 0);

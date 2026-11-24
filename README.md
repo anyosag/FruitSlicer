@@ -406,7 +406,19 @@ Points are chosen bottom-up so that
    against what was there 1 mm below; before, faces up to about 47.5° got no
    tips. Within 0.5° of the angle is taken for the outlines' rounding. Ceilings
    over holes (hollows, cups, bores) keep the layer-by-layer rule: a hollow's
-   ceiling is shaped at the angle and its rounding closes it at 45.6° on average;
+   ceiling is shaped at the angle and its rounding closes it at 45.6° on average.
+   The top of a hole through a wall 1.5 to 3 mm thick closes from both sides
+   at once, the way a bridge is built, and holds itself up: no tips where each
+   layer of it reaches at most 0.8 mm past the one below, the gap 1 mm under
+   where it closes is 4 to 6.9 mm across (at 0.05 mm layers; the top of a
+   round hole up to about 12 mm across), both sides came in over that last
+   millimetre, the gap goes right through the wall, and no flat face starts
+   within 2 mm above it. A top that rises across the wall (a tapered or tilted
+   bore) may be up to 12 mm across, on a model taller than 80 mm: small parts
+   tilted as they print have such bores, and keep their tips. On a rack
+   175 mm tall with 144 round holes through 2 mm walls this takes 1,229 of
+   2,717 tips; the row of holes just under its lattice plate keeps them.
+   Reasoning, not measured on a print;
 2. **capacity**: for every connected piece at every layer, its tips together
    can hold its cross-section under peel (seed: one 0.4 mm tip per 11.1 mm²,
    scaled by tip area);

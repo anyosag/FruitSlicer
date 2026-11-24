@@ -90,6 +90,11 @@ Paths simplify(const Paths& p, double tolerance_mm);
 // For drawing a vertical cut through a stack of layers.
 std::vector<std::pair<double, double>> lineSpans(const Paths& p, const Vec2& at, const Vec2& dir);
 
+// The same through polygons-with-holes that do not overlap each other (the
+// parts of one layer), read where they are.
+std::vector<std::pair<double, double>> lineSpans(const std::vector<const ExPolygon*>& p, const Vec2& at,
+                                                 const Vec2& dir);
+
 // Group (already unioned, NonZero) paths into polygons-with-holes. Islands
 // inside holes become their own ExPolygons.
 ExPolygons toExPolygons(const Paths& p);

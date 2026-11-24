@@ -742,6 +742,61 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   pins it: a post with a stem and an arm, the tip under the stem's end; the
   arm put it at 2.33 mm² (worst at layer 74) instead of 1.99 (layer 62).
   Not printed.
+- **The top of a hole through a wall holds itself up (2026-11-24).** The
+  user: the planner works well on small models, but large ones need other
+  logic. On TubeRack_v3 (175 mm tall, 144 round holes through 2 mm walls)
+  1,250 of 2,738 tips sat on the tops of the holes, about 7 a hole, within
+  32° to 41° of the top. The look-back (`anchor_window`, `self_supported_reach`)
+  read the two sides of a gap closing over 1 mm each as a ledge reaching over
+  nothing, and coverage then packed tips 0.7 to 0.94 mm apart along the arc.
+  Each layer of such a closing reaches out from both sides at once, as a
+  bridge is built. Now a gap that closes is judged once, where it closes, and
+  its pieces below get no tips when: each piece is within `closing_reach`
+  (0.8 mm, half of `skin_reach`) of the layer below; 1 mm under where it
+  closes the gap is 4.0 mm across or more (narrower: the apexes of the star
+  and diamond windows, whose tips the walls beside them pull on) and no wider
+  than a round crown whose last layer reaches 0.8 mm from each side (6.9 mm
+  at 0.05 mm layers); both sides are one wall 1.5 to 3.0 mm deep with the gap
+  open past both faces (not a cup, a tube, a notch, a blind hole), each side
+  at least 1 mm wide, and both came in over that millimetre, neither by less
+  than half the other (an arch, not a fin reaching for a wall); it closes
+  within 4 mm; and no flat face over 50 mm² appears within 2 mm above it (the
+  rack's row of holes 0.65 mm under its lattice plate keeps its 56 tips). A
+  top that rises across the wall by 14° or more (a tapered bore) may be up to
+  12 mm across, only on a model taller than 80 mm: CHamber's bores, on parts
+  tilted about 45°, rise 43° to 45° across their walls with closing gaps of
+  7.3 to 9.6 mm, and keep their tips. The spots for extra hold on such a top
+  are left out too. Found while measuring it: the lowest pieces of the 30 mm
+  holes' tops are about 20 mm across, so the line that looks for the far side
+  of a gap reaches 25 mm; a tapered top is followed until it has closed just
+  inside both faces; and in a closing that holds itself up a piece keeps tips
+  only where it reaches past 0.8 mm (as the look-back does): the 17.5 mm
+  bores' last piece is one U (both sides and a 1.606 mm bridge, 3 µm past
+  the reach at its middle), which had put 8 tips across it. Measured, app,
+  Generate (the strengthening loop ran, 0 rounds, as before):
+  - TubeRack_v3: 2,738 tips to 1,503; on the holes' tops 1,250 to 60 (the 56
+    under the plate, and 2 on each of two bridges), tips for extra hold 76 to
+    36 (those beside the tips on the tops), 5 others; every other kind of
+    face the same. Supports' resin, the slices less the model's, 51.4 ml to
+    33.6 ml (the shown sum, 115.0 to 51.6); trunks 996 to 482, braces 4,621
+    to 1,555; "Tips over the edge of a slot or wall" 42 to 5. The replay, 500
+    replays a seed: as it is, 0 of 2,000 lose any model, expected loss
+    0.062 mm³ either way, tips that may let go 5 to 0; 1.41 times weaker,
+    18 to 17 of 1,500, 5.36 to 0.16 mm³; 3 times weaker, 1,359 to 1,352,
+    700 to 153 mm³; the tips alone 3 times weaker, 10 to 3 of 2,500, 81 to
+    24 mm³; the tips 8 times weaker (the tips plate's level), all lost
+    either way. The replay does not judge whether a bare top itself prints.
+  - Lid, eye cup, CHamber, TheDipper_full: identical (the planner's plan, the
+    plan after the strengthening loop, the tips as built, the tree, the
+    replay); no closing holds itself up on any of them.
+  - The rule's own time: 0.38 s of 38 s planning TubeRack, about 1 % on the
+    lid and eye cup.
+  Tests: `test_closings.cpp` (holes of 6.5 and 11.8 mm lose their tops' tips
+  and nothing else changes; 14 mm, walls of 1.2 and 4 mm, a side of 0.6 mm, a
+  blind hole, a cup, a tube, a flat-topped window, a 50° apex, a shallow roof,
+  a fin into a wall and a plate 0.65 mm over a top keep theirs; a tapered bore
+  only past the height; a box of holes with rule 4; the socket, the slab over
+  two fingers and the slotted floor the same either way). Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:
