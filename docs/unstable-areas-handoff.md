@@ -122,6 +122,13 @@ Units:
      The set's pull is split by how much each tip touches the model. Before
      2026-11-20 a pair 0.2 mm apart was a lever: a tip that barely touched
      came out far past where half let go (the CHamber job's spikes at 28 mm).
+   - **Only tips under the same part:** a tip takes thin model's pull outright
+     only when the model goes on straight over the tip into that same part of
+     the layer, or ended in a part this one stands on (`buildColumns`,
+     `underPart`). Before 2026-11-23 any tip within reach did. On the TubeRack
+     job, two arms of a wall's lattice leaving a node handed their pull to a
+     0.2 mm tip at the end of the divider, 3 to 4 mm away across a gap, at
+     2.1 times the arms' own pull: the chart's 204 % at 54 mm.
    - **Stiff model:** the rest goes to the whole piece by stiffness, as springs
      (`settle`: force and both moments balanced).
    - The worst load of every joint is recorded. Joints are walked in runs

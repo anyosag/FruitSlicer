@@ -32,6 +32,10 @@ constexpr size_t kMaxSheets = 16;  // more parts of one piece in one layer than 
 // mm: how far up a support that stands on the model may still be sunk in the face it stands on. On a face
 // that climbs at 60° a 1 mm support is in it for 1.7 mm. Longer than this it lies along the model: a seam.
 constexpr double kFootRun = 2.0;
+// mm: how far up the model straight over a tip is followed, to tell which
+// part of a layer the tip is under. (Further up, thin model is taken as held
+// by it wherever it is, as all thin model was before.)
+constexpr double kColumnMm = 20.0;
 
 // ---------------------------------------------------------------- small matrices
 //
@@ -545,6 +549,16 @@ private:
     // -1 where it overlaps none. Such tips are one contact when a pull is
     // shared out (step).
     std::vector<int> group_one_;
+    // By tip under the model: the part of each layer it is under, from its
+    // lowest joint up, for as long as the model goes on straight over it
+    // (at most column_most_ layers). Thin model is given outright only to
+    // the tips under its own part of the layer, or under what it stands on
+    // (underPart, step).
+    std::vector<int> col_from_;
+    std::vector<std::vector<int>> col_;
+    int column_most_ = 1;
+    void buildColumns();
+    bool underPart(int t, int k, int part, Scratch& st) const;
     // How much model lies under each point that a part's pull is shared out
     // from (the points samplePart gives, in that order): layers in a row.
     std::vector<std::vector<std::uint16_t>> depth_;
@@ -1219,6 +1233,50 @@ void Analysis::sizeJoints() {
     }
 }
 
+void Analysis::buildColumns() {
+    const size_t tips = group_at_.size();
+    col_from_.assign(tips, -1);
+    col_.assign(tips, {});
+    // Each tip's lowest joint under the model: where its column starts.
+    std::vector<int> start(tips, -1);
+    for (size_t i = 0; i < links_.size(); ++i) {
+        const int t = tip_group_[i];
+        if (t < 0 || links_[i].kind != Kind::Tip) continue;
+        const int c = links_[i].child;
+        int& s = start[static_cast<size_t>(t)];
+        if (s < 0 || layerOf(c) < layerOf(s)) s = c;
+    }
+    const int most = column_most_ = std::max(1, static_cast<int>(std::ceil(kColumnMm / h_)));
+    parallelFor(tips, cfg_.threads, [&](size_t t) {
+        int at = start[t];
+        if (at < 0) return;
+        const Vec2 p = group_at_[t];
+        const double tol = std::max(group_r_[t], 0.05);  // a tip on the very edge of a part is under it
+        auto over = [&](int id) {
+            const Part& q = part_[id];
+            if (p.x < q.box.min.x - tol || p.x > q.box.max.x + tol || p.y < q.box.min.y - tol || p.y > q.box.max.y + tol)
+                return false;
+            if (q.poly().contains(p) || distanceToOutline(p, q.poly().contour) <= tol) return true;
+            for (const Path& hole : q.poly().holes)
+                if (distanceToOutline(p, hole) <= tol) return true;
+            return false;
+        };
+        col_from_[t] = layerOf(at);
+        std::vector<int>& col = col_[t];
+        col.push_back(at);
+        while (static_cast<int>(col.size()) < most) {
+            int next = -1;
+            for (int c : part_[at].children)
+                if (model_[c] && over(c)) {
+                    next = c;
+                    break;
+                }
+            if (next < 0) break;
+            col.push_back(at = next);
+        }
+    });
+}
+
 // Next to each tip, along its own support as far as that runs alone: the
 // tips plate measures a tip with its head, so the head has no strength of
 // its own to lose.
@@ -1778,6 +1836,10 @@ struct Analysis::Scratch {
     // spring has been let off.
     std::vector<double> tip_foot, tip_back;
     std::vector<double> load, y, z, u, t;  // the sheets' loads and moves, three numbers a sheet
+    // The parts of the model that the part being shared out stands on, down
+    // to layer `anc_low`: those marked `anc_tick` (underPart).
+    int anc_tick = 0, anc_of = -1, anc_k = -1, anc_low = 0;
+    std::vector<int> anc_mark, anc_front, anc_next;
     Scratch(int parts, int layers, size_t links, size_t bodies, size_t groups, int nodes)
         : f(parts, 0.0), stamp(parts, -1), todo(layers), worst(links), tip_pull(links, 0.0), tip_stamp(links, -1),
           group_pull(groups, 0.0), group_stamp(groups, -1), body_slot(bodies, -1), body_stamp(bodies, -1),
@@ -1790,8 +1852,44 @@ struct Analysis::Scratch {
         one_area.assign(groups, 0.0);
         tip_w.assign(groups, 0.0);
         one_at.assign(groups, Vec2{});
+        anc_mark.assign(static_cast<size_t>(parts), -1);
     }
 };
+
+bool Analysis::underPart(int t, int k, int part, Scratch& st) const {
+    if (t < 0 || t >= static_cast<int>(col_from_.size()) || col_from_[t] < 0) return true;
+    const int at = k - col_from_[t];
+    const std::vector<int>& col = col_[static_cast<size_t>(t)];
+    if (at < 0) return true;
+    // The model goes on straight over the tip: it holds that part, and no other.
+    if (at < static_cast<int>(col.size())) return col[static_cast<size_t>(at)] == part;
+    if (static_cast<int>(col.size()) >= column_most_) return true;
+    // The model over the tip ended below this layer: it holds what stands on
+    // the last of that. Down from `part`, layer by layer, through all it
+    // stands on, as far as that layer (kept for the next tip asked about).
+    const int q = col.back(), m = layerOf(q);
+    if (st.anc_of != part || st.anc_k != k) {
+        st.anc_of = part;
+        st.anc_k = k;
+        ++st.anc_tick;
+        st.anc_low = layerOf(part);
+        st.anc_front.assign(1, part);
+        st.anc_mark[static_cast<size_t>(part)] = st.anc_tick;
+    }
+    while (st.anc_low > m && !st.anc_front.empty()) {
+        st.anc_next.clear();
+        for (int a : st.anc_front)
+            for (int i = 0; i < same_[a]; ++i) {
+                const int b = part_[a].parents[static_cast<size_t>(i)];
+                if (st.anc_mark[static_cast<size_t>(b)] == st.anc_tick) continue;
+                st.anc_mark[static_cast<size_t>(b)] = st.anc_tick;
+                st.anc_next.push_back(b);
+            }
+        st.anc_front.swap(st.anc_next);
+        --st.anc_low;
+    }
+    return st.anc_low <= m && st.anc_mark[static_cast<size_t>(q)] == st.anc_tick;
+}
 
 // Points spread evenly over a part, for sharing its pull out: the middles of
 // equal cells across its box that lie in it.
@@ -1968,14 +2066,21 @@ void Analysis::step(int k, Scratch& st) const {
         for (size_t j = 0; j < nh; ++j) all[j] = static_cast<int>(j);
         // A pull at x, where the model straight under it is `solid` mm thick
         // and thick model of the same part is `away` mm off.
-        auto share = [&](const Vec2& x, double pull, double solid, double away) {
+        auto share = [&](int on, const Vec2& x, double pull, double solid, double away) {
             // Only what touches the underside of this same slab can hold a
             // patch of it. A hold further under the newest layer than the
             // slab is thick here, allowing for the tip's own depth and for
             // an underside that drops at 45° on the way to it, is under
-            // something else.
+            // something else. So is a tip that the model goes on straight
+            // over into another part of this layer, or that the model over
+            // ended in something this part does not stand on: this part
+            // reaches it only round through the model below, as stiff model
+            // does (below). (A lattice's arm leaving a node beside a tip at
+            // the end of another arm hung from that tip across the gap.)
             auto under = [&](size_t j, double d2) {
-                return stiff || st.reach[j].below <= solid + 0.6 + std::sqrt(d2);
+                if (stiff) return true;
+                if (st.reach[j].below > solid + 0.6 + std::sqrt(d2)) return false;
+                return j >= nt || underPart(tip_group_[g.tips[j]], k, on, st);
             };
             double inv = 0;
             const std::vector<int>* holds = &all;
@@ -2118,14 +2223,14 @@ void Analysis::step(int k, Scratch& st) const {
                     n = std::clamp(static_cast<int>(std::ceil(std::max(cell.x, cell.y) / len - 1e-9)), 1, 8);
                 }
                 if (n == 1) {
-                    share(points[j], each, solid, awayAt(id, points[j]));
+                    share(id, points[j], each, solid, awayAt(id, points[j]));
                     continue;
                 }
                 const double part = each / (n * n);
                 for (int a = 0; a < n; ++a)
                     for (int c = 0; c < n; ++c) {
                         const Vec2 q{points[j].x + ((a + 0.5) / n - 0.5) * cell.x, points[j].y + ((c + 0.5) / n - 0.5) * cell.y};
-                        share(q, part, solid, awayAt(id, q));
+                        share(id, q, part, solid, awayAt(id, q));
                     }
             }
         }
@@ -2133,7 +2238,7 @@ void Analysis::step(int k, Scratch& st) const {
         for (const Cup& c : cups_[k])
             if (model_[c.part] && st.body_stamp[bodyAt(c.part, k)] == k &&
                 static_cast<size_t>(st.body_slot[bodyAt(c.part, k)]) == gi)
-                share({centre_[c.part].x + c.dx, centre_[c.part].y + c.dy}, c.force,
+                share(c.part, {centre_[c.part].x + c.dx, centre_[c.part].y + c.dy}, c.force,
                       *std::max_element(depth_[c.part].begin(), depth_[c.part].end()) * h_, kInf);
     }
 
@@ -3435,6 +3540,7 @@ StabilityResult Analysis::run() {
     ctl_.check();
     buildLinks();
     sizeJoints();
+    buildColumns();
     buildRods();
     buildBodies();
     buildDepths();

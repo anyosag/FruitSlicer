@@ -710,6 +710,38 @@ tests/         unit/, models/ (procedural generators), golden/ (metric snapshots
   Tests: the stages and lines from labelled reports; a real Generate goes
   forward through all seven stages; the loop on the thinned plate says each
   thing it does and moves the bar more than 20 times a round.
+- **Thin model hangs only from the tips under its own part (2026-11-23).** On
+  the user's TubeRack_v3 the Layers chart's "how close" line jumped to 204 %
+  at 54 mm (layers 1071 to 1094) and came back under 100 % by 55 mm. It was
+  one 0.2 mm tip at the end of the rack's divider (0.028 mm² of contact,
+  half let go at 7.5 mm²) carrying 15.3 mm², 15.2 of it given outright by
+  the thin-model share. 14.7 came from the two arms of the back wall's
+  lattice, which leave a node at 52 mm and climb outward at about 50°: 3 to
+  4 mm from the tip, across a gap, and separate parts of the layer from it.
+  Their outer edges have 0.25 mm of model straight under them, so they
+  counted as thin; the post they grow from is another part of the layer, so
+  no thick model was near; and which tips may hold a patch was judged only by
+  how far under the layer each is. With the patch off to one side of the line
+  of tips along the divider, the lever put 2.1 times the arms' pull on that
+  tip. Now a tip takes thin model's pull outright only where the model goes
+  on straight over the tip into the patch's own part of the layer, or ended
+  in a part the patch's part stands on (`buildColumns`: each tip's column,
+  followed up to 20 mm; `underPart`: a part walked down through what it
+  stands on, as far as asked). The rest goes by stiffness, as thick model's
+  does. Measured, rule off and on, same commit (saved supports, hinge +y):
+  - TubeRack_v3: 204 % at 54 mm to 39 %; 90 % at 80 mm (another arm, the
+    same cause) to 54 %; the top plate's 98 % at 98.5 mm, a real thin slab
+    over a tip, unchanged. Tips that may let go: 5 to 1; places 1 and 1.
+  - CHamber: 8 layers move, by at most 3 points. DishRack_SideBar,
+    DishRack_Top, MMPLA_print01, the MMPLA lid, TheDipper_Front and
+    TheDipper_full: identical.
+  - Lid, planned afresh: 637 tips to 636; places, tips shown and the worst
+    layer the same; 35 layers move, by at most 7 points. Eye cup: identical.
+  Given up: two parts of one layer on one thin slab, with a tip right under
+  one of them; the other no longer hangs from that tip outright. A new test
+  pins it: a post with a stem and an arm, the tip under the stem's end; the
+  arm put it at 2.33 mm² (worst at layer 74) instead of 1.99 (layer 62).
+  Not printed.
 - **Quick controls named for what they set (2026-11-13).** The Supports
   panel had three five-stop sliders named after outcomes (Hold, Amount,
   Sturdiness). Measured through the app's own logic on seven placements:

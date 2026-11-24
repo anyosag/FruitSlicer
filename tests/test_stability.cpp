@@ -1341,6 +1341,45 @@ TEST_CASE("a second branch joining the model does not load the lowest tip with w
     CHECK(at(r, 60, {10, 2}).stress == Approx(24.0 / 16).epsilon(0.04));
 }
 
+TEST_CASE("a tip under one branch does not hold another branch it reaches only through the model below",
+          "[stability]") {
+    // A post 1.2 mm square stands on the plate. From layer 60 a stem leaves
+    // it towards +y, joined to it for 4 layers and then 0.6 mm clear of it,
+    // with a tip under its far end (0, 2.6). From layer 70 an arm leaves the
+    // post the other way, towards +x, joined to it for 4 layers and then
+    // clear of it too, 1.2 to 3.3 mm from the tip. (As in the user's tube
+    // rack: lattice arms leaving a node, a tip at the end of one of them.)
+    // The arm's fresh layers are thin, and within a skin's reach of the tip,
+    // but the tip is under the stem: the arm reaches it only round through
+    // the post, which holds the arm itself. What the tip carries must not
+    // change with the arm there or not, and it carries most while the stem
+    // prints, not the arm. (Before, the arm hung from the tip across the
+    // gap, as thin model does from the tips under it: 5 mm² was given it
+    // outright while the arm printed, and that became its worst layer.)
+    auto tip = [](bool arm) {
+        Build b(120);
+        b.part(0, 120, rect(-0.6, -0.6, 0.6, 0.6));
+        b.part(60, 64, rect(-0.6, 0.6, 0.6, 3.0));
+        b.part(64, 120, rect(-0.6, 1.2, 0.6, 3.0));
+        b.support(0, 60, rect(-0.2, 2.4, 0.2, 2.8));
+        if (arm) {
+            b.part(70, 74, rect(0.6, -2, 3.0, 2));
+            b.part(74, 90, rect(1.2, -2, 3.0, 2));
+        }
+        StabilityConfig cfg;
+        cfg.replays = 10;
+        const StabilityResult r = b.run(cfg, {{{0, 2.6, 3.0}, 0.4}});
+        REQUIRE(r.tips.size() == 1);
+        return r.tips.front();
+    };
+    const TipRisk without = tip(false), with = tip(true);
+    INFO("the tip carries " << without.load << " mm² without the arm (at layer " << without.at_layer << "), "
+                            << with.load << " with it (at layer " << with.at_layer << ")");
+    CHECK(without.load > 1.0);
+    CHECK(with.load == Approx(without.load).epsilon(0.05));
+    CHECK(with.at_layer < 70);
+}
+
 TEST_CASE("a tip under a small ledge of a thick piece holds the ledge, not the piece", "[stability]") {
     // A block 10 mm tall on four tips. Near its top a small ledge on its
     // side, with a tip of its own on a long support.
