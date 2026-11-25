@@ -120,7 +120,7 @@ jobs:
         # manifest (UTF-8 code page, common controls) built in.
         run: |
           $exe = 'build\src\gui\FruitSlicer.exe'
-          $subsystem = "$(dumpbin /headers $exe | Select-String 'subsystem \(')".Trim()
+          $subsystem = (dumpbin /headers $exe | Select-String -SimpleMatch 'subsystem (' | Select-Object -First 1).Line.Trim()
           $subsystem
           if ($subsystem -notmatch 'Windows GUI') { throw "FruitSlicer.exe is not a windowed program" }
           (Get-Item $exe).VersionInfo | Format-List FileDescription, ProductName, ProductVersion, FileVersion, LegalCopyright
